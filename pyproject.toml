@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mito-overview"
+version = "0.1.0"
+description = "Modular ONT mtDNA interpretation and reporting framework"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [
+  { name = "Elisson Lopes, PhD" }
+]
+dependencies = [
+  "matplotlib>=3.10",
+  "numpy>=2.0",
+  "pandas>=2.2",
+  "pysam>=0.22",
+  "requests>=2.32"
+]
+
+[project.optional-dependencies]
+human = []
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+mito-overview = "mito_overview.cli:main"

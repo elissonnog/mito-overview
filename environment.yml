@@ -1,0 +1,15 @@
+name: mito-overview
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - python=3.12
+  - matplotlib
+  - numpy
+  - pandas
+  - pysam
+  - requests
+  - samtools
+  - pip
+  - pip:
+      - pytest

@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.DS_Store
+.env
+.venv/
+build/
+dist/
+*.egg-info/
+examples/expected_reports/*
+!examples/expected_reports/.gitkeep

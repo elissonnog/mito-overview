@@ -1,0 +1,9 @@
+cff-version: 1.2.0
+title: mito-overview
+message: Please cite this software using the metadata below.
+authors:
+  - family-names: Lopes
+    given-names: Elisson
+    name-particle: ""
+    suffix: PhD
+version: 0.1.0
