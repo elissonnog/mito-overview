@@ -1,0 +1,8 @@
+metric	value
+selected_sites	1
+pairwise_edges_meeting_shared_threshold	0
+reads_with_any_selected_site_coverage	10
+min_shared_reads_threshold	25
+top_sites_limit	8
+strongest_pair	NA
+strongest_pair_jaccard_alt	0.0

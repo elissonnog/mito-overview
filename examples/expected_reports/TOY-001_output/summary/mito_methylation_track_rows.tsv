@@ -1,0 +1,11 @@
+track	position	valid_coverage	percent_modified	modified_count	canonical_count
+NP_real_all_reads	1	10.0	75.0	7.0	3.0
+NP_real_all_reads	10	10.0	30.0	3.0	7.0
+HP1	1	10.0	75.0	7.0	3.0
+HP1	10	10.0	30.0	3.0	7.0
+HP2	1	10.0	75.0	7.0	3.0
+HP2	10	10.0	30.0	3.0	7.0
+Ungrouped	1	10.0	75.0	7.0	3.0
+Ungrouped	10	10.0	30.0	3.0	7.0
+Phased_proxy_all_reads	1	30.0	70.0	21.0	9.0
+Phased_proxy_all_reads	10	30.0	30.0	9.0	21.0

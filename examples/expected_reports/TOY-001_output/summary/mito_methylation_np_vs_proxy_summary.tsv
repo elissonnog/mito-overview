@@ -1,0 +1,7 @@
+metric	value
+tracks_available	5.0
+np_rows	2.0
+proxy_rows	2.0
+shared_np_proxy_positions	2.0
+np_proxy_mean_abs_difference	2.5
+np_proxy_correlation	1.0

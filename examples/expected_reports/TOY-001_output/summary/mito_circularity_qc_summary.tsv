@@ -1,0 +1,11 @@
+metric	value
+edge_window_bp	6.0
+mean_depth_first_edge	10.0
+mean_depth_last_edge	0.0
+mean_depth_interior	2.917
+candidate_sites_total	1.0
+candidate_sites_in_edges	0.0
+candidate_edge_fraction	0.0
+primary_read_start_in_edge_fraction	1.0
+primary_read_end_in_edge_fraction	0.0
+edge_read_heavy_softclip_fraction	0.0

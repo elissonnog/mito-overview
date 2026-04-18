@@ -1,0 +1,11 @@
+read_name	mapq	query_length	read_start	read_end	aligned_span	aligned_fraction_mt	softclip_bases	softclip_fraction	has_sa_tag	is_primary	is_supplementary	is_secondary	is_reverse
+r01	60	20	1	20	20	0.333333	0	0.0	0	1	0	0	0
+r02	60	20	1	20	20	0.333333	0	0.0	0	1	0	0	0
+r03	60	20	1	20	20	0.333333	0	0.0	0	1	0	0	0
+r04	60	20	1	20	20	0.333333	0	0.0	0	1	0	0	0
+r05	60	20	1	20	20	0.333333	0	0.0	0	1	0	0	0
+r06	60	20	1	20	20	0.333333	0	0.0	0	1	0	0	0
+r07	60	20	1	20	20	0.333333	0	0.0	0	1	0	0	0
+r08	60	20	1	20	20	0.333333	0	0.0	0	1	0	0	0
+r09	60	20	1	20	20	0.333333	0	0.0	0	1	0	0	0
+r10	60	20	1	20	20	0.333333	0	0.0	0	1	0	0	0

@@ -1,0 +1,9 @@
+metric	value
+features_summarized	3
+features_with_candidate_sites	1
+features_with_deletion_cluster_overlap	0
+features_with_cosegregation_selected_sites	1
+candidate_site_rows	1
+selected_coseg_positions_loaded	1
+deletion_event_intervals_loaded	0
+deletion_cluster_intervals_loaded	0

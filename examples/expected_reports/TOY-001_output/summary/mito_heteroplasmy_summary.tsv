@@ -1,0 +1,7 @@
+metric	value
+positions_tested	60.0
+candidate_sites_vaf>=0.2	1.0
+sites_vaf>=0.10	1.0
+sites_vaf>=0.05	1.0
+sites_vaf>=0.02	1.0
+max_heteroplasmy_fraction	0.3

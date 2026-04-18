@@ -1,0 +1,11 @@
+metric	value
+reads_evaluated	10
+low_mapq_fraction_lt20	0.0
+very_low_mapq_fraction_lt5	0.0
+short_aligned_fraction_lt0.5_mt	1.0
+heavy_softclip_fraction_gt0.2	0.0
+sa_tag_fraction	0.0
+supplementary_fraction_all_reads	0.0
+full_length_fraction	0.0
+heuristic_numt_risk	moderate
+heuristic_numt_risk_score	2

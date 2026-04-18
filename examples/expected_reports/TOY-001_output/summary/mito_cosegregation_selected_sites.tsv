@@ -1,0 +1,2 @@
+site_label	position	ref_base	alt_base	heteroplasmy_fraction	depth	covered_reads	alt_reads
+10:A>C	10	A	C	0.3	10	10	3
