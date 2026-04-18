@@ -17,8 +17,8 @@
 - optional human-specific enrichment kept separate from the reproducible core workflow
 - exploratory methylation retained as a secondary summary layer rather than the primary biological conclusion
 
-## Current validated scope
-The public mirror currently covers the working core already ported from the internal pipeline. Best-supported use at present is sample-level ONT mtDNA analysis with:
+## Current implemented scope
+The public mirror currently covers the working core already ported from the internal pipeline. The modules below are implemented in the public mirror and exercised by the current synthetic smoke-test and example-bundle workflow:
 - portable config loading
 - run layout and provenance writing
 - mitochondrial asset extraction
@@ -108,7 +108,7 @@ Each finished sample bundle is expected to contain:
 A synthetic public-core example bundle is staged at:
 - [`examples/expected_reports/TOY-001_output`](examples/expected_reports/TOY-001_output)
 
-Pages `01` through `12` in the example bundle correspond to the current portable public core.
+Pages `01` through `12` in the example bundle correspond to the current portable public-core report pages. The workflow logic is organized into more than twelve analytical layers overall, but the public example bundle currently renders twelve HTML pages because some technical outputs are summarized within shared report sections rather than split into standalone public pages.
 
 ## Optional integrations
 - Phy-Mer: optional human mtDNA haplogroup enrichment

@@ -60,10 +60,10 @@ The current public mirror has been structured around reproducibility and staged 
 - a synthetic public example report bundle
 - synthetic smoke tests that exercise the public-core analytical chain
 
-The validated internal pipeline has also been run on representative human ONT mtDNA samples, which informed the step structure, report design, and failure-mode handling. At the present stage, the strongest claims are workflow-level: executable modular design, stable sample-bundle outputs, and long-read-aware interpretability.
+The internally exercised pipeline has also been run on representative human ONT mtDNA samples, which informed the step structure, report design, and failure-mode handling. At the present stage, the strongest claims are workflow-level: executable modular design, working sample-bundle outputs, and long-read-aware interpretability.
 
 ## Results
-From a packaging and reproducibility standpoint, the workflow now supports a full public-core report chain across twelve analytical pages. The synthetic example bundle demonstrates that the public mirror can produce a collaborator-facing HTML report set with matching figures and tabular outputs while avoiding private sample identifiers. The same structure is exercised by the smoke-test workflow, which provides a compact regression target for future refactoring.
+From a packaging and reproducibility standpoint, the workflow now supports a working public-core report chain across twelve HTML report pages. The synthetic example bundle demonstrates that the public mirror can produce a collaborator-facing HTML report set with matching figures and tabular outputs while avoiding private sample identifiers. The same structure is exercised by the smoke-test workflow, which provides a compact regression target for future refactoring.
 
 The report design intentionally keeps each analytical layer interpretable in isolation. For example, the heteroplasmy page emphasizes per-position support and landscape summaries, the deletion page focuses on structural burden rather than forcing a specialized caller claim, and the NUMT and circularity pages provide warning-oriented technical context around biological interpretation. This separation is useful for collaborator review because it allows specific concerns to be localized without losing access to the broader sample-level summary.
 
