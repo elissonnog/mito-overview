@@ -5,7 +5,7 @@ This directory holds packaging examples for the public mirror.
 ## Included now
 - [`configs/human_example.env`](configs/human_example.env): example environment-style config for a human mtDNA run
 - [`synthetic_data/TOY-001`](synthetic_data/TOY-001): tracked toy input dataset used for installation checks and example-bundle generation
-- [`expected_reports/TOY-001_output`](expected_reports/TOY-001_output): synthetic public-core report bundle generated from the repository's own example-builder workflow
+- [`expected_reports/TOY-001_output`](expected_reports/TOY-001_output): synthetic public report bundle generated from the repository's own example-builder workflow, including locally validated optional pages `13` and `14`
 
 ## How to regenerate
 Use the builder script:
@@ -15,4 +15,4 @@ Use the builder script:
   examples/expected_reports/TOY-001_output
 ```
 
-This produces a synthetic human-like toy sample that exercises the public-core analytical pages without relying on private project identifiers.
+This produces a synthetic human-like toy sample that exercises the public analytical pages without relying on private project identifiers. The bundled builder uses local fixture resources for the optional Phy-Mer and mvTool-style validation layers so the example bundle can be regenerated from a fresh clone without private tool installations or live remote calls.

@@ -7,6 +7,7 @@ WORKDIR="$(mktemp -d "${TMPDIR:-/tmp}/mito-overview-smoke.XXXXXX")"
 trap 'rm -rf "${WORKDIR}"' EXIT
 
 source "${REPO_ROOT}/scripts/lib/prepare_synthetic_toy_sample.sh"
+source "${REPO_ROOT}/scripts/lib/mock_optional_integrations.sh"
 
 echo "[smoke] repo root: ${REPO_ROOT}"
 echo "[smoke] workdir: ${WORKDIR}"
@@ -16,7 +17,10 @@ if [[ -n "${MITO_OVERVIEW_PYTHON:-}" ]]; then
   TOOL_BIN="$(cd "$(dirname "${MITO_OVERVIEW_PYTHON}")" && pwd)"
   export PATH="${TOOL_BIN}${PATH:+:${PATH}}"
 fi
-
+export MPLCONFIGDIR="${WORKDIR}/.mplconfig"
+mkdir -p "${MPLCONFIGDIR}"
+export XDG_CACHE_HOME="${WORKDIR}/.cache"
+mkdir -p "${XDG_CACHE_HOME}"
 HV_DIR="${WORKDIR}/sample/human_variation"
 HV_NP_DIR="${WORKDIR}/sample/human_variation_NP"
 RUN_ROOT="${WORKDIR}/runs"
@@ -24,6 +28,11 @@ FINAL_DIR="${WORKDIR}/final_bundle"
 mkdir -p "${HV_DIR}" "${HV_NP_DIR}" "${RUN_ROOT}"
 
 prepare_synthetic_toy_sample "${REPO_ROOT}" "${WORKDIR}"
+PHYMER_ROOT="$(mock_phymer_root "${REPO_ROOT}")"
+MVTOOL_API_URL="$(mock_mvtool_fixture_url "${REPO_ROOT}")"
+
+echo "[smoke] phymer root: ${PHYMER_ROOT}"
+echo "[smoke] mock mvtool api: ${MVTOOL_API_URL}"
 
 cat > "${WORKDIR}/toy.env" <<EOF
 PIPELINE_ROOT=${REPO_ROOT}
@@ -43,6 +52,11 @@ SPECIES=human
 HET_MIN_DEPTH=2
 HET_MIN_VAF=0.2
 HUMAN_MT_GTF=${WORKDIR}/tiny_mt.gtf
+PHYMER_ROOT=${PHYMER_ROOT}
+PHYMER_MIN_DEPTH=2
+PHYMER_MAJOR_VAF=0.2
+MVTOOL_API_URL=${MVTOOL_API_URL}
+MSEQDR_TIMEOUT=10
 FINAL_BIOINFO_DIR=${FINAL_DIR}
 EOF
 
@@ -50,7 +64,7 @@ cd "${REPO_ROOT}"
 ./scripts/run_mito_pipeline.sh \
   --config "${WORKDIR}/toy.env" \
   --strict-files \
-  --steps validate,stage,extract,mito_qc,heteroplasmy,deletions,copy_number,feature_annotation,cosegregation,gene_summary,numt_qc,identity_qc,variant_consequence,circularity_qc,methylation_exploratory,sync_bioinfo
+  --steps validate,stage,extract,mito_qc,heteroplasmy,deletions,copy_number,feature_annotation,cosegregation,gene_summary,numt_qc,phymer_haplogroup,identity_qc,variant_consequence,mvtool_annotation,circularity_qc,methylation_exploratory,sync_bioinfo
 
 test -f "${FINAL_DIR}/output/report/01_mito_qc.html"
 test -f "${FINAL_DIR}/output/report/02_mito_heteroplasmy.html"
@@ -64,6 +78,8 @@ test -f "${FINAL_DIR}/output/report/09_mito_identity_qc.html"
 test -f "${FINAL_DIR}/output/report/10_mito_variant_consequence.html"
 test -f "${FINAL_DIR}/output/report/11_mito_circularity_qc.html"
 test -f "${FINAL_DIR}/output/report/12_mito_methylation_exploratory.html"
+test -f "${FINAL_DIR}/output/report/13_mito_phymer_haplogroup.html"
+test -f "${FINAL_DIR}/output/report/14_mito_mvtool_annotation.html"
 test -f "${FINAL_DIR}/sync_manifest.tsv"
 
 echo "[smoke] public pipeline smoke test completed successfully"

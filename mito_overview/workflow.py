@@ -393,6 +393,27 @@ def _run_gene_summary(config: PipelineConfig, paths: RunPaths, strict_files: boo
 STEP_RUNNERS["gene_summary"] = _run_gene_summary
 
 
+def _run_phymer_haplogroup(config: PipelineConfig, paths: RunPaths, strict_files: bool) -> StepResult:
+    del strict_files
+    from .steps.mito_phymer_haplogroup import run_step
+
+    outputs = run_step(
+        summary_dir=paths.summary_dir,
+        figure_dir=paths.figure_dir,
+        report_dir=paths.report_dir,
+        sample_id=config.sample_id,
+        mt_contig=config.mt_contig,
+        mt_length=config.mt_length,
+        species=config.detected_species,
+        ref_fasta=config.ref_fasta,
+        phymer_root=config.phymer_root,
+        min_depth=config.phymer_min_depth,
+        major_vaf=config.phymer_major_vaf,
+    )
+    (paths.log_dir / "phymer_haplogroup.done").write_text("ok\n", encoding="utf-8")
+    return StepResult("phymer_haplogroup", "ok", f"Wrote {outputs['report_path']}")
+
+
 def _run_identity_qc(config: PipelineConfig, paths: RunPaths, strict_files: bool) -> StepResult:
     del strict_files
     from .steps.mito_identity_qc import run_step
@@ -464,7 +485,28 @@ def _run_methylation_exploratory(config: PipelineConfig, paths: RunPaths, strict
 
 
 STEP_RUNNERS["identity_qc"] = _run_identity_qc
+
+
+def _run_mvtool_annotation(config: PipelineConfig, paths: RunPaths, strict_files: bool) -> StepResult:
+    del strict_files
+    from .steps.mito_mvtool_annotation import run_step
+
+    outputs = run_step(
+        summary_dir=paths.summary_dir,
+        figure_dir=paths.figure_dir,
+        report_dir=paths.report_dir,
+        sample_id=config.sample_id,
+        species=config.detected_species,
+        api_url=config.mvtool_api_url,
+        timeout=config.mseqdr_timeout,
+    )
+    (paths.log_dir / "mvtool_annotation.done").write_text("ok\n", encoding="utf-8")
+    return StepResult("mvtool_annotation", "ok", f"Wrote {outputs['report_path']}")
+
+
+STEP_RUNNERS["phymer_haplogroup"] = _run_phymer_haplogroup
 STEP_RUNNERS["variant_consequence"] = _run_variant_consequence
+STEP_RUNNERS["mvtool_annotation"] = _run_mvtool_annotation
 STEP_RUNNERS["circularity_qc"] = _run_circularity_qc
 STEP_RUNNERS["methylation_exploratory"] = _run_methylation_exploratory
 

@@ -29,6 +29,8 @@ The public mirror currently covers the working core already ported from the inte
 - `mito_numt_qc`
 - `mito_identity_qc`
 - `mito_variant_consequence`
+- `mito_phymer_haplogroup` (optional human haplogroup enrichment)
+- `mito_mvtool_annotation` (optional human external annotation enrichment)
 - `mito_circularity_qc`
 - `mito_methylation_exploratory`
 - final sync into a persistent report directory
@@ -44,7 +46,11 @@ This dataset is intentionally small and deterministic. It is meant for:
 - smoke testing
 - generation of the public example output bundle
 
-The corresponding expected public-core output bundle is:
+Optional human-only enrichment pages are validated locally in this repository with bundled fixture resources:
+- a tiny deterministic Phy-Mer vendor stand-in under [`tests/fixtures/mock_phymer_vendor`](tests/fixtures/mock_phymer_vendor)
+- a local mvTool-style annotation fixture under [`tests/fixtures/mock_mvtool_annotations.json`](tests/fixtures/mock_mvtool_annotations.json)
+
+The corresponding expected public example output bundle is:
 - [`examples/expected_reports/TOY-001_output`](examples/expected_reports/TOY-001_output)
 
 ## Representative report views
@@ -61,6 +67,10 @@ These panels come from a synthetic public-core example bundle generated from the
 **Gene-level summary**
 
 ![Gene summary overview](examples/expected_reports/TOY-001_output/figures/mito_gene_summary_overview.png)
+
+**Optional annotation context**
+
+![mvTool status overview](examples/expected_reports/TOY-001_output/figures/mito_mvtool_status_counts.png)
 
 ## Installation
 Create the public environment:
@@ -116,12 +126,13 @@ Each finished sample bundle is expected to contain:
 A synthetic public-core example bundle is staged at:
 - [`examples/expected_reports/TOY-001_output`](examples/expected_reports/TOY-001_output)
 
-Pages `01` through `12` in the example bundle correspond to the current portable public-core report pages. The workflow logic is organized into more than twelve analytical layers overall, but the public example bundle currently renders twelve HTML pages because some technical outputs are summarized within shared report sections rather than split into standalone public pages.
+Pages `01` through `14` in the example bundle correspond to the currently ported public report pages. In the bundled toy validation path, pages `13` and `14` are exercised through local fixture resources so that a fresh clone can validate the optional human enrichment layers without a private Phy-Mer checkout or live network dependency.
 
 ## Optional integrations
 - Phy-Mer: optional human mtDNA haplogroup enrichment
 - mvTool: optional human mtDNA external annotation enrichment
 - these integrations are intentionally non-mandatory and should be treated as secondary annotation layers rather than the core analysis
+- the repository's synthetic validation path uses local fixtures for these layers; real biological use should point to a true Phy-Mer vendor tree and the intended mvTool-compatible endpoint
 - `mito-overview` does not bundle external Phy-Mer code or mvTool data resources; see [`docs/license_notes.md`](docs/license_notes.md)
 
 ## Repository status

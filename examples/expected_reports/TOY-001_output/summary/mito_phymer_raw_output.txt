@@ -1,0 +1,3 @@
+mito_phymer_consensus
+H1a1	0.982	m.10A>C
+R0	0.251	NA

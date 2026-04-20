@@ -1,0 +1,466 @@
+"""Optional human mtDNA external annotation enrichment via the MSeqDR mvTool API."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import math
+from pathlib import Path
+from urllib.parse import unquote, urlparse
+
+import matplotlib
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import pandas as pd
+import requests
+
+from mito_overview.report_common import df_to_html_table, figure_html, metric_card, render_page
+
+DEFAULT_FIELDS = [
+    "Input",
+    "HGVS_g",
+    "AF_M1",
+    "AF_mitomap",
+    "Mitomap_status",
+    "Mitomap_Disease",
+    "Heteroplasmy",
+    "Homoplasmy",
+    "HmtDB",
+    "HmtDB_disease",
+    "NT_variability",
+    "AA_variability",
+    "M1_cnt",
+    "Mitomap_cnt",
+]
+REQUIRED_CANDIDATE_COLUMNS = {"position", "ref_base", "alt_base"}
+STATUS_COLUMNS = ["Mitomap_status", "candidate_sites"]
+DISEASE_COLUMNS = ["Reported_association", "candidate_sites", "supporting_statuses"]
+POP_BIN_COLUMNS = ["AF_M1_bin", "candidate_sites"]
+SUMMARY_COLUMNS = ["metric", "value"]
+
+
+def build_arg_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--summary-dir", required=True)
+    parser.add_argument("--figure-dir", required=True)
+    parser.add_argument("--report-dir", required=True)
+    parser.add_argument("--sample-id", required=True)
+    parser.add_argument("--species", required=True)
+    parser.add_argument("--api-url", required=True)
+    parser.add_argument("--timeout", type=int, default=120)
+    parser.add_argument("--batch-size", type=int, default=100)
+    return parser
+
+
+def load_table(path: str | Path, *, columns: list[str] | None = None) -> pd.DataFrame:
+    path = Path(path)
+    if path.exists() and path.stat().st_size > 0:
+        return pd.read_csv(path, sep="\t")
+    return pd.DataFrame(columns=columns or [])
+
+
+def write_status_page(
+    *,
+    report_path: Path,
+    summary_path: Path,
+    annot_path: Path,
+    batch_log_path: Path,
+    sample_id: str,
+    status_rows: list[dict[str, object]],
+    message: str,
+) -> dict[str, Path]:
+    summary_df = pd.DataFrame(status_rows)
+    summary_df.to_csv(summary_path, sep="\t", index=False)
+    pd.DataFrame().to_csv(annot_path, sep="\t", index=False)
+    pd.DataFrame().to_csv(batch_log_path, sep="\t", index=False)
+    intro_html = f"<p class='muted'>{message}</p>"
+    body_html = "<section><h2>Status</h2>" + df_to_html_table(summary_df, max_rows=20) + "</section>"
+    render_page(report_path, "Mito mvTool Annotation", sample_id, "MT:whole_mito", intro_html, body_html)
+    return {
+        "summary_path": summary_path,
+        "annot_path": annot_path,
+        "batch_log_path": batch_log_path,
+        "report_path": report_path,
+    }
+
+
+def to_hgvs(row: object) -> str:
+    return f"m.{int(row.position)}{row.ref_base}>{row.alt_base}"
+
+
+def as_float(series: pd.Series) -> pd.Series:
+    return pd.to_numeric(series, errors="coerce")
+
+
+def normalize_text_values(series: pd.Series) -> pd.Series:
+    normalized = series.fillna("").astype(str).str.strip()
+    invalid = {"", "-", "--", "na", "n/a", "nan", "none", "null"}
+    return normalized.map(lambda value: pd.NA if value.lower() in invalid else value)
+
+
+def fetch_mvtool_rows(
+    *,
+    api_url: str,
+    session: requests.Session,
+    variants: list[str],
+    timeout: int,
+) -> tuple[list[dict[str, object]], int]:
+    """Fetch mvTool-style annotation rows from HTTP or a local file fixture."""
+
+    if api_url.startswith("file://"):
+        parsed = urlparse(api_url)
+        fixture_path = Path(unquote(parsed.path))
+        fixture_payload = json.loads(fixture_path.read_text(encoding="utf-8"))
+        if "records" in fixture_payload:
+            records = fixture_payload.get("records", {})
+            default_row = fixture_payload.get("default", {})
+            rows = []
+            for variant in variants:
+                row = dict(default_row)
+                row.update(records.get(variant, {}))
+                row.setdefault("Input", variant)
+                row.setdefault("HGVS_g", variant)
+                rows.append(row)
+            return rows, 200
+        if "mseqdr" in fixture_payload and isinstance(fixture_payload["mseqdr"], list):
+            return list(fixture_payload["mseqdr"]), 200
+        raise ValueError("Local mvTool fixture must contain either 'records' or 'mseqdr'")
+
+    payload = ("\n".join(variants) + "\n").encode()
+    response = session.post(api_url, data=payload, timeout=timeout)
+    response.raise_for_status()
+    data = response.json()
+    entries = data.get("mseqdr", [])
+    if not isinstance(entries, list):
+        raise ValueError("mvTool response did not contain a list under 'mseqdr'")
+    return entries, int(response.status_code)
+
+
+def run_step(
+    *,
+    summary_dir: str | Path,
+    figure_dir: str | Path,
+    report_dir: str | Path,
+    sample_id: str,
+    species: str,
+    api_url: str,
+    timeout: int = 120,
+    batch_size: int = 100,
+) -> dict[str, Path]:
+    """Run the optional mvTool annotation step."""
+
+    print(
+        f"[mvtool] starting sample={sample_id} species={species} timeout={timeout} batch_size={batch_size}",
+        flush=True,
+    )
+    summary_dir = Path(summary_dir)
+    figure_dir = Path(figure_dir)
+    report_dir = Path(report_dir)
+    summary_dir.mkdir(parents=True, exist_ok=True)
+    figure_dir.mkdir(parents=True, exist_ok=True)
+    report_dir.mkdir(parents=True, exist_ok=True)
+
+    report_path = report_dir / "14_mito_mvtool_annotation.html"
+    summary_path = summary_dir / "mito_mvtool_annotation_summary.tsv"
+    annot_path = summary_dir / "mito_mvtool_annotation_candidates.tsv"
+    batch_log_path = summary_dir / "mito_mvtool_annotation_batches.tsv"
+    status_counts_path = summary_dir / "mito_mvtool_status_counts.tsv"
+    disease_summary_path = summary_dir / "mito_mvtool_disease_summary.tsv"
+    population_bins_path = summary_dir / "mito_mvtool_population_bins.tsv"
+
+    if species.lower() != "human":
+        return write_status_page(
+            report_path=report_path,
+            summary_path=summary_path,
+            annot_path=annot_path,
+            batch_log_path=batch_log_path,
+            sample_id=sample_id,
+            status_rows=[{"metric": "status", "value": "skipped_non_human_sample"}],
+            message="mvTool annotation is currently enabled only for human mitochondrial samples.",
+        )
+
+    candidates = load_table(summary_dir / "mito_heteroplasmy_candidates.tsv")
+    if candidates.empty:
+        return write_status_page(
+            report_path=report_path,
+            summary_path=summary_path,
+            annot_path=annot_path,
+            batch_log_path=batch_log_path,
+            sample_id=sample_id,
+            status_rows=[{"metric": "status", "value": "no_candidate_sites_available"}],
+            message="No mitochondrial candidate variants were available for mvTool annotation.",
+        )
+    if not REQUIRED_CANDIDATE_COLUMNS.issubset(candidates.columns):
+        missing = sorted(REQUIRED_CANDIDATE_COLUMNS.difference(candidates.columns))
+        return write_status_page(
+            report_path=report_path,
+            summary_path=summary_path,
+            annot_path=annot_path,
+            batch_log_path=batch_log_path,
+            sample_id=sample_id,
+            status_rows=[
+                {"metric": "status", "value": "candidate_table_missing_columns"},
+                {"metric": "missing_columns", "value": ",".join(missing)},
+            ],
+            message="The heteroplasmy candidate table is missing columns required for mvTool annotation.",
+        )
+
+    candidates = candidates.copy()
+    candidates["mvtool_input"] = [to_hgvs(r) for r in candidates.itertuples(index=False)]
+    unique_inputs = candidates[["mvtool_input"]].drop_duplicates().reset_index(drop=True)
+    session = requests.Session()
+    results: list[dict[str, object]] = []
+    batch_rows: list[dict[str, object]] = []
+    total_batches = max(1, math.ceil(len(unique_inputs) / batch_size))
+
+    try:
+        for idx in range(total_batches):
+            start = idx * batch_size
+            end = min((idx + 1) * batch_size, len(unique_inputs))
+            subset = unique_inputs.iloc[start:end]
+            print(
+                f"[mvtool] sample={sample_id} batch={idx + 1}/{total_batches} variants={len(subset)} url={api_url}",
+                flush=True,
+            )
+            entries, http_status = fetch_mvtool_rows(
+                api_url=api_url,
+                session=session,
+                variants=subset["mvtool_input"].tolist(),
+                timeout=timeout,
+            )
+            batch_rows.append(
+                {
+                    "batch": idx + 1,
+                    "variants_submitted": int(len(subset)),
+                    "records_returned": int(len(entries)),
+                    "http_status": int(http_status),
+                }
+            )
+            results.extend(entries)
+    except Exception as exc:
+        pd.DataFrame(batch_rows).to_csv(batch_log_path, sep="\t", index=False)
+        return write_status_page(
+            report_path=report_path,
+            summary_path=summary_path,
+            annot_path=annot_path,
+            batch_log_path=batch_log_path,
+            sample_id=sample_id,
+            status_rows=[
+                {"metric": "status", "value": "mvtool_request_failed"},
+                {"metric": "api_url", "value": api_url},
+                {"metric": "error", "value": f"{type(exc).__name__}: {exc}"[:220]},
+            ],
+            message="The mvTool annotation request failed before a complete annotation table could be assembled.",
+        )
+
+    batch_df = pd.DataFrame(batch_rows)
+    batch_df.to_csv(batch_log_path, sep="\t", index=False)
+    annot_df = pd.DataFrame(results)
+    if annot_df.empty:
+        return write_status_page(
+            report_path=report_path,
+            summary_path=summary_path,
+            annot_path=annot_path,
+            batch_log_path=batch_log_path,
+            sample_id=sample_id,
+            status_rows=[
+                {"metric": "status", "value": "mvtool_returned_no_records"},
+                {"metric": "submitted_candidates", "value": int(len(unique_inputs))},
+            ],
+            message="mvTool returned no annotation rows for the submitted mitochondrial candidate variants.",
+        )
+    if "Input" not in annot_df.columns:
+        annot_df.to_csv(annot_path, sep="\t", index=False)
+        return write_status_page(
+            report_path=report_path,
+            summary_path=summary_path,
+            annot_path=annot_path,
+            batch_log_path=batch_log_path,
+            sample_id=sample_id,
+            status_rows=[
+                {"metric": "status", "value": "mvtool_missing_input_column"},
+                {"metric": "returned_columns", "value": ",".join(map(str, annot_df.columns.tolist()[:20]))},
+            ],
+            message="mvTool returned rows, but the required Input column was absent, so candidates could not be merged back to the report table.",
+        )
+
+    keep_fields = [field for field in DEFAULT_FIELDS if field in annot_df.columns]
+    annot_df = annot_df[keep_fields].copy()
+    merged = candidates.merge(annot_df, left_on="mvtool_input", right_on="Input", how="left")
+
+    status_norm = normalize_text_values(merged.get("Mitomap_status", pd.Series(dtype=object)))
+    disease_norm = normalize_text_values(merged.get("Mitomap_Disease", pd.Series(dtype=object)))
+    hmtdb_disease_norm = normalize_text_values(merged.get("HmtDB_disease", pd.Series(dtype=object)))
+
+    merged["Mitomap_status_normalized"] = status_norm
+    merged["Mitomap_Disease_normalized"] = disease_norm
+    merged["HmtDB_disease_normalized"] = hmtdb_disease_norm
+    merged.to_csv(annot_path, sep="\t", index=False)
+
+    status_counts = pd.DataFrame(columns=STATUS_COLUMNS)
+    mitomap_status_df = merged[status_norm.notna()].copy()
+    if not mitomap_status_df.empty:
+        status_counts = (
+            mitomap_status_df.groupby("Mitomap_status_normalized", as_index=False)
+            .agg(candidate_sites=("mvtool_input", "count"))
+            .sort_values("candidate_sites", ascending=False)
+            .rename(columns={"Mitomap_status_normalized": "Mitomap_status"})
+        )
+    status_counts.to_csv(status_counts_path, sep="\t", index=False)
+
+    disease_summary = pd.DataFrame(columns=DISEASE_COLUMNS)
+    disease_rows = merged[disease_norm.notna()].copy()
+    if not disease_rows.empty:
+        disease_summary = (
+            disease_rows.groupby("Mitomap_Disease_normalized", as_index=False)
+            .agg(
+                candidate_sites=("mvtool_input", "count"),
+                supporting_statuses=(
+                    "Mitomap_status_normalized",
+                    lambda s: ", ".join(sorted({str(v) for v in s.dropna()})) or "NA",
+                ),
+            )
+            .sort_values(["candidate_sites", "Mitomap_Disease_normalized"], ascending=[False, True])
+            .rename(columns={"Mitomap_Disease_normalized": "Reported_association"})
+        )
+    disease_summary.to_csv(disease_summary_path, sep="\t", index=False)
+
+    population_bin_summary = pd.DataFrame(columns=POP_BIN_COLUMNS)
+    if "AF_M1" in merged.columns:
+        freq_df = merged[["mvtool_input", "AF_M1"]].copy()
+        freq_df["AF_M1"] = as_float(freq_df["AF_M1"])
+        freq_df = freq_df.dropna(subset=["AF_M1"])
+        if not freq_df.empty:
+            population_bin_summary = (
+                freq_df.assign(
+                    AF_M1_bin=pd.cut(
+                        freq_df["AF_M1"],
+                        bins=[-0.000001, 0.001, 0.01, 0.05, 0.10, 1.0],
+                        labels=["<0.1%", "0.1-1%", "1-5%", "5-10%", ">=10%"],
+                    )
+                )
+                .groupby("AF_M1_bin", observed=False, as_index=False)
+                .agg(candidate_sites=("mvtool_input", "count"))
+            )
+            population_bin_summary = population_bin_summary[population_bin_summary["candidate_sites"] > 0].copy()
+    population_bin_summary.to_csv(population_bins_path, sep="\t", index=False)
+
+    usable_status_rows = int(status_norm.notna().sum())
+    usable_disease_rows = int(disease_norm.notna().sum())
+    usable_hmtdb_rows = int(hmtdb_disease_norm.notna().sum())
+    rows_without_usable_status = int(len(merged) - usable_status_rows)
+
+    summary_df = pd.DataFrame(
+        [
+            {"metric": "status", "value": "ok"},
+            {"metric": "candidate_sites_submitted", "value": int(len(unique_inputs))},
+            {"metric": "rows_returned_by_mvtool", "value": int(len(annot_df))},
+            {"metric": "sites_with_usable_mitomap_status", "value": usable_status_rows},
+            {"metric": "sites_without_usable_mitomap_status", "value": rows_without_usable_status},
+            {"metric": "sites_with_reported_mitomap_association", "value": usable_disease_rows},
+            {"metric": "sites_with_reported_hmtdb_association", "value": usable_hmtdb_rows},
+            {"metric": "api_url", "value": api_url},
+        ]
+    )
+    summary_df.to_csv(summary_path, sep="\t", index=False)
+
+    status_fig = None
+    if not status_counts.empty:
+        status_fig = figure_dir / "mito_mvtool_status_counts.png"
+        plot_df = status_counts.head(8)
+        plt.figure(figsize=(9, 4))
+        plt.bar(plot_df["Mitomap_status"], plot_df["candidate_sites"], color="#7c3aed")
+        plt.xticks(rotation=30, ha="right")
+        plt.ylabel("Candidate sites")
+        plt.title(f"{sample_id} mvTool / MITOMAP status distribution")
+        plt.tight_layout()
+        plt.savefig(status_fig, dpi=150)
+        plt.close()
+
+    af_fig = None
+    if not population_bin_summary.empty:
+        af_fig = figure_dir / "mito_mvtool_population_context.png"
+        plt.figure(figsize=(7, 4))
+        plt.bar(population_bin_summary["AF_M1_bin"].astype(str), population_bin_summary["candidate_sites"], color="#0f766e")
+        plt.xlabel("mvTool AF_M1 population-frequency bin")
+        plt.ylabel("Candidate sites")
+        plt.title(f"{sample_id} mvTool population-frequency context")
+        plt.xticks(rotation=20, ha="right")
+        plt.tight_layout()
+        plt.savefig(af_fig, dpi=150)
+        plt.close()
+
+    metrics_html = "".join(
+        [
+            metric_card("Submitted candidates", int(len(unique_inputs))),
+            metric_card("Rows returned by mvTool", int(len(annot_df))),
+            metric_card("Usable MITOMAP statuses", usable_status_rows),
+            metric_card("Rows without usable status", rows_without_usable_status),
+            metric_card("Reported disease / phenotype labels", usable_disease_rows),
+        ]
+    )
+    intro_html = (
+        '<p class="muted">This page sends mitochondrial candidate variants to the MSeqDR mvTool annotation API to recover standardized mtDNA nomenclature and external annotation context, including MITOMAP-style status, disease or phenotype labels, HmtDB links, and population-frequency fields. '
+        "Placeholder values are excluded from the summary metrics and status plot so that the page emphasizes usable external annotation rather than uninformative return rows.</p>"
+        f"<div class='metrics-grid'>{metrics_html}</div>"
+    )
+    body_parts = [
+        "<section><h2>mvTool summary</h2>" + df_to_html_table(summary_df, max_rows=20) + "</section>",
+        "<section><h2>Batch log</h2>" + df_to_html_table(batch_df, max_rows=20) + "</section>",
+        "<section><h2>Annotated candidate table</h2>" + df_to_html_table(merged, max_rows=40) + "</section>",
+    ]
+    if status_fig:
+        body_parts.insert(
+            2,
+            "<section><h2>MITOMAP status distribution</h2>"
+            + figure_html(status_fig, "Distribution of usable mvTool / MITOMAP status labels among annotated candidates")
+            + "</section>",
+        )
+    if af_fig:
+        body_parts.insert(
+            3,
+            "<section><h2>Population-frequency context</h2>"
+            + figure_html(af_fig, "Candidate-site counts across mvTool AF_M1 population-frequency bins")
+            + "</section>",
+        )
+    if not population_bin_summary.empty:
+        body_parts.append(
+            "<section><h2>Population-frequency bin summary</h2>"
+            + df_to_html_table(population_bin_summary, max_rows=10)
+            + "</section>"
+        )
+    if not disease_summary.empty:
+        body_parts.append(
+            "<section><h2>Reported phenotype / disease associations</h2>"
+            + df_to_html_table(disease_summary, max_rows=20)
+            + "</section>"
+        )
+    body_parts.append("<section><h2>Authorship</h2><p>Author: Elisson Lopes, PhD</p></section>")
+    render_page(report_path, "Mito mvTool Annotation", sample_id, "MT:whole_mito", intro_html, "".join(body_parts))
+    return {
+        "summary_path": summary_path,
+        "annot_path": annot_path,
+        "batch_log_path": batch_log_path,
+        "report_path": report_path,
+    }
+
+
+def main() -> None:
+    args = build_arg_parser().parse_args()
+    outputs = run_step(
+        summary_dir=args.summary_dir,
+        figure_dir=args.figure_dir,
+        report_dir=args.report_dir,
+        sample_id=args.sample_id,
+        species=args.species,
+        api_url=args.api_url,
+        timeout=args.timeout,
+        batch_size=args.batch_size,
+    )
+    for path in outputs.values():
+        print(f"Wrote {path}")
+
+
+if __name__ == "__main__":
+    main()

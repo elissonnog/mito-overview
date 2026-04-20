@@ -1,0 +1,8 @@
+metric	value
+status	ok
+sample_label	mito_phymer_consensus
+best_haplogroup	H1a1
+best_score	0.982
+major_variant_sites_used	1
+phymer_library	PhyloTree_b16_k12.txt
+major_variant_threshold	depth>=2;vaf>=0.2

@@ -1,0 +1,50 @@
+{
+  "records": {
+    "m.10A>C": {
+      "Input": "m.10A>C",
+      "HGVS_g": "NC_012920.1:m.10A>C",
+      "AF_M1": "0.0007",
+      "AF_mitomap": "0.0009",
+      "Mitomap_status": "Reported",
+      "Mitomap_Disease": "Synthetic_mito_condition",
+      "Heteroplasmy": "Yes",
+      "Homoplasmy": "No",
+      "HmtDB": "HMTDB000001",
+      "HmtDB_disease": "Synthetic_mito_condition",
+      "NT_variability": "0.02",
+      "AA_variability": "NA",
+      "M1_cnt": "3",
+      "Mitomap_cnt": "2"
+    },
+    "m.20A>G": {
+      "Input": "m.20A>G",
+      "HGVS_g": "NC_012920.1:m.20A>G",
+      "AF_M1": "0.0200",
+      "AF_mitomap": "0.0180",
+      "Mitomap_status": "Cfrm",
+      "Mitomap_Disease": "Synthetic_secondary_label",
+      "Heteroplasmy": "Yes",
+      "Homoplasmy": "No",
+      "HmtDB": "HMTDB000002",
+      "HmtDB_disease": "Synthetic_secondary_label",
+      "NT_variability": "0.10",
+      "AA_variability": "0.00",
+      "M1_cnt": "8",
+      "Mitomap_cnt": "6"
+    }
+  },
+  "default": {
+    "AF_M1": "-",
+    "AF_mitomap": "-",
+    "Mitomap_status": "-",
+    "Mitomap_Disease": "-",
+    "Heteroplasmy": "NA",
+    "Homoplasmy": "NA",
+    "HmtDB": "-",
+    "HmtDB_disease": "-",
+    "NT_variability": "-",
+    "AA_variability": "-",
+    "M1_cnt": "0",
+    "Mitomap_cnt": "0"
+  }
+}
