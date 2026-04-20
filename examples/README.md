@@ -16,3 +16,7 @@ Use the builder script:
 ```
 
 This produces a synthetic human-like toy sample that exercises the public analytical pages without relying on private project identifiers. The bundled builder uses local fixture resources for the optional Phy-Mer and mvTool-style validation layers so the example bundle can be regenerated from a fresh clone without private tool installations or live remote calls.
+
+Note:
+- analytical TSV, HTML, and figure outputs are intended to be stable across rebuilds
+- the bundled mitochondrial BAM and BAM index are included for inspection convenience, but byte-level identity is not guaranteed across rebuilds because binary compression and indexing details can vary by environment
