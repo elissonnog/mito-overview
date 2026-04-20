@@ -1,21 +1,17 @@
 # mito-overview
 
-`mito-overview` is a modular Oxford Nanopore Technologies (ONT) mitochondrial DNA analysis and reporting framework for sample-level interpretation. The workflow decomposes mtDNA review into explicit analytical layers that each emit tabular summaries, figures, and collaborator-facing HTML pages. The current repository is a pre-public mirror of a validated internal pipeline, with the goal of releasing a portable scientific core without reproducing the private production environment.
+`mito-overview` is a Python-based workflow for mitochondrial DNA analysis from Oxford Nanopore Technologies (ONT) alignments. The current implementation packages a portable core that was derived from an internally exercised mtDNA reporting workflow. The repository emphasizes stepwise mitochondrial QC, heteroplasmy screening, deletion screening, copy-number proxy estimation, feature annotation, and related report generation.
 
-## Why this repository exists
-- ONT mtDNA interpretation is often fragmented across single-purpose scripts or web services.
-- Long reads add information that is hard to summarize from flat variant tables alone, including read-level co-segregation, deletion structure, circularity effects, and NUMT-related warning signals.
-- Collaborators usually need both machine-readable outputs and a compact report bundle that can be reviewed without re-running ad hoc notebooks.
-
-`mito-overview` is designed around those needs: one analytical layer per step, one report page per major biological question, and explicit provenance carried through the final bundle.
-
-## Highlights
-- long-read mtDNA interpretation from aligned BAM or CRAM inputs
-- disease-agnostic analytical layers for heteroplasmy, deletion and rearrangement burden, depth and copy-number proxy, NUMT-aware QC, circularity-aware QC, read-level co-segregation, and feature- or gene-level summaries
-- provenance-aware reporting with explicit reference build, contig naming, thresholds, and input-source tracking
-- one HTML page per major biological report section, paired with TSV outputs for downstream reuse
-- optional human-specific enrichment kept separate from the reproducible core workflow
-- exploratory methylation retained as a secondary summary layer rather than the primary biological conclusion
+## Scope
+- aligned BAM or CRAM input
+- mitochondrial subset extraction
+- heteroplasmy screening
+- deletion and rearrangement screening
+- mtDNA depth and copy-number proxy estimation
+- mitochondrial feature and gene-level summarization
+- NUMT-aware and circularity-aware QC
+- optional exploratory methylation summaries
+- HTML, TSV, and figure outputs per analytical section
 
 ## Current implemented scope
 The public mirror currently covers the working core already ported from the internal pipeline. The modules below are implemented in the public mirror and exercised by the current synthetic smoke-test and example-bundle workflow:
@@ -38,6 +34,18 @@ The public mirror currently covers the working core already ported from the inte
 - final sync into a persistent report directory
 
 Human mtDNA currently has the clearest public configuration path. Human-specific external annotation and haplogroup layers remain optional, and non-human use should be limited to the reference-driven core modules unless separately validated.
+
+## Synthetic validation dataset
+The repository contains a small synthetic dataset for installation checks and public example generation:
+- [`examples/synthetic_data/TOY-001`](examples/synthetic_data/TOY-001)
+
+This dataset is intentionally small and deterministic. It is meant for:
+- environment validation
+- smoke testing
+- generation of the public example output bundle
+
+The corresponding expected public-core output bundle is:
+- [`examples/expected_reports/TOY-001_output`](examples/expected_reports/TOY-001_output)
 
 ## Representative report views
 These panels come from a synthetic public-core example bundle generated from the repository's own example-builder workflow.
@@ -90,7 +98,7 @@ Run the local synthetic smoke test:
 ./tests/smoke_public_pipeline.sh
 ```
 
-Build the synthetic public example bundle:
+Generate the synthetic public example bundle from the tracked toy inputs:
 
 ```bash
 ./scripts/build_public_example_bundle.sh \
@@ -103,7 +111,7 @@ Each finished sample bundle is expected to contain:
 - per-step TSV summaries
 - per-step figures
 - per-step HTML report pages
-- a final sample bundle for collaborator review
+- a final sample bundle for archival or downstream review
 
 A synthetic public-core example bundle is staged at:
 - [`examples/expected_reports/TOY-001_output`](examples/expected_reports/TOY-001_output)
@@ -113,7 +121,7 @@ Pages `01` through `12` in the example bundle correspond to the current portable
 ## Optional integrations
 - Phy-Mer: optional human mtDNA haplogroup enrichment
 - mvTool: optional human mtDNA external annotation enrichment
-- these integrations are intentionally non-mandatory and should be treated as contextual support rather than the sole basis for biological interpretation
+- these integrations are intentionally non-mandatory and should be treated as secondary annotation layers rather than the core analysis
 - `mito-overview` does not bundle external Phy-Mer code or mvTool data resources; see [`docs/license_notes.md`](docs/license_notes.md)
 
 ## Repository status
