@@ -99,6 +99,15 @@ def normalize_text_values(series: pd.Series) -> pd.Series:
     return normalized.map(lambda value: pd.NA if value.lower() in invalid else value)
 
 
+def describe_api_source(api_url: str) -> str:
+    """Return a stable human-readable description of the annotation source."""
+
+    if api_url.startswith("file://"):
+        parsed = urlparse(api_url)
+        return f"local_fixture:{Path(unquote(parsed.path)).name}"
+    return api_url
+
+
 def fetch_mvtool_rows(
     *,
     api_url: str,
@@ -360,7 +369,7 @@ def run_step(
             {"metric": "sites_without_usable_mitomap_status", "value": rows_without_usable_status},
             {"metric": "sites_with_reported_mitomap_association", "value": usable_disease_rows},
             {"metric": "sites_with_reported_hmtdb_association", "value": usable_hmtdb_rows},
-            {"metric": "api_url", "value": api_url},
+            {"metric": "annotation_source", "value": describe_api_source(api_url)},
         ]
     )
     summary_df.to_csv(summary_path, sep="\t", index=False)
