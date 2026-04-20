@@ -54,9 +54,9 @@ These panels come from a synthetic public-core example bundle generated from the
 
 ![Heteroplasmy landscape](examples/expected_reports/TOY-001_output/figures/mito_heteroplasmy_landscape.png)
 
-**Deletion cluster overview**
+**Feature annotation overview**
 
-![Deletion cluster overview](examples/expected_reports/TOY-001_output/figures/mito_deletion_clusters.png)
+![Feature annotation overview](examples/expected_reports/TOY-001_output/figures/mito_feature_annotation.png)
 
 **Gene-level summary**
 
@@ -129,3 +129,6 @@ Pages `01` through `12` in the example bundle correspond to the current portable
 - current repository now includes a synthetic public example bundle generated from the public-core workflow
 - cite the software metadata in [`CITATION.cff`](CITATION.cff) (current version `0.1.0`) until a manuscript and/or DOI is posted
 - design notes for the public package are in [`docs/overview.md`](docs/overview.md) and [`docs/methodology.md`](docs/methodology.md)
+
+## Preprint
+A software/resource preprint is in preparation. A citation link and versioned preprint reference will be added here when posted.
