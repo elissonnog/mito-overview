@@ -136,7 +136,7 @@ Pages `01` through `14` in the example bundle correspond to the currently ported
 - `mito-overview` does not bundle external Phy-Mer code or mvTool data resources; see [`docs/license_notes.md`](docs/license_notes.md)
 
 ## Repository status
-- active private or pre-public repository with a functional core and ongoing packaging for external release
+- public repository with a functional core, tracked synthetic validation assets, and an active software/resource preprint draft
 - current repository now includes a synthetic public example bundle generated from the public-core workflow
 - cite the software metadata in [`CITATION.cff`](CITATION.cff) (current version `0.1.0`) until a manuscript and/or DOI is posted
 - design notes for the public package are in [`docs/overview.md`](docs/overview.md) and [`docs/methodology.md`](docs/methodology.md)

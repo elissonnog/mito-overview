@@ -81,6 +81,17 @@ First, the workflow architecture is now executable end-to-end in the public repo
 
 From a biological interpretation perspective, the report structure intentionally separates distinct questions rather than collapsing them into a single summary statistic. Heteroplasmy, structural burden, NUMT warnings, circularity effects, consequence summaries, and methylation context are exposed as separate layers so that users can localize uncertainty or follow-up needs without losing the broader sample-level picture.
 
+## Example figures
+### Figure 1. Public-core analytical views from the tracked synthetic example bundle
+![Figure 1. Public-core analytical views from the tracked synthetic example bundle](figures/figure2_example_core_montage.png)
+
+The tracked `TOY-001` example bundle demonstrates the report style and output contract of the public core. Shown here are representative views for heteroplasmy landscape, mt:nuclear depth proxy, mitochondrial feature annotation, and feature-level burden summary. These panels are generated from the version-controlled synthetic example outputs bundled in the repository and are intended to document report structure and reproducible rendering rather than biological effect size.
+
+### Figure 2. Optional human-only enrichment views validated through local fixtures
+![Figure 2. Optional human-only enrichment views validated through local fixtures](figures/figure3_optional_enrichment_montage.png)
+
+The public repository also validates two optional human-specific enrichment layers using local fixtures that preserve the software contract without requiring private tool installations or live network calls during smoke testing. The left panel shows the optional haplogroup-ranking view, and the right panel shows the optional annotation-status view. In real biological use, these layers are intended to connect to true external resources rather than the bundled validation fixtures.
+
 ## Discussion
 `mito-overview` is best understood as a software/resource contribution for ONT mtDNA evidence synthesis and reporting. Its novelty lies in modular integration, explicit long-read-aware interpretation layers, and a reproducible public-core packaging strategy. The workflow is therefore complementary to existing mtDNA utilities rather than competitive with each of them on their own most specialized task.
 
