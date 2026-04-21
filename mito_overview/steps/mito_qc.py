@@ -25,6 +25,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--sample-id", required=True)
     parser.add_argument("--species", required=True)
     parser.add_argument("--build", required=True)
+    parser.add_argument("--read-mode", default="long", choices=("long", "short"))
+    parser.add_argument("--assay-type", default="wgs", choices=("wgs", "targeted_mt"))
     parser.add_argument("--mt-contig", required=True)
     parser.add_argument("--mt-length", type=int, required=True)
     return parser
@@ -39,6 +41,8 @@ def run_step(
     sample_id: str,
     species: str,
     build: str,
+    read_mode: str = "long",
+    assay_type: str = "wgs",
     mt_contig: str,
     mt_length: int,
 ) -> dict[str, Path]:
@@ -56,6 +60,7 @@ def run_step(
     strand_counts = {"forward": 0, "reverse": 0}
     primary = supplementary = secondary = mapped = 0
     full_length = 0
+    high_alignment_fraction_reads = 0
 
     for read in bam_handle.fetch(mt_contig):
         if read.is_unmapped:
@@ -73,6 +78,7 @@ def run_step(
         ref_end = read.reference_end or ref_start
         aligned_span = max(0, ref_end - ref_start + 1)
         aligned_fraction = (aligned_span / mt_length) if mt_length else 0.0
+        query_aligned_fraction = (aligned_span / read_len) if read_len else 0.0
         softclip_bases = 0
         if read.cigartuples:
             for op, length in read.cigartuples:
@@ -81,6 +87,8 @@ def run_step(
         softclip_fraction = (softclip_bases / read_len) if read_len else 0.0
         if aligned_span >= 0.9 * mt_length:
             full_length += 1
+        if query_aligned_fraction >= 0.9:
+            high_alignment_fraction_reads += 1
         read_rows.append(
             {
                 "read_name": read.query_name,
@@ -90,6 +98,7 @@ def run_step(
                 "read_end": ref_end,
                 "aligned_span": aligned_span,
                 "aligned_fraction_mt": round(aligned_fraction, 6),
+                "query_aligned_fraction": round(query_aligned_fraction, 6),
                 "softclip_bases": softclip_bases,
                 "softclip_fraction": round(softclip_fraction, 6),
                 "has_sa_tag": int(read.has_tag("SA")),
@@ -112,22 +121,25 @@ def run_step(
     breadth_1x = round(sum(d >= 1 for d in depth) / len(depth), 4) if depth else 0.0
     breadth_10x = round(sum(d >= 10 for d in depth) / len(depth), 4) if depth else 0.0
     full_length_fraction = round(full_length / mapped, 4) if mapped else 0.0
+    high_alignment_fraction = round(high_alignment_fraction_reads / mapped, 4) if mapped else 0.0
 
-    summary_df = pd.DataFrame(
-        [
-            {"metric": "mapped_reads", "value": mapped},
-            {"metric": "primary_reads", "value": primary},
-            {"metric": "supplementary_reads", "value": supplementary},
-            {"metric": "secondary_reads", "value": secondary},
-            {"metric": "mean_depth", "value": mean_depth},
-            {"metric": "median_depth", "value": median_depth},
-            {"metric": "breadth_1x", "value": breadth_1x},
-            {"metric": "breadth_10x", "value": breadth_10x},
-            {"metric": "full_length_fraction", "value": full_length_fraction},
-            {"metric": "forward_reads", "value": strand_counts["forward"]},
-            {"metric": "reverse_reads", "value": strand_counts["reverse"]},
-        ]
-    )
+    summary_rows = [
+        {"metric": "mapped_reads", "value": mapped},
+        {"metric": "primary_reads", "value": primary},
+        {"metric": "supplementary_reads", "value": supplementary},
+        {"metric": "secondary_reads", "value": secondary},
+        {"metric": "mean_depth", "value": mean_depth},
+        {"metric": "median_depth", "value": median_depth},
+        {"metric": "breadth_1x", "value": breadth_1x},
+        {"metric": "breadth_10x", "value": breadth_10x},
+        {
+            "metric": "full_length_fraction" if read_mode == "long" else "high_query_alignment_fraction",
+            "value": full_length_fraction if read_mode == "long" else high_alignment_fraction,
+        },
+        {"metric": "forward_reads", "value": strand_counts["forward"]},
+        {"metric": "reverse_reads", "value": strand_counts["reverse"]},
+    ]
+    summary_df = pd.DataFrame(summary_rows)
 
     depth_path = summary_dir / "mito_depth_per_base.tsv"
     reads_path = summary_dir / "mito_read_stats.tsv"
@@ -159,19 +171,28 @@ def run_step(
         plt.savefig(readlen_fig, dpi=150)
         plt.close()
 
+    span_metric_label = "Full-length fraction" if read_mode == "long" else "High query-alignment fraction"
+    span_metric_value = full_length_fraction if read_mode == "long" else high_alignment_fraction
     metrics_html = "".join(
         [
             metric_card("Species", species),
             metric_card("Build", build),
+            metric_card("Read mode", read_mode),
+            metric_card("Assay type", assay_type),
             metric_card("Mito contig", mt_contig),
             metric_card("Mapped reads", mapped),
             metric_card("Mean depth", mean_depth),
-            metric_card("Full-length fraction", full_length_fraction),
+            metric_card(span_metric_label, span_metric_value),
         ]
+    )
+    structure_phrase = (
+        "whole-molecule length structure and alignment quality"
+        if read_mode == "long"
+        else "fragment coverage, read-level alignment completeness, and alignment quality"
     )
     intro_html = (
         '<p class="muted">Whole-mitochondrion QC summary from the extracted mitochondrial BAM. '
-        "This page is intended to establish depth, molecule length structure, and alignment quality "
+        f"This page is intended to establish depth, {structure_phrase} "
         "before heteroplasmy or deletion interpretation.</p>"
         f"<div class='metrics-grid'>{metrics_html}</div>"
     )
@@ -215,6 +236,8 @@ def main() -> None:
         sample_id=args.sample_id,
         species=args.species,
         build=args.build,
+        read_mode=args.read_mode,
+        assay_type=args.assay_type,
         mt_contig=args.mt_contig,
         mt_length=args.mt_length,
     )

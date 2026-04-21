@@ -1,0 +1,6 @@
+metric	value
+status	not_applicable
+step	deletions
+read_mode	short
+assay_type	targeted_mt
+message	The current deletion screen is long-read-specific and is skipped in short-read mode. Short-read deletion calling has not yet been implemented in the public profile.

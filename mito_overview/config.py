@@ -25,6 +25,8 @@ DEFAULTS: dict[str, Any] = {
     "DEBUG": "0",
     "THREADS": "4",
     "SPECIES": "auto",
+    "READ_MODE": "long",
+    "ASSAY_TYPE": "wgs",
     "CONDA_BASE": "",
     "CONDA_ENV_PREFIX": "",
     "SOURCE_HV_NP_DIR": "",
@@ -98,9 +100,23 @@ def detect_species(reference_fasta: str | Path, requested_species: str = "auto")
     return "unknown"
 
 
-def _optional_path(value: str) -> Path | None:
+def _config_base_dir(config_file: str | Path) -> Path | None:
+    config_path = Path(config_file)
+    if str(config_path).startswith("<"):
+        return None
+    return config_path.expanduser().resolve().parent
+
+
+def _resolve_path(value: str, base_dir: Path | None) -> Path:
+    path = Path(value).expanduser()
+    if path.is_absolute() or base_dir is None:
+        return path
+    return (base_dir / path).resolve()
+
+
+def _optional_path(value: str, base_dir: Path | None) -> Path | None:
     value = (value or "").strip()
-    return Path(value) if value else None
+    return _resolve_path(value, base_dir) if value else None
 
 
 @dataclass(frozen=True)
@@ -124,6 +140,8 @@ class PipelineConfig:
     requested_species: str
     detected_species: str
     reference_build_guess: str
+    read_mode: str
+    assay_type: str
     conda_base: str
     conda_env_prefix: str
     final_bioinfo_dir: Path | None
@@ -152,19 +170,26 @@ class PipelineConfig:
             missing_str = ", ".join(missing)
             raise ValueError(f"Missing required config keys: {missing_str}")
 
-        ref_fasta = Path(merged["REF_FASTA"])
+        base_dir = _config_base_dir(config_file)
+        ref_fasta = _resolve_path(merged["REF_FASTA"], base_dir)
         requested_species = merged["SPECIES"]
+        read_mode = merged["READ_MODE"].strip().lower()
+        assay_type = merged["ASSAY_TYPE"].strip().lower()
+        if read_mode not in {"long", "short"}:
+            raise ValueError(f"Unsupported READ_MODE: {read_mode}")
+        if assay_type not in {"wgs", "targeted_mt"}:
+            raise ValueError(f"Unsupported ASSAY_TYPE: {assay_type}")
         return cls(
             config_file=Path(config_file),
-            pipeline_root=Path(merged["PIPELINE_ROOT"]),
-            work_root=Path(merged["WORK_ROOT"]),
+            pipeline_root=_resolve_path(merged["PIPELINE_ROOT"], base_dir),
+            work_root=_resolve_path(merged["WORK_ROOT"], base_dir),
             run_name=merged["RUN_NAME"],
             sample_id=merged["SAMPLE_ID"],
-            source_sample_dir=Path(merged["SOURCE_SAMPLE_DIR"]),
-            source_hv_dir=Path(merged["SOURCE_HV_DIR"]),
-            source_hv_np_dir=_optional_path(merged["SOURCE_HV_NP_DIR"]),
+            source_sample_dir=_resolve_path(merged["SOURCE_SAMPLE_DIR"], base_dir),
+            source_hv_dir=_resolve_path(merged["SOURCE_HV_DIR"], base_dir),
+            source_hv_np_dir=_optional_path(merged["SOURCE_HV_NP_DIR"], base_dir),
             ref_fasta=ref_fasta,
-            source_align_file=Path(merged["SOURCE_ALIGN_FILE"]),
+            source_align_file=_resolve_path(merged["SOURCE_ALIGN_FILE"], base_dir),
             source_align_mode=merged["SOURCE_ALIGN_MODE"],
             mt_contig=merged["MT_CONTIG"],
             mt_length=int(merged["MT_LENGTH"]),
@@ -172,17 +197,19 @@ class PipelineConfig:
             requested_species=requested_species,
             detected_species=detect_species(ref_fasta, requested_species),
             reference_build_guess=detect_reference_build(ref_fasta),
+            read_mode=read_mode,
+            assay_type=assay_type,
             conda_base=merged["CONDA_BASE"],
             conda_env_prefix=merged["CONDA_ENV_PREFIX"],
-            final_bioinfo_dir=_optional_path(merged["FINAL_BIOINFO_DIR"]),
+            final_bioinfo_dir=_optional_path(merged["FINAL_BIOINFO_DIR"], base_dir),
             debug=merged["DEBUG"] in {"1", "true", "TRUE", "yes", "YES"},
             het_min_depth=int(merged["HET_MIN_DEPTH"]),
             het_min_vaf=float(merged["HET_MIN_VAF"]),
             deletion_min_size=int(merged["DELETION_MIN_SIZE"]),
             nuclear_window_size=int(merged["NUCLEAR_WINDOW_SIZE"]),
             nuclear_window_count=int(merged["NUCLEAR_WINDOW_COUNT"]),
-            phymer_root=_optional_path(merged["PHYMER_ROOT"]),
-            human_mt_gtf=_optional_path(merged["HUMAN_MT_GTF"]),
+            phymer_root=_optional_path(merged["PHYMER_ROOT"], base_dir),
+            human_mt_gtf=_optional_path(merged["HUMAN_MT_GTF"], base_dir),
             phymer_min_depth=int(merged["PHYMER_MIN_DEPTH"]),
             phymer_major_vaf=float(merged["PHYMER_MAJOR_VAF"]),
             mvtool_api_url=merged["MVTOOL_API_URL"],
@@ -202,6 +229,8 @@ class PipelineConfig:
             ("reference_fasta", str(self.ref_fasta)),
             ("source_align_file", str(self.source_align_file)),
             ("source_align_mode", self.source_align_mode),
+            ("read_mode", self.read_mode),
+            ("assay_type", self.assay_type),
             ("species_requested", self.requested_species),
             ("species_detected", self.detected_species),
             ("reference_build_guess", self.reference_build_guess),
@@ -214,3 +243,19 @@ class PipelineConfig:
             ("human_mt_gtf", str(self.human_mt_gtf or "")),
             ("mvtool_api_url", self.mvtool_api_url),
         ]
+
+    @property
+    def is_short_read(self) -> bool:
+        return self.read_mode == "short"
+
+    @property
+    def is_long_read(self) -> bool:
+        return self.read_mode == "long"
+
+    @property
+    def is_wgs(self) -> bool:
+        return self.assay_type == "wgs"
+
+    @property
+    def is_targeted_mt(self) -> bool:
+        return self.assay_type == "targeted_mt"

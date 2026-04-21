@@ -1,37 +1,33 @@
 # Figure Plan
 
-## Figure 1. Workflow architecture
-- show the modular step layout from `validate` through `sync_bioinfo`
-- separate `12 core analytical pages` from `2 optional human-only enrichment pages`
-- annotate which outputs are TSV, figures, HTML, and synced bundle assets
+## Figure 1. Public-core analytical views from the tracked synthetic example bundle
+- file: `paper/figures/figure2_example_core_montage.png`
+- source bundle: `examples/expected_reports/TOY-001_output`
+- panels:
+  - heteroplasmy landscape
+  - mt:nuclear depth proxy
+  - feature annotation
+  - gene summary
 
-## Figure 2. Public example report montage
-- use the synthetic `TOY-001_output` bundle
-- include panels from:
-  - mito QC
-  - heteroplasmy
-  - deletions
-  - feature annotation or gene summary
-  - optional page 13 or 14 as a small inset if space permits
+## Figure 2. Optional human-only enrichment views validated through local fixtures
+- file: `paper/figures/figure3_optional_enrichment_montage.png`
+- source bundle: `examples/expected_reports/TOY-001_output`
+- panels:
+  - Phy-Mer haplogroup ranking
+  - mvTool-style status summary
 
-## Figure 3. Reproducibility assets and validation path
-- diagram the repository components:
-  - CLI
-  - shell runner
-  - environment file
-  - tracked synthetic inputs
-  - smoke test
-  - example-bundle builder
-  - tracked expected outputs
-- label the validations performed:
-  - local mirror smoke
-  - fresh-clone smoke
-  - example-bundle regeneration
-
-## Figure 4. Integration boundary
-- show the public-core workflow as the central block
-- show Phy-Mer and mvTool as optional external enrichments
-- label local validation fixtures versus real external resources
+## Figure 3. Auxiliary short-read proof-of-principle compatibility example
+- file: `paper/figures/figure4_shortread_public_validation_montage.png`
+- source bundle: `examples/public_validation/GM11906_MERRF_shortread`
+- panels:
+  - short-read heteroplasmy landscape
+  - feature annotation
+  - gene summary
+  - variant consequence class summary
+- role in manuscript:
+  - demonstrate real-data execution of `READ_MODE=short`
+  - show recovery/reporting of the known `m.8344A>G` site context
+  - explicitly not presented as modality-matched or cohort-scale short-read validation
 
 ## Table 1. Core analytical layers
 - step name

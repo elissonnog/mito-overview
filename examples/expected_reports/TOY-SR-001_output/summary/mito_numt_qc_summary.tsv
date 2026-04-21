@@ -1,0 +1,6 @@
+metric	value
+status	not_applicable
+step	numt_qc
+read_mode	short
+assay_type	targeted_mt
+message	The current NUMT-aware QC heuristics are tuned for long-read molecule structure and are skipped in short-read mode.

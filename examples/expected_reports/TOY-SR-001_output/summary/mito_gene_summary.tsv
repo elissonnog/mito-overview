@@ -1,0 +1,4 @@
+feature_label	feature_class	feature_intervals	candidate_sites	selected_coseg_sites	max_heteroplasmy	mean_heteroplasmy	median_depth	deletion_event_overlaps	deletion_cluster_overlaps	max_cluster_support_fraction_primary	top_site
+D-loop/control region	control_region	1-576; 16024-16569	1	0	0.3	0.3	10.0	0	0	0.0	10:A>C
+MT-TEST	protein_coding	1-60	0	0	0.0	0.0	0.0	0	0	0.0	NA
+intergenic	intergenic	non-feature candidate positions	0	0	0.0	0.0	0.0	0	0	0.0	NA

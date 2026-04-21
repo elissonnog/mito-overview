@@ -11,3 +11,6 @@ examples/expected_reports/*
 !examples/expected_reports/.gitkeep
 !examples/expected_reports/TOY-001_output/
 !examples/expected_reports/TOY-001_output/**
+!examples/expected_reports/TOY-SR-001_output/
+!examples/expected_reports/TOY-SR-001_output/**
+paper/*.docx

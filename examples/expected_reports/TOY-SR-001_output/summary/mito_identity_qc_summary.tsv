@@ -1,0 +1,6 @@
+metric	value
+status	not_applicable
+step	identity_qc
+read_mode	short
+assay_type	targeted_mt
+message	The current identity-QC page compares phased and no-phased mitochondrial SNP callsets from the long-read workflow and is skipped in short-read mode.

@@ -128,14 +128,14 @@ def run_step(
     figure_dir.mkdir(parents=True, exist_ok=True)
     report_dir.mkdir(parents=True, exist_ok=True)
 
-    if species.lower() != "human" or build.lower() != "hg38":
+    if species.lower() != "human":
         return _status_page(
             report_dir=report_dir,
             summary_dir=summary_dir,
             sample_id=sample_id,
             mt_contig=mt_contig,
             mt_length=mt_length,
-            message="Feature annotation is currently implemented only for human hg38 mitochondrial reports.",
+            message="Feature annotation is currently implemented only for human mitochondrial reports.",
         )
     if not human_mt_gtf or not Path(human_mt_gtf).exists():
         return _status_page(
@@ -224,7 +224,8 @@ def run_step(
     intro_html = (
         '<p class="muted">Mitochondrial candidate heteroplasmy sites are mapped to the human mitochondrial gene '
         "catalog and the control-region interval. This provides biological context for whether candidate variation "
-        "falls in protein-coding, rRNA, tRNA, or control-region sequence.</p>"
+        "falls in protein-coding, rRNA, tRNA, or control-region sequence. The annotation source can be used with "
+        "standard mitochondrial references that share the canonical human mitochondrial coordinate system.</p>"
         f"<div class='metrics-grid'>{metrics_html}</div>"
     )
     body_parts = [

@@ -1,0 +1,9 @@
+metric	value
+sample_id	GM11906_MERRF_shortread
+read_mode	short
+assay_type	targeted_mt
+mapped_reads	1357178.0
+mean_depth	3098.625
+median_depth	3144.0
+high_query_alignment_fraction	0.9864
+candidate_site_count	34

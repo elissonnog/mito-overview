@@ -119,5 +119,25 @@ def render_page(
   <footer class='page-footer'><p>Author: Elisson Lopes, PhD</p></footer>
 </body>
 </html>
-"""
+    """
     output_path.write_text(doc, encoding="utf-8")
+
+
+def render_status_page(
+    output_path: str | Path,
+    title: str,
+    sample_id: str,
+    region: str,
+    message: str,
+    status_rows,
+    *,
+    section_title: str = "Status",
+) -> None:
+    """Write a standard status-only report page."""
+
+    intro_html = f"<p class='muted'>{html.escape(message)}</p>"
+    body_html = (
+        f"<section><h2>{html.escape(section_title)}</h2>"
+        f"{df_to_html_table(status_rows, max_rows=25)}</section>"
+    )
+    render_page(output_path, title, sample_id, region, intro_html, body_html)

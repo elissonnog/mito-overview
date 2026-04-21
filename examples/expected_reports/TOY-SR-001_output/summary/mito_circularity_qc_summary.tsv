@@ -1,0 +1,6 @@
+metric	value
+status	not_applicable
+step	circularity_qc
+read_mode	short
+assay_type	targeted_mt
+message	The current circularity-QC heuristics are tuned for long-read edge-context signals and are skipped in short-read mode.

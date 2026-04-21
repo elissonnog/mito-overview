@@ -1,0 +1,3 @@
+feature_type	gene_name	gene_biotype	start	end	strand
+gene	MT-TEST	protein_coding	1	60	+
+CDS	MT-TEST	protein_coding	1	60	+

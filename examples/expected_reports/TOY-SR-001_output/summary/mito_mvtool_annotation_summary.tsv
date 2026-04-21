@@ -1,0 +1,9 @@
+metric	value
+status	ok
+candidate_sites_submitted	1
+rows_returned_by_mvtool	1
+sites_with_usable_mitomap_status	1
+sites_without_usable_mitomap_status	0
+sites_with_reported_mitomap_association	1
+sites_with_reported_hmtdb_association	1
+annotation_source	local_fixture:mock_mvtool_annotations.json

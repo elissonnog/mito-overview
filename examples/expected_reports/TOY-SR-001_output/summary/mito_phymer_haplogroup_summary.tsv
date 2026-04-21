@@ -1,0 +1,6 @@
+metric	value
+status	not_applicable
+step	phymer_haplogroup
+read_mode	short
+assay_type	targeted_mt
+message	Phy-Mer haplogroup inference assumes full-mitochondrion sequence context and is skipped for targeted mtDNA assays that may not cover the complete mitochondrial genome.

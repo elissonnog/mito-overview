@@ -14,6 +14,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--source-align-file", required=True)
     parser.add_argument("--align-mode", required=True, choices=("bam", "cram"))
     parser.add_argument("--ref-fasta", required=True)
+    parser.add_argument("--read-mode", default="long", choices=("long", "short"))
     parser.add_argument("--mito-bam", required=True)
     parser.add_argument("--mito-region-bed", required=True)
     parser.add_argument("--sample-id", required=True)
@@ -21,9 +22,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--mt-length", type=int, required=True)
     parser.add_argument("--threads", type=int, default=4)
     parser.add_argument("--np-bedmethyl-source-gz")
-    parser.add_argument("--hp1-bedmethyl-source-gz", required=True)
-    parser.add_argument("--hp2-bedmethyl-source-gz", required=True)
-    parser.add_argument("--ungrouped-bedmethyl-source-gz", required=True)
+    parser.add_argument("--hp1-bedmethyl-source-gz")
+    parser.add_argument("--hp2-bedmethyl-source-gz")
+    parser.add_argument("--ungrouped-bedmethyl-source-gz")
     parser.add_argument("--mito-mods-np", required=True)
     parser.add_argument("--mito-mods-hp1", required=True)
     parser.add_argument("--mito-mods-hp2", required=True)
@@ -50,6 +51,22 @@ def _open_bedmethyl(path_gz: str | Path | None):
     if plain_path and plain_path.exists():
         return plain_path.open("r", encoding="utf-8")
     return None
+
+
+def _bedmethyl_source_exists(path_gz: str | Path | None) -> bool:
+    if not path_gz:
+        return False
+    gz_path = Path(path_gz)
+    if gz_path.exists():
+        return True
+    plain_path = _plain_path(gz_path)
+    return bool(plain_path and plain_path.exists())
+
+
+def _write_empty_table(path: str | Path) -> None:
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("", encoding="utf-8")
 
 
 def subset_bedmethyl(
@@ -119,6 +136,7 @@ def run_step(
     mt_contig: str,
     mt_length: int,
     threads: int,
+    read_mode: str = "long",
     np_bedmethyl_source_gz: str | Path | None,
     hp1_bedmethyl_source_gz: str | Path,
     hp2_bedmethyl_source_gz: str | Path,
@@ -132,8 +150,24 @@ def run_step(
 
     print(
         f"[extract] starting sample={sample_id} contig={mt_contig} "
-        f"length={mt_length} align_mode={align_mode} threads={threads}"
+        f"length={mt_length} align_mode={align_mode} read_mode={read_mode} threads={threads}"
     )
+    if read_mode == "long":
+        missing_tracks = [
+            label
+            for label, source in (
+                ("hp1", hp1_bedmethyl_source_gz),
+                ("hp2", hp2_bedmethyl_source_gz),
+                ("ungrouped", ungrouped_bedmethyl_source_gz),
+            )
+            if not _bedmethyl_source_exists(source)
+        ]
+        if missing_tracks:
+            missing_str = ", ".join(missing_tracks)
+            raise RuntimeError(
+                "Long-read mode requires phased/ungrouped bedmethyl sources for "
+                f"{missing_str}. Short-read mode should be used when these tracks do not exist."
+            )
     extract_mito_bam(
         source_align_file=source_align_file,
         align_mode=align_mode,
@@ -148,19 +182,25 @@ def run_step(
     mito_region_bed.write_text(f"{mt_contig}\t1\t{mt_length}\n", encoding="utf-8")
     print(f"[extract] wrote region BED to {mito_region_bed}")
 
-    print("[extract] subsetting mitochondrial bedmethyl tracks")
-    np_rows = subset_bedmethyl(source_gz=np_bedmethyl_source_gz, destination=mito_mods_np, contig=mt_contig)
-    hp1_rows = subset_bedmethyl(source_gz=hp1_bedmethyl_source_gz, destination=mito_mods_hp1, contig=mt_contig)
-    hp2_rows = subset_bedmethyl(source_gz=hp2_bedmethyl_source_gz, destination=mito_mods_hp2, contig=mt_contig)
-    ungrouped_rows = subset_bedmethyl(
-        source_gz=ungrouped_bedmethyl_source_gz,
-        destination=mito_mods_ungrouped,
-        contig=mt_contig,
-    )
-    print(
-        "[extract] bedmethyl rows "
-        f"np={np_rows} hp1={hp1_rows} hp2={hp2_rows} ungrouped={ungrouped_rows}"
-    )
+    np_rows = hp1_rows = hp2_rows = ungrouped_rows = 0
+    if read_mode == "short":
+        print("[extract] short-read mode detected; skipping bedmethyl subsetting", flush=True)
+        for destination in (mito_mods_np, mito_mods_hp1, mito_mods_hp2, mito_mods_ungrouped):
+            _write_empty_table(destination)
+    else:
+        print("[extract] subsetting mitochondrial bedmethyl tracks")
+        np_rows = subset_bedmethyl(source_gz=np_bedmethyl_source_gz, destination=mito_mods_np, contig=mt_contig)
+        hp1_rows = subset_bedmethyl(source_gz=hp1_bedmethyl_source_gz, destination=mito_mods_hp1, contig=mt_contig)
+        hp2_rows = subset_bedmethyl(source_gz=hp2_bedmethyl_source_gz, destination=mito_mods_hp2, contig=mt_contig)
+        ungrouped_rows = subset_bedmethyl(
+            source_gz=ungrouped_bedmethyl_source_gz,
+            destination=mito_mods_ungrouped,
+            contig=mt_contig,
+        )
+        print(
+            "[extract] bedmethyl rows "
+            f"np={np_rows} hp1={hp1_rows} hp2={hp2_rows} ungrouped={ungrouped_rows}"
+        )
 
     return {
         "mito_bam": Path(mito_bam),
@@ -189,6 +229,7 @@ def main() -> None:
         mt_contig=args.mt_contig,
         mt_length=args.mt_length,
         threads=args.threads,
+        read_mode=args.read_mode,
         np_bedmethyl_source_gz=args.np_bedmethyl_source_gz,
         hp1_bedmethyl_source_gz=args.hp1_bedmethyl_source_gz,
         hp2_bedmethyl_source_gz=args.hp2_bedmethyl_source_gz,

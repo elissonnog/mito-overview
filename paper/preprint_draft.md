@@ -65,6 +65,8 @@ These validations were run successfully from the local source tree and from a fr
 
 The public validation is therefore workflow-level and reproducibility-oriented, not a substitute for cohort-scale benchmark evaluation. The synthetic dataset is intentionally minimal and is designed to validate installation, step connectivity, and output contracts rather than biological realism.
 
+The repository also includes an auxiliary short-read proof-of-principle compatibility example. This example pools three public GM11906 scATAC-seq runs from the dscATAC-seq study of Lareau and colleagues [16], uses public metadata describing GM11906 as a lymphoblastoid cell line carrying pathogenic `m.8344A>G` [17,18], and executes the workflow in `READ_MODE=short` with `ASSAY_TYPE=targeted_mt`. Under this reduced profile, long-read-specific layers are emitted as explicit `not_applicable` pages while the applicable core layers remain active. In the bundled example output, the workflow recovers the expected `m.8344A>G` site in the pooled mt-only alignment with depth `1041`, alternate count `754`, estimated heteroplasmy fraction `0.724304`, and `MT-TK` / `tRNA_variant` annotation. This example is included to demonstrate real-data execution and representation of a known pathogenic site under the reduced short-read profile; it is not presented as cohort-scale, modality-matched, or clinical validation.
+
 ## Relation to current ONT mtDNA evidence
 Current published evidence most directly supports ONT mtDNA analysis for structural mtDNA interpretation and moderate-frequency heteroplasmy analysis. Long-read sequencing has been shown to improve detection and interpretation of mtDNA deletions and rearrangements, including cases where apparent single-deletion events resolve into more complex structures under long-read inspection [3,4]. A recent ONT heteroplasmy validation study reported strong agreement for moderate-level heteroplasmy but also emphasized the need for stringent validation, with a practical detection limit around 12% [5].
 
@@ -87,6 +89,11 @@ The tracked `TOY-001` example bundle demonstrates the report structure of the pu
 ![Figure 2. Optional human-only enrichment views validated through local fixtures](figures/figure3_optional_enrichment_montage.png)
 
 The public repository also validates two optional human-specific enrichment layers using local fixtures during smoke testing. The left panel shows the optional haplogroup-ranking view, and the right panel shows the optional annotation-status view. In applied analyses, these layers are intended to connect to live external resources rather than the bundled validation fixtures.
+
+### Figure 3. Auxiliary short-read proof-of-principle compatibility example from pooled public GM11906 scATAC-seq runs
+![Figure 3. Auxiliary short-read proof-of-principle compatibility example from pooled public GM11906 scATAC-seq runs](figures/figure4_shortread_public_validation_montage.png)
+
+This auxiliary figure summarizes the reduced short-read profile applied to pooled public GM11906 data. The panels show the short-read heteroplasmy landscape together with mitochondrial feature annotation, feature-level gene summary, and variant consequence summary from the public asset pack bundled in the repository. This example is intended to show real-data execution and recovery/reporting of the known `m.8344A>G` site under the mt-only short-read profile. It is not intended to establish modality-matched validation for long-read-only layers such as deletion screening, co-segregation, NUMT discrimination, or circularity-aware review.
 
 ## Discussion
 `mito-overview` is a software/resource contribution for ONT mtDNA evidence synthesis and reporting. Its main contribution lies in modular integration, explicit long-read-aware interpretation layers, and a reproducible public-core implementation. The workflow is therefore complementary to existing mtDNA utilities rather than a replacement for each specialized tool.
@@ -111,6 +118,8 @@ Optional external enrichments such as Phy-Mer and mvTool are intentionally kept 
 
 ## Limitations and future work
 The current release has clear boundaries. Public validation is synthetic and workflow-oriented rather than cohort-scale. Copy-number remains a depth proxy rather than an absolute mtDNA copy-number estimate. Deletion output is a structural screen driven by alignment structure rather than a specialized SV caller. NUMT and circularity components are warning-oriented QC layers, not formal classifiers. The clearest validated path is currently human mtDNA, and the optional enrichment modules remain human-only.
+
+The auxiliary short-read example has additional limits. It uses pooled public scATAC-seq runs aligned directly to the mitochondrial reference and therefore supports only a reduced `READ_MODE=short` profile. It should be interpreted as a compatibility example for real-data execution and site recovery, not as a full short-read validation study or a calibrated heteroplasmy benchmark.
 
 Immediate next steps before journal submission include:
 - adding cohort-scale quantitative validation tables
@@ -137,3 +146,6 @@ A second future direction is downstream classifier work using `mito-overview` ou
 13. Cox SN, et al. MitSorter: a standalone tool for accurate discrimination of mtDNA and NuMT ONT reads based on differential methylation. *Bioinformatics Advances*. 2025. [PubMed](https://pubmed.ncbi.nlm.nih.gov/40688360/)
 14. Bicci I, et al. Single-molecule mitochondrial DNA sequencing shows no evidence of CpG methylation in human cells and tissues. *Nucleic Acids Res*. 2021. [PubMed](https://pubmed.ncbi.nlm.nih.gov/34850165/)
 15. Guitton R, et al. No evidence of extensive non-CpG methylation in mtDNA. *Nucleic Acids Res*. 2022. [PubMed](https://pubmed.ncbi.nlm.nih.gov/35979955/)
+16. Lareau CA, Duarte FM, Chew JG, et al. Droplet-based combinatorial indexing for massive-scale single-cell chromatin accessibility. *Nat Biotechnol*. 2019. [Nature](https://www.nature.com/articles/s41587-019-0147-6)
+17. Shoffner JM, Lott MT, Lezza AMS, et al. Myoclonic epilepsy and ragged-red fiber disease (MERRF) is associated with a mitochondrial DNA tRNA(Lys) mutation. *Cell*. 1990. [PubMed](https://pubmed.ncbi.nlm.nih.gov/2112427/)
+18. Coriell Institute for Medical Research. GM11906 sample record. [Coriell](https://www.coriell.org/0/Sections/Search/Sample_Detail.aspx?Ref=GM11906)

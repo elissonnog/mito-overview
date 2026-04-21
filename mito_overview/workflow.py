@@ -9,8 +9,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
+import pandas as pd
+
 from .config import PipelineConfig
 from .paths import RunPaths
+from .report_common import render_status_page
 
 DEFAULT_STEP_ORDER = [
     "validate",
@@ -54,6 +57,146 @@ STEP_DESCRIPTIONS = {
     "sync_bioinfo": "Copy final outputs to the persistent destination.",
 }
 
+STEP_STATUS_OUTPUTS: dict[str, dict[str, object]] = {
+    "deletions": {
+        "title": "Mitochondrial Deletions",
+        "report_filename": "03_mito_deletions.html",
+        "status_files": ["mito_deletion_summary.tsv"],
+        "empty_tables": {
+            "mito_deletion_events.tsv": [
+                "read_name",
+                "event_start",
+                "event_end",
+                "deletion_size",
+                "event_bin_start",
+                "event_bin_end",
+                "is_primary_read",
+                "has_sa_tag",
+            ],
+            "mito_deletion_clusters.tsv": [
+                "event_bin_start",
+                "event_bin_end",
+                "supporting_reads",
+                "median_deletion_size",
+                "min_deletion_size",
+                "max_deletion_size",
+                "support_fraction_primary",
+            ],
+            "mito_deletion_read_flags.tsv": [
+                "read_name",
+                "has_large_deletion",
+                "is_supplementary",
+                "has_sa_tag",
+            ],
+        },
+    },
+    "copy_number": {
+        "title": "Mitochondrial Copy-number Proxy",
+        "report_filename": "04_mito_copy_number.html",
+        "status_files": ["mito_copy_number_summary.tsv"],
+        "empty_tables": {
+            "mito_copy_number_windows.tsv": ["contig", "start", "end", "window_size", "mean_depth"],
+        },
+    },
+    "cosegregation": {
+        "title": "Mitochondrial Co-segregation",
+        "report_filename": "06_mito_cosegregation.html",
+        "status_files": ["mito_cosegregation_summary.tsv"],
+        "empty_tables": {
+            "mito_cosegregation_selected_sites.tsv": [
+                "site_label",
+                "position",
+                "ref_base",
+                "alt_base",
+                "heteroplasmy_fraction",
+                "depth",
+                "covered_reads",
+                "alt_reads",
+            ],
+            "mito_cosegregation_pairwise.tsv": [
+                "site_i",
+                "site_j",
+                "shared_reads",
+                "alt_i_shared_reads",
+                "alt_j_shared_reads",
+                "co_alt_reads",
+                "co_alt_fraction_shared",
+                "jaccard_alt",
+                "fraction_alt_i_also_alt_j",
+                "fraction_alt_j_also_alt_i",
+            ],
+            "mito_cosegregation_read_burden.tsv": ["alt_selected_sites", "read_count"],
+        },
+    },
+    "numt_qc": {
+        "title": "Mito NUMT-aware QC",
+        "report_filename": "08_mito_numt_qc.html",
+        "status_files": ["mito_numt_qc_summary.tsv"],
+        "empty_tables": {},
+    },
+    "phymer_haplogroup": {
+        "title": "Mito Phy-Mer Haplogroup",
+        "report_filename": "13_mito_phymer_haplogroup.html",
+        "status_files": ["mito_phymer_haplogroup_summary.tsv"],
+        "empty_tables": {
+            "mito_phymer_haplogroup_ranking.tsv": ["rank", "haplogroup", "score", "defining_snps"],
+            "mito_phymer_major_variant_input.tsv": [
+                "position",
+                "ref_base",
+                "alt_base",
+                "depth",
+                "heteroplasmy_fraction",
+                "phymer_input",
+            ],
+        },
+    },
+    "identity_qc": {
+        "title": "Mitochondrial Identity QC",
+        "report_filename": "09_mito_identity_qc.html",
+        "status_files": ["mito_identity_qc_summary.tsv"],
+        "empty_tables": {
+            "mito_identity_major_variant_fingerprint.tsv": [
+                "position",
+                "ref_base",
+                "alt_base",
+                "heteroplasmy_fraction",
+                "depth",
+            ],
+            "mito_identity_vcf_comparison.tsv": ["membership", "position", "ref", "alt"],
+        },
+    },
+    "circularity_qc": {
+        "title": "Mitochondrial Circularity QC",
+        "report_filename": "11_mito_circularity_qc.html",
+        "status_files": ["mito_circularity_qc_summary.tsv"],
+        "empty_tables": {},
+    },
+    "methylation_exploratory": {
+        "title": "Mitochondrial Methylation (Exploratory)",
+        "report_filename": "12_mito_methylation_exploratory.html",
+        "status_files": [
+            "mito_methylation_exploratory_summary.tsv",
+            "mito_methylation_np_vs_proxy_summary.tsv",
+        ],
+        "empty_tables": {
+            "mito_methylation_track_rows.tsv": [
+                "track",
+                "position",
+                "valid_coverage",
+                "percent_modified",
+                "modified_count",
+                "canonical_count",
+            ],
+            "mito_methylation_np_vs_proxy.tsv": [
+                "position",
+                "percent_modified_np",
+                "percent_modified_proxy",
+                "abs_difference",
+            ],
+        },
+    },
+}
+
 
 def _timestamp() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -88,6 +231,93 @@ def _ensure_known_steps(steps: list[str]) -> None:
     if unknown:
         unknown_str = ", ".join(unknown)
         raise ValueError(f"Unknown workflow steps: {unknown_str}")
+
+
+def _step_not_applicable_message(config: PipelineConfig, step_name: str) -> str | None:
+    if config.is_short_read:
+        short_read_messages = {
+            "deletions": (
+                "The current deletion screen is long-read-specific and is skipped in short-read mode. "
+                "Short-read deletion calling has not yet been implemented in the public profile."
+            ),
+            "cosegregation": (
+                "Co-segregation is defined on the same long molecules and is skipped in short-read mode."
+            ),
+            "numt_qc": (
+                "The current NUMT-aware QC heuristics are tuned for long-read molecule structure and are "
+                "skipped in short-read mode."
+            ),
+            "identity_qc": (
+                "The current identity-QC page compares phased and no-phased mitochondrial SNP callsets from "
+                "the long-read workflow and is skipped in short-read mode."
+            ),
+            "circularity_qc": (
+                "The current circularity-QC heuristics are tuned for long-read edge-context signals and are "
+                "skipped in short-read mode."
+            ),
+            "methylation_exploratory": (
+                "Exploratory methylation requires ONT bedmethyl-style inputs and is skipped in short-read mode."
+            ),
+        }
+        if step_name in short_read_messages:
+            return short_read_messages[step_name]
+    if config.is_targeted_mt:
+        targeted_messages = {
+            "copy_number": (
+                "Copy-number proxy is only interpreted for whole-genome data and is skipped for targeted mtDNA assays."
+            ),
+            "phymer_haplogroup": (
+                "Phy-Mer haplogroup inference assumes full-mitochondrion sequence context and is skipped for targeted "
+                "mtDNA assays that may not cover the complete mitochondrial genome."
+            ),
+        }
+        if step_name in targeted_messages:
+            return targeted_messages[step_name]
+    return None
+
+
+def _write_not_applicable_step(
+    config: PipelineConfig,
+    paths: RunPaths,
+    step_name: str,
+    message: str,
+) -> StepResult:
+    spec = STEP_STATUS_OUTPUTS.get(step_name)
+    if spec is None:
+        note = f"{step_name} was not applicable for this run profile: {message}"
+        (paths.log_dir / f"{step_name}.not_applicable").write_text(note + "\n", encoding="utf-8")
+        return StepResult(step_name, "not_applicable", note)
+
+    status_df = pd.DataFrame(
+        [
+            {"metric": "status", "value": "not_applicable"},
+            {"metric": "step", "value": step_name},
+            {"metric": "read_mode", "value": config.read_mode},
+            {"metric": "assay_type", "value": config.assay_type},
+            {"metric": "message", "value": message},
+        ]
+    )
+    for filename in spec.get("status_files", []):
+        output_path = paths.summary_dir / str(filename)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        status_df.to_csv(output_path, sep="\t", index=False)
+    for filename, columns in spec.get("empty_tables", {}).items():
+        output_path = paths.summary_dir / str(filename)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        pd.DataFrame(columns=list(columns)).to_csv(output_path, sep="\t", index=False)
+
+    report_path = paths.report_dir / str(spec["report_filename"])
+    render_status_page(
+        report_path,
+        str(spec["title"]),
+        config.sample_id,
+        f"{config.mt_contig}:1-{config.mt_length}",
+        message,
+        status_df,
+    )
+    note = f"{step_name} is not applicable for read_mode={config.read_mode} assay_type={config.assay_type}"
+    (paths.log_dir / f"{step_name}.not_applicable").write_text(note + "\n", encoding="utf-8")
+    return StepResult(step_name, "not_applicable", note)
 
 
 def validate_config(config: PipelineConfig, strict_files: bool = False) -> list[str]:
@@ -164,6 +394,7 @@ def _run_extract(config: PipelineConfig, paths: RunPaths, strict_files: bool) ->
         mt_contig=config.mt_contig,
         mt_length=config.mt_length,
         threads=config.threads,
+        read_mode=config.read_mode,
         np_bedmethyl_source_gz=paths.np_bedmethyl_source_gz,
         hp1_bedmethyl_source_gz=paths.hp1_bedmethyl_source_gz,
         hp2_bedmethyl_source_gz=paths.hp2_bedmethyl_source_gz,
@@ -222,6 +453,8 @@ def _run_mito_qc(config: PipelineConfig, paths: RunPaths, strict_files: bool) ->
         sample_id=config.sample_id,
         species=config.detected_species,
         build=config.reference_build_guess,
+        read_mode=config.read_mode,
+        assay_type=config.assay_type,
         mt_contig=config.mt_contig,
         mt_length=config.mt_length,
     )
@@ -573,6 +806,8 @@ def run_pipeline(
     log(f"Sample: {config.sample_id}")
     log(f"Species: {config.detected_species}")
     log(f"Build: {config.reference_build_guess}")
+    log(f"Read mode: {config.read_mode}")
+    log(f"Assay type: {config.assay_type}")
     log(f"Run dir: {paths.run_dir}")
     debug(
         f"THREADS={config.threads} HET_MIN_DEPTH={config.het_min_depth} "
@@ -590,6 +825,12 @@ def run_pipeline(
 
     for step_name in selected:
         log(f"Starting step: {step_name}")
+        skip_message = _step_not_applicable_message(config, step_name)
+        if skip_message is not None:
+            result = _write_not_applicable_step(config, paths, step_name, skip_message)
+            results.append(result)
+            log(f"Completed step: {step_name} ({result.status})")
+            continue
         result = STEP_RUNNERS[step_name](config, paths, strict_files)
         results.append(result)
         if result.status == "failed":

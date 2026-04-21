@@ -1,0 +1,6 @@
+metric	value
+status	not_applicable
+step	cosegregation
+read_mode	short
+assay_type	targeted_mt
+message	Co-segregation is defined on the same long molecules and is skipped in short-read mode.
