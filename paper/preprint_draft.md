@@ -1,15 +1,19 @@
-# mito-overview: a modular Oxford Nanopore mitochondrial DNA interpretation and reporting framework
+# mito-overview: a modular long-read mitochondrial DNA interpretation and reporting framework
 
 ## Running title
-`mito-overview` for modular ONT mtDNA interpretation
+`mito-overview` for long-read mtDNA interpretation
 
-## Authors
+## Author
 Elisson Lopes
 
-## Title alternatives
-1. `mito-overview`: a modular long-read mitochondrial DNA interpretation and reporting framework
-2. A modular Oxford Nanopore mitochondrial DNA evidence-synthesis and reporting workflow
-3. `mito-overview`: a reproducible ONT mtDNA software and reporting resource with optional external enrichment layers
+## Affiliation
+Affiliation to be finalized before submission
+
+## Correspondence
+Correspondence details to be finalized before submission
+
+## Software version
+This draft describes `mito-overview` version `0.2.0` at [elissonnog/mito-overview](https://github.com/elissonnog/mito-overview).
 
 ## Abstract
 Mitochondrial DNA analysis from Oxford Nanopore Technologies (ONT) data often remains fragmented across single-purpose callers, external annotation resources, and custom review steps. This fragmentation is especially limiting for long-read mitochondrial workflows because interpretation may depend not only on variant presence, but also on deletion structure, mtDNA burden proxies, read-level co-segregation, circular-genome edge effects, and quality signals relevant to nuclear mitochondrial DNA segments (NUMTs). We developed `mito-overview`, a modular mtDNA interpretation and reporting framework that converts aligned ONT mitochondrial inputs into layered tabular summaries, figures, and self-contained HTML reports. The current core implementation includes mitochondrial extraction, QC, heteroplasmy summarization, deletion screening, mt:nuclear depth proxy estimation, feature annotation, co-segregation, gene-level aggregation, NUMT-aware QC, identity QC, variant consequence summaries, circularity-aware QC, and an exploratory methylation layer. Two additional human-only enrichment layers are implemented for haplogroup classification and external mtDNA annotation through optional Phy-Mer and mvTool integrations validated in the repository with local fixtures. The repository provides a command-line entry point, environment specification, tracked synthetic validation inputs, a synthetic example output bundle, and reproducible regeneration of report pages `01` through `14`. `mito-overview` is intended as a disease-agnostic research framework for ONT mtDNA evidence synthesis and report generation rather than as a clinical diagnostic test.
@@ -22,7 +26,7 @@ Human mitochondrial DNA (mtDNA) is a small circular genome whose interpretation 
 
 The current mtDNA software ecosystem includes specialized resources for haplogroup classification, variant interpretation, and annotated mtDNA reporting. Examples include Phy-Mer for alignment-free haplogroup classification [7], HaploGrep 3 for phylogenetic classification and QC [8], mvTool within MSeqDR for mtDNA annotation and nomenclature handling [9], MitoVisualize for structure-aware mtDNA interpretation [10], MToolBox for automated mtDNA reconstruction and prioritization [11], and mtDNA-Server 2 for human mtDNA variant analysis and interactive reporting [12]. ONT-focused analysis tools are also emerging for long-read heteroplasmy analysis and NUMT-aware read discrimination [6,13]. However, there remains a need for a compact sample-level workflow that integrates multiple ONT-relevant layers into one report bundle while remaining reproducible, inspectable, and portable.
 
-`mito-overview` was developed to address that need. It is not intended to replace specialized mtDNA tools or to serve as a best-in-class caller for each event type. Instead, it provides a modular ONT mtDNA evidence-synthesis and reporting framework that organizes long-read-aware analytical layers into one machine-readable and human-readable sample bundle.
+`mito-overview` was developed to address that need. It is not intended to replace specialized mtDNA tools or to serve as a best-in-class caller for each event type. Instead, it provides a modular long-read mtDNA evidence-synthesis and reporting framework that organizes long-read-aware analytical layers into one machine-readable and human-readable sample bundle.
 
 ## Software scope and design principles
 `mito-overview` was designed around five principles.

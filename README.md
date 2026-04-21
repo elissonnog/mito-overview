@@ -1,6 +1,6 @@
 # mito-overview
 
-`mito-overview` is a Python-based workflow for mitochondrial DNA analysis from aligned BAM or CRAM inputs. The current public implementation provides a long-read-oriented profile derived from an internally exercised ONT mtDNA reporting workflow together with a reduced short-read profile that preserves only the analytical layers that remain interpretable without long molecules or ONT methylation tracks. The repository emphasizes stepwise mitochondrial QC, heteroplasmy screening, deletion screening, copy-number proxy estimation, feature annotation, and report generation.
+`mito-overview` is a Python-based workflow for mitochondrial DNA analysis from aligned BAM or CRAM inputs. The current public implementation is centered on a long-read-oriented profile derived from an internally exercised ONT mtDNA reporting workflow, with an auxiliary reduced short-read compatibility profile that preserves only the analytical layers that remain interpretable without long molecules or ONT methylation tracks. The repository emphasizes stepwise mitochondrial QC, heteroplasmy screening, deletion screening, copy-number proxy estimation, feature annotation, and report generation.
 
 ## Scope
 - aligned BAM or CRAM input
@@ -20,7 +20,7 @@
 - `short`
   - intended for short-read mtDNA-aligned inputs
   - retains the applicable core pages and writes explicit `not_applicable` pages for long-read-only layers
-  - currently exercised in the public repository for a synthetic toy sample and one public proof-of-principle pathogenic positive-control dataset
+  - currently exercised in the public repository as an auxiliary compatibility path with a synthetic toy sample and one public proof-of-principle example
 
 ## Current implemented scope
 The public mirror currently covers the working core already ported from the internal pipeline. The modules below are implemented in the public mirror and exercised by the current synthetic smoke-test and example-bundle workflow:
@@ -84,22 +84,6 @@ These panels come from a synthetic public-core example bundle generated from the
 **Optional annotation context**
 
 ![mvTool status overview](examples/expected_reports/TOY-001_output/figures/mito_mvtool_status_counts.png)
-
-## Public short-read compatibility example
-The repository now includes a light-weight asset pack from a real public short-read proof-of-principle example:
-- [`examples/public_validation/GM11906_MERRF_shortread`](examples/public_validation/GM11906_MERRF_shortread)
-
-This example uses public GM11906 short-read ATAC-seq runs from the dscATAC-seq study by Lareau and colleagues together with public GM11906 metadata describing the cell line as carrying pathogenic `m.8344A>G`:
-- [Lareau et al., Nat Biotechnol 2019](https://www.nature.com/articles/s41587-019-0147-6)
-- [GEO sample metadata example](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSM4238489)
-- [Coriell GM11906](https://www.coriell.org/0/Sections/Search/Sample_Detail.aspx?Ref=GM11906)
-- [ClinVar m.8344A>G](https://www.ncbi.nlm.nih.gov/clinvar/RCV000010192.15/)
-
-The short-read profile is run in `READ_MODE=short` and `ASSAY_TYPE=targeted_mt`, which intentionally preserves the applicable core pages and marks long-read-specific layers as `not_applicable` rather than attempting to reinterpret them. In the bundled proof-of-principle run, the workflow recovers the expected `m.8344A>G` site in the pooled mt-only alignment with depth `1041`, alt count `754`, estimated heteroplasmy fraction `0.724304`, and `MT-TK` / `tRNA_variant` annotation.
-
-This example is included to demonstrate real-data execution and site recovery under the reduced short-read profile. It is not presented as a modality-matched benchmark for deletion calling, NUMT discrimination, copy-number estimation, or clinical heteroplasmy calibration.
-
-![GM11906 short-read public validation](examples/public_validation/GM11906_MERRF_shortread/figures/GM11906_MERRF_shortread_montage.png)
 
 ## Installation
 Create the public environment:
@@ -190,10 +174,26 @@ In the short-read profile, pages `03`, `04`, `06`, `08`, `09`, `11`, `12`, and, 
 ## Repository status
 - public repository with a functional core, tracked synthetic validation assets, and an active software/resource preprint draft
 - current repository now includes a synthetic public example bundle generated from the public-core workflow
-- current repository now includes a short-read synthetic bundle and a real public proof-of-principle short-read validation asset pack
-- cite the software metadata in [`CITATION.cff`](CITATION.cff) (current version `0.1.0`) until a manuscript and/or DOI is posted
+- current repository now includes a short-read synthetic bundle and an auxiliary public short-read compatibility example asset pack
+- cite the software metadata in [`CITATION.cff`](CITATION.cff) (current version `0.2.0`) until a manuscript and/or DOI is posted
 - design notes for the public package are in [`docs/overview.md`](docs/overview.md) and [`docs/methodology.md`](docs/methodology.md)
 - short-read validation notes are in [`docs/validation_public_shortread.md`](docs/validation_public_shortread.md)
+
+## Auxiliary short-read compatibility example
+The repository includes a light-weight asset pack from a real public short-read proof-of-principle example:
+- [`examples/public_validation/GM11906_MERRF_shortread`](examples/public_validation/GM11906_MERRF_shortread)
+
+This example uses public GM11906 short-read ATAC-seq runs from the dscATAC-seq study by Lareau and colleagues together with public GM11906 metadata describing the cell line as carrying pathogenic `m.8344A>G`:
+- [Lareau et al., Nat Biotechnol 2019](https://www.nature.com/articles/s41587-019-0147-6)
+- [GEO sample metadata example](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSM4238489)
+- [Coriell GM11906](https://www.coriell.org/0/Sections/Search/Sample_Detail.aspx?Ref=GM11906)
+- [ClinVar m.8344A>G](https://www.ncbi.nlm.nih.gov/clinvar/RCV000010192.15/)
+
+The short-read profile is run in `READ_MODE=short` and `ASSAY_TYPE=targeted_mt`, which intentionally preserves the applicable core pages and marks long-read-specific layers as `not_applicable` rather than attempting to reinterpret them. In the bundled proof-of-principle run, the workflow recovers the expected `m.8344A>G` site in the pooled mt-only alignment with depth `1041`, alt count `754`, estimated heteroplasmy fraction `0.724304`, and `MT-TK` / `tRNA_variant` annotation.
+
+This example is included to demonstrate real-data execution and site recovery under the reduced short-read profile. It is not presented as a modality-matched benchmark for deletion calling, NUMT discrimination, copy-number estimation, or clinical heteroplasmy calibration.
+
+![GM11906 short-read public validation](examples/public_validation/GM11906_MERRF_shortread/figures/GM11906_MERRF_shortread_montage.png)
 
 ## Preprint
 A software/resource preprint is in preparation. A citation link and versioned preprint reference will be added here when posted.

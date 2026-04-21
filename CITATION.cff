@@ -6,4 +6,6 @@ authors:
     given-names: Elisson
     name-particle: ""
     suffix: PhD
-version: 0.1.0
+version: 0.2.0
+repository-code: https://github.com/elissonnog/mito-overview
+date-released: 2026-04-21
