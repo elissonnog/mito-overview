@@ -1,12 +1,12 @@
 # mito-overview
 
-`mito-overview` is a Python-based workflow for mitochondrial DNA analysis from aligned BAM or CRAM inputs. The current public implementation is centered on a long-read-oriented profile derived from an internally exercised ONT mtDNA reporting workflow, with an auxiliary reduced short-read compatibility profile that preserves only the analytical layers that remain interpretable without long molecules or ONT methylation tracks. The repository emphasizes stepwise mitochondrial QC, heteroplasmy screening, deletion screening, copy-number proxy estimation, feature annotation, and report generation.
+`mito-overview` is a Python-based workflow for mitochondrial DNA analysis from aligned BAM or CRAM inputs. The current public implementation is centered on a long-read-oriented profile derived from an internally exercised ONT mtDNA reporting workflow, with an auxiliary reduced short-read compatibility profile that preserves only the analytical layers that remain interpretable without long molecules or ONT methylation tracks. The repository emphasizes stepwise mitochondrial QC, heteroplasmy screening, deletion-like structural screening, copy-number proxy estimation, feature annotation, and report generation.
 
 ## Scope
 - aligned BAM or CRAM input
 - mitochondrial subset extraction
 - heteroplasmy screening
-- deletion and rearrangement screening
+- deletion-like structural screening
 - mtDNA depth and copy-number proxy estimation
 - mitochondrial feature and gene-level summarization
 - NUMT-aware and circularity-aware QC
@@ -58,7 +58,7 @@ This dataset is intentionally small and deterministic. It is meant for:
 The repository also includes a short-read synthetic example bundle generated from the same tracked toy inputs:
 - [`examples/expected_reports/TOY-SR-001_output`](examples/expected_reports/TOY-SR-001_output)
 
-Optional human-only enrichment pages are validated locally in this repository with bundled fixture resources:
+Optional human-only enrichment pages are exercised locally in this repository with bundled fixture resources:
 - a tiny deterministic Phy-Mer vendor stand-in under [`tests/fixtures/mock_phymer_vendor`](tests/fixtures/mock_phymer_vendor)
 - a local mvTool-style annotation fixture under [`tests/fixtures/mock_mvtool_annotations.json`](tests/fixtures/mock_mvtool_annotations.json)
 
@@ -67,23 +67,13 @@ The corresponding expected public example output bundle is:
 - [`examples/expected_reports/TOY-SR-001_output`](examples/expected_reports/TOY-SR-001_output)
 
 ## Representative report views
-These panels come from a synthetic public-core example bundle generated from the repository's own example-builder workflow.
+The main figure below is a public-safe montage built from report-native PNGs produced by a representative long-read example bundle. It is included to show the kinds of biological views the workflow generates in practice, while the tracked synthetic bundles remain the primary public reproducibility assets.
 
-**Heteroplasmy landscape**
+![Representative long-read report-native analytical views](paper/figures/figure1_representative_longread_report_montage.png)
 
-![Heteroplasmy landscape](examples/expected_reports/TOY-001_output/figures/mito_heteroplasmy_landscape.png)
+The repository also includes a real public short-read proof-of-principle montage from GM11906:
 
-**Feature annotation overview**
-
-![Feature annotation overview](examples/expected_reports/TOY-001_output/figures/mito_feature_annotation.png)
-
-**Gene-level summary**
-
-![Gene summary overview](examples/expected_reports/TOY-001_output/figures/mito_gene_summary_overview.png)
-
-**Optional annotation context**
-
-![mvTool status overview](examples/expected_reports/TOY-001_output/figures/mito_mvtool_status_counts.png)
+![GM11906 short-read public validation](examples/public_validation/GM11906_MERRF_shortread/figures/GM11906_MERRF_shortread_montage.png)
 
 ## Installation
 Create the public environment:
@@ -160,15 +150,15 @@ A synthetic public-core example bundle is staged at:
 - [`examples/expected_reports/TOY-001_output`](examples/expected_reports/TOY-001_output)
 - [`examples/expected_reports/TOY-SR-001_output`](examples/expected_reports/TOY-SR-001_output)
 
-Pages `01` through `14` in the example bundle correspond to the currently ported public report pages. In the bundled toy validation path, pages `13` and `14` are exercised through local fixture resources so that a fresh clone can validate the optional human enrichment layers without a private Phy-Mer checkout or live network dependency.
+Pages `01` through `14` in the example bundle correspond to the currently ported public report pages. In the bundled toy validation path, pages `13` and `14` are exercised through local fixture resources so that a fresh clone can exercise the optional human enrichment interfaces without a private Phy-Mer checkout or live network dependency.
 
-In the short-read profile, pages `03`, `04`, `06`, `08`, `09`, `11`, `12`, and, for targeted mtDNA assays, `13` are expected to be explicit status pages rather than active long-read analyses.
+In the short-read targeted-mt profile, pages `03`, `04`, `06`, `08`, `09`, `11`, `12`, and `13` are expected to be explicit status pages rather than active long-read analyses. In a short-read WGS profile, page `04` can remain active as a depth-proxy layer, but the long-read structural and molecule-level pages remain status-only.
 
 ## Optional integrations
 - Phy-Mer: optional human mtDNA haplogroup enrichment
 - mvTool: optional human mtDNA external annotation enrichment
 - these integrations are intentionally non-mandatory and should be treated as secondary annotation layers rather than the core analysis
-- the repository's synthetic validation path uses local fixtures for these layers; real biological use should point to a true Phy-Mer vendor tree and the intended mvTool-compatible endpoint
+- the repository's synthetic validation path uses local fixtures to exercise these layers; real biological use should point to a true Phy-Mer vendor tree and the intended mvTool-compatible endpoint
 - `mito-overview` does not bundle external Phy-Mer code or mvTool data resources; see [`docs/license_notes.md`](docs/license_notes.md)
 
 ## Repository status
@@ -183,17 +173,15 @@ In the short-read profile, pages `03`, `04`, `06`, `08`, `09`, `11`, `12`, and, 
 The repository includes a light-weight asset pack from a real public short-read proof-of-principle example:
 - [`examples/public_validation/GM11906_MERRF_shortread`](examples/public_validation/GM11906_MERRF_shortread)
 
-This example uses public GM11906 short-read ATAC-seq runs from the dscATAC-seq study by Lareau and colleagues together with public GM11906 metadata describing the cell line as carrying pathogenic `m.8344A>G`:
-- [Lareau et al., Nat Biotechnol 2019](https://www.nature.com/articles/s41587-019-0147-6)
+This example uses public GM11906 short-read scATAC-seq runs from the single-cell mtDNA/chromatin profiling study by Lareau and colleagues together with public GM11906 metadata describing the cell line as carrying pathogenic `m.8344A>G`:
+- [Lareau et al., Nat Biotechnol 2021](https://www.nature.com/articles/s41587-020-0645-6)
 - [GEO sample metadata example](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSM4238489)
 - [Coriell GM11906](https://www.coriell.org/0/Sections/Search/Sample_Detail.aspx?Ref=GM11906)
 - [ClinVar m.8344A>G](https://www.ncbi.nlm.nih.gov/clinvar/RCV000010192.15/)
 
 The short-read profile is run in `READ_MODE=short` and `ASSAY_TYPE=targeted_mt`, which intentionally preserves the applicable core pages and marks long-read-specific layers as `not_applicable` rather than attempting to reinterpret them. In the bundled proof-of-principle run, the workflow recovers the expected `m.8344A>G` site in the pooled mt-only alignment with depth `1041`, alt count `754`, estimated heteroplasmy fraction `0.724304`, and `MT-TK` / `tRNA_variant` annotation.
 
-This example is included to demonstrate real-data execution and site recovery under the reduced short-read profile. It is not presented as a modality-matched benchmark for deletion calling, NUMT discrimination, copy-number estimation, or clinical heteroplasmy calibration.
-
-![GM11906 short-read public validation](examples/public_validation/GM11906_MERRF_shortread/figures/GM11906_MERRF_shortread_montage.png)
+This example is included to demonstrate real-data execution and site recovery under the reduced short-read profile. It is not presented as modality-matched or cohort-scale short-read validation, calibrated heteroplasmy benchmarking, non-WGS copy-number estimation, definitive NUMT discrimination, or validation of long-read-only layers.
 
 ## Preprint
 A software/resource preprint is in preparation. A citation link and versioned preprint reference will be added here when posted.
