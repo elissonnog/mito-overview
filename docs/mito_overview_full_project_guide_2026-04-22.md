@@ -871,9 +871,11 @@ This is the final packaging step. It defines the human-facing deliverable of the
 - it gives a real-data proof-of-principle example for the short-read compatibility path
 
 ### What this result does not mean
+- it is not modality-matched or cohort-scale short-read validation
 - it is not a calibrated short-read heteroplasmy benchmark
 - it is not clinical validation
-- it does not validate long-read-only layers such as deletion screening or co-segregation in short-read mode
+- it does not establish accurate mt:nuclear copy-number estimation for non-WGS assays
+- it does not validate long-read-only layers in short-read mode
 - it does not establish definitive NUMT discrimination from an mt-only alignment strategy
 
 ## How the current preprint is supported
