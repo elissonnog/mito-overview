@@ -81,5 +81,7 @@ test -f "${FINAL_DIR}/output/report/12_mito_methylation_exploratory.html"
 test -f "${FINAL_DIR}/output/report/13_mito_phymer_haplogroup.html"
 test -f "${FINAL_DIR}/output/report/14_mito_mvtool_annotation.html"
 test -f "${FINAL_DIR}/sync_manifest.tsv"
+grep -q $'^status\tok$' "${FINAL_DIR}/output/summary/mito_phymer_haplogroup_summary.tsv"
+grep -q "rows_returned_by_mvtool" "${FINAL_DIR}/output/summary/mito_mvtool_annotation_summary.tsv"
 
 echo "[smoke] public pipeline smoke test completed successfully"

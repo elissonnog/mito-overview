@@ -10,6 +10,7 @@ dependencies:
   - pysam
   - requests
   - samtools
+  - minimap2
   - bwa
   - pip
   - pip:

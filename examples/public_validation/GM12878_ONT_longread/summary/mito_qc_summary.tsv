@@ -1,0 +1,12 @@
+metric	value
+mapped_reads	247254.0
+primary_reads	142374.0
+supplementary_reads	104880.0
+secondary_reads	0.0
+mean_depth	106379.759
+median_depth	106032.0
+breadth_1x	1.0
+breadth_10x	1.0
+full_length_fraction	0.3758
+forward_reads	144134.0
+reverse_reads	103120.0

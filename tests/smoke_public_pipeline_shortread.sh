@@ -90,6 +90,9 @@ grep -q "not_applicable" "${FINAL_DIR}/output/summary/mito_identity_qc_summary.t
 grep -q "not_applicable" "${FINAL_DIR}/output/summary/mito_phymer_haplogroup_summary.tsv"
 grep -q "not_applicable" "${FINAL_DIR}/output/summary/mito_circularity_qc_summary.tsv"
 grep -q "not_applicable" "${FINAL_DIR}/output/summary/mito_methylation_exploratory_summary.tsv"
+grep -q "not_applicable" "${FINAL_DIR}/output/summary/mito_methylation_np_vs_proxy_summary.tsv"
+grep -q "not_applicable" "${FINAL_DIR}/output/report/03_mito_deletions.html"
+grep -q "not_applicable" "${FINAL_DIR}/output/report/12_mito_methylation_exploratory.html"
 grep -q "rows_returned_by_mvtool" "${FINAL_DIR}/output/summary/mito_mvtool_annotation_summary.tsv"
 
 test -f "${FINAL_DIR}/sync_manifest.tsv"

@@ -1,0 +1,48 @@
+name: smoke-tests
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  synthetic-smoke:
+    name: Synthetic workflow smoke tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash -l {0}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up conda environment
+        uses: conda-incubator/setup-miniconda@v3
+        with:
+          environment-file: environment.yml
+          activate-environment: mito-overview
+          auto-activate-base: false
+
+      - name: Show versions
+        run: |
+          python --version
+          samtools --version | head -n 2
+
+      - name: Check CLI wiring
+        run: |
+          python -m mito_overview.cli --list-steps
+          python -m mito_overview.cli --config examples/configs/human_example.env --dry-run
+
+      - name: Run synthetic long-read smoke test
+        run: |
+          MITO_OVERVIEW_PYTHON="$(command -v python)" ./tests/smoke_public_pipeline.sh
+
+      - name: Run synthetic reduced short-read smoke test
+        run: |
+          MITO_OVERVIEW_PYTHON="$(command -v python)" ./tests/smoke_public_pipeline_shortread.sh
+
+      - name: Run long-read no-methylation smoke test
+        run: |
+          MITO_OVERVIEW_PYTHON="$(command -v python)" ./tests/smoke_public_pipeline_longread_nomethyl.sh

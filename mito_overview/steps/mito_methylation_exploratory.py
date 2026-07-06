@@ -125,14 +125,40 @@ def build_proxy(df: pd.DataFrame) -> pd.DataFrame:
 def render_no_data_report(
     *,
     summary_path: Path,
+    combined_path: Path,
+    cmp_path: Path,
+    cmp_summary_path: Path,
     report_path: Path,
     sample_id: str,
     mt_contig: str,
+    track_paths: dict[str, str | Path | None],
 ) -> dict[str, Path]:
     """Write a status-only report when no mitochondrial bedmethyl rows are present."""
 
-    summary_df = pd.DataFrame([{"metric": "status", "value": "no_mt_bedmethyl_rows_available"}])
+    summary_df = pd.DataFrame(
+        [
+            {"metric": "status", "value": "no_mt_bedmethyl_rows_available"},
+            {
+                "metric": "message",
+                "value": "No mitochondrial bedmethyl rows were available after mitochondrial subsetting.",
+            },
+            {"metric": "np_track_input_present", "value": int(bool(track_paths.get("NP_real_all_reads")))},
+            {"metric": "hp1_track_input_present", "value": int(bool(track_paths.get("HP1")))},
+            {"metric": "hp2_track_input_present", "value": int(bool(track_paths.get("HP2")))},
+            {"metric": "ungrouped_track_input_present", "value": int(bool(track_paths.get("Ungrouped")))},
+        ]
+    )
     summary_df.to_csv(summary_path, sep="\t", index=False)
+    empty_rows_df().to_csv(combined_path, sep="\t", index=False)
+    pd.DataFrame(
+        columns=["position", "percent_modified_np", "percent_modified_proxy", "abs_difference"]
+    ).to_csv(cmp_path, sep="\t", index=False)
+    pd.DataFrame(
+        [
+            {"metric": "status", "value": "no_mt_bedmethyl_rows_available"},
+            {"metric": "shared_np_proxy_positions", "value": 0},
+        ]
+    ).to_csv(cmp_summary_path, sep="\t", index=False)
     intro_html = '<p class="muted">No mitochondrial bedmethyl rows were available for the exploratory methylation summary.</p>'
     body_html = "<section><h2>Status</h2>" + df_to_html_table(summary_df, max_rows=20) + "</section>"
     render_page(
@@ -145,6 +171,9 @@ def render_no_data_report(
     )
     return {
         "summary_path": summary_path,
+        "combined_path": combined_path,
+        "cmp_path": cmp_path,
+        "cmp_summary_path": cmp_summary_path,
         "report_path": report_path,
     }
 
@@ -193,17 +222,23 @@ def run_step(
     combined_df = pd.concat([base_df, proxy_df], ignore_index=True) if not proxy_df.empty else base_df.copy()
 
     summary_path = summary_dir / "mito_methylation_exploratory_summary.tsv"
+    combined_path = summary_dir / "mito_methylation_track_rows.tsv"
+    cmp_path = summary_dir / "mito_methylation_np_vs_proxy.tsv"
+    cmp_summary_path = summary_dir / "mito_methylation_np_vs_proxy_summary.tsv"
     report_path = report_dir / "12_mito_methylation_exploratory.html"
     if combined_df.empty:
         print("[methylation] no mitochondrial bedmethyl rows available; writing status-only report", flush=True)
         return render_no_data_report(
             summary_path=summary_path,
+            combined_path=combined_path,
+            cmp_path=cmp_path,
+            cmp_summary_path=cmp_summary_path,
             report_path=report_path,
             sample_id=sample_id,
             mt_contig=mt_contig,
+            track_paths=track_paths,
         )
 
-    combined_path = summary_dir / "mito_methylation_track_rows.tsv"
     combined_df.to_csv(combined_path, sep="\t", index=False)
     print(f"[methylation] wrote combined rows {combined_path}", flush=True)
 
@@ -226,7 +261,6 @@ def run_step(
             np_proxy_cmp["abs_difference"] = (
                 np_proxy_cmp["percent_modified_np"] - np_proxy_cmp["percent_modified_proxy"]
             ).abs()
-    cmp_path = summary_dir / "mito_methylation_np_vs_proxy.tsv"
     np_proxy_cmp.to_csv(cmp_path, sep="\t", index=False)
     print(f"[methylation] wrote NP vs proxy table {cmp_path}", flush=True)
 
@@ -247,7 +281,6 @@ def run_step(
             {"metric": "np_proxy_correlation", "value": correlation},
         ]
     )
-    cmp_summary_path = summary_dir / "mito_methylation_np_vs_proxy_summary.tsv"
     cmp_summary.to_csv(cmp_summary_path, sep="\t", index=False)
     print(f"[methylation] wrote NP vs proxy summary {cmp_summary_path}", flush=True)
 

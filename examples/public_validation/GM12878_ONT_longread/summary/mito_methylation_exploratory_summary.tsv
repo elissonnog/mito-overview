@@ -1,0 +1,7 @@
+metric	value
+status	no_mt_bedmethyl_rows_available
+message	No mitochondrial bedmethyl rows were available after mitochondrial subsetting.
+np_track_input_present	1
+hp1_track_input_present	1
+hp2_track_input_present	1
+ungrouped_track_input_present	1

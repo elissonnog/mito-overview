@@ -52,8 +52,26 @@ download_if_missing() {
   local dest="$2"
   if [[ ! -s "${dest}" ]]; then
     echo "[shortread-gm11906] downloading ${url}"
-    curl -L "${url}" -o "${dest}"
+    # Use explicit retries and timeouts so stalled public mirrors fail fast
+    # instead of making the validation look frozen.
+    curl \
+      --fail \
+      --retry "${MITO_OVERVIEW_SHORTREAD_CURL_RETRIES:-3}" \
+      --retry-delay "${MITO_OVERVIEW_SHORTREAD_CURL_RETRY_DELAY:-2}" \
+      --connect-timeout "${MITO_OVERVIEW_SHORTREAD_CURL_CONNECT_TIMEOUT:-20}" \
+      --max-time "${MITO_OVERVIEW_SHORTREAD_CURL_MAX_TIME:-300}" \
+      -L "${url}" \
+      -o "${dest}"
   fi
+}
+
+copy_if_needed() {
+  local src="$1"
+  local dest="$2"
+  if [[ "$(cd "$(dirname "${src}")" && pwd)/$(basename "${src}")" == "$(cd "$(dirname "${dest}")" && pwd)/$(basename "${dest}")" ]]; then
+    return 0
+  fi
+  cp "${src}" "${dest}"
 }
 
 download_if_missing "https://ftp.sra.ebi.ac.uk/vol1/fastq/SRR108/085/SRR10804585/SRR10804585_1.fastq.gz" "${DATA_DIR}/SRR10804585_1.fastq.gz"
@@ -126,8 +144,8 @@ cd "${REPO_ROOT}"
 rm -rf "${OUTPUT_DIR}"
 mkdir -p "$(dirname "${OUTPUT_DIR}")"
 cp -R "${FINAL_DIR}/output" "${OUTPUT_DIR}"
-cp "${WORKDIR}/GM11906_MERRF_shortread.flagstat.txt" "$(dirname "${OUTPUT_DIR}")/GM11906_MERRF_shortread.flagstat.txt"
-cp "${WORKDIR}/GM11906_MERRF_shortread.8344.mpileup" "$(dirname "${OUTPUT_DIR}")/GM11906_MERRF_shortread.8344.mpileup"
+copy_if_needed "${WORKDIR}/GM11906_MERRF_shortread.flagstat.txt" "$(dirname "${OUTPUT_DIR}")/GM11906_MERRF_shortread.flagstat.txt"
+copy_if_needed "${WORKDIR}/GM11906_MERRF_shortread.8344.mpileup" "$(dirname "${OUTPUT_DIR}")/GM11906_MERRF_shortread.8344.mpileup"
 
 if [[ -n "${MITO_OVERVIEW_SHORTREAD_ASSET_DIR:-}" ]]; then
   ASSET_DIR="${MITO_OVERVIEW_SHORTREAD_ASSET_DIR}"
@@ -142,8 +160,8 @@ if [[ -n "${MITO_OVERVIEW_SHORTREAD_ASSET_DIR:-}" ]]; then
   cp "${OUTPUT_DIR}/summary/mito_heteroplasmy_candidates.tsv" "${SUMMARY_DIR}/"
   cp "${OUTPUT_DIR}/summary/mito_gene_summary.tsv" "${SUMMARY_DIR}/"
   cp "${OUTPUT_DIR}/summary/mito_variant_consequence_candidates.tsv" "${SUMMARY_DIR}/"
-  cp "${WORKDIR}/GM11906_MERRF_shortread.flagstat.txt" "${ASSET_DIR}/"
-  cp "${WORKDIR}/GM11906_MERRF_shortread.8344.mpileup" "${ASSET_DIR}/"
+  copy_if_needed "${WORKDIR}/GM11906_MERRF_shortread.flagstat.txt" "${ASSET_DIR}/GM11906_MERRF_shortread.flagstat.txt"
+  copy_if_needed "${WORKDIR}/GM11906_MERRF_shortread.8344.mpileup" "${ASSET_DIR}/GM11906_MERRF_shortread.8344.mpileup"
   "${PYTHON_BIN}" - <<'PY' "${OUTPUT_DIR}" "${ASSET_DIR}"
 import sys
 from pathlib import Path

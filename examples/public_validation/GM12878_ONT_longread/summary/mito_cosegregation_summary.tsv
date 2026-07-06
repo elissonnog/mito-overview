@@ -1,0 +1,8 @@
+metric	value
+selected_sites	8
+pairwise_edges_meeting_shared_threshold	28
+reads_with_any_selected_site_coverage	21965
+min_shared_reads_threshold	25
+top_sites_limit	8
+strongest_pair	152:T>C | 14872:C>T
+strongest_pair_jaccard_alt	0.968059
