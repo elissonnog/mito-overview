@@ -164,9 +164,14 @@ def run_step(
         ]
         if missing_tracks:
             missing_str = ", ".join(missing_tracks)
-            raise RuntimeError(
-                "Long-read mode requires phased/ungrouped bedmethyl sources for "
-                f"{missing_str}. Short-read mode should be used when these tracks do not exist."
+            # Real ONT mitochondrial runs may be available without exported bedmethyl
+            # sidecars. Keep the core long-read workflow usable and let the dedicated
+            # methylation step emit a status-only page from the empty subsets.
+            print(
+                "[extract] long-read mode detected but missing phased/ungrouped "
+                f"bedmethyl sources for {missing_str}; proceeding with empty mitochondrial "
+                "bedmethyl subsets for the missing tracks",
+                flush=True,
             )
     extract_mito_bam(
         source_align_file=source_align_file,

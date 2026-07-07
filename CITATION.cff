@@ -1,11 +1,24 @@
 cff-version: 1.2.0
 title: mito-overview
 message: Please cite this software using the metadata below.
+abstract: Mode-gated mitochondrial DNA evidence reporting workflow for aligned sequencing data.
 authors:
   - family-names: Lopes
     given-names: Elisson
     name-particle: ""
     suffix: PhD
-version: 0.2.0
+  - family-names: Gai
+    given-names: Xiaowu
+    suffix: PhD
+version: 0.2.1
+license: MIT
 repository-code: https://github.com/elissonnog/mito-overview
-date-released: 2026-04-21
+url: https://github.com/elissonnog/mito-overview
+keywords:
+  - mitochondrial DNA
+  - mtDNA
+  - Oxford Nanopore
+  - heteroplasmy
+  - bioinformatics workflow
+  - report generation
+date-released: 2026-07-07

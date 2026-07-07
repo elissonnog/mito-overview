@@ -1,6 +1,17 @@
-# Validation Plan
+# Validation and Reproducibility Plan
 
-## Core validation set
+This document separates current workflow/resource checks from future analytical validation. The current public repository supports report-generation and assay-gating claims; stronger performance claims require additional truth-set or cohort-scale work.
+
+## Current workflow-resource checks
+The current release candidate should be checked with:
+- package import and CLI step listing
+- synthetic long-read smoke test
+- synthetic reduced short-read smoke test
+- long-read no-methylation smoke test
+- public GM12878 ONT proof-of-principle report generation
+- public GM11906 reduced short-read marker-representation proof-of-principle
+
+## Future analytical validation set
 Representative human mtDNA samples should be used to validate:
 - depth and coverage summaries
 - heteroplasmy candidate detection
@@ -28,4 +39,4 @@ The initial release should include:
 - one small example configuration
 - one example output bundle
 - one figure montage for the README
-- one validation table for the software preprint
+- one reproducibility evidence table for the software preprint

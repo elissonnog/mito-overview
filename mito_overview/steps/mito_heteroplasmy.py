@@ -126,8 +126,10 @@ def run_step(
         flush=True,
     )
 
+    canonical_bases = {"A", "C", "G", "T"}
     all_rows = []
     candidate_rows = []
+    skipped_noncanonical_candidates = 0
     for pos in range(1, mt_length + 1):
         base_counts = {
             "A": int(cov_a[pos - 1]),
@@ -154,13 +156,22 @@ def run_step(
         }
         all_rows.append(row)
         if depth >= min_depth and alt_base and vaf >= min_vaf:
-            candidate_rows.append(row.copy())
+            if ref_base in canonical_bases and alt_base in canonical_bases:
+                candidate_rows.append(row.copy())
+            else:
+                skipped_noncanonical_candidates += 1
         if pos % 4000 == 0 or pos == mt_length:
             print(
                 f"[heteroplasmy] summarised positions {pos}/{mt_length} "
                 f"elapsed_sec={round(time.time() - start_time, 1)}",
                 flush=True,
             )
+    if skipped_noncanonical_candidates:
+        print(
+            "[heteroplasmy] skipped "
+            f"{skipped_noncanonical_candidates} candidate-like positions with non-canonical bases",
+            flush=True,
+        )
 
     if candidate_rows:
         strand_support = candidate_strand_support(

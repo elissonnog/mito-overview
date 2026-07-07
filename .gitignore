@@ -14,3 +14,8 @@ examples/expected_reports/*
 !examples/expected_reports/TOY-SR-001_output/
 !examples/expected_reports/TOY-SR-001_output/**
 paper/*.docx
+docs/*.docx
+paper/rendered_*/
+.mplconfig/
+.cache/
+.conda-release-check/

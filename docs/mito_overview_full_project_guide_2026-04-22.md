@@ -13,12 +13,13 @@ This guide is the detailed technical companion for the current `mito-overview` p
 | Item | Current state |
 | --- | --- |
 | Software | `mito-overview` |
-| Version used in the public repo | `0.2.0` |
+| Version used in the public repo | `0.2.1` |
 | Public repository | [elissonnog/mito-overview](https://github.com/elissonnog/mito-overview) |
 | Main framing | modular long-read mtDNA interpretation and reporting framework |
 | Secondary framing | reduced short-read compatibility profile |
 | Main manuscript source | `paper/preprint_draft.md` |
 | Main report example bundle | `examples/expected_reports/TOY-001_output` |
+| Main long-read public example | `examples/public_validation/GM12878_ONT_longread` |
 | Main short-read public example | `examples/public_validation/GM11906_MERRF_shortread` |
 | Main claim boundary | workflow/reproducibility support, not clinical validation |
 
@@ -69,7 +70,7 @@ DEFAULT_STEP_ORDER = [
 ### Why the profile split matters
 The project keeps the ONT long-read logic intact. Short-read support was added as a bounded compatibility path, not as a claim that all long-read biological layers can be reinterpreted from short reads.
 
-### Output bundle anatomy
+### Runtime full-bundle anatomy
 
 ```text
 output/
@@ -92,11 +93,13 @@ mito.bam
 mito.bam.bai
 ```
 
+Tracked public example directories under `examples/expected_reports/` contain the committed `output/` tree only. Runtime-only files such as `sync_manifest.tsv` are preserved in smoke-test or fresh-run destinations, not in the tracked example directories.
+
 ### Representative report views
 These are the manuscript-facing long-read and short-read montages together with one supporting optional-enrichment view retained for documentation.
 
 #### Public-core long-read example
-![Public-core long-read example](../paper/figures/figure1_representative_longread_report_montage.png)
+![Public ONT long-read example](../paper/figures/figure1_public_longread_validation_montage.png)
 
 #### Optional human-only enrichment views
 ![Optional enrichment views](../paper/figures/figure3_optional_enrichment_montage.png)
@@ -818,6 +821,7 @@ This is the final packaging step. It defines the human-facing deliverable of the
 | long-read example-bundle regeneration | `scripts/build_public_example_bundle.sh` | tracked long-read toy inputs | rebuild tracked example bundle | passed | reproducible documentation assets |
 | short-read synthetic smoke | `tests/smoke_public_pipeline_shortread.sh` | synthetic short-read toy inputs | active short-read pages run, unsupported pages become `not_applicable` | passed | honest short-read gating |
 | short-read example-bundle regeneration | `scripts/build_public_shortread_example_bundle.sh` | tracked short-read toy inputs | rebuild tracked short-read example bundle | passed | reproducible reduced-profile docs |
+| real public ONT long-read proof-of-principle | `scripts/run_public_longread_validation_gm12878.sh` | GM12878 public ONT targeted-mt run | execute active long-read report layers on real data with explicit targeted-mt boundaries | passed | real-data long-read operability and report generation |
 | real public short-read proof-of-principle | `scripts/run_public_shortread_validation_gm11906.sh` | pooled GM11906 public runs | recover and annotate `m.8344A>G` in short-read mode | passed | real-data execution and site representation |
 | fresh-clone validation | clone + rerun workflow checks | published GitHub repo | public state works outside original tree | passed | published-repo reproducibility |
 
@@ -829,8 +833,42 @@ This is the final packaging step. It defines the human-facing deliverable of the
 | smoke workflow | protect against regression in step wiring | end-to-end workflow still runs | not cohort-scale benchmarking |
 | example-bundle rebuild | prove figures/docs come from rebuildable assets | documentation is tied to tracked outputs | not analytical calibration |
 | short-read gating | prevent misuse of long-read-only layers | unsupported steps are honestly labeled | not modality equivalence |
-| real-data proof-of-principle | show the reduced profile can run on public data | a known public site can be reported | not clinical or full short-read validation |
+| real-data proof-of-principle | show public data can run through the bounded workflow profiles | report-native outputs and key sites/signals can be recovered honestly | not clinical or cohort-scale validation |
 | fresh clone | verify the published repo is usable outside the dev tree | public state is reproducible on the validated Mac | not all-environment portability |
+
+## Real public long-read result table: GM12878
+
+### Key findings
+| Metric | Value |
+| --- | --- |
+| sample_id | `GM12878_ONT_longread` |
+| read_mode | `long` |
+| assay_type | `targeted_mt` |
+| heteroplasmy_min_vaf | `0.10` |
+| mapped_reads | `247254.0` |
+| mean_depth | `106379.759` |
+| median_depth | `106032.0` |
+| full_length_fraction | `0.3758` |
+| candidate_site_count | `28` |
+| selected_cosegregation_sites | `8` |
+| candidate_deletion_clusters | `1337.0` |
+| max_deletion_support_fraction_primary | `2.1e-05` |
+| numt_risk | `moderate` |
+| copy_number_status | `not_applicable` |
+| phymer_status | `not_applicable` |
+| methylation_status | `no_mt_bedmethyl_rows_available` |
+
+### What this result means
+- the long-read profile can execute on real public ONT data and generate the expected report-native QC, heteroplasmy, deletion-screening, co-segregation, gene-summary, NUMT-QC, circularity-QC, and consequence outputs
+- targeted-mt assay boundaries remain explicit instead of being silently overinterpreted
+- the public asset pack now contains real ONT figures that can be used in the paper and GitHub page
+
+### What this result does not mean
+- it is not full `01-14` page coverage
+- it is not identity-style long-read validation
+- it is not low-VAF heteroplasmy benchmarking
+- it is not deletion-truth benchmarking
+- it is not clinical validation
 
 ## Real public short-read result table: GM11906
 
@@ -886,6 +924,7 @@ This is the final packaging step. It defines the human-facing deliverable of the
 | long-read workflow produces the intended report structure | long-read smoke + long-read example-bundle rebuild | strong | workflow/reproducibility support, not cohort-scale benchmarking |
 | optional human layers exist in the public repo | fixture-based smoke tests | moderate | interface/report-generation support, not live external benchmarking |
 | short-read compatibility path exists | short-read smoke | strong | reduced profile only |
+| long-read path runs on real public ONT data | GM12878 proof-of-principle | moderate | targeted-mt exemplar, not WGS-style or cohort-scale benchmarking |
 | short-read path runs on real public data | GM11906 proof-of-principle | moderate | one public example, not modality-matched benchmarking |
 | manuscript figures come from rebuildable repo assets | example-bundle regeneration scripts | strong | binary assets are not guaranteed byte-identical across every environment |
 
@@ -939,8 +978,8 @@ This is the final packaging step. It defines the human-facing deliverable of the
 - `examples/public_validation/GM11906_MERRF_shortread`
 
 ### Manuscript-facing files
-- `paper/preprint_draft.md`
-- `paper/figures/figure1_representative_longread_report_montage.png`
+- `paper/mito_overview_workflow_resource_manuscript_2026-06-23.md`
+- `paper/figures/figure1_public_longread_validation_montage.png`
 - `paper/figures/figure3_optional_enrichment_montage.png`
 - `paper/figures/figure2_shortread_public_validation_montage.png`
 
@@ -951,7 +990,7 @@ This is the final packaging step. It defines the human-facing deliverable of the
 - each analytical layer is split into an independent module with explicit outputs
 - long-read behavior is the main supported path
 - short-read behavior is present as a bounded reduced profile
-- the public repo includes synthetic workflow validation and one real public short-read proof-of-principle example
+- the public repo includes synthetic workflow validation plus bounded real public long-read and short-read proof-of-principle examples
 - the current preprint can be checked against this document step by step
 
 This guide is therefore intended to function as the project-level reference for technical understanding, validation review, and manuscript cross-checking.

@@ -1,14 +1,19 @@
-# Public short-read proof-of-principle compatibility example
+# Public reduced short-read proof-of-principle compatibility example
 
 `mito-overview` now includes a separate short-read profile that keeps the long-read workflow intact while marking long-read-specific analytical layers as not applicable.
 
 Current public real-data example path:
-- sample source: public GM11906 short-read ATAC-seq runs
+- sample source: public GM11906 short-read/scATAC-derived mtDNA reads
 - biological context: public sample metadata describes GM11906 as a lymphoblastoid cell line derived from a donor with pathogenic `m.8344A>G`
-- use case: proof-of-principle short-read operability and pathogenic-site representation
+- use case: proof-of-principle reduced short-read operability and marker representation
 
-Included validation script:
+Included proof-of-principle script:
 - `scripts/run_public_shortread_validation_gm11906.sh`
+
+Current rerun status:
+- fresh rerun completed on `2026-06-23` in the local Mac reproducibility environment
+- public FASTQ downloads were executed from EBI with explicit retries and timeouts
+- the tracked light-weight asset pack under `examples/public_validation/GM11906_MERRF_shortread` was refreshed from that rerun
 
 What this example is intended to demonstrate:
 - configuration and execution of `READ_MODE=short`
@@ -24,19 +29,19 @@ What this example does **not** demonstrate by itself:
 
 Current public dataset choice:
 - runs `SRR10804585`, `SRR10804590`, and `SRR10804657`
-- same GM11906 MERRF cell-line source in public metadata
-- combined in the validation script to increase mitochondrial coverage for proof-of-principle reporting
+- same GM11906 cell-line source in public metadata
+- combined in the proof-of-principle script to increase mitochondrial coverage for reduced-profile reporting
 
 Current observed recovery in the bundled example:
 - site recovered: `m.8344A>G`
 - depth at position `8344`: `1041`
 - alternate count: `754`
-- estimated heteroplasmy fraction in the current implementation: `0.724304`
+- estimated alternate fraction in the current implementation: `0.724304`
 - feature context: `MT-TK`
 - consequence class: `tRNA_variant`
 
 References and source metadata:
-- [Lareau et al., Nat Biotechnol 2019](https://www.nature.com/articles/s41587-019-0147-6)
+- [Lareau et al., Nat Biotechnol 2021](https://www.nature.com/articles/s41587-020-0645-6)
 - [GEO sample metadata example](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSM4238489)
 - [Coriell GM11906](https://www.coriell.org/0/Sections/Search/Sample_Detail.aspx?Ref=GM11906)
 - [Shoffner et al., Cell 1990](https://pubmed.ncbi.nlm.nih.gov/2112427/)
