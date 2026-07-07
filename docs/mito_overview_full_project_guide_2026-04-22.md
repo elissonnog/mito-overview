@@ -13,11 +13,11 @@ This guide is the detailed technical companion for the current `mito-overview` p
 | Item | Current state |
 | --- | --- |
 | Software | `mito-overview` |
-| Version used in the public repo | `0.2.0` |
+| Version used in the public repo | `0.2.1` |
 | Public repository | [elissonnog/mito-overview](https://github.com/elissonnog/mito-overview) |
 | Main framing | modular long-read mtDNA interpretation and reporting framework |
 | Secondary framing | reduced short-read compatibility profile |
-| Main manuscript source | `paper/mito_overview_workflow_resource_manuscript_2026-06-23.md` |
+| Main manuscript source | `paper/preprint_draft.md` |
 | Main report example bundle | `examples/expected_reports/TOY-001_output` |
 | Main long-read public example | `examples/public_validation/GM12878_ONT_longread` |
 | Main short-read public example | `examples/public_validation/GM11906_MERRF_shortread` |

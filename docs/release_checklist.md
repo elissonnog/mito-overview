@@ -19,10 +19,11 @@ This checklist defines what must be true before tagging `mito-overview` as a man
 | long-read no-methylation smoke test | present | `tests/smoke_public_pipeline_longread_nomethyl.sh` |
 | public GM12878 ONT proof-of-principle assets | present | report-native figures and summary tables under `examples/public_validation/GM12878_ONT_longread/` |
 | public GM11906 reduced short-read proof-of-principle assets | present | marker-focused assets under `examples/public_validation/GM11906_MERRF_shortread/` |
-| release DOI or Software Heritage archive | pending | required before journal submission |
-| exact release commit in manuscript | pending | required before journal submission |
-| clean-checkout rerun transcript | pending | required before journal submission |
-| independent reproducibility re-check | pending | required before journal submission |
+| manuscript-supporting version | planned as `v0.2.1` | use a new patch release because `v0.2.0` already points to an earlier commit |
+| release DOI or Software Heritage archive | not yet assigned | GitHub tag archive is the active release identifier until an external archive identifier is minted |
+| exact release commit in manuscript | pending release freeze | insert after merge/tag |
+| clean-checkout rerun transcript | pending release freeze | record in `docs/release_validation_audit_2026-07-07.md` |
+| independent reproducibility re-check | pending release freeze | record reviewer/separate-thread outcome in the validation audit |
 
 ## Must-Pass Commands Before Tagging
 
@@ -59,7 +60,7 @@ Optional but manuscript-relevant public proof-of-principle reruns:
 1. Ensure the working tree contains only intended release files.
 2. Run the must-pass commands from a clean checkout.
 3. Commit all release files.
-4. Tag the release, for example `v0.2.0`.
+4. Tag the release as `v0.2.1` unless a later patch release is intentionally selected.
 5. Archive the tag through Zenodo or Software Heritage.
 6. Update `CITATION.cff`, `README.md`, and the manuscript with the tag, commit, and archive DOI or persistent identifier.
 

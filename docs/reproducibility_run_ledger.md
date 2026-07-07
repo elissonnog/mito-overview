@@ -1,6 +1,6 @@
 # Reproducibility Run Ledger
 
-This ledger records the evidence used for the workflow/resource manuscript draft for `mito-overview` v0.2.0. It is intended to make the manuscript auditable without overstating analytical validation. Runtime, memory, checksums, exact commit, and release archive identifiers should be completed at release freeze.
+This ledger records the evidence used for the workflow/resource manuscript draft for `mito-overview` v0.2.1. It is intended to make the manuscript auditable without overstating analytical validation. Runtime, memory, checksums, exact commit, and release archive identifiers should be completed at release freeze and summarized in `docs/release_validation_audit_2026-07-07.md`.
 
 Note: the folder label `GM11906_MERRF_shortread` is a historical project label for the public short-read proof-of-principle. The supported claim is representation of the literature-associated m.8344A>G marker in a reduced short-read report, not confirmation of disease status or clinical pathogenicity in this dataset.
 
@@ -43,3 +43,20 @@ Note: the folder label `GM11906_MERRF_shortread` is a historical project label f
 4. Record command transcripts, runtime, memory, dependency versions, and output paths.
 5. Verify expected file presence, TSV schemas, assay-mode status pages, and threshold-specific public findings.
 6. Have an independent reviewer or separate thread repeat the clean-checkout validation.
+
+## v0.2.1 Release-Freeze Evidence Plan
+
+The current release-freeze validation packet is expected at:
+
+- `/Users/elopes/Desktop/ont_results/mito_overview_validation_packets/mito_overview_validation_2026-07-07`
+
+The packet should include:
+
+- `metadata/environment_and_git.txt`
+- `metadata/output_file_inventory.txt`
+- `metadata/output_sha256.txt`
+- numbered command transcripts under `logs/`
+- regenerated outputs under `outputs/`
+- public-data work directories under `work/` when public data reruns are feasible
+
+The public proof-of-principle runs remain optional for a quick smoke-test release gate because they depend on public mirror availability and local alignment runtime. If skipped, the release audit must state that the tracked public asset packs were inspected but not regenerated in the final validation pass.

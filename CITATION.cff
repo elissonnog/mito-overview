@@ -7,7 +7,10 @@ authors:
     given-names: Elisson
     name-particle: ""
     suffix: PhD
-version: 0.2.0
+  - family-names: Gai
+    given-names: Xiaowu
+    suffix: PhD
+version: 0.2.1
 license: MIT
 repository-code: https://github.com/elissonnog/mito-overview
 url: https://github.com/elissonnog/mito-overview
@@ -18,4 +21,4 @@ keywords:
   - heteroplasmy
   - bioinformatics workflow
   - report generation
-date-released: 2026-04-21
+date-released: 2026-07-07

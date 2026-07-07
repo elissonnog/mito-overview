@@ -75,6 +75,10 @@ The corresponding expected public example output bundle is:
 - [`examples/expected_reports/TOY-SR-001_output`](examples/expected_reports/TOY-SR-001_output)
 
 ## Representative report views
+The workflow-level figure below summarizes the mode-gated reporting architecture and embeds public ONT long-read report-native panels from the GM12878 proof-of-principle asset pack.
+
+![mito-overview workflow architecture and public ONT proof-of-principle panels](paper/figures/figure0_workflow_architecture.png)
+
 The main figure below is the tracked public ONT long-read proof-of-principle montage from the GM12878 public asset pack. It is included to show the kinds of real report-native views the workflow generates in practice while keeping the underlying claims bounded to workflow execution, mode-gated status handling, and report production.
 
 ![GM12878 public ONT long-read proof-of-principle report montage](examples/public_validation/GM12878_ONT_longread/figures/GM12878_ONT_longread_montage.png)
@@ -188,13 +192,16 @@ In long-read mode without ONT bedmethyl sidecars, page `12` is expected to be a 
 - public repository with a functional core, tracked synthetic smoke-test assets, and an active software/resource preprint draft
 - current repository now includes a synthetic public example bundle generated from the public-core workflow
 - current repository now includes a short-read synthetic bundle plus bounded public long-read and short-read proof-of-principle asset packs
-- cite the software metadata in [`CITATION.cff`](CITATION.cff) (current version `0.2.0`) until a manuscript and/or DOI is posted
+- cite the software metadata in [`CITATION.cff`](CITATION.cff) (current version `0.2.1`) until a manuscript and/or DOI is posted
+- canonical free-format manuscript source is [`paper/preprint_draft.md`](paper/preprint_draft.md)
+- versioned release archive for this draft: [`v0.2.1`](https://github.com/elissonnog/mito-overview/releases/tag/v0.2.1)
 - design notes for the public package are in [`docs/overview.md`](docs/overview.md) and [`docs/methodology.md`](docs/methodology.md)
 - public long-read proof-of-principle notes are in [`docs/validation_public_longread.md`](docs/validation_public_longread.md)
 - public reduced short-read proof-of-principle notes are in [`docs/validation_public_shortread.md`](docs/validation_public_shortread.md)
 - release-readiness requirements are in [`docs/release_checklist.md`](docs/release_checklist.md)
 - related-software positioning is in [`docs/related_software_landscape.md`](docs/related_software_landscape.md)
 - the current reproducibility evidence ledger is in [`docs/reproducibility_run_ledger.md`](docs/reproducibility_run_ledger.md)
+- the current release-validation audit template is in [`docs/release_validation_audit_2026-07-07.md`](docs/release_validation_audit_2026-07-07.md)
 - contribution and issue-reporting guidance is in [`CONTRIBUTING.md`](CONTRIBUTING.md)
 
 ## Auxiliary long-read public proof-of-principle example
@@ -215,13 +222,13 @@ This example is included to demonstrate real-data ONT execution, real report-nat
 The repository also includes a light-weight asset pack from a real public short-read proof-of-principle example:
 - [`examples/public_validation/GM11906_MERRF_shortread`](examples/public_validation/GM11906_MERRF_shortread)
 
-This example uses public GM11906 short-read/scATAC-derived mtDNA reads from the single-cell mtDNA/chromatin profiling study by Lareau and colleagues together with public GM11906 metadata describing the cell line as carrying pathogenic `m.8344A>G`:
+This example uses public GM11906 short-read/scATAC-derived mtDNA reads from the single-cell mtDNA/chromatin profiling study by Lareau and colleagues together with public GM11906 metadata describing the cell line as carrying the literature-associated `m.8344A>G` marker:
 - [Lareau et al., Nat Biotechnol 2021](https://www.nature.com/articles/s41587-020-0645-6)
 - [GEO sample metadata example](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSM4238489)
 - [Coriell GM11906](https://www.coriell.org/0/Sections/Search/Sample_Detail.aspx?Ref=GM11906)
 - [ClinVar m.8344A>G](https://www.ncbi.nlm.nih.gov/clinvar/RCV000010192.15/)
 
-The short-read example is run in `READ_MODE=short` using the package's `ASSAY_TYPE=targeted_mt` report profile. This profile intentionally preserves the applicable core pages and marks long-read-specific layers as `not_applicable` rather than attempting to reinterpret them. In the bundled proof-of-principle run, the workflow represents the expected `m.8344A>G` site in the pooled mt-only alignment with depth `1041`, alt count `754`, estimated alternate fraction `0.724304`, and `MT-TK` / `tRNA_variant` annotation.
+The short-read example is run in `READ_MODE=short` using the package's `ASSAY_TYPE=targeted_mt` report profile. This profile intentionally preserves the applicable core pages and marks long-read-specific layers as `not_applicable` rather than attempting to reinterpret them. In the bundled proof-of-principle run and fresh release-candidate rerun, the workflow represents the `m.8344A>G` site in the pooled mt-only alignment with depth `1041`, alt count `754`, estimated alternate fraction `0.724304`, and `MT-TK` / `tRNA_variant` annotation.
 
 This example is included to demonstrate real-data execution and marker representation under the reduced short-read profile. It is not presented as modality-matched or cohort-scale short-read validation, calibrated heteroplasmy benchmarking, non-WGS copy-number estimation, definitive NUMT discrimination, or validation of long-read-only layers.
 
