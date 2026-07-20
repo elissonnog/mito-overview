@@ -154,6 +154,24 @@ for dataset in gm11906 gm12878; do
     cat "${OUTPUT_ROOT}/logs/${dataset}_repeatability.diff" >&2
     exit 1
   fi
+  for repeat in run1 run2; do
+    "${PYTHON_BIN}" "${REPO_ROOT}/scripts/inventory_visual_artifacts.py" \
+      "${OUTPUT_ROOT}/outputs/${dataset}_default_${repeat}" \
+      "${OUTPUT_ROOT}/observed_normalized/${dataset}_default_${repeat}/visual_artifact_inventory.tsv" \
+      "${OUTPUT_ROOT}/logs/${dataset}_visual_structure_${repeat}.tsv"
+  done
+  if diff -u \
+    "${OUTPUT_ROOT}/logs/${dataset}_visual_structure_run1.tsv" \
+    "${OUTPUT_ROOT}/logs/${dataset}_visual_structure_run2.tsv" \
+    >"${OUTPUT_ROOT}/logs/${dataset}_visual_structure.diff"; then
+    record_case "${dataset}_visual_integrity" visual_integrity 1 1 PASS \
+      "HTML/PNG artifacts were readable and structurally consistent across repeats"
+  else
+    record_case "${dataset}_visual_integrity" visual_integrity 1 1 FAIL \
+      "HTML/PNG artifact structures differed across repeats"
+    cat "${OUTPUT_ROOT}/logs/${dataset}_visual_structure.diff" >&2
+    exit 1
+  fi
 done
 
 "${PYTHON_BIN}" "${REPO_ROOT}/scripts/summarize_filter_profiles.py" \

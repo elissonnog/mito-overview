@@ -50,6 +50,8 @@ REQUIRED_PASS_CASES = {
     "gm12878_strict",
     "gm11906_repeatability",
     "gm12878_repeatability",
+    "gm11906_visual_integrity",
+    "gm12878_visual_integrity",
     "filter_profiles",
 }
 
@@ -165,7 +167,8 @@ required_pass = {
     "public_validation_matrix", "gm11906_default_run1", "gm11906_default_run2",
     "gm11906_lenient", "gm11906_strict", "gm12878_default_run1",
     "gm12878_default_run2", "gm12878_lenient", "gm12878_strict",
-    "gm11906_repeatability", "gm12878_repeatability", "filter_profiles",
+    "gm11906_repeatability", "gm12878_repeatability",
+    "gm11906_visual_integrity", "gm12878_visual_integrity", "filter_profiles",
 }
 with (root / "cases.tsv").open(encoding="utf-8", newline="") as handle:
     cases = list(csv.DictReader(handle, delimiter="\t"))
