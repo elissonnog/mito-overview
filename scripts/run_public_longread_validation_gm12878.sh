@@ -339,12 +339,13 @@ if [[ -n "${MITO_OVERVIEW_LONGREAD_ASSET_DIR:-}" ]]; then
     "${PYTHON_BIN}" scripts/build_report_montage.py \
       --source-dir "${OUTPUT_DIR}/figures" \
       --output "${FIG_DIR}/GM12878_ONT_longread_montage.png" \
-      --title "GM12878 public ONT deterministic reduced proof-of-principle"
+      --title "GM12878 public ONT ${SUBSET_READ_NAMES}-query-name workflow proof-of-principle"
   else
     echo "[longread-gm12878] skipping montage build because one or more expected long-read panels were not produced"
   fi
 
   "${PYTHON_BIN}" - <<'PY' "${OUTPUT_DIR}" "${ASSET_DIR}"
+import json
 import sys
 from pathlib import Path
 import pandas as pd
@@ -352,6 +353,7 @@ import pandas as pd
 output_dir = Path(sys.argv[1])
 asset_dir = Path(sys.argv[2])
 summary_dir = output_dir / "summary"
+provenance_dir = output_dir / "provenance"
 
 def load_metric_table(name: str) -> pd.DataFrame:
     path = summary_dir / name
@@ -370,7 +372,26 @@ phymer = load_metric_table("mito_phymer_haplogroup_summary.tsv")
 methyl = load_metric_table("mito_methylation_exploratory_summary.tsv")
 coseg = load_metric_table("mito_cosegregation_summary.tsv")
 numt = load_metric_table("mito_numt_qc_summary.tsv")
+mvtool = load_metric_table("mito_mvtool_annotation_summary.tsv")
 vc_class = load_metric_table("mito_variant_consequence_class_summary.tsv")
+
+subset_provenance = json.loads(
+    (provenance_dir / "GM12878_ONT_longread.fastq_subset.provenance.json").read_text(
+        encoding="utf-8"
+    )
+)
+alignment_provenance = json.loads(
+    (provenance_dir / "GM12878_ONT_longread.reduced_alignment.provenance.json").read_text(
+        encoding="utf-8"
+    )
+)
+selection = subset_provenance["selection"]
+source_fastq = subset_provenance["source_fastq"]
+subset_fastq = subset_provenance["subset_fastq"]
+selected_names = subset_provenance["selected_query_names"]
+selected_count = int(selection["selected_query_names"])
+source_count = int(selection["source_records_seen"])
+selection_fraction = selected_count / source_count if source_count else float("nan")
 
 qc_map = dict(zip(qc.get("metric", []), qc.get("value", [])))
 het_map = dict(zip(het_summary.get("metric", []), het_summary.get("value", [])))
@@ -380,22 +401,41 @@ phymer_map = dict(zip(phymer.get("metric", []), phymer.get("value", [])))
 methyl_map = dict(zip(methyl.get("metric", []), methyl.get("value", [])))
 coseg_map = dict(zip(coseg.get("metric", []), coseg.get("value", [])))
 numt_map = dict(zip(numt.get("metric", []), numt.get("value", [])))
+mvtool_map = dict(zip(mvtool.get("metric", []), mvtool.get("value", [])))
 
 findings = pd.DataFrame(
     [
-        {"metric": "sample_id", "value": "GM12878_ONT_longread_reduced"},
-        {"metric": "input_scope", "value": "deterministic query-name subset"},
+        {"metric": "sample_id", "value": f"GM12878_ONT_longread_reduced_qn{selected_count}"},
+        {"metric": "source_accession", "value": "SRR18110025"},
+        {"metric": "input_scope", "value": "resource-limited deterministic query-name subset"},
+        {"metric": "complete_run_analyzed", "value": 0},
+        {"metric": "statistical_representativeness_claimed", "value": 0},
+        {"metric": "selector_algorithm", "value": selection["algorithm"]},
+        {"metric": "selection_seed", "value": selection["seed"]},
+        {"metric": "source_fastq_records", "value": source_count},
+        {"metric": "selected_query_names", "value": selected_count},
+        {"metric": "selection_fraction", "value": round(selection_fraction, 8)},
+        {"metric": "source_fastq_sha256", "value": source_fastq["sha256"]},
+        {"metric": "subset_fastq_sha256", "value": subset_fastq["sha256"]},
+        {"metric": "selected_query_names_sha256", "value": selected_names["sha256"]},
+        {"metric": "alignment_bam_sha256", "value": alignment_provenance["alignment"]["sha256"]},
+        {"metric": "alignment_bai_sha256", "value": alignment_provenance["alignment_index"]["sha256"]},
         {"metric": "read_mode", "value": "long"},
         {"metric": "assay_type", "value": "targeted_mt"},
         {"metric": "min_callable_depth", "value": het_map.get("min_callable_depth", "NA")},
         {"metric": "min_alt_allele_fraction", "value": het_map.get("min_alt_allele_fraction", "NA")},
-        {"metric": "mapped_reads", "value": qc_map.get("mapped_reads", "NA")},
+        {"metric": "mapped_alignment_records", "value": qc_map.get("mapped_reads", "NA")},
+        {"metric": "primary_alignment_records", "value": qc_map.get("primary_reads", "NA")},
+        {"metric": "supplementary_alignment_records", "value": qc_map.get("supplementary_reads", "NA")},
+        {"metric": "secondary_alignment_records", "value": qc_map.get("secondary_reads", "NA")},
+        {"metric": "allele_engine_unique_query_names_seen", "value": het_map.get("unique_reads_seen", "NA")},
         {"metric": "mean_depth", "value": qc_map.get("mean_depth", "NA")},
         {"metric": "median_depth", "value": qc_map.get("median_depth", "NA")},
         {"metric": "full_length_fraction", "value": qc_map.get("full_length_fraction", "NA")},
         {"metric": "candidate_site_count", "value": len(het)},
         {"metric": "selected_cosegregation_sites", "value": coseg_map.get("selected_sites", "NA")},
         {"metric": "candidate_deletion_clusters", "value": del_map.get("candidate_deletion_clusters", "NA")},
+        {"metric": "deletion_screen_method", "value": "CIGAR/SA candidate structural screen"},
         {"metric": "largest_median_deletion", "value": del_map.get("largest_median_deletion", "NA")},
         {"metric": "max_deletion_support_fraction_primary", "value": del_map.get("max_support_fraction_primary", "NA")},
         {"metric": "numt_interpretation_status", "value": numt_map.get("numt_interpretation_status", "NA")},
@@ -403,6 +443,7 @@ findings = pd.DataFrame(
         {"metric": "copy_number_status", "value": copy_map.get("status", "NA")},
         {"metric": "phymer_status", "value": phymer_map.get("status", "NA")},
         {"metric": "methylation_status", "value": methyl_map.get("status", "NA")},
+        {"metric": "mvtool_status", "value": mvtool_map.get("status", "NA")},
     ]
 )
 findings.to_csv(asset_dir / "GM12878_ONT_longread_key_findings.tsv", sep="\t", index=False)

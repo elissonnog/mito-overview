@@ -116,7 +116,8 @@ run_long_case() {
     "${REPO_ROOT}/scripts/run_public_longread_validation_gm12878.sh" "${output_dir}" \
     >"${log}" 2>&1; then
     rm -rf "${workdir}"
-    record_case "${case_id}" "public_${profile}" 1 1 PASS "GM12878 long-read workflow completed"
+    record_case "${case_id}" "public_${profile}" 1 1 PASS \
+      "GM12878 provenance-verified 1000-query-name reduced workflow completed"
   else
     record_case "${case_id}" "public_${profile}" 1 1 FAIL "see logs/${case_id}.log"
     tail -80 "${log}" >&2
@@ -150,7 +151,11 @@ for dataset in gm11906 gm12878; do
     "${OUTPUT_ROOT}/observed_normalized/${dataset}_default_run1" \
     "${OUTPUT_ROOT}/observed_normalized/${dataset}_default_run2" \
     >"${OUTPUT_ROOT}/logs/${dataset}_repeatability.diff"; then
-    record_case "${dataset}_repeatability" repeatability 1 1 PASS "normalized TSVs matched"
+    repeatability_detail="normalized TSVs matched"
+    if [[ "${dataset}" == "gm12878" ]]; then
+      repeatability_detail="normalized TSVs matched conditional on the fixed reduced BAM"
+    fi
+    record_case "${dataset}_repeatability" repeatability 1 1 PASS "${repeatability_detail}"
   else
     record_case "${dataset}_repeatability" repeatability 1 1 FAIL "normalized TSVs differed"
     cat "${OUTPUT_ROOT}/logs/${dataset}_repeatability.diff" >&2
