@@ -1,0 +1,70 @@
+{
+  "alignment": {
+    "bytes": 8676581,
+    "name": "GM12878_ONT_longread.deterministic-qnames-1000.mt.bam",
+    "sha256": "a36e1b5cb0f0e6576e9b4eda2cca9c527610a39b287fd2379109961b5fef24c1"
+  },
+  "alignment_index": {
+    "bytes": 1840,
+    "name": "GM12878_ONT_longread.deterministic-qnames-1000.mt.bam.bai",
+    "sha256": "3ca1b839814c857d34a62ced0cf0237854f69e4caa9758cbcb4f29974dad6c98"
+  },
+  "dataset_id": "GM12878_SRR18110025_ONT_reduced_qn1000",
+  "derivation": {
+    "command_template": "minimap2 -t {threads} -ax map-ont {reference_mmi} {deterministic_subset_fastq} | samtools view -@ {threads} -b -F 4 | samtools sort -@ {threads} -o {alignment_bam}",
+    "derivation_id": "minimap2-map-ont-deterministic-fastq-subset-mapped-only-v1",
+    "parameters": {
+      "selected_query_names": "1000",
+      "selection_seed": "mito-overview-v0.3.0-GM12878-SRR18110025",
+      "threads": "4",
+      "unmapped_filter_flag": "4"
+    },
+    "tool_versions": {
+      "minimap2": "2.31-r1302",
+      "samtools": "samtools 1.23.1"
+    }
+  },
+  "generated_utc": "2026-07-20T21:25:18.338786+00:00",
+  "provenance_type": "public_alignment",
+  "public_inputs": [
+    {
+      "bytes": 2033558460,
+      "label": "SRR18110025_full_fastq",
+      "md5": "d5bfb9aeba04cae5f3dd79462a42e5b0",
+      "name": "SRR18110025.fastq.gz",
+      "sha256": "c0872ee9ceb772ee5a4b76735c0d670e2159764b23dd800b6eb1f4933da11320"
+    },
+    {
+      "bytes": 10721431,
+      "label": "deterministic_subset_fastq",
+      "md5": "a337abc2691753c56f030f7f523dd750",
+      "name": "SRR18110025.deterministic-qnames-1000.fastq.gz",
+      "sha256": "40e203ead1d621bfec8caa3c5d18cd1e7e70c08da27008a73364812b6871df33"
+    },
+    {
+      "bytes": 1133,
+      "label": "deterministic_subset_manifest",
+      "md5": "cf7881f7c5be992374f610652c9cd664",
+      "name": "SRR18110025.deterministic-qnames-1000.fastq.gz.provenance.json",
+      "sha256": "319e43734ce654c49aec41f6e0bd3547f007170afa600939fc2d6ab1844f9668"
+    },
+    {
+      "bytes": 18422,
+      "label": "selected_query_names",
+      "md5": "64d606e56bf8dd58ad68baad28898e18",
+      "name": "SRR18110025.deterministic-qnames-1000.fastq.gz.selected_qnames.txt",
+      "sha256": "3444cc7db3dcf78bea807d8bcc6686883a7759d128288c1d26aeae077a771a19"
+    }
+  ],
+  "reference": {
+    "bytes": 16864,
+    "name": "NC_012920.1.fa",
+    "sha256": "fc392cde8e63b4d2e3a870bb97cc0626dea33d46dfb8abdebffada040f42ec92"
+  },
+  "reference_index": {
+    "bytes": 27,
+    "name": "NC_012920.1.fa.fai",
+    "sha256": "38e4cd6941e7dca67cfc91f9f11db4f9aed29eb809a530796f75f3a94b6ac7e0"
+  },
+  "schema_version": "1.0"
+}

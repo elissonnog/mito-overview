@@ -1,2 +1,2 @@
-position	ref_base	alt_base	depth	heteroplasmy_fraction	feature_label	feature_class	consequence_class	codon_ref	codon_alt	protein_change	clinvar_significance	clinvar_disease
-8344	A	G	1041	0.724304	MT-TK	Mt_tRNA	tRNA_variant					
+position	ref_base	alt_base	depth	alt_allele_fraction	heteroplasmy_fraction	feature_label	feature_class	consequence_class	codon_ref	codon_alt	protein_change	clinvar_significance	clinvar_disease
+8344	A	G	1027	0.720545	0.720545	MT-TK	Mt_tRNA	tRNA_variant					

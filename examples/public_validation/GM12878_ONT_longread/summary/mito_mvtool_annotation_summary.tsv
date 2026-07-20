@@ -1,0 +1,4 @@
+metric	value
+status	not_configured
+reason_code	mvtool_mode_disabled
+network_request_attempted	0

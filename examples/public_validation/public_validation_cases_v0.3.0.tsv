@@ -1,0 +1,14 @@
+case_id	category	input_available	expected_available	verdict	detail
+gm11906_default_run1	public_default	1	1	PASS	GM11906 short-read workflow completed
+gm11906_default_run2	public_default	1	1	PASS	GM11906 short-read workflow completed
+gm11906_lenient	public_lenient	1	1	PASS	GM11906 short-read workflow completed
+gm11906_strict	public_strict	1	1	PASS	GM11906 short-read workflow completed
+gm12878_default_run1	public_default	1	1	PASS	GM12878 provenance-verified 1000-query-name reduced workflow completed
+gm12878_default_run2	public_default	1	1	PASS	GM12878 provenance-verified 1000-query-name reduced workflow completed
+gm12878_lenient	public_lenient	1	1	PASS	GM12878 provenance-verified 1000-query-name reduced workflow completed
+gm12878_strict	public_strict	1	1	PASS	GM12878 provenance-verified 1000-query-name reduced workflow completed
+gm11906_repeatability	repeatability	1	1	PASS	normalized TSVs matched
+gm11906_visual_integrity	visual_integrity	1	1	PASS	HTML/PNG artifacts were readable and structurally consistent across repeats
+gm12878_repeatability	repeatability	1	1	PASS	normalized TSVs matched conditional on the fixed reduced BAM
+gm12878_visual_integrity	visual_integrity	1	1	PASS	HTML/PNG artifacts were readable and structurally consistent across repeats
+filter_profiles	descriptive_sensitivity	1	1	PASS	0/0/0, 13/20/10, and 20/30/15 profiles summarized

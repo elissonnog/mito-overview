@@ -1,2 +1,2 @@
-position	ref_base	alt_base	depth	alt_count	heteroplasmy_fraction	A	C	G	T	alt_forward	alt_reverse
-8344	A	G	1041	754	0.724304	285	0	754	2	307	447
+position	ref_base	alt_base	callable_depth	depth	alt_count	alt_allele_fraction	heteroplasmy_fraction	alt_forward	alt_reverse	A	C	G	T
+8344	A	G	1027	1027	740	0.720545	0.720545	305	435	285	0	740	2

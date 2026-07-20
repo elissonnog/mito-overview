@@ -2,8 +2,10 @@ metric	value
 sample_id	GM11906_MERRF_shortread
 read_mode	short
 assay_type	targeted_mt
-mapped_reads	1357178.0
-mean_depth	3098.625
+min_callable_depth	10
+min_alt_allele_fraction	0.2
+mapped_reads	1357167.0
+mean_depth	3098.6
 median_depth	3144.0
 high_query_alignment_fraction	0.9864
-candidate_site_count	34
+candidate_site_count	33

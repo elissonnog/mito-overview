@@ -1,12 +1,12 @@
 metric	value
-mapped_reads	1357178.0
-primary_reads	1357178.0
+mapped_reads	1357167.0
+primary_reads	1357167.0
 supplementary_reads	0.0
 secondary_reads	0.0
-mean_depth	3098.625
+mean_depth	3098.6
 median_depth	3144.0
 breadth_1x	1.0
 breadth_10x	1.0
 high_query_alignment_fraction	0.9864
-forward_reads	678215.0
-reverse_reads	678963.0
+forward_reads	678207.0
+reverse_reads	678960.0
