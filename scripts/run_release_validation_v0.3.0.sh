@@ -110,7 +110,7 @@ cp "${REPO_ROOT}/examples/synthetic_data/TOY-SR-001/expected_alleles.tsv" \
 PUBLIC_ROOT="${VALIDATION_ROOT}/public"
 run_logged public_validation_matrix public \
   env MITO_OVERVIEW_PYTHON="${PYTHON_BIN}" \
-  MITO_OVERVIEW_VALIDATION_CACHE="${MITO_OVERVIEW_VALIDATION_CACHE:-/Users/elopes/Desktop/ont_results/mito_overview_validation_cache/v0.3.0}" \
+  MITO_OVERVIEW_VALIDATION_CACHE="${MITO_OVERVIEW_VALIDATION_CACHE:-${XDG_CACHE_HOME:-${HOME}/.cache}/mito-overview/validation/v0.3.0}" \
   "${REPO_ROOT}/scripts/run_public_validation_matrix_v0.3.0.sh" "${PUBLIC_ROOT}"
 tail -n +2 "${PUBLIC_ROOT}/cases.tsv" >> "${CASES_TSV}"
 

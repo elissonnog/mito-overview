@@ -9,7 +9,7 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 OUTPUT_ROOT="$1"
-CACHE_ROOT="${MITO_OVERVIEW_VALIDATION_CACHE:-/Users/elopes/Desktop/ont_results/mito_overview_validation_cache/v0.3.0}"
+CACHE_ROOT="${MITO_OVERVIEW_VALIDATION_CACHE:-${XDG_CACHE_HOME:-${HOME}/.cache}/mito-overview/validation/v0.3.0}"
 PYTHON_BIN="${MITO_OVERVIEW_PYTHON:-python3}"
 
 if [[ -d "${OUTPUT_ROOT}" && -n "$(find "${OUTPUT_ROOT}" -mindepth 1 -maxdepth 1 -print -quit)" ]]; then
@@ -35,6 +35,18 @@ record_case() {
   printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "$5" "$6" >> "${CASES_TSV}"
 }
 
+write_replay_command() {
+  local destination="$1"
+  shift
+  {
+    printf '#!/usr/bin/env bash\nset -euo pipefail\n'
+    printf 'env'
+    printf ' %q' "$@"
+    printf '\n'
+  } > "${destination}"
+  chmod +x "${destination}"
+}
+
 run_short_case() {
   local case_id="$1"
   local profile="$2"
@@ -47,27 +59,21 @@ run_short_case() {
   local log="${OUTPUT_ROOT}/logs/${case_id}.log"
   local command_file="${OUTPUT_ROOT}/commands/${case_id}.sh"
   mkdir -p "${workdir}"
-  cat > "${command_file}" <<EOF
-MITO_OVERVIEW_SHORTREAD_WORKDIR=${workdir} \\
-MITO_OVERVIEW_SHORTREAD_DATA_DIR=${CACHE_ROOT}/GM11906/downloads \\
-MITO_OVERVIEW_SHORTREAD_ALIGN_BAM=${CACHE_ROOT}/GM11906/alignment/GM11906_MERRF_shortread.mt.bam \\
-MITO_OVERVIEW_SHORTREAD_ALLELE_MIN_BASE_QUALITY=${baseq} \\
-MITO_OVERVIEW_SHORTREAD_ALLELE_MIN_MAPPING_QUALITY=${mapq} \\
-MITO_OVERVIEW_SHORTREAD_ALLELE_MIN_READ_MEAN_QUALITY=${readq} \\
-MITO_OVERVIEW_SHORTREAD_REQUIRE_8344=${require_8344} \\
-MITO_OVERVIEW_PUBLIC_OUTPUT_MODE=evidence \\
-${REPO_ROOT}/scripts/run_public_shortread_validation_gm11906.sh ${output_dir}
-EOF
-  if env \
-    MITO_OVERVIEW_PYTHON="${PYTHON_BIN}" \
-    MITO_OVERVIEW_SHORTREAD_WORKDIR="${workdir}" \
-    MITO_OVERVIEW_SHORTREAD_DATA_DIR="${CACHE_ROOT}/GM11906/downloads" \
-    MITO_OVERVIEW_SHORTREAD_ALIGN_BAM="${CACHE_ROOT}/GM11906/alignment/GM11906_MERRF_shortread.mt.bam" \
-    MITO_OVERVIEW_SHORTREAD_ALLELE_MIN_BASE_QUALITY="${baseq}" \
-    MITO_OVERVIEW_SHORTREAD_ALLELE_MIN_MAPPING_QUALITY="${mapq}" \
-    MITO_OVERVIEW_SHORTREAD_ALLELE_MIN_READ_MEAN_QUALITY="${readq}" \
-    MITO_OVERVIEW_SHORTREAD_REQUIRE_8344="${require_8344}" \
-    MITO_OVERVIEW_PUBLIC_OUTPUT_MODE=evidence \
+  local -a case_environment=(
+    "MITO_OVERVIEW_PYTHON=${PYTHON_BIN}"
+    "MITO_OVERVIEW_SHORTREAD_WORKDIR=${workdir}"
+    "MITO_OVERVIEW_SHORTREAD_DATA_DIR=${CACHE_ROOT}/GM11906/downloads"
+    "MITO_OVERVIEW_SHORTREAD_ALIGN_BAM=${CACHE_ROOT}/GM11906/alignment/GM11906_MERRF_shortread.mt.bam"
+    "MITO_OVERVIEW_SHORTREAD_ALLELE_MIN_BASE_QUALITY=${baseq}"
+    "MITO_OVERVIEW_SHORTREAD_ALLELE_MIN_MAPPING_QUALITY=${mapq}"
+    "MITO_OVERVIEW_SHORTREAD_ALLELE_MIN_READ_MEAN_QUALITY=${readq}"
+    "MITO_OVERVIEW_SHORTREAD_REQUIRE_8344=${require_8344}"
+    "MITO_OVERVIEW_PUBLIC_OUTPUT_MODE=evidence"
+  )
+  write_replay_command "${command_file}" \
+    "${case_environment[@]}" \
+    "${REPO_ROOT}/scripts/run_public_shortread_validation_gm11906.sh" "${output_dir}"
+  if env "${case_environment[@]}" \
     "${REPO_ROOT}/scripts/run_public_shortread_validation_gm11906.sh" "${output_dir}" \
     >"${log}" 2>&1; then
     rm -rf "${workdir}"
@@ -90,27 +96,23 @@ run_long_case() {
   local log="${OUTPUT_ROOT}/logs/${case_id}.log"
   local command_file="${OUTPUT_ROOT}/commands/${case_id}.sh"
   mkdir -p "${workdir}"
-  cat > "${command_file}" <<EOF
-MITO_OVERVIEW_LONGREAD_WORKDIR=${workdir} \\
-MITO_OVERVIEW_LONGREAD_DATA_DIR=${CACHE_ROOT}/GM12878/downloads \\
-MITO_OVERVIEW_LONGREAD_FASTQ_GZ=${CACHE_ROOT}/GM12878/downloads/SRR18110025.fastq.gz \\
-MITO_OVERVIEW_LONGREAD_ALIGN_BAM=${CACHE_ROOT}/GM12878/alignment/GM12878_ONT_longread.mt.bam \\
-MITO_OVERVIEW_LONGREAD_ALLELE_MIN_BASE_QUALITY=${baseq} \\
-MITO_OVERVIEW_LONGREAD_ALLELE_MIN_MAPPING_QUALITY=${mapq} \\
-MITO_OVERVIEW_LONGREAD_ALLELE_MIN_READ_MEAN_QUALITY=${readq} \\
-MITO_OVERVIEW_PUBLIC_OUTPUT_MODE=evidence \\
-${REPO_ROOT}/scripts/run_public_longread_validation_gm12878.sh ${output_dir}
-EOF
-  if env \
-    MITO_OVERVIEW_PYTHON="${PYTHON_BIN}" \
-    MITO_OVERVIEW_LONGREAD_WORKDIR="${workdir}" \
-    MITO_OVERVIEW_LONGREAD_DATA_DIR="${CACHE_ROOT}/GM12878/downloads" \
-    MITO_OVERVIEW_LONGREAD_FASTQ_GZ="${CACHE_ROOT}/GM12878/downloads/SRR18110025.fastq.gz" \
-    MITO_OVERVIEW_LONGREAD_ALIGN_BAM="${CACHE_ROOT}/GM12878/alignment/GM12878_ONT_longread.mt.bam" \
-    MITO_OVERVIEW_LONGREAD_ALLELE_MIN_BASE_QUALITY="${baseq}" \
-    MITO_OVERVIEW_LONGREAD_ALLELE_MIN_MAPPING_QUALITY="${mapq}" \
-    MITO_OVERVIEW_LONGREAD_ALLELE_MIN_READ_MEAN_QUALITY="${readq}" \
-    MITO_OVERVIEW_PUBLIC_OUTPUT_MODE=evidence \
+  local -a case_environment=(
+    "MITO_OVERVIEW_PYTHON=${PYTHON_BIN}"
+    "MITO_OVERVIEW_LONGREAD_WORKDIR=${workdir}"
+    "MITO_OVERVIEW_LONGREAD_DATA_DIR=${CACHE_ROOT}/GM12878/downloads"
+    "MITO_OVERVIEW_LONGREAD_FASTQ_GZ=${CACHE_ROOT}/GM12878/downloads/SRR18110025.fastq.gz"
+    "MITO_OVERVIEW_LONGREAD_FULL_ALIGN_BAM=${CACHE_ROOT}/GM12878/alignment/GM12878_ONT_longread.mt.bam"
+    "MITO_OVERVIEW_LONGREAD_SUBSET_BAM=${CACHE_ROOT}/GM12878/alignment/GM12878_ONT_longread.mt.deterministic-qnames-2000.bam"
+    "MITO_OVERVIEW_LONGREAD_SUBSET_READ_NAMES=2000"
+    "MITO_OVERVIEW_LONGREAD_ALLELE_MIN_BASE_QUALITY=${baseq}"
+    "MITO_OVERVIEW_LONGREAD_ALLELE_MIN_MAPPING_QUALITY=${mapq}"
+    "MITO_OVERVIEW_LONGREAD_ALLELE_MIN_READ_MEAN_QUALITY=${readq}"
+    "MITO_OVERVIEW_PUBLIC_OUTPUT_MODE=evidence"
+  )
+  write_replay_command "${command_file}" \
+    "${case_environment[@]}" \
+    "${REPO_ROOT}/scripts/run_public_longread_validation_gm12878.sh" "${output_dir}"
+  if env "${case_environment[@]}" \
     "${REPO_ROOT}/scripts/run_public_longread_validation_gm12878.sh" "${output_dir}" \
     >"${log}" 2>&1; then
     rm -rf "${workdir}"
@@ -184,12 +186,7 @@ done
   "gm12878_strict=GM12878:strict:${OUTPUT_ROOT}/outputs/gm12878_strict"
 record_case filter_profiles descriptive_sensitivity 1 1 PASS "0/0/0, 13/20/10, and 20/30/15 profiles summarized"
 
-find "${CACHE_ROOT}" -type f \
-  ! -name inputs.sha256 \
-  ! -name cache_provenance.tsv \
-  -print \
-  | LC_ALL=C sort \
-  | while IFS= read -r input_file; do shasum -a 256 "${input_file}"; done \
-  > "${OUTPUT_ROOT}/inputs.sha256"
+"${PYTHON_BIN}" "${REPO_ROOT}/scripts/hash_validation_inputs.py" \
+  "${CACHE_ROOT}" "${OUTPUT_ROOT}/inputs.sha256"
 
 echo "[validation-matrix] completed at ${OUTPUT_ROOT}"

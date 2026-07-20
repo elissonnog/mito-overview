@@ -9,6 +9,18 @@ from pathlib import Path
 import pandas as pd
 
 
+EXPECTED_THRESHOLDS = {
+    "lenient": ("0", "0", "0"),
+    "default": ("13", "20", "10"),
+    "strict": ("20", "30", "15"),
+}
+
+
+def normalized_number(value: str) -> str:
+    number = float(value)
+    return str(int(number)) if number.is_integer() else format(number, "g")
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", required=True, type=Path)
@@ -34,6 +46,22 @@ def summarize(case_id: str, dataset: str, profile: str, output_dir: Path) -> dic
         keep_default_na=False,
     )
     metrics = metric_map(summary_dir / "mito_heteroplasmy_summary.tsv")
+    observed_thresholds = tuple(
+        normalized_number(metrics.get(metric, "nan"))
+        for metric in (
+            "allele_min_base_quality",
+            "allele_min_mapping_quality",
+            "allele_min_read_mean_quality",
+        )
+    )
+    expected_thresholds = EXPECTED_THRESHOLDS.get(profile)
+    if expected_thresholds is None:
+        raise ValueError(f"Unsupported filter profile: {profile}")
+    if observed_thresholds != expected_thresholds:
+        raise ValueError(
+            f"Filter profile {case_id} did not apply {expected_thresholds}: "
+            f"observed {observed_thresholds}"
+        )
     site = candidates[
         (pd.to_numeric(candidates["position"], errors="coerce") == 8344)
         & (candidates["ref_base"].str.upper() == "A")
