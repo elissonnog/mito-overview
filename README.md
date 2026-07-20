@@ -1,8 +1,8 @@
 # mito-overview
 
-`mito-overview` is a Python-based workflow for mode-gated mitochondrial DNA (mtDNA) evidence reporting from aligned BAM or CRAM inputs. The current public implementation is centered on a long-read-oriented profile derived from an internally exercised ONT mtDNA reporting workflow, with an auxiliary reduced short-read compatibility profile that preserves only the analytical layers that remain interpretable without long molecules or ONT methylation tracks. The repository emphasizes synchronized HTML, TSV, and figure report generation for mitochondrial QC, heteroplasmy screening, deletion-like structural screening, copy-number proxy estimation when nuclear context is available, feature annotation, same-read co-occurrence, and warning-oriented QC.
+`mito-overview` is a Python-based workflow for mode-gated mitochondrial DNA (mtDNA) evidence reporting from aligned BAM or CRAM inputs. The current public implementation provides a long-read-oriented profile and a reduced short-read compatibility profile that preserves the analytical layers applicable without long molecules or ONT methylation tracks. The repository emphasizes synchronized HTML, TSV, and figure generation for mitochondrial QC, alternate-allele screening, structural screening, depth-proxy reporting when nuclear context is available, feature annotation, same-read co-occurrence, and warning-oriented QC.
 
-`mito-overview` is research software for report generation and reproducibility-oriented review. It is not a clinical reporting engine, primary mtDNA caller, formal NUMT classifier, absolute mtDNA copy-number estimator, or diagnostic interpretation tool.
+Version `0.3.0` is documented as a workflow/resource release. Its public validation evidence covers report execution, synchronized artifacts, mode/status gating, filter-profile sensitivity, and repeatability from provenance-verified fixed BAM inputs.
 
 ## Scope
 - aligned BAM or CRAM input
@@ -70,12 +70,12 @@ Optional human-only enrichment pages are exercised locally in this repository wi
 - a tiny deterministic Phy-Mer vendor stand-in under [`tests/fixtures/mock_phymer_vendor`](tests/fixtures/mock_phymer_vendor)
 - a local mvTool-style annotation fixture under [`tests/fixtures/mock_mvtool_annotations.json`](tests/fixtures/mock_mvtool_annotations.json)
 
-## Representative report views
-The lead figure below shows representative public ONT long-read report-native panels from the GM12878 proof-of-principle asset pack.
+## Report views
+The lead figure below shows public ONT long-read report-native panels from the fixed GM12878 qn1000 asset pack.
 
 ![mito-overview public ONT report-native views](paper/figures/figure0_workflow_architecture.png)
 
-The panels show depth, alternate-allele fractions, selected-site read co-occurrence, and alignment span-versus-MAPQ QC. Candidate sites in this example are not independently validated heteroplasmies, and the alignment panel is not a formal NUMT classifier.
+The panels show depth, alternate-allele fractions, selected-site read co-occurrence, and alignment span-versus-MAPQ QC. These are descriptive workflow outputs from the fixed reduced input.
 
 Regenerate the lead figure with `python scripts/build_workflow_architecture_figure.py`.
 
@@ -188,9 +188,9 @@ In long-read mode without ONT bedmethyl sidecars, page `12` is expected to be a 
 - public repository with a functional core, tracked synthetic smoke-test assets, and an active software/resource preprint draft
 - current repository now includes a synthetic public example bundle generated from the public-core workflow
 - current repository now includes a short-read synthetic bundle plus bounded public long-read and short-read proof-of-principle asset packs
-- cite the software metadata in [`CITATION.cff`](CITATION.cff) (current version `0.2.1`) until a manuscript and/or DOI is posted
+- v0.3.0 public validation evidence was generated from clean commit `dc09114`
+- cite the software metadata in [`CITATION.cff`](CITATION.cff) and use tagged releases for archived versions
 - canonical free-format manuscript source is [`paper/preprint_draft.md`](paper/preprint_draft.md)
-- versioned release archive for this draft: [`v0.2.1`](https://github.com/elissonnog/mito-overview/releases/tag/v0.2.1)
 - design notes for the public package are in [`docs/overview.md`](docs/overview.md) and [`docs/methodology.md`](docs/methodology.md)
 - public long-read proof-of-principle notes are in [`docs/validation_public_longread.md`](docs/validation_public_longread.md)
 - public reduced short-read proof-of-principle notes are in [`docs/validation_public_shortread.md`](docs/validation_public_shortread.md)
@@ -200,8 +200,8 @@ In long-read mode without ONT bedmethyl sidecars, page `12` is expected to be a 
 - the current release-validation audit template is in [`docs/release_validation_audit_2026-07-07.md`](docs/release_validation_audit_2026-07-07.md)
 - contribution and issue-reporting guidance is in [`CONTRIBUTING.md`](CONTRIBUTING.md)
 
-## Auxiliary long-read public proof-of-principle example
-The repository includes a light-weight asset pack from a bounded real public ONT long-read proof-of-principle example:
+## Public long-read reduced-input example
+The repository includes an asset pack from a fixed deterministic subset of a public ONT targeted-mt run:
 - [`examples/public_validation/GM12878_ONT_longread`](examples/public_validation/GM12878_ONT_longread)
 
 This example uses a public GM12878 targeted-mt ONT run from BioProject `PRJNA809571` / run `SRR18110025`, described in the source metadata as `Long read mitochondrial genome sequencing using Cas9-guided adaptor ligation`:
@@ -210,23 +210,36 @@ This example uses a public GM12878 targeted-mt ONT run from BioProject `PRJNA809
 - [Slapnik et al., Sci Rep 2024](https://www.nature.com/articles/s41598-024-78270-0)
 - [Frascarelli et al., Front Genet 2023](https://pubmed.ncbi.nlm.nih.gov/37456669/)
 
-The long-read profile is run in `READ_MODE=long` and `ASSAY_TYPE=targeted_mt`, which preserves the core long-read structural and report layers while keeping targeted-mt-specific boundaries explicit. In the current packaged proof-of-principle rerun, the workflow reports `247254` mapped reads, mean depth `106379.759`, median depth `106032.0`, `28` candidate sites at `VAF>=0.10`, `8` selected same-read co-occurrence sites, `moderate` NUMT heuristic risk, `not_applicable` copy-number and Phy-Mer status pages, and a status-only methylation output because no mitochondrial bedmethyl rows were available.
+The v0.3.0 input is exactly a seeded deterministic subset of `1,000` query names selected from `193,043` source FASTQ records. Its provenance-verified mapped-only BAM has `728` mapped unique query names represented by `728` primary alignments and `543` supplementary records.
 
-This example is included to demonstrate real-data ONT execution, real report-native figure generation, and explicit mode-gated status handling. It is not presented as full `01-14` page coverage, identity-style long-read validation, live mvTool validation, low-VAF heteroplasmy benchmarking, deletion-truth benchmarking, or biological methylation validation.
+At `MIN_CALLABLE_DEPTH=100`, `MIN_ALT_ALLELE_FRACTION=0.10`, and default BaseQ/MAPQ/readQ filters `13/20/10`, the workflow reports `16` candidates, `7,143,152` accepted observations, and `2,047,476` excluded observations. The structural screen emits `13` singleton CIGAR/SA bins. Statuses are `not_applicable` for copy number and Phy-Mer, `not_configured` for mvTool and methylation, and `not_evaluable` for NUMT interpretation with `reference_scope_mt_only`.
+
+| GM12878 profile | BaseQ/MAPQ/readQ | Candidates | Accepted observations |
+| --- | --- | ---: | ---: |
+| lenient | `0/0/0` | 32 | 8,278,969 |
+| default | `13/20/10` | 16 | 7,143,152 |
+| strict | `20/30/15` | 15 | 6,046,355 |
+
+The repeated default invocations start from that same fixed BAM; they do not regenerate the query-name subset or alignment. See [`docs/validation_public_longread.md`](docs/validation_public_longread.md) for the evidence scope.
 
 ## Complementary short-read compatibility example
-The repository also includes a light-weight asset pack from a real public short-read proof-of-principle example:
+The repository also includes an asset pack from a fixed public short-read input:
 - [`examples/public_validation/GM11906_MERRF_shortread`](examples/public_validation/GM11906_MERRF_shortread)
 
-This example uses public GM11906 short-read/scATAC-derived mtDNA reads from the single-cell mtDNA/chromatin profiling study by Lareau and colleagues together with public GM11906 metadata describing the cell line as carrying the literature-associated `m.8344A>G` marker:
+This example uses public GM11906 short-read/scATAC-derived mtDNA reads from the single-cell mtDNA/chromatin profiling study by Lareau and colleagues:
 - [Lareau et al., Nat Biotechnol 2021](https://www.nature.com/articles/s41587-020-0645-6)
 - [GEO sample metadata example](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSM4238489)
 - [Coriell GM11906](https://www.coriell.org/0/Sections/Search/Sample_Detail.aspx?Ref=GM11906)
-- [ClinVar m.8344A>G](https://www.ncbi.nlm.nih.gov/clinvar/RCV000010192.15/)
 
-The short-read example is run in `READ_MODE=short` using the package's `ASSAY_TYPE=targeted_mt` report profile. This profile intentionally preserves the applicable core pages and marks long-read-specific layers as `not_applicable` rather than attempting to reinterpret them. In the bundled proof-of-principle run and fresh release-candidate rerun, the workflow represents the `m.8344A>G` site in the pooled mt-only alignment with depth `1041`, alt count `754`, estimated alternate fraction `0.724304`, and `MT-TK` / `tRNA_variant` annotation.
+The short-read example runs with `READ_MODE=short` and `ASSAY_TYPE=targeted_mt`. At `MIN_CALLABLE_DEPTH=10`, `MIN_ALT_ALLELE_FRACTION=0.20`, and default BaseQ/MAPQ/readQ filters `13/20/10`, it reports `33` candidates, `44,052,664` accepted observations, and `7,293,106` excluded observations. The `m.8344A>G` row has depth `1,027`, alternate count `740`, `AF=0.720545`, and `MT-TK` / `tRNA_variant` annotation.
 
-This example is included to demonstrate real-data execution and marker representation under the reduced short-read profile. It is not presented as modality-matched or cohort-scale short-read validation, calibrated heteroplasmy benchmarking, non-WGS copy-number estimation, definitive NUMT discrimination, or validation of long-read-only layers.
+| GM11906 profile | BaseQ/MAPQ/readQ | Candidates | Accepted observations |
+| --- | --- | ---: | ---: |
+| lenient | `0/0/0` | 33 | 44,052,664 |
+| default | `13/20/10` | 33 | 44,052,664 |
+| strict | `20/30/15` | 33 | 42,676,166 |
+
+The repeated default invocations start from the same provenance-verified BAM and do not regenerate the alignment. See [`docs/validation_public_shortread.md`](docs/validation_public_shortread.md) for the evidence scope.
 
 ## Preprint
 A software/resource preprint is in preparation. A citation link and versioned preprint reference will be added here when posted.

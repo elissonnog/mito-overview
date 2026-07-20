@@ -1,54 +1,60 @@
-# Public ONT long-read proof-of-principle example
+# Public ONT long-read reduced-input workflow evidence
 
-`mito-overview` now includes a bounded real-data ONT long-read example that exercises the core long-read workflow on a public targeted-mt dataset.
+`mito-overview` v0.3.0 includes a bounded public GM12878 ONT targeted-mt example for exercising the long-read report workflow and its assay-mode status handling.
 
-Current public real-data example path:
-- sample source: public GM12878 ONT targeted-mt run
+## Evidence scope
+- evidence snapshot: `2026-07-20`
+- clean source commit: `dc09114`
 - public accessions: BioProject `PRJNA809571`, run `SRR18110025`
 - public assay description: `Long read mitochondrial genome sequencing using Cas9-guided adaptor ligation`
-- use case: proof-of-principle long-read operability, real report-native figure generation, and explicit assay-boundary handling
+- profile: `READ_MODE=long`, `ASSAY_TYPE=targeted_mt`
+- runner: `scripts/run_public_longread_validation_gm12878.sh`
 
-Included proof-of-principle script:
-- `scripts/run_public_longread_validation_gm12878.sh`
+## Fixed reduced input
+The source FASTQ contains `193,043` records. The v0.3.0 input is exactly a seeded deterministic subset of `1,000` query names, with one FASTQ record per selected name. The provenance-verified mapped-only BAM contains:
 
-Current rerun status:
-- fresh rerun completed on `2026-06-23` in the local Mac reproducibility environment
-- the current packaged proof-of-principle rerun uses `HET_MIN_VAF=0.10`
-- the tracked light-weight asset pack under `examples/public_validation/GM12878_ONT_longread` was refreshed from that rerun
-- one ambiguous-reference candidate-like site (`3107 N>T`) is now excluded from the candidate set so heteroplasmy and consequence outputs remain internally consistent
+- `728` mapped unique query names
+- `728` primary alignments
+- `543` supplementary records
+- `1,271` mapped alignment records in total
 
-What this example is intended to demonstrate:
-- configuration and execution of `READ_MODE=long`
-- real public ONT generation of QC, heteroplasmy, deletion-screening, same-read co-occurrence, gene-summary, NUMT-QC, circularity-QC, and consequence outputs
-- honest targeted-mt assay gating with `not_applicable` status for `copy_number` and `phymer_haplogroup`
-- stable status-only methylation reporting when mitochondrial bedmethyl rows are unavailable
+The validation matrix reuses that fixed BAM. Its repeatability result is conditional on the BAM and does not test regeneration of the query-name subset or alignment.
 
-What this example does **not** demonstrate by itself:
-- full `01-14` public page coverage
-- identity-style long-read validation
-- live mvTool-backed annotation validation
-- low-VAF heteroplasmy benchmarking
-- validated deletion truth benchmarking
-- formal mtDNA-versus-NUMT classification
-- biological methylation conclusions
+## Default profile
+The example-specific candidate thresholds are `MIN_CALLABLE_DEPTH=100` and `MIN_ALT_ALLELE_FRACTION=0.10`. The default observation filters are `ALLELE_MIN_BASE_QUALITY=13`, `ALLELE_MIN_MAPPING_QUALITY=20`, and `ALLELE_MIN_READ_MEAN_QUALITY=10`.
 
-Current observed values in the packaged proof-of-principle run:
-- mapped reads: `247254`
-- mean depth: `106379.759`
-- median depth: `106032.0`
-- full-length fraction: `0.3758`
-- candidate heteroplasmy sites at `VAF>=0.10`: `28`
-- selected same-read co-occurrence sites: `8`
-- candidate deletion clusters: `1337`
-- maximum deletion support fraction among primary reads: `2.1e-05`
-- NUMT heuristic risk: `moderate`
-- `copy_number` status: `not_applicable`
-- `phymer_haplogroup` status: `not_applicable`
-- methylation status: `no_mt_bedmethyl_rows_available`
+The default run reports:
 
-Interpretation note:
-- the deletion layer in this public example should be treated as a low-support screening layer, not as validated evidence of biologically meaningful deletion burden
-- the leading candidate-site table is dominated by high-fraction background-style mtDNA differences and should not be presented as a low-fraction heteroplasmy benchmark
+- `16` candidate sites
+- `7,143,152` accepted observations
+- `2,047,476` excluded observations
+- `13` singleton CIGAR/SA structural-screen bins
+
+The 13 screen bins each have one supporting primary read. They are descriptive workflow output from this fixed input.
+
+Targeted-mt and optional-layer status values are:
+
+| Layer | Status | Detail |
+| --- | --- | --- |
+| `copy_number` | `not_applicable` | targeted-mt input lacks the required nuclear context |
+| `phymer_haplogroup` | `not_applicable` | targeted-mt assay gating |
+| `mvtool_annotation` | `not_configured` | optional integration disabled |
+| `methylation_exploratory` | `not_configured` | no bedmethyl sidecars configured |
+| NUMT interpretation | `not_evaluable` | `reference_scope_mt_only` |
+
+## Filter-profile matrix
+Profiles vary only the allele-observation quality filters; candidate thresholds remain fixed.
+
+Candidate counts are lenient=`32`, default=`16`, and strict=`15`; accepted observations are lenient=`8,278,969`, default=`7,143,152`, and strict=`6,046,355`.
+
+| Profile | BaseQ | MAPQ | ReadQ | Candidate sites | Accepted observations | Excluded observations |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| lenient | 0 | 0 | 0 | 32 | 8,278,969 | 911,659 |
+| default | 13 | 20 | 10 | 16 | 7,143,152 | 2,047,476 |
+| strict | 20 | 30 | 15 | 15 | 6,046,355 | 3,144,273 |
+
+## Repeatability and claim scope
+Two default invocations from the same provenance-verified BAM produced matching normalized TSVs. HTML and PNG artifacts were readable and structurally consistent across the repeats. This evidence supports fixed-input workflow execution, report/resource generation, profile sensitivity, and status gating only.
 
 Tracked asset pack:
 - `examples/public_validation/GM12878_ONT_longread`

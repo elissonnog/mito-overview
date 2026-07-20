@@ -1,7 +1,7 @@
 # Methodology
 
 ## Core analytical logic
-The public package retains the modular structure of the internal HPC workflow while making read-mode and assay-mode boundaries explicit.
+The v0.3.0 public package uses a modular, mode-gated report workflow. Read mode and assay type determine whether each layer runs, writes a status-only output, or is marked `not_applicable`.
 
 Primary analytical layers:
 1. metadata discovery and provenance capture
@@ -19,5 +19,34 @@ Primary analytical layers:
 13. circularity edge QC
 14. exploratory methylation summary
 
-## Scientific interpretation
-The intended scientific emphasis is genetics-first and long-read-aware. Methylation remains an exploratory secondary layer rather than the central mitochondrial conclusion. Warning-oriented QC layers should not be interpreted as calibrated classifiers unless additional validation is added.
+## Candidate and observation filters
+Candidate-site selection uses the canonical configuration keys `MIN_CALLABLE_DEPTH` and `MIN_ALT_ALLELE_FRACTION`. Package defaults are `100` reads and `0.02`, respectively. Public validation examples keep their documented candidate thresholds fixed while varying the observation-quality filters.
+
+The default allele-observation filters are:
+
+| Filter | Default |
+| --- | ---: |
+| `ALLELE_MIN_BASE_QUALITY` | 13 |
+| `ALLELE_MIN_MAPPING_QUALITY` | 20 |
+| `ALLELE_MIN_READ_MEAN_QUALITY` | 10 |
+
+The v0.3.0 sensitivity matrix uses lenient `0/0/0`, default `13/20/10`, and strict `20/30/15` BaseQ/MAPQ/readQ profiles. Candidate thresholds do not change between those profiles.
+
+For GM11906, candidate counts are lenient=`33`, default=`33`, and strict=`33`, while accepted observations are lenient=`44,052,664`, default=`44,052,664`, and strict=`42,676,166`. For GM12878 qn1000, candidate counts are lenient=`32`, default=`16`, and strict=`15`, while accepted observations are lenient=`8,278,969`, default=`7,143,152`, and strict=`6,046,355`.
+
+| Dataset | Metric | Lenient | Default | Strict |
+| --- | --- | ---: | ---: | ---: |
+| GM11906 | candidate sites | 33 | 33 | 33 |
+| GM11906 | accepted observations | 44,052,664 | 44,052,664 | 42,676,166 |
+| GM12878 qn1000 | candidate sites | 32 | 16 | 15 |
+| GM12878 qn1000 | accepted observations | 8,278,969 | 7,143,152 | 6,046,355 |
+
+## Status semantics
+- `not_applicable`: the read/assay mode excludes the layer.
+- `not_configured`: an optional input or integration was not enabled.
+- `not_evaluable`: an output is generated, but its input scope does not support that interpretation.
+
+For the GM12878 targeted-mt input, copy number and Phy-Mer are `not_applicable`, mvTool and methylation are `not_configured`, and NUMT interpretation is `not_evaluable` with reason `reference_scope_mt_only`.
+
+## Repeatability scope
+The v0.3.0 repeatability checks invoke the workflow twice from each provenance-verified fixed BAM, compare normalized TSV outputs, and inspect HTML/PNG structure. They do not regenerate the GM12878 query-name subset or either dataset's alignment. Results therefore support fixed-input workflow and resource repeatability only.

@@ -1,48 +1,49 @@
-# Public reduced short-read proof-of-principle compatibility example
+# Public reduced short-read workflow evidence
 
-`mito-overview` now includes a separate short-read profile that keeps the long-read workflow intact while marking long-read-specific analytical layers as not applicable.
+`mito-overview` v0.3.0 includes a GM11906 public short-read example for exercising the reduced report profile and explicit status pages for long-read-only layers.
 
-Current public real-data example path:
-- sample source: public GM11906 short-read/scATAC-derived mtDNA reads
-- biological context: public sample metadata describes GM11906 as a lymphoblastoid cell line derived from a donor with pathogenic `m.8344A>G`
-- use case: proof-of-principle reduced short-read operability and marker representation
+## Evidence scope
+- evidence snapshot: `2026-07-20`
+- clean source commit: `dc09114`
+- source runs: `SRR10804585`, `SRR10804590`, and `SRR10804657`
+- sample context: GM11906 lymphoblastoid-cell short-read/scATAC-derived mtDNA reads
+- profile: `READ_MODE=short`, `ASSAY_TYPE=targeted_mt`
+- runner: `scripts/run_public_shortread_validation_gm11906.sh`
 
-Included proof-of-principle script:
-- `scripts/run_public_shortread_validation_gm11906.sh`
+The three public runs are combined for the reduced-profile report. The v0.3.0 matrix reuses a provenance-verified fixed BAM.
 
-Current rerun status:
-- fresh rerun completed on `2026-06-23` in the local Mac reproducibility environment
-- public FASTQ downloads were executed from EBI with explicit retries and timeouts
-- the tracked light-weight asset pack under `examples/public_validation/GM11906_MERRF_shortread` was refreshed from that rerun
+## Default profile
+The example-specific candidate thresholds are `MIN_CALLABLE_DEPTH=10` and `MIN_ALT_ALLELE_FRACTION=0.20`. The default observation filters are `ALLELE_MIN_BASE_QUALITY=13`, `ALLELE_MIN_MAPPING_QUALITY=20`, and `ALLELE_MIN_READ_MEAN_QUALITY=10`.
 
-What this example is intended to demonstrate:
-- configuration and execution of `READ_MODE=short`
-- preservation of the report structure with explicit `not_applicable` pages for long-read-only layers
-- detection/reporting of mtDNA variation from real public short-read data
-- real figure generation from a public dataset
+The default run reports:
 
-What this example does **not** demonstrate by itself:
-- clinical-grade short-read pathogenicity calling
-- formal heteroplasmy benchmarking across short-read cohorts
-- accurate mt:nuclear copy-number estimation for non-WGS assays
-- definitive NUMT discrimination from a mt-only alignment strategy
+- `33` candidate sites
+- `44,052,664` accepted observations
+- `7,293,106` excluded observations
+- `m.8344A>G` at depth `1,027`, with `740` alternate observations and `AF=0.720545`
+- `MT-TK` feature context and `tRNA_variant` consequence output for position `8344`
 
-Current public dataset choice:
-- runs `SRR10804585`, `SRR10804590`, and `SRR10804657`
-- same GM11906 cell-line source in public metadata
-- combined in the proof-of-principle script to increase mitochondrial coverage for reduced-profile reporting
+## Filter-profile matrix
+Profiles vary only the allele-observation quality filters; candidate thresholds remain fixed.
 
-Current observed recovery in the bundled example:
-- site recovered: `m.8344A>G`
-- depth at position `8344`: `1041`
-- alternate count: `754`
-- estimated alternate fraction in the current implementation: `0.724304`
-- feature context: `MT-TK`
-- consequence class: `tRNA_variant`
+Candidate counts are lenient=`33`, default=`33`, and strict=`33`; accepted observations are lenient=`44,052,664`, default=`44,052,664`, and strict=`42,676,166`.
+
+| Profile | BaseQ | MAPQ | ReadQ | Candidate sites | Accepted observations | Excluded observations |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| lenient | 0 | 0 | 0 | 33 | 44,052,664 | 7,293,106 |
+| default | 13 | 20 | 10 | 33 | 44,052,664 | 7,293,106 |
+| strict | 20 | 30 | 15 | 33 | 42,676,166 | 8,669,604 |
+
+## Mode-gated statuses
+The reduced short-read targeted-mt profile writes `not_applicable` status outputs for `deletions`, `copy_number`, `cosegregation`, `numt_qc`, `phymer_haplogroup`, `identity_qc`, `circularity_qc`, and `methylation_exploratory`. Optional `mvtool_annotation` is `not_configured` when disabled.
+
+## Repeatability and claim scope
+Two default invocations from the same provenance-verified BAM produced matching normalized TSVs. HTML and PNG artifacts were readable and structurally consistent across the repeats. This result is conditional on the fixed BAM; it does not assess download, FASTQ combination, or alignment regeneration. The evidence supports workflow execution, report/resource generation, profile sensitivity, and mode gating only.
+
+Tracked asset pack:
+- `examples/public_validation/GM11906_MERRF_shortread`
 
 References and source metadata:
 - [Lareau et al., Nat Biotechnol 2021](https://www.nature.com/articles/s41587-020-0645-6)
 - [GEO sample metadata example](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSM4238489)
 - [Coriell GM11906](https://www.coriell.org/0/Sections/Search/Sample_Detail.aspx?Ref=GM11906)
-- [Shoffner et al., Cell 1990](https://pubmed.ncbi.nlm.nih.gov/2112427/)
-- [ClinVar m.8344A>G](https://www.ncbi.nlm.nih.gov/clinvar/RCV000010192.15/)
