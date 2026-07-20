@@ -41,6 +41,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--sample-id", required=True)
     parser.add_argument("--mt-contig", required=True)
     parser.add_argument("--mt-length", type=int, required=True)
+    parser.add_argument("--reference-scope", default="custom", choices=("whole_genome", "mt_only", "custom"))
     return parser
 
 
@@ -112,29 +113,36 @@ def render_no_reads_report(
     sample_id: str,
     mt_contig: str,
     mt_length: int,
+    reference_scope: str,
 ) -> dict[str, Path]:
     """Write outputs for runs without mitochondrial read-level stats."""
 
     print("[numt_qc] no mito_read_stats.tsv available; writing status-only outputs", flush=True)
     summary_df = pd.DataFrame(
-        [{"metric": "status", "value": "no_read_stats_available"}],
+        [
+            {"metric": "status", "value": "not_evaluable"},
+            {"metric": "reason_code", "value": "no_read_stats_available"},
+            {"metric": "reference_scope", "value": reference_scope},
+            {"metric": "numt_interpretation_status", "value": "not_evaluable"},
+        ],
         columns=SUMMARY_COLUMNS,
     )
     summary_df.to_csv(summary_path, sep="\t", index=False)
     intro_html = (
-        '<p class="muted">NUMT-aware QC could not be computed because read-level mitochondrial '
+        '<p class="muted">Alignment-ambiguity QC could not be computed because read-level mitochondrial '
         "alignment statistics were not available.</p>"
     )
     body_html = "<section><h2>Status</h2>" + df_to_html_table(summary_df, max_rows=20) + "</section>"
     render_page(
         report_path,
-        "Mito NUMT-aware QC",
+        "Mito Alignment-Ambiguity QC",
         sample_id,
         f"{mt_contig}:1-{mt_length}",
         intro_html,
         body_html,
     )
     return {
+        "status": "not_evaluable",
         "summary_path": summary_path,
         "report_path": report_path,
     }
@@ -148,10 +156,15 @@ def run_step(
     sample_id: str,
     mt_contig: str,
     mt_length: int,
-) -> dict[str, Path]:
+    reference_scope: str = "custom",
+) -> dict[str, Path | str]:
     """Run the public NUMT-aware mitochondrial QC step."""
 
-    print(f"[numt_qc] starting sample={sample_id} contig={mt_contig} length={mt_length}", flush=True)
+    print(
+        f"[numt_qc] starting sample={sample_id} contig={mt_contig} length={mt_length} "
+        f"reference_scope={reference_scope}",
+        flush=True,
+    )
     summary_dir = Path(summary_dir)
     figure_dir = Path(figure_dir)
     report_dir = Path(report_dir)
@@ -181,6 +194,7 @@ def run_step(
             sample_id=sample_id,
             mt_contig=mt_contig,
             mt_length=mt_length,
+            reference_scope=reference_scope,
         )
 
     if "is_primary" in reads_df.columns:
@@ -211,16 +225,30 @@ def run_step(
     risk_score += 1 if supplementary_fraction > 0.15 else 0
     risk_score += 1 if full_length_fraction < 0.01 else 0
     risk = risk_label(risk_score)
+    if reference_scope == "whole_genome":
+        interpretation_status = "ok"
+        reason_code = ""
+        reported_risk = risk
+        reported_risk_score: int | str = risk_score
+    else:
+        interpretation_status = "not_evaluable"
+        reason_code = f"reference_scope_{reference_scope}"
+        reported_risk = "not_evaluable"
+        reported_risk_score = ""
     print(
         f"[numt_qc] fractions low_mapq={low_mapq_fraction:.4f} very_low_mapq={very_low_mapq_fraction:.4f} "
         f"short_span={short_span_fraction:.4f} heavy_softclip={heavy_softclip_fraction:.4f} "
         f"sa={sa_fraction:.4f} supplementary={supplementary_fraction:.4f} "
-        f"full_length={full_length_fraction:.4f} risk={risk} score={risk_score}",
+        f"full_length={full_length_fraction:.4f} risk={reported_risk} score={reported_risk_score}",
         flush=True,
     )
 
     summary_df = pd.DataFrame(
         [
+            {"metric": "status", "value": "ok"},
+            {"metric": "reference_scope", "value": reference_scope},
+            {"metric": "numt_interpretation_status", "value": interpretation_status},
+            {"metric": "reason_code", "value": reason_code},
             {"metric": "reads_evaluated", "value": int(len(eval_df))},
             {"metric": "low_mapq_fraction_lt20", "value": round(low_mapq_fraction, 6)},
             {"metric": "very_low_mapq_fraction_lt5", "value": round(very_low_mapq_fraction, 6)},
@@ -229,8 +257,8 @@ def run_step(
             {"metric": "sa_tag_fraction", "value": round(sa_fraction, 6)},
             {"metric": "supplementary_fraction_all_reads", "value": round(supplementary_fraction, 6)},
             {"metric": "full_length_fraction", "value": round(full_length_fraction, 6)},
-            {"metric": "heuristic_numt_risk", "value": risk},
-            {"metric": "heuristic_numt_risk_score", "value": int(risk_score)},
+            {"metric": "heuristic_numt_risk", "value": reported_risk},
+            {"metric": "heuristic_numt_risk_score", "value": reported_risk_score},
         ],
         columns=SUMMARY_COLUMNS,
     )
@@ -280,7 +308,7 @@ def run_step(
     plt.bar(metric_plot_df["metric"], metric_plot_df["fraction"], color="#7c3aed")
     plt.xticks(rotation=20)
     plt.ylabel("Fraction of reads")
-    plt.title(f"{sample_id} mito QC fractions used for NUMT-aware warning")
+    plt.title(f"{sample_id} mitochondrial alignment-ambiguity QC fractions")
     plt.tight_layout()
     plt.savefig(metrics_fig, dpi=150)
     plt.close()
@@ -288,8 +316,8 @@ def run_step(
 
     metrics_html = "".join(
         [
-            metric_card("Heuristic NUMT risk", risk),
-            metric_card("Risk score", int(risk_score)),
+            metric_card("NUMT interpretation", interpretation_status),
+            metric_card("Heuristic risk", reported_risk),
             metric_card("Low MAPQ fraction", round(low_mapq_fraction, 4)),
             metric_card("Short-span fraction", round(short_span_fraction, 4)),
             metric_card("Heavy soft-clip fraction", round(heavy_softclip_fraction, 4)),
@@ -297,11 +325,12 @@ def run_step(
         ]
     )
     intro_html = (
-        '<p class="muted">This page provides a conservative, heuristic warning layer for '
-        "mitochondrial reads that may be more vulnerable to NUMT-like interpretation issues. "
+        '<p class="muted">This page reports mitochondrial alignment-structure and ambiguity metrics. '
+        "A categorical NUMT warning is shown only when reads were aligned against a recognized whole-genome reference. "
         "The summary is based on read-level alignment structure, including MAPQ, mitochondrial "
         "span coverage, soft clipping, supplementary alignments, and SA-tag frequency. "
-        "It is intended as QC context rather than a formal NUMT classifier.</p>"
+        f"The resolved reference scope is {reference_scope}; NUMT interpretation status is {interpretation_status}. "
+        "This remains QC context rather than a formal NUMT classifier.</p>"
         f"<div class='metrics-grid'>{metrics_html}</div>"
     )
 
@@ -332,7 +361,7 @@ def run_step(
 
     render_page(
         report_path,
-        "Mito NUMT-aware QC",
+        "Mito Alignment-Ambiguity QC",
         sample_id,
         f"{mt_contig}:1-{mt_length}",
         intro_html,
@@ -340,6 +369,7 @@ def run_step(
     )
     print(f"[numt_qc] wrote report {report_path}", flush=True)
     outputs = {
+        "status": "ok",
         "summary_path": summary_path,
         "metrics_figure_path": metrics_fig,
         "report_path": report_path,
@@ -358,6 +388,7 @@ def main() -> None:
         sample_id=args.sample_id,
         mt_contig=args.mt_contig,
         mt_length=args.mt_length,
+        reference_scope=args.reference_scope,
     )
     for path in outputs.values():
         print(f"Wrote {path}")
