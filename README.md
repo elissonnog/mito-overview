@@ -70,18 +70,14 @@ Optional human-only enrichment pages are exercised locally in this repository wi
 - a tiny deterministic Phy-Mer vendor stand-in under [`tests/fixtures/mock_phymer_vendor`](tests/fixtures/mock_phymer_vendor)
 - a local mvTool-style annotation fixture under [`tests/fixtures/mock_mvtool_annotations.json`](tests/fixtures/mock_mvtool_annotations.json)
 
-The corresponding expected public example output bundle is:
-- [`examples/expected_reports/TOY-001_output`](examples/expected_reports/TOY-001_output)
-- [`examples/expected_reports/TOY-SR-001_output`](examples/expected_reports/TOY-SR-001_output)
-
 ## Representative report views
-The workflow-level figure below summarizes the mode-gated reporting architecture and embeds public ONT long-read report-native panels from the GM12878 proof-of-principle asset pack.
+The lead figure below shows representative public ONT long-read report-native panels from the GM12878 proof-of-principle asset pack.
 
-![mito-overview workflow architecture and public ONT proof-of-principle panels](paper/figures/figure0_workflow_architecture.png)
+![mito-overview public ONT report-native views](paper/figures/figure0_workflow_architecture.png)
 
-The main figure below is the tracked public ONT long-read proof-of-principle montage from the GM12878 public asset pack. It is included to show the kinds of real report-native views the workflow generates in practice while keeping the underlying claims bounded to workflow execution, mode-gated status handling, and report production.
+The panels show depth, alternate-allele fractions, selected-site read co-occurrence, and alignment span-versus-MAPQ QC. Candidate sites in this example are not independently validated heteroplasmies, and the alignment panel is not a formal NUMT classifier.
 
-![GM12878 public ONT long-read proof-of-principle report montage](examples/public_validation/GM12878_ONT_longread/figures/GM12878_ONT_longread_montage.png)
+Regenerate the lead figure with `python scripts/build_workflow_architecture_figure.py`.
 
 The repository also includes a complementary real public short-read proof-of-principle montage from GM11906:
 

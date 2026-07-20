@@ -1,33 +1,19 @@
 # Figure Plan
 
-## Figure 1. Workflow architecture and public ONT long-read proof-of-principle views
+## Figure 1. Public ONT long-read report-native views
 - file: `paper/figures/figure0_workflow_architecture.png`
-- source bundle: `examples/public_validation/GM12878_ONT_longread`
+- source: `scripts/build_workflow_architecture_figure.py`
 - panels:
-  - mode-gated workflow overview
   - mitochondrial depth profile
-  - heteroplasmy landscape
-  - long-read co-segregation heatmap
-  - NUMT-warning span-versus-MAPQ QC
+  - alternate-allele fraction landscape
+  - selected-site read co-occurrence heatmap
+  - mitochondrial alignment span-versus-MAPQ QC
 - role in manuscript:
-  - introduce the algorithmic structure and output contract
-  - show real report-native public ONT panels rather than a schematic-only workflow
+  - show representative report-native public ONT output views
+  - remove the workflow schematic from the lead figure
   - keep interpretation at workflow/resource level
 
-## Figure 2. Public ONT long-read proof-of-principle report-native montage
-- file: `paper/figures/figure1_public_longread_validation_montage.png`
-- source bundle: `examples/public_validation/GM12878_ONT_longread`
-- panels:
-  - heteroplasmy landscape
-  - co-segregation heatmap
-  - gene summary
-  - NUMT-aware QC span vs MAPQ
-- role in manuscript:
-  - demonstrate real-data `READ_MODE=long` execution on a public ONT targeted-mt dataset
-  - show that core long-read report-native views are generated on a bounded public example
-  - keep assay boundaries explicit: `copy_number` and `phymer_haplogroup` are `not_applicable`, and methylation is status-only in this exemplar
-
-## Figure 3. Complementary short-read proof-of-principle compatibility example
+## Figure 2. Complementary short-read proof-of-principle compatibility example
 - file: `paper/figures/figure2_shortread_public_validation_montage.png`
 - source bundle: `examples/public_validation/GM11906_MERRF_shortread`
 - panels:

@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+- replaced the lead workflow schematic with public ONT report-native views
+- tightened figure terminology and manuscript caveats for alternate-allele, read co-occurrence, and alignment-QC outputs
+- consolidated the manuscript to one long-read lead figure and one complementary short-read figure
+- added a reproducible deterministic figure builder and removed repository-specific local paths
+
 ## v0.2.1 - 2026-07-07
 - synchronized release metadata across `pyproject.toml`, `CITATION.cff`, README, release checklist, and manuscript source
 - added Xiaowu Gai to software and manuscript authorship metadata

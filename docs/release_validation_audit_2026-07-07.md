@@ -10,9 +10,7 @@ Release target: `v0.2.1`
 
 Canonical manuscript source: `paper/preprint_draft.md`
 
-Validation packet root:
-
-`/Users/elopes/Desktop/ont_results/mito_overview_validation_packets/mito_overview_validation_2026-07-07`
+Validation packet: external local release artifact, not included in this repository.
 
 ## Scientific Scope
 
@@ -24,7 +22,7 @@ This validation packet supports a conservative workflow/resource software prepri
 | --- | --- |
 | Version | `0.2.1` |
 | Tag | `v0.2.1` |
-| Exact tag target commit | To be recorded after merge/tag |
+| Exact tag target commit | `2ba62b775a7204c0dc61f5408989603f536c78da` |
 | GitHub release archive | `https://github.com/elissonnog/mito-overview/releases/tag/v0.2.1` |
 | External archive DOI or SWHID | Not assigned at local validation time; add after Zenodo or Software Heritage archival |
 | Authors | Elisson Lopes; Xiaowu Gai |

@@ -19,9 +19,9 @@ This checklist defines what must be true before tagging `mito-overview` as a man
 | long-read no-methylation smoke test | present | `tests/smoke_public_pipeline_longread_nomethyl.sh` |
 | public GM12878 ONT proof-of-principle assets | present | report-native figures and summary tables under `examples/public_validation/GM12878_ONT_longread/` |
 | public GM11906 reduced short-read proof-of-principle assets | present | marker-focused assets under `examples/public_validation/GM11906_MERRF_shortread/` |
-| manuscript-supporting version | planned as `v0.2.1` | use a new patch release because `v0.2.0` already points to an earlier commit |
+| manuscript-supporting version | `v0.2.1` tagged; current figure update unreleased | use `v0.2.2` for the next manuscript-supporting release |
 | release DOI or Software Heritage archive | not yet assigned | GitHub tag archive is the active release identifier until an external archive identifier is minted |
-| exact release commit in manuscript | pending release freeze | insert after merge/tag |
+| exact `v0.2.1` release commit | recorded | `2ba62b775a7204c0dc61f5408989603f536c78da` |
 | clean-checkout rerun transcript | pending release freeze | record in `docs/release_validation_audit_2026-07-07.md` |
 | independent reproducibility re-check | pending release freeze | record reviewer/separate-thread outcome in the validation audit |
 
@@ -60,7 +60,7 @@ Optional but manuscript-relevant public proof-of-principle reruns:
 1. Ensure the working tree contains only intended release files.
 2. Run the must-pass commands from a clean checkout.
 3. Commit all release files.
-4. Tag the release as `v0.2.1` unless a later patch release is intentionally selected.
+4. Tag the next release as `v0.2.2` after its release freeze.
 5. Archive the tag through Zenodo or Software Heritage.
 6. Update `CITATION.cff`, `README.md`, and the manuscript with the tag, commit, and archive DOI or persistent identifier.
 

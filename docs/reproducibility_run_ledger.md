@@ -46,9 +46,7 @@ Note: the folder label `GM11906_MERRF_shortread` is a historical project label f
 
 ## v0.2.1 Release-Freeze Evidence Plan
 
-The current release-freeze validation packet is expected at:
-
-- `/Users/elopes/Desktop/ont_results/mito_overview_validation_packets/mito_overview_validation_2026-07-07`
+The release-freeze validation packet is an external local artifact and is not included in this repository.
 
 The packet should include:
 
