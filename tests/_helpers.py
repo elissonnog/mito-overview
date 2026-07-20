@@ -16,6 +16,7 @@ class ReadSpec:
     mapping_quality: int = 60
     qualities: tuple[int, ...] | None = None
     cigar: tuple[tuple[int, int], ...] | None = None
+    tags: tuple[tuple[str, object], ...] = ()
 
 
 def write_fasta(path: Path, contigs: dict[str, str]) -> Path:
@@ -51,6 +52,7 @@ def write_alignment(
             segment.cigartuples = list(spec.cigar or ((0, len(spec.sequence)),))
             qualities = spec.qualities or tuple([40] * len(spec.sequence))
             segment.query_qualities = list(qualities)
+            segment.set_tags(list(spec.tags))
             handle.write(segment)
     pysam.index(str(path))
     return path

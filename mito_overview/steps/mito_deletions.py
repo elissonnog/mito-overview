@@ -77,9 +77,9 @@ def run_step(
     bam_handle = pysam.AlignmentFile(str(bam), "rb")
     event_rows: list[dict[str, object]] = []
     read_rows: list[dict[str, object]] = []
-    primary_reads = 0
-    reads_with_large_deletion = 0
-    reads_with_supplementary = 0
+    primary_read_names: set[str] = set()
+    read_names_with_large_deletion: set[str] = set()
+    read_names_with_supplementary_or_sa: set[str] = set()
     processed_reads = 0
     event_counter = Counter()
 
@@ -88,11 +88,14 @@ def run_step(
             continue
         processed_reads += 1
         if processed_reads % 5000 == 0:
-            print(f"[deletions] scanned reads={processed_reads} events={len(event_rows)}")
+            print(
+                f"[deletions] scanned alignment_records={processed_reads} "
+                f"events={len(event_rows)}"
+            )
         if not read.is_supplementary:
-            primary_reads += 1
+            primary_read_names.add(read.query_name)
         if read.has_tag("SA") or read.is_supplementary:
-            reads_with_supplementary += 1
+            read_names_with_supplementary_or_sa.add(read.query_name)
 
         has_large = False
         ref_pos = read.reference_start + 1
@@ -120,7 +123,7 @@ def run_step(
             elif op in (1, 4, 5, 6):
                 continue
         if has_large:
-            reads_with_large_deletion += 1
+            read_names_with_large_deletion.add(read.query_name)
         read_rows.append(
             {
                 "read_name": read.query_name,
@@ -130,6 +133,9 @@ def run_step(
             }
         )
     bam_handle.close()
+    primary_reads = len(primary_read_names)
+    reads_with_large_deletion = len(read_names_with_large_deletion)
+    reads_with_supplementary = len(read_names_with_supplementary_or_sa)
     print(f"[deletions] finished scanning primary_reads={primary_reads} candidate_events={len(event_rows)}")
 
     event_df = pd.DataFrame(event_rows, columns=EVENT_COLUMNS)
