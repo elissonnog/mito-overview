@@ -9,6 +9,7 @@ import json
 import subprocess
 import tarfile
 import zipfile
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -21,6 +22,8 @@ packet_builder = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(packet_builder)
 
 REPOSITORY = "https://github.com/elissonnog/mito-overview"
+GITHUB_REPOSITORY = "elissonnog/mito-overview"
+GITHUB_RUN_ID = 123456
 
 
 def write_cases(path: Path, rows: list[dict[str, str]]) -> None:
@@ -106,6 +109,93 @@ def write_distribution_artifacts(dist_root: Path, version: str = "0.3.0") -> Non
         archive.addfile(member, io.BytesIO(payload))
 
 
+def write_acceptance_evidence(root: Path, commit: str) -> None:
+    fresh_case = packet_builder.FRESH_CLONE_CASE_ID
+    (root / "commands" / f"{fresh_case}.sh").write_text(
+        f"git clone --no-local . fresh-clone\ngit checkout --detach {commit}\npytest -q\n",
+        encoding="utf-8",
+    )
+    (root / "logs" / f"{fresh_case}.log").write_text(
+        f"checked_out_commit={commit}\nfresh_clone_validation=PASS\n",
+        encoding="utf-8",
+    )
+    (root / "acceptance" / "fresh_clone.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "evidence_type": "fresh_clone_validation",
+                "case_id": fresh_case,
+                "verdict": "PASS",
+                "repository": REPOSITORY,
+                "candidate_commit": commit,
+                "checked_out_commit": commit,
+                "detached_head": True,
+                "clone_worktree_clean": True,
+                "command_path": f"commands/{fresh_case}.sh",
+                "log_path": f"logs/{fresh_case}.log",
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    run_url = f"https://github.com/{GITHUB_REPOSITORY}/actions/runs/{GITHUB_RUN_ID}"
+    (root / "commands" / "github_actions_candidate_commit.sh").write_text(
+        f"gh api repos/{GITHUB_REPOSITORY}/actions/runs/{GITHUB_RUN_ID}\n",
+        encoding="utf-8",
+    )
+    (root / "logs" / "github_actions_candidate_commit.log").write_text(
+        f"github_actions_run_id={GITHUB_RUN_ID}\ngithub_actions_metadata_ingestion=PASS\n",
+        encoding="utf-8",
+    )
+    (root / "acceptance" / "github_actions_run.json").write_text(
+        json.dumps(
+            {
+                "id": GITHUB_RUN_ID,
+                "run_attempt": 1,
+                "name": packet_builder.EXPECTED_GITHUB_WORKFLOW,
+                "head_sha": commit,
+                "status": "completed",
+                "conclusion": "success",
+                "html_url": run_url,
+                "repository": {"full_name": GITHUB_REPOSITORY},
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    jobs = []
+    for index, expectation in enumerate(packet_builder.EXPECTED_GITHUB_JOBS.values(), start=1):
+        job_id = 9000 + index
+        jobs.append(
+            {
+                "id": job_id,
+                "run_id": GITHUB_RUN_ID,
+                "run_attempt": 1,
+                "workflow_name": packet_builder.EXPECTED_GITHUB_WORKFLOW,
+                "head_sha": commit,
+                "name": expectation["name"],
+                "status": "completed",
+                "conclusion": "success",
+                "labels": [expectation["label"]],
+                "html_url": f"{run_url}/job/{job_id}",
+            }
+        )
+    (root / "acceptance" / "github_actions_jobs.json").write_text(
+        json.dumps({"total_count": len(jobs), "jobs": jobs}, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
+def rewrite_json(path: Path, update: Callable[[dict[str, object]], None]) -> None:
+    value = json.loads(path.read_text(encoding="utf-8"))
+    assert isinstance(value, dict)
+    update(value)
+    path.write_text(json.dumps(value, indent=2) + "\n", encoding="utf-8")
+
+
 def create_validation_root(
     tmp_path: Path,
     commit: str,
@@ -115,6 +205,7 @@ def create_validation_root(
 ) -> tuple[Path, str]:
     root = tmp_path / "validation"
     for relative in (
+        "acceptance",
         "commands",
         "logs",
         "expected",
@@ -124,7 +215,13 @@ def create_validation_root(
     ):
         (root / relative).mkdir(parents=True, exist_ok=True)
 
-    rows = required_pass_rows()
+    write_acceptance_evidence(root, commit)
+    rows = [
+        row
+        for row in required_pass_rows()
+        if row["case_id"] not in packet_builder.ACCEPTANCE_CASE_IDS
+    ]
+    rows.extend(packet_builder.validate_acceptance_evidence(root, commit, REPOSITORY))
     rows.append(
         {
             "case_id": "optional_documentation_check",
@@ -270,6 +367,9 @@ def test_packet_copies_runtime_evidence_and_self_verifies(tmp_path: Path) -> Non
     assert (packet / "inputs.sha256").read_text(encoding="utf-8") == input_manifest
     assert (packet / "commands" / "public" / "gm11906_default_run1.sh").is_file()
     assert (packet / "logs" / "public" / "gm11906_default_run1.log").is_file()
+    assert (packet / "acceptance" / "fresh_clone.json").is_file()
+    assert (packet / "acceptance" / "github_actions_run.json").is_file()
+    assert (packet / "acceptance" / "github_actions_jobs.json").is_file()
     assert len(list((packet / "dist").glob("*.whl"))) == 1
     assert len(list((packet / "dist").glob("*.tar.gz"))) == 1
 
@@ -277,6 +377,7 @@ def test_packet_copies_runtime_evidence_and_self_verifies(tmp_path: Path) -> Non
     run_record = json.loads((packet / "run.json").read_text(encoding="utf-8"))
     assert identity["git_commit"] == commit
     assert run_record["git_commit"] == commit
+    assert set(identity["acceptance_cases"]) == packet_builder.ACCEPTANCE_CASE_IDS
     assert set(identity["metadata_versions"].values()) == {"0.3.0"}
     assert {entry["kind"] for entry in identity["dist_artifacts"]} == {"wheel", "sdist"}
 
@@ -293,6 +394,142 @@ def test_packet_copies_runtime_evidence_and_self_verifies(tmp_path: Path) -> Non
     assert "release_identity.json" in names
     assert "commands/public/gm11906_default_run1.sh" in names
     assert any(name.startswith("dist/") and name.endswith(".whl") for name in names)
+
+
+@pytest.mark.parametrize(
+    "relative",
+    [
+        "acceptance/fresh_clone.json",
+        "acceptance/github_actions_run.json",
+        "acceptance/github_actions_jobs.json",
+    ],
+)
+def test_packet_rejects_missing_acceptance_evidence(tmp_path: Path, relative: str) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation_root, _ = create_validation_root(tmp_path, commit)
+    (validation_root / relative).unlink()
+
+    with pytest.raises(FileNotFoundError, match="Required .* evidence not found"):
+        packet_builder.build_packet(packet_args(validation_root, repo, tmp_path / "output"))
+
+
+@pytest.mark.parametrize("target", ["fresh_clone", "workflow", "linux_job", "macos_job"])
+def test_packet_rejects_nonpassing_acceptance_evidence(
+    tmp_path: Path,
+    target: str,
+) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation_root, _ = create_validation_root(tmp_path, commit)
+    if target == "fresh_clone":
+        rewrite_json(
+            validation_root / "acceptance" / "fresh_clone.json",
+            lambda value: value.__setitem__("verdict", "FAIL"),
+        )
+    elif target == "workflow":
+        rewrite_json(
+            validation_root / "acceptance" / "github_actions_run.json",
+            lambda value: value.__setitem__("conclusion", "failure"),
+        )
+    else:
+        job_index = 0 if target == "linux_job" else 1
+
+        def fail_job(value: dict[str, object]) -> None:
+            jobs = value["jobs"]
+            assert isinstance(jobs, list) and isinstance(jobs[job_index], dict)
+            jobs[job_index]["conclusion"] = "failure"
+
+        rewrite_json(
+            validation_root / "acceptance" / "github_actions_jobs.json",
+            fail_job,
+        )
+
+    with pytest.raises(ValueError, match="nonpassing"):
+        packet_builder.build_packet(packet_args(validation_root, repo, tmp_path / "output"))
+
+
+@pytest.mark.parametrize("target", ["fresh_clone", "workflow", "linux_job", "macos_job"])
+def test_packet_rejects_acceptance_evidence_for_another_commit(
+    tmp_path: Path,
+    target: str,
+) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation_root, _ = create_validation_root(tmp_path, commit)
+    wrong_commit = "f" * 40
+    if target == "fresh_clone":
+        rewrite_json(
+            validation_root / "acceptance" / "fresh_clone.json",
+            lambda value: value.__setitem__("checked_out_commit", wrong_commit),
+        )
+    elif target == "workflow":
+        rewrite_json(
+            validation_root / "acceptance" / "github_actions_run.json",
+            lambda value: value.__setitem__("head_sha", wrong_commit),
+        )
+    else:
+        job_index = 0 if target == "linux_job" else 1
+
+        def change_job_commit(value: dict[str, object]) -> None:
+            jobs = value["jobs"]
+            assert isinstance(jobs, list) and isinstance(jobs[job_index], dict)
+            jobs[job_index]["head_sha"] = wrong_commit
+
+        rewrite_json(
+            validation_root / "acceptance" / "github_actions_jobs.json",
+            change_job_commit,
+        )
+
+    with pytest.raises(ValueError, match="commit mismatch"):
+        packet_builder.build_packet(packet_args(validation_root, repo, tmp_path / "output"))
+
+
+def test_packet_rejects_missing_github_actions_platform_evidence(tmp_path: Path) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation_root, _ = create_validation_root(tmp_path, commit)
+
+    def remove_linux_job(value: dict[str, object]) -> None:
+        jobs = value["jobs"]
+        assert isinstance(jobs, list)
+        value["jobs"] = jobs[1:]
+        value["total_count"] = len(jobs) - 1
+
+    rewrite_json(
+        validation_root / "acceptance" / "github_actions_jobs.json",
+        remove_linux_job,
+    )
+    with pytest.raises(ValueError, match="platform evidence is missing.*linux"):
+        packet_builder.build_packet(packet_args(validation_root, repo, tmp_path / "output"))
+
+
+def test_packet_rejects_mismatched_github_actions_platform_evidence(tmp_path: Path) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation_root, _ = create_validation_root(tmp_path, commit)
+
+    def relabel_linux_job(value: dict[str, object]) -> None:
+        jobs = value["jobs"]
+        assert isinstance(jobs, list) and isinstance(jobs[0], dict)
+        jobs[0]["labels"] = ["macos-latest"]
+
+    rewrite_json(
+        validation_root / "acceptance" / "github_actions_jobs.json",
+        relabel_linux_job,
+    )
+    with pytest.raises(ValueError, match="platform mismatch for linux"):
+        packet_builder.build_packet(packet_args(validation_root, repo, tmp_path / "output"))
+
+
+def test_packet_rejects_handwritten_acceptance_pass_row(tmp_path: Path) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation_root, _ = create_validation_root(tmp_path, commit)
+    with (validation_root / "cases.tsv").open(encoding="utf-8", newline="") as handle:
+        rows = list(csv.DictReader(handle, delimiter="\t"))
+    fresh_row = next(
+        row for row in rows if row["case_id"] == packet_builder.FRESH_CLONE_CASE_ID
+    )
+    fresh_row["detail"] = "claimed PASS without provenance"
+    write_cases(validation_root / "cases.tsv", rows)
+
+    with pytest.raises(ValueError, match="Acceptance case does not match validated evidence"):
+        packet_builder.build_packet(packet_args(validation_root, repo, tmp_path / "output"))
 
 
 @pytest.mark.parametrize("relative", ["public/commands", "public/logs", "dist"])
@@ -342,6 +579,57 @@ def test_packet_rejects_distribution_with_wrong_internal_version(tmp_path: Path)
     validation_root, _ = create_validation_root(tmp_path, commit, dist_version="0.2.1")
     with pytest.raises(ValueError, match="Distribution version mismatch"):
         packet_builder.build_packet(packet_args(validation_root, repo, tmp_path / "output"))
+
+
+@pytest.mark.parametrize(
+    ("target", "expected_error"),
+    [
+        ("nonpassing", "fresh-clone acceptance mismatch"),
+        ("commit", "GitHub Actions linux commit mismatch"),
+        ("platform", "GitHub Actions linux platform mismatch"),
+        ("missing_platform", "missing or ambiguous GitHub Actions linux evidence"),
+    ],
+)
+def test_verifier_rejects_invalid_acceptance_evidence(
+    tmp_path: Path,
+    target: str,
+    expected_error: str,
+) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation_root, _ = create_validation_root(tmp_path, commit)
+    output_root = tmp_path / "output"
+    packet_builder.build_packet(packet_args(validation_root, repo, output_root))
+    packet = output_root / "packet"
+
+    if target == "nonpassing":
+        rewrite_json(
+            packet / "acceptance" / "fresh_clone.json",
+            lambda value: value.__setitem__("verdict", "FAIL"),
+        )
+    else:
+
+        def alter_jobs(value: dict[str, object]) -> None:
+            jobs = value["jobs"]
+            assert isinstance(jobs, list) and isinstance(jobs[0], dict)
+            if target == "commit":
+                jobs[0]["head_sha"] = "f" * 40
+            elif target == "platform":
+                jobs[0]["labels"] = ["macos-latest"]
+            else:
+                value["jobs"] = jobs[1:]
+                value["total_count"] = len(jobs) - 1
+
+        rewrite_json(packet / "acceptance" / "github_actions_jobs.json", alter_jobs)
+    rewrite_artifact_manifest(packet)
+
+    verification = subprocess.run(
+        [str(packet / "verify_bundle.sh")],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert verification.returncode != 0
+    assert expected_error in verification.stderr
 
 
 def test_verifier_rejects_tampered_release_identity(tmp_path: Path) -> None:

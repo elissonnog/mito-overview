@@ -25,6 +25,7 @@ REQUIRED_TOP_LEVEL = (
     "run.json",
     "release_identity.json",
     "cases.tsv",
+    "acceptance",
     "claim_evidence_matrix.tsv",
     "public_data_sources.tsv",
     "environment.txt",
@@ -38,6 +39,28 @@ REQUIRED_TOP_LEVEL = (
     "artifacts.sha256",
     "verify_bundle.sh",
 )
+
+FRESH_CLONE_CASE_ID = "fresh_clone_candidate_commit"
+GITHUB_ACTIONS_LINUX_CASE_ID = "github_actions_linux_candidate_commit"
+GITHUB_ACTIONS_MACOS_CASE_ID = "github_actions_macos_candidate_commit"
+ACCEPTANCE_CASE_IDS = {
+    FRESH_CLONE_CASE_ID,
+    GITHUB_ACTIONS_LINUX_CASE_ID,
+    GITHUB_ACTIONS_MACOS_CASE_ID,
+}
+EXPECTED_GITHUB_WORKFLOW = "smoke-tests"
+EXPECTED_GITHUB_JOBS = {
+    GITHUB_ACTIONS_LINUX_CASE_ID: {
+        "platform": "linux",
+        "label": "ubuntu-latest",
+        "name": "Unit and synthetic tests (ubuntu-latest)",
+    },
+    GITHUB_ACTIONS_MACOS_CASE_ID: {
+        "platform": "macos",
+        "label": "macos-latest",
+        "name": "Unit and synthetic tests (macos-latest)",
+    },
+}
 
 REQUIRED_PASS_CASES = {
     "unit_known_answer",
@@ -62,7 +85,7 @@ REQUIRED_PASS_CASES = {
     "gm11906_visual_integrity",
     "gm12878_visual_integrity",
     "filter_profiles",
-}
+} | ACCEPTANCE_CASE_IDS
 
 
 def parse_args() -> argparse.Namespace:
@@ -275,6 +298,213 @@ def validate_hash_manifest(path: Path, label: str) -> None:
         entries.add(evidence_path)
 
 
+def load_json_object(path: Path, label: str) -> dict[str, object]:
+    if not path.is_file():
+        raise FileNotFoundError(f"Required {label} not found: {path}")
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ValueError(f"Unable to parse {label}: {path}") from error
+    if not isinstance(value, dict):
+        raise ValueError(f"{label} must contain a JSON object: {path}")
+    return value
+
+
+def github_repository_slug(repository: str) -> str:
+    prefix = "https://github.com/"
+    if not repository.startswith(prefix):
+        raise ValueError(
+            f"GitHub Actions evidence requires a GitHub HTTPS repository: {repository}"
+        )
+    slug = repository[len(prefix) :].rstrip("/")
+    if slug.endswith(".git"):
+        slug = slug[:-4]
+    if not re.fullmatch(r"[^/\s]+/[^/\s]+", slug):
+        raise ValueError(f"Unable to derive GitHub repository identity from: {repository}")
+    return slug
+
+
+def require_nonempty_evidence(validation_root: Path, relative: str) -> None:
+    path = validation_root / relative
+    if not path.is_file() or path.stat().st_size == 0:
+        raise ValueError(f"Required acceptance evidence is missing or empty: {relative}")
+
+
+def positive_json_integer(value: object, label: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise ValueError(f"GitHub Actions {label} must be a positive integer: {value!r}")
+    return value
+
+
+def validate_fresh_clone_evidence(
+    validation_root: Path,
+    expected_commit: str,
+    repository: str,
+) -> dict[str, str]:
+    relative = "acceptance/fresh_clone.json"
+    fresh = load_json_object(validation_root / relative, "fresh-clone evidence")
+    expected_fields = {
+        "schema_version": "1.0",
+        "evidence_type": "fresh_clone_validation",
+        "case_id": FRESH_CLONE_CASE_ID,
+        "repository": repository,
+        "command_path": f"commands/{FRESH_CLONE_CASE_ID}.sh",
+        "log_path": f"logs/{FRESH_CLONE_CASE_ID}.log",
+    }
+    for field, expected in expected_fields.items():
+        if fresh.get(field) != expected:
+            raise ValueError(
+                f"Fresh-clone evidence field mismatch for {field}: "
+                f"{fresh.get(field)!r} != {expected!r}"
+            )
+    if fresh.get("verdict") != "PASS":
+        raise ValueError(
+            f"Fresh-clone validation evidence is nonpassing: {fresh.get('verdict')!r}"
+        )
+    for field in ("candidate_commit", "checked_out_commit"):
+        if fresh.get(field) != expected_commit:
+            raise ValueError(
+                f"Fresh-clone commit mismatch for {field}: "
+                f"{fresh.get(field)!r} != {expected_commit!r}"
+            )
+    if fresh.get("detached_head") is not True:
+        raise ValueError("Fresh-clone evidence does not confirm a detached candidate checkout")
+    if fresh.get("clone_worktree_clean") is not True:
+        raise ValueError("Fresh-clone evidence does not confirm a clean candidate checkout")
+
+    require_nonempty_evidence(validation_root, expected_fields["command_path"])
+    require_nonempty_evidence(validation_root, expected_fields["log_path"])
+    return {
+        "case_id": FRESH_CLONE_CASE_ID,
+        "category": "release_acceptance",
+        "input_available": "1",
+        "expected_available": "1",
+        "verdict": "PASS",
+        "detail": (
+            f"{relative}; {expected_fields['command_path']}; {expected_fields['log_path']}; "
+            f"commit={expected_commit}"
+        ),
+    }
+
+
+def validate_github_actions_evidence(
+    validation_root: Path,
+    expected_commit: str,
+    repository: str,
+) -> list[dict[str, str]]:
+    run_relative = "acceptance/github_actions_run.json"
+    jobs_relative = "acceptance/github_actions_jobs.json"
+    command_relative = "commands/github_actions_candidate_commit.sh"
+    log_relative = "logs/github_actions_candidate_commit.log"
+    run = load_json_object(validation_root / run_relative, "GitHub Actions run evidence")
+    jobs_payload = load_json_object(
+        validation_root / jobs_relative,
+        "GitHub Actions jobs evidence",
+    )
+    require_nonempty_evidence(validation_root, command_relative)
+    require_nonempty_evidence(validation_root, log_relative)
+
+    repository_slug = github_repository_slug(repository)
+    run_id = positive_json_integer(run.get("id"), "run id")
+    run_attempt = positive_json_integer(run.get("run_attempt"), "run attempt")
+    if run.get("name") != EXPECTED_GITHUB_WORKFLOW:
+        raise ValueError(
+            f"GitHub Actions workflow mismatch: {run.get('name')!r} "
+            f"!= {EXPECTED_GITHUB_WORKFLOW!r}"
+        )
+    if run.get("head_sha") != expected_commit:
+        raise ValueError(
+            f"GitHub Actions run commit mismatch: "
+            f"{run.get('head_sha')!r} != {expected_commit!r}"
+        )
+    run_repository = run.get("repository")
+    if not isinstance(run_repository, dict) or run_repository.get("full_name") != repository_slug:
+        raise ValueError("GitHub Actions run repository does not match the release repository")
+    if run.get("status") != "completed" or run.get("conclusion") != "success":
+        raise ValueError(
+            "GitHub Actions workflow run evidence is nonpassing: "
+            f"status={run.get('status')!r}, conclusion={run.get('conclusion')!r}"
+        )
+    run_url = f"https://github.com/{repository_slug}/actions/runs/{run_id}"
+    if run.get("html_url") != run_url:
+        raise ValueError(
+            f"GitHub Actions run URL mismatch: {run.get('html_url')!r} != {run_url!r}"
+        )
+
+    jobs = jobs_payload.get("jobs")
+    if not isinstance(jobs, list) or not all(isinstance(job, dict) for job in jobs):
+        raise ValueError("GitHub Actions jobs evidence must contain a jobs object list")
+    if jobs_payload.get("total_count") != len(jobs):
+        raise ValueError("GitHub Actions jobs total_count does not match the jobs inventory")
+
+    rows: list[dict[str, str]] = []
+    for case_id, expectation in EXPECTED_GITHUB_JOBS.items():
+        matching = [job for job in jobs if job.get("name") == expectation["name"]]
+        if len(matching) != 1:
+            raise ValueError(
+                "GitHub Actions platform evidence is missing or ambiguous for "
+                f"{expectation['platform']}: expected one {expectation['name']!r} job"
+            )
+        job = matching[0]
+        labels = job.get("labels")
+        if not isinstance(labels, list) or expectation["label"] not in labels:
+            raise ValueError(
+                f"GitHub Actions platform mismatch for {expectation['platform']}: "
+                f"expected label {expectation['label']!r}, observed {labels!r}"
+            )
+        if job.get("head_sha") != expected_commit:
+            raise ValueError(
+                f"GitHub Actions {expectation['platform']} job commit mismatch: "
+                f"{job.get('head_sha')!r} != {expected_commit!r}"
+            )
+        if job.get("run_id") != run_id or job.get("run_attempt") != run_attempt:
+            raise ValueError(
+                f"GitHub Actions {expectation['platform']} job is not from the selected run attempt"
+            )
+        if job.get("workflow_name") != EXPECTED_GITHUB_WORKFLOW:
+            raise ValueError(
+                f"GitHub Actions {expectation['platform']} job workflow mismatch"
+            )
+        if job.get("status") != "completed" or job.get("conclusion") != "success":
+            raise ValueError(
+                f"GitHub Actions {expectation['platform']} job evidence is nonpassing: "
+                f"status={job.get('status')!r}, conclusion={job.get('conclusion')!r}"
+            )
+        job_id = positive_json_integer(job.get("id"), f"{expectation['platform']} job id")
+        expected_job_url = f"{run_url}/job/{job_id}"
+        job_url = job.get("html_url")
+        if job_url != expected_job_url:
+            raise ValueError(
+                f"GitHub Actions {expectation['platform']} job URL mismatch: "
+                f"{job_url!r} != {expected_job_url!r}"
+            )
+        rows.append(
+            {
+                "case_id": case_id,
+                "category": "release_acceptance",
+                "input_available": "1",
+                "expected_available": "1",
+                "verdict": "PASS",
+                "detail": (
+                    f"{run_relative}; {jobs_relative}; {command_relative}; {log_relative}; "
+                    f"run_id={run_id}; job_id={job_id}; "
+                    f"platform={expectation['platform']}; commit={expected_commit}; url={job_url}"
+                ),
+            }
+        )
+    return rows
+
+
+def validate_acceptance_evidence(
+    validation_root: Path,
+    expected_commit: str,
+    repository: str,
+) -> list[dict[str, str]]:
+    rows = [validate_fresh_clone_evidence(validation_root, expected_commit, repository)]
+    rows.extend(validate_github_actions_evidence(validation_root, expected_commit, repository))
+    return rows
+
+
 def resolve_release_identity(
     repo_root: Path,
     environment_path: Path,
@@ -349,7 +579,10 @@ def write_tsv(path: Path, header: list[str], rows: list[list[str]]) -> None:
         writer.writerows(rows)
 
 
-def validate_cases(path: Path) -> tuple[int, dict[str, int]]:
+def validate_cases(
+    path: Path,
+    acceptance_rows: list[dict[str, str]] | None = None,
+) -> tuple[int, dict[str, int]]:
     allowed = {"PASS", "FAIL", "XFAIL", "SKIP", "BLOCKED"}
     counts = {value: 0 for value in allowed}
     with path.open("r", encoding="utf-8", newline="") as handle:
@@ -380,6 +613,17 @@ def validate_cases(path: Path) -> tuple[int, dict[str, int]]:
     )
     if nonpassing_required:
         raise ValueError(f"Required release cases did not pass: {', '.join(nonpassing_required)}")
+    if acceptance_rows is not None:
+        rows_by_id = {row["case_id"]: row for row in rows}
+        for expected in acceptance_rows:
+            case_id = expected["case_id"]
+            observed = rows_by_id[case_id]
+            for field, expected_value in expected.items():
+                if observed.get(field) != expected_value:
+                    raise ValueError(
+                        f"Acceptance case does not match validated evidence for {case_id} "
+                        f"field {field}: {observed.get(field)!r} != {expected_value!r}"
+                    )
     release_blockers = sorted(
         f"{row['case_id']}={row['verdict']}"
         for row in rows
@@ -409,7 +653,8 @@ from pathlib import Path
 
 root = Path(sys.argv[1])
 required_top_level = {
-    "run.json", "release_identity.json", "cases.tsv", "claim_evidence_matrix.tsv",
+    "run.json", "release_identity.json", "cases.tsv", "acceptance",
+    "claim_evidence_matrix.tsv",
     "public_data_sources.tsv", "environment.txt", "commands", "logs", "dist",
     "expected", "observed_normalized", "filter_profile_results.tsv", "inputs.sha256",
     "artifacts.sha256", "verify_bundle.sh",
@@ -418,7 +663,7 @@ missing = sorted(name for name in required_top_level if not (root / name).exists
 if missing:
     raise SystemExit(f"missing required evidence: {missing}")
 
-for relative in ("commands", "commands/public", "logs", "logs/public", "dist"):
+for relative in ("acceptance", "commands", "commands/public", "logs", "logs/public", "dist"):
     evidence_root = root / relative
     if not evidence_root.is_dir() or not any(path.is_file() for path in evidence_root.rglob("*")):
         raise SystemExit(f"required evidence directory is empty: {relative}")
@@ -513,6 +758,162 @@ if set(metadata_hashes) != required_metadata or any(
 if run.get("diagnostic_validation_claimed") is not False:
     raise SystemExit("packet exceeds its bounded non-diagnostic claim scope")
 
+fresh_case_id = "fresh_clone_candidate_commit"
+github_jobs = {
+    "github_actions_linux_candidate_commit": {
+        "platform": "linux",
+        "label": "ubuntu-latest",
+        "name": "Unit and synthetic tests (ubuntu-latest)",
+    },
+    "github_actions_macos_candidate_commit": {
+        "platform": "macos",
+        "label": "macos-latest",
+        "name": "Unit and synthetic tests (macos-latest)",
+    },
+}
+acceptance_case_ids = {fresh_case_id, *github_jobs}
+identity_acceptance = identity.get("acceptance_cases")
+if (
+    not isinstance(identity_acceptance, list)
+    or len(identity_acceptance) != len(acceptance_case_ids)
+    or set(identity_acceptance) != acceptance_case_ids
+):
+    raise SystemExit("release identity acceptance-case inventory is incomplete")
+
+def evidence_json(relative):
+    path = root / relative
+    if not path.is_file():
+        raise SystemExit(f"missing acceptance evidence: {relative}")
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise SystemExit(f"invalid acceptance JSON: {relative}: {error}")
+    if not isinstance(value, dict):
+        raise SystemExit(f"acceptance evidence is not an object: {relative}")
+    return value
+
+def evidence_file(relative):
+    path = root / relative
+    if not path.is_file() or path.stat().st_size == 0:
+        raise SystemExit(f"missing or empty acceptance evidence: {relative}")
+
+def positive_integer(value, label):
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise SystemExit(f"invalid GitHub Actions {label}: {value!r}")
+    return value
+
+repository = identity["repository"]
+prefix = "https://github.com/"
+if not repository.startswith(prefix):
+    raise SystemExit("release repository is not a GitHub HTTPS repository")
+repository_slug = repository[len(prefix):].rstrip("/")
+if repository_slug.endswith(".git"):
+    repository_slug = repository_slug[:-4]
+if not re.fullmatch(r"[^/\s]+/[^/\s]+", repository_slug):
+    raise SystemExit("invalid GitHub repository identity")
+commit = identity["git_commit"]
+
+fresh_relative = "acceptance/fresh_clone.json"
+fresh_command = f"commands/{fresh_case_id}.sh"
+fresh_log = f"logs/{fresh_case_id}.log"
+fresh = evidence_json(fresh_relative)
+fresh_fields = {
+    "schema_version": "1.0",
+    "evidence_type": "fresh_clone_validation",
+    "case_id": fresh_case_id,
+    "repository": repository,
+    "command_path": fresh_command,
+    "log_path": fresh_log,
+    "verdict": "PASS",
+    "candidate_commit": commit,
+    "checked_out_commit": commit,
+    "detached_head": True,
+    "clone_worktree_clean": True,
+}
+for field, expected in fresh_fields.items():
+    if fresh.get(field) != expected:
+        raise SystemExit(
+            f"fresh-clone acceptance mismatch for {field}: "
+            f"{fresh.get(field)!r} != {expected!r}"
+        )
+evidence_file(fresh_command)
+evidence_file(fresh_log)
+expected_acceptance = {
+    fresh_case_id: {
+        "case_id": fresh_case_id,
+        "category": "release_acceptance",
+        "input_available": "1",
+        "expected_available": "1",
+        "verdict": "PASS",
+        "detail": (
+            f"{fresh_relative}; {fresh_command}; {fresh_log}; commit={commit}"
+        ),
+    }
+}
+
+run_relative = "acceptance/github_actions_run.json"
+jobs_relative = "acceptance/github_actions_jobs.json"
+github_command = "commands/github_actions_candidate_commit.sh"
+github_log = "logs/github_actions_candidate_commit.log"
+actions_run = evidence_json(run_relative)
+jobs_payload = evidence_json(jobs_relative)
+evidence_file(github_command)
+evidence_file(github_log)
+run_id = positive_integer(actions_run.get("id"), "run id")
+run_attempt = positive_integer(actions_run.get("run_attempt"), "run attempt")
+if actions_run.get("name") != "smoke-tests":
+    raise SystemExit("GitHub Actions workflow mismatch")
+if actions_run.get("head_sha") != commit:
+    raise SystemExit("GitHub Actions run commit mismatch")
+run_repository = actions_run.get("repository")
+if not isinstance(run_repository, dict) or run_repository.get("full_name") != repository_slug:
+    raise SystemExit("GitHub Actions run repository mismatch")
+if actions_run.get("status") != "completed" or actions_run.get("conclusion") != "success":
+    raise SystemExit("GitHub Actions workflow run is not successful")
+run_url = f"https://github.com/{repository_slug}/actions/runs/{run_id}"
+if actions_run.get("html_url") != run_url:
+    raise SystemExit("GitHub Actions run URL mismatch")
+
+jobs = jobs_payload.get("jobs")
+if not isinstance(jobs, list) or not all(isinstance(job, dict) for job in jobs):
+    raise SystemExit("GitHub Actions jobs inventory is invalid")
+if jobs_payload.get("total_count") != len(jobs):
+    raise SystemExit("GitHub Actions jobs inventory count mismatch")
+for case_id, expectation in github_jobs.items():
+    matching = [job for job in jobs if job.get("name") == expectation["name"]]
+    if len(matching) != 1:
+        raise SystemExit(
+            f"missing or ambiguous GitHub Actions {expectation['platform']} evidence"
+        )
+    job = matching[0]
+    labels = job.get("labels")
+    if not isinstance(labels, list) or expectation["label"] not in labels:
+        raise SystemExit(f"GitHub Actions {expectation['platform']} platform mismatch")
+    if job.get("head_sha") != commit:
+        raise SystemExit(f"GitHub Actions {expectation['platform']} commit mismatch")
+    if job.get("run_id") != run_id or job.get("run_attempt") != run_attempt:
+        raise SystemExit(f"GitHub Actions {expectation['platform']} run-attempt mismatch")
+    if job.get("workflow_name") != "smoke-tests":
+        raise SystemExit(f"GitHub Actions {expectation['platform']} workflow mismatch")
+    if job.get("status") != "completed" or job.get("conclusion") != "success":
+        raise SystemExit(f"GitHub Actions {expectation['platform']} job is not successful")
+    job_id = positive_integer(job.get("id"), f"{expectation['platform']} job id")
+    job_url = job.get("html_url")
+    if job_url != f"{run_url}/job/{job_id}":
+        raise SystemExit(f"GitHub Actions {expectation['platform']} job URL mismatch")
+    expected_acceptance[case_id] = {
+        "case_id": case_id,
+        "category": "release_acceptance",
+        "input_available": "1",
+        "expected_available": "1",
+        "verdict": "PASS",
+        "detail": (
+            f"{run_relative}; {jobs_relative}; {github_command}; {github_log}; "
+            f"run_id={run_id}; job_id={job_id}; platform={expectation['platform']}; "
+            f"commit={commit}; url={job_url}"
+        ),
+    }
+
 verdicts = {"PASS", "FAIL", "XFAIL", "SKIP", "BLOCKED"}
 required_pass = {
     "unit_known_answer", "cli_step_listing", "strict_generic_dry_run",
@@ -523,7 +924,7 @@ required_pass = {
     "gm12878_default_run2", "gm12878_lenient", "gm12878_strict",
     "gm11906_repeatability", "gm12878_repeatability",
     "gm11906_visual_integrity", "gm12878_visual_integrity", "filter_profiles",
-}
+} | acceptance_case_ids
 with (root / "cases.tsv").open(encoding="utf-8", newline="") as handle:
     cases = list(csv.DictReader(handle, delimiter="\t"))
 if not cases:
@@ -556,6 +957,14 @@ nonpassing = sorted(
 )
 if nonpassing:
     raise SystemExit(f"required release cases did not pass: {nonpassing}")
+cases_by_id = {case["case_id"]: case for case in cases}
+for case_id, expected in expected_acceptance.items():
+    observed = cases_by_id[case_id]
+    for field, expected_value in expected.items():
+        if observed.get(field) != expected_value:
+            raise SystemExit(
+                f"acceptance case does not match evidence for {case_id} field {field}"
+            )
 observed_counts = Counter(case["verdict"] for case in cases)
 expected_counts = {verdict: observed_counts.get(verdict, 0) for verdict in verdicts}
 if run.get("case_count") != len(cases) or run.get("verdict_counts") != expected_counts:
@@ -646,8 +1055,6 @@ def build_packet(args: argparse.Namespace) -> Path:
         raise SystemExit(f"Packet root must be absent or empty: {args.packet_root}")
 
     public_root = args.validation_root / "public"
-    case_count, verdict_counts = validate_cases(args.validation_root / "cases.tsv")
-    validate_hash_manifest(public_root / "inputs.sha256", "public/inputs.sha256")
     release_identity = resolve_release_identity(
         args.repo_root,
         args.validation_root / "environment.txt",
@@ -655,6 +1062,16 @@ def build_packet(args: argparse.Namespace) -> Path:
         args.repository,
         args.commit,
     )
+    acceptance_rows = validate_acceptance_evidence(
+        args.validation_root,
+        str(release_identity["git_commit"]),
+        str(release_identity["repository"]),
+    )
+    case_count, verdict_counts = validate_cases(
+        args.validation_root / "cases.tsv",
+        acceptance_rows,
+    )
+    validate_hash_manifest(public_root / "inputs.sha256", "public/inputs.sha256")
     dist_artifacts = validate_distributions(
         args.validation_root / "dist",
         str(release_identity["package_name"]),
@@ -675,6 +1092,7 @@ def build_packet(args: argparse.Namespace) -> Path:
 
     shutil.copy2(args.validation_root / "cases.tsv", args.packet_root / "cases.tsv")
     shutil.copy2(args.validation_root / "environment.txt", args.packet_root / "environment.txt")
+    copy_tree(args.validation_root / "acceptance", args.packet_root / "acceptance")
     copy_tree(args.validation_root / "commands", args.packet_root / "commands")
     copy_tree(public_root / "commands", args.packet_root / "commands" / "public")
     copy_tree(args.validation_root / "logs", args.packet_root / "logs")
@@ -692,6 +1110,7 @@ def build_packet(args: argparse.Namespace) -> Path:
     shutil.copy2(public_root / "inputs.sha256", args.packet_root / "inputs.sha256")
 
     release_identity["dist_artifacts"] = dist_artifacts
+    release_identity["acceptance_cases"] = [row["case_id"] for row in acceptance_rows]
     (args.packet_root / "release_identity.json").write_text(
         json.dumps(release_identity, indent=2) + "\n",
         encoding="utf-8",
