@@ -24,10 +24,34 @@ REQUIRED_TOP_LEVEL = (
     "logs",
     "expected",
     "observed_normalized",
+    "filter_profile_results.tsv",
     "inputs.sha256",
     "artifacts.sha256",
     "verify_bundle.sh",
 )
+
+REQUIRED_PASS_CASES = {
+    "unit_known_answer",
+    "cli_step_listing",
+    "strict_generic_dry_run",
+    "synthetic_longread_smoke",
+    "synthetic_shortread_smoke",
+    "synthetic_longread_nomethyl_smoke",
+    "standalone_minimal_smoke",
+    "package_build",
+    "public_validation_matrix",
+    "gm11906_default_run1",
+    "gm11906_default_run2",
+    "gm11906_lenient",
+    "gm11906_strict",
+    "gm12878_default_run1",
+    "gm12878_default_run2",
+    "gm12878_lenient",
+    "gm12878_strict",
+    "gm11906_repeatability",
+    "gm12878_repeatability",
+    "filter_profiles",
+}
 
 
 def parse_args() -> argparse.Namespace:
@@ -71,7 +95,14 @@ def validate_cases(path: Path) -> tuple[int, dict[str, int]]:
         rows = list(csv.DictReader(handle, delimiter="\t"))
     if not rows:
         raise ValueError("cases.tsv contains no validation cases")
+    case_ids: set[str] = set()
     for row in rows:
+        case_id = row.get("case_id", "")
+        if not case_id:
+            raise ValueError("Validation case is missing case_id")
+        if case_id in case_ids:
+            raise ValueError(f"Duplicate validation case_id: {case_id}")
+        case_ids.add(case_id)
         verdict = row.get("verdict", "")
         if verdict not in allowed:
             raise ValueError(f"Unsupported case verdict: {verdict}")
@@ -80,6 +111,14 @@ def validate_cases(path: Path) -> tuple[int, dict[str, int]]:
         ):
             raise ValueError(f"PASS case lacks input or expected evidence: {row.get('case_id')}")
         counts[verdict] += 1
+    missing_required = sorted(REQUIRED_PASS_CASES - case_ids)
+    if missing_required:
+        raise ValueError(f"Required release cases are missing: {', '.join(missing_required)}")
+    nonpassing_required = sorted(
+        row["case_id"] for row in rows if row["case_id"] in REQUIRED_PASS_CASES and row["verdict"] != "PASS"
+    )
+    if nonpassing_required:
+        raise ValueError(f"Required release cases did not pass: {', '.join(nonpassing_required)}")
     return len(rows), counts
 
 
@@ -89,7 +128,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "${ROOT}"
 
-for required in run.json cases.tsv claim_evidence_matrix.tsv public_data_sources.tsv environment.txt commands logs expected observed_normalized inputs.sha256 artifacts.sha256 verify_bundle.sh; do
+for required in run.json cases.tsv claim_evidence_matrix.tsv public_data_sources.tsv environment.txt commands logs expected observed_normalized filter_profile_results.tsv inputs.sha256 artifacts.sha256 verify_bundle.sh; do
   [[ -e "${required}" ]] || { echo "missing required evidence: ${required}" >&2; exit 1; }
 done
 
@@ -119,17 +158,40 @@ if not re.fullmatch(r"[0-9a-f]{40}", str(run.get("git_commit", ""))):
     raise SystemExit("invalid release commit")
 
 verdicts = {"PASS", "FAIL", "XFAIL", "SKIP", "BLOCKED"}
+required_pass = {
+    "unit_known_answer", "cli_step_listing", "strict_generic_dry_run",
+    "synthetic_longread_smoke", "synthetic_shortread_smoke",
+    "synthetic_longread_nomethyl_smoke", "standalone_minimal_smoke", "package_build",
+    "public_validation_matrix", "gm11906_default_run1", "gm11906_default_run2",
+    "gm11906_lenient", "gm11906_strict", "gm12878_default_run1",
+    "gm12878_default_run2", "gm12878_lenient", "gm12878_strict",
+    "gm11906_repeatability", "gm12878_repeatability", "filter_profiles",
+}
 with (root / "cases.tsv").open(encoding="utf-8", newline="") as handle:
     cases = list(csv.DictReader(handle, delimiter="\t"))
 if not cases:
     raise SystemExit("no validation cases")
+case_ids = set()
 for case in cases:
+    case_id = case.get("case_id", "")
+    if not case_id or case_id in case_ids:
+        raise SystemExit(f"missing or duplicate case_id: {case_id!r}")
+    case_ids.add(case_id)
     if case.get("verdict") not in verdicts:
         raise SystemExit(f"invalid verdict: {case}")
     if case.get("verdict") == "PASS" and (
         case.get("input_available") != "1" or case.get("expected_available") != "1"
     ):
         raise SystemExit(f"unsupported PASS verdict: {case.get('case_id')}")
+missing_required = sorted(required_pass - case_ids)
+if missing_required:
+    raise SystemExit(f"missing required release cases: {missing_required}")
+nonpassing = sorted(
+    case["case_id"] for case in cases
+    if case["case_id"] in required_pass and case["verdict"] != "PASS"
+)
+if nonpassing:
+    raise SystemExit(f"required release cases did not pass: {nonpassing}")
 
 states = {"ok", "not_configured", "not_applicable", "not_evaluable", "unavailable", "failed"}
 for path in (root / "observed_normalized").rglob("*.tsv"):
