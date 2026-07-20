@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import gzip
 import json
 from pathlib import Path
 
@@ -11,8 +12,10 @@ from mito_overview.validation_provenance import (
     ProvenanceError,
     create_alignment_provenance,
     create_deterministic_subset,
+    create_deterministic_fastq_subset,
     verify_alignment_provenance,
     verify_deterministic_subset,
+    verify_deterministic_fastq_subset,
     tool_version,
 )
 from tests._helpers import ReadSpec, write_alignment, write_fasta
@@ -183,3 +186,53 @@ def test_tool_version_ignores_failed_version_flag_and_parses_usage(
     )
     monkeypatch.setattr("subprocess.run", lambda *args, **kwargs: next(responses))
     assert tool_version("bwa") == "0.7.19-r1273"
+
+
+def test_deterministic_fastq_subset_is_exact_and_reproducible(tmp_path: Path) -> None:
+    source = tmp_path / "source.fastq.gz"
+    with gzip.open(source, "wt", encoding="ascii", newline="") as handle:
+        for index in range(20):
+            handle.write(f"@read-{index:03d} metadata\nAAAA\n+\nIIII\n")
+    subset = tmp_path / "subset.fastq.gz"
+    manifest = tmp_path / "subset.fastq.provenance.json"
+    names = tmp_path / "subset.fastq.selected_qnames.txt"
+    seed = "fastq-test-seed"
+    payload = create_deterministic_fastq_subset(
+        source_fastq=source,
+        output_fastq=subset,
+        output_manifest=manifest,
+        selected_names_path=names,
+        dataset_id="FASTQ-001",
+        requested_count=5,
+        seed=seed,
+    )
+    expected = sorted(
+        (f"read-{index:03d}" for index in range(20)),
+        key=lambda name: hashlib.sha256(f"{seed}\0{name}".encode()).digest(),
+    )[:5]
+    assert names.read_text(encoding="utf-8").splitlines() == sorted(expected)
+    with gzip.open(subset, "rt", encoding="ascii") as handle:
+        headers = [line[1:].split()[0] for line in handle if line.startswith("@")]
+    assert headers == [name for name in (f"read-{index:03d}" for index in range(20)) if name in expected]
+    assert payload["selection"]["source_records_seen"] == 20
+    verify_deterministic_fastq_subset(
+        source_fastq=source,
+        output_fastq=subset,
+        output_manifest=manifest,
+        selected_names_path=names,
+        dataset_id="FASTQ-001",
+        requested_count=5,
+        seed=seed,
+    )
+
+    source.write_bytes(source.read_bytes() + b"tamper")
+    with pytest.raises(ProvenanceError, match="source FASTQ"):
+        verify_deterministic_fastq_subset(
+            source_fastq=source,
+            output_fastq=subset,
+            output_manifest=manifest,
+            selected_names_path=names,
+            dataset_id="FASTQ-001",
+            requested_count=5,
+            seed=seed,
+        )

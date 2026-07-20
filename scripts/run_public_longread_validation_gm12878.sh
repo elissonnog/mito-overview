@@ -91,14 +91,14 @@ copy_if_exists() {
 }
 
 THREADS="${MITO_OVERVIEW_LONGREAD_THREADS:-2}"
-FULL_ALIGN_BAM="${MITO_OVERVIEW_LONGREAD_FULL_ALIGN_BAM:-${MITO_OVERVIEW_LONGREAD_ALIGN_BAM:-${HV_DIR}/GM12878_ONT_longread.mt.bam}}"
-FULL_ALIGN_PROVENANCE="${MITO_OVERVIEW_LONGREAD_FULL_ALIGN_PROVENANCE:-${FULL_ALIGN_BAM}.provenance.json}"
 FASTQ_GZ="${MITO_OVERVIEW_LONGREAD_FASTQ_GZ:-${DATA_DIR}/SRR18110025.fastq.gz}"
 SUBSET_READ_NAMES="${MITO_OVERVIEW_LONGREAD_SUBSET_READ_NAMES:-2000}"
 SUBSET_SEED="${MITO_OVERVIEW_LONGREAD_SUBSET_SEED:-mito-overview-v0.3.0-GM12878-SRR18110025}"
-SUBSET_BAM="${MITO_OVERVIEW_LONGREAD_SUBSET_BAM:-${FULL_ALIGN_BAM%.bam}.deterministic-qnames-${SUBSET_READ_NAMES}.bam}"
-SUBSET_PROVENANCE="${MITO_OVERVIEW_LONGREAD_SUBSET_PROVENANCE:-${SUBSET_BAM}.provenance.json}"
-SUBSET_NAMES="${MITO_OVERVIEW_LONGREAD_SUBSET_NAMES:-${SUBSET_BAM}.selected_qnames.txt}"
+SUBSET_FASTQ="${MITO_OVERVIEW_LONGREAD_SUBSET_FASTQ:-${DATA_DIR}/SRR18110025.deterministic-qnames-${SUBSET_READ_NAMES}.fastq.gz}"
+SUBSET_FASTQ_PROVENANCE="${MITO_OVERVIEW_LONGREAD_SUBSET_FASTQ_PROVENANCE:-${SUBSET_FASTQ}.provenance.json}"
+SUBSET_NAMES="${MITO_OVERVIEW_LONGREAD_SUBSET_NAMES:-${SUBSET_FASTQ}.selected_qnames.txt}"
+ALIGN_BAM="${MITO_OVERVIEW_LONGREAD_ALIGN_BAM:-${HV_DIR}/GM12878_ONT_longread.deterministic-qnames-${SUBSET_READ_NAMES}.mt.bam}"
+ALIGN_PROVENANCE="${MITO_OVERVIEW_LONGREAD_ALIGN_PROVENANCE:-${ALIGN_BAM}.provenance.json}"
 
 if [[ "${FASTQ_GZ}" == "${DATA_DIR}/SRR18110025.fastq.gz" ]]; then
   download_if_missing \
@@ -123,79 +123,83 @@ if [[ ! -f "${REF_FASTA}.mmi" ]]; then
   minimap2 -d "${REF_FASTA}.mmi" "${REF_FASTA}"
 fi
 
-FULL_ALIGN_DERIVATION_ID="minimap2-map-ont-mapped-only-samtools-sort-v1"
-FULL_PROVENANCE_INPUTS=(--input "SRR18110025=${FASTQ_GZ}")
-full_component_count=0
-for component in "${FULL_ALIGN_BAM}" "${FULL_ALIGN_BAM}.bai" "${FULL_ALIGN_PROVENANCE}"; do
-  [[ -s "${component}" ]] && full_component_count=$((full_component_count + 1))
-done
-if [[ "${full_component_count}" -eq 3 ]]; then
-  "${PYTHON_BIN}" "${REPO_ROOT}/scripts/public_alignment_provenance.py" verify \
-    --manifest "${FULL_ALIGN_PROVENANCE}" \
-    --dataset GM12878_SRR18110025_ONT \
-    --alignment "${FULL_ALIGN_BAM}" \
-    --reference "${REF_FASTA}" \
-    --derivation-id "${FULL_ALIGN_DERIVATION_ID}" \
-    "${FULL_PROVENANCE_INPUTS[@]}"
-  echo "[longread-gm12878] reusing provenance-verified full BAM ${FULL_ALIGN_BAM}"
-elif [[ "${full_component_count}" -eq 0 ]]; then
-  echo "[longread-gm12878] aligning public ONT mtDNA data to ${REF_FASTA}"
-  mkdir -p "$(dirname "${FULL_ALIGN_BAM}")"
-  minimap2 -t "${THREADS}" -ax map-ont "${REF_FASTA}.mmi" "${FASTQ_GZ}" \
-    | samtools view -@ "${THREADS}" -b -F 4 \
-    | samtools sort -@ "${THREADS}" -o "${FULL_ALIGN_BAM}"
-  samtools index -@ "${THREADS}" "${FULL_ALIGN_BAM}"
-  "${PYTHON_BIN}" "${REPO_ROOT}/scripts/public_alignment_provenance.py" record \
-    --manifest "${FULL_ALIGN_PROVENANCE}" \
-    --dataset GM12878_SRR18110025_ONT \
-    --alignment "${FULL_ALIGN_BAM}" \
-    --reference "${REF_FASTA}" \
-    --derivation-id "${FULL_ALIGN_DERIVATION_ID}" \
-    --command-template 'minimap2 -t {threads} -ax map-ont {reference_mmi} {fastq} | samtools view -@ {threads} -b -F 4 | samtools sort -@ {threads} -o {alignment_bam}' \
-    --parameter "threads=${THREADS}" \
-    --parameter "unmapped_filter_flag=4" \
-    --tool minimap2 \
-    --tool samtools \
-    "${FULL_PROVENANCE_INPUTS[@]}"
-else
-  echo "Incomplete cached GM12878 full-alignment provenance. Refusing unsafe reuse:" >&2
-  echo "  BAM: ${FULL_ALIGN_BAM}" >&2
-  echo "  BAI: ${FULL_ALIGN_BAM}.bai" >&2
-  echo "  manifest: ${FULL_ALIGN_PROVENANCE}" >&2
-  exit 1
-fi
-
 if ! [[ "${SUBSET_READ_NAMES}" =~ ^[0-9]+$ ]] || [[ "${SUBSET_READ_NAMES}" -lt 1 ]]; then
   echo "MITO_OVERVIEW_LONGREAD_SUBSET_READ_NAMES must be a positive integer" >&2
   exit 1
 fi
 subset_component_count=0
-for component in "${SUBSET_BAM}" "${SUBSET_BAM}.bai" "${SUBSET_PROVENANCE}" "${SUBSET_NAMES}"; do
+for component in "${SUBSET_FASTQ}" "${SUBSET_FASTQ_PROVENANCE}" "${SUBSET_NAMES}"; do
   [[ -s "${component}" ]] && subset_component_count=$((subset_component_count + 1))
 done
-if [[ "${subset_component_count}" -eq 4 ]]; then
+if [[ "${subset_component_count}" -eq 3 ]]; then
   subset_action=verify
 elif [[ "${subset_component_count}" -eq 0 ]]; then
   subset_action=create
-  echo "[longread-gm12878] selecting ${SUBSET_READ_NAMES} deterministic primary query names"
+  echo "[longread-gm12878] selecting ${SUBSET_READ_NAMES} deterministic FASTQ query names"
 else
-  echo "Incomplete cached GM12878 deterministic-subset provenance. Refusing unsafe reuse:" >&2
-  echo "  subset BAM: ${SUBSET_BAM}" >&2
-  echo "  subset BAI: ${SUBSET_BAM}.bai" >&2
-  echo "  subset manifest: ${SUBSET_PROVENANCE}" >&2
+  echo "Incomplete cached GM12878 deterministic FASTQ provenance. Refusing unsafe reuse:" >&2
+  echo "  subset FASTQ: ${SUBSET_FASTQ}" >&2
+  echo "  subset manifest: ${SUBSET_FASTQ_PROVENANCE}" >&2
   echo "  selected names: ${SUBSET_NAMES}" >&2
   exit 1
 fi
-"${PYTHON_BIN}" "${REPO_ROOT}/scripts/select_deterministic_bam_subset.py" "${subset_action}" \
-  --source-alignment "${FULL_ALIGN_BAM}" \
-  --source-manifest "${FULL_ALIGN_PROVENANCE}" \
-  --output-alignment "${SUBSET_BAM}" \
-  --output-manifest "${SUBSET_PROVENANCE}" \
+"${PYTHON_BIN}" "${REPO_ROOT}/scripts/select_deterministic_fastq_subset.py" "${subset_action}" \
+  --source-fastq "${FASTQ_GZ}" \
+  --output-fastq "${SUBSET_FASTQ}" \
+  --output-manifest "${SUBSET_FASTQ_PROVENANCE}" \
   --selected-names "${SUBSET_NAMES}" \
   --dataset GM12878_SRR18110025_ONT \
   --count "${SUBSET_READ_NAMES}" \
   --seed "${SUBSET_SEED}"
-ALIGN_BAM="${SUBSET_BAM}"
+
+ALIGN_DERIVATION_ID="minimap2-map-ont-deterministic-fastq-subset-mapped-only-v1"
+ALIGNMENT_INPUTS=(
+  --input "SRR18110025_full_fastq=${FASTQ_GZ}"
+  --input "deterministic_subset_fastq=${SUBSET_FASTQ}"
+  --input "deterministic_subset_manifest=${SUBSET_FASTQ_PROVENANCE}"
+  --input "selected_query_names=${SUBSET_NAMES}"
+)
+alignment_component_count=0
+for component in "${ALIGN_BAM}" "${ALIGN_BAM}.bai" "${ALIGN_PROVENANCE}"; do
+  [[ -s "${component}" ]] && alignment_component_count=$((alignment_component_count + 1))
+done
+if [[ "${alignment_component_count}" -eq 3 ]]; then
+  "${PYTHON_BIN}" "${REPO_ROOT}/scripts/public_alignment_provenance.py" verify \
+    --manifest "${ALIGN_PROVENANCE}" \
+    --dataset GM12878_SRR18110025_ONT_reduced_qn${SUBSET_READ_NAMES} \
+    --alignment "${ALIGN_BAM}" \
+    --reference "${REF_FASTA}" \
+    --derivation-id "${ALIGN_DERIVATION_ID}" \
+    "${ALIGNMENT_INPUTS[@]}"
+  echo "[longread-gm12878] reusing provenance-verified reduced BAM ${ALIGN_BAM}"
+elif [[ "${alignment_component_count}" -eq 0 ]]; then
+  echo "[longread-gm12878] aligning deterministic reduced FASTQ to ${REF_FASTA}"
+  mkdir -p "$(dirname "${ALIGN_BAM}")"
+  minimap2 -t "${THREADS}" -ax map-ont "${REF_FASTA}.mmi" "${SUBSET_FASTQ}" \
+    | samtools view -@ "${THREADS}" -b -F 4 \
+    | samtools sort -@ "${THREADS}" -o "${ALIGN_BAM}"
+  samtools index -@ "${THREADS}" "${ALIGN_BAM}"
+  "${PYTHON_BIN}" "${REPO_ROOT}/scripts/public_alignment_provenance.py" record \
+    --manifest "${ALIGN_PROVENANCE}" \
+    --dataset GM12878_SRR18110025_ONT_reduced_qn${SUBSET_READ_NAMES} \
+    --alignment "${ALIGN_BAM}" \
+    --reference "${REF_FASTA}" \
+    --derivation-id "${ALIGN_DERIVATION_ID}" \
+    --command-template 'minimap2 -t {threads} -ax map-ont {reference_mmi} {deterministic_subset_fastq} | samtools view -@ {threads} -b -F 4 | samtools sort -@ {threads} -o {alignment_bam}' \
+    --parameter "threads=${THREADS}" \
+    --parameter "unmapped_filter_flag=4" \
+    --parameter "selected_query_names=${SUBSET_READ_NAMES}" \
+    --parameter "selection_seed=${SUBSET_SEED}" \
+    --tool minimap2 \
+    --tool samtools \
+    "${ALIGNMENT_INPUTS[@]}"
+else
+  echo "Incomplete cached GM12878 reduced-alignment provenance. Refusing unsafe reuse:" >&2
+  echo "  BAM: ${ALIGN_BAM}" >&2
+  echo "  BAI: ${ALIGN_BAM}.bai" >&2
+  echo "  manifest: ${ALIGN_PROVENANCE}" >&2
+  exit 1
+fi
 echo "[longread-gm12878] analysis input is deterministic reduced BAM ${ALIGN_BAM}"
 samtools flagstat "${ALIGN_BAM}" > "${WORKDIR}/GM12878_ONT_longread.flagstat.txt"
 
@@ -289,8 +293,8 @@ case "${OUTPUT_MODE}" in
     ;;
 esac
 mkdir -p "${OUTPUT_DIR}/provenance"
-copy_if_needed "${FULL_ALIGN_PROVENANCE}" "${OUTPUT_DIR}/provenance/GM12878_ONT_longread.full_alignment.provenance.json"
-copy_if_needed "${SUBSET_PROVENANCE}" "${OUTPUT_DIR}/provenance/GM12878_ONT_longread.subset.provenance.json"
+copy_if_needed "${ALIGN_PROVENANCE}" "${OUTPUT_DIR}/provenance/GM12878_ONT_longread.reduced_alignment.provenance.json"
+copy_if_needed "${SUBSET_FASTQ_PROVENANCE}" "${OUTPUT_DIR}/provenance/GM12878_ONT_longread.fastq_subset.provenance.json"
 copy_if_needed "${SUBSET_NAMES}" "${OUTPUT_DIR}/provenance/GM12878_ONT_longread.selected_qnames.txt"
 copy_if_needed "${WORKDIR}/GM12878_ONT_longread.flagstat.txt" "$(dirname "${OUTPUT_DIR}")/GM12878_ONT_longread.flagstat.txt"
 

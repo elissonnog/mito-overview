@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import hashlib
 import heapq
+import gzip
+import io
 import json
 import os
 import subprocess
@@ -249,6 +251,198 @@ def verify_alignment_provenance(
 def _query_name_score(seed: str, query_name: str) -> int:
     value = f"{seed}\0{query_name}".encode("utf-8")
     return int.from_bytes(hashlib.sha256(value).digest(), byteorder="big")
+
+
+def _open_fastq_text(path: Path):
+    if path.name.endswith(".gz"):
+        return gzip.open(path, "rt", encoding="ascii", newline="")
+    return path.open("r", encoding="ascii", newline="")
+
+
+def _iter_fastq_records(path: Path):
+    with _open_fastq_text(path) as handle:
+        record_number = 0
+        while True:
+            header = handle.readline()
+            if not header:
+                break
+            sequence = handle.readline()
+            plus = handle.readline()
+            quality = handle.readline()
+            record_number += 1
+            if not sequence or not plus or not quality:
+                raise ProvenanceError(
+                    f"Truncated FASTQ record {record_number} in {path}"
+                )
+            if not header.startswith("@") or not plus.startswith("+"):
+                raise ProvenanceError(
+                    f"Malformed FASTQ record {record_number} in {path}"
+                )
+            query_name = header[1:].strip().split(maxsplit=1)[0]
+            if not query_name:
+                raise ProvenanceError(
+                    f"FASTQ record {record_number} has no query name in {path}"
+                )
+            if len(sequence.rstrip("\r\n")) != len(quality.rstrip("\r\n")):
+                raise ProvenanceError(
+                    f"FASTQ sequence/quality length mismatch at record {record_number} in {path}"
+                )
+            yield query_name, (header, sequence, plus, quality)
+
+
+def select_fastq_query_names(
+    source_fastq: Path,
+    *,
+    requested_count: int,
+    seed: str,
+) -> tuple[list[str], int]:
+    """Select a deterministic bounded set of names from a complete FASTQ."""
+
+    if requested_count < 1:
+        raise ValueError("requested_count must be at least 1")
+    heap: list[tuple[int, str]] = []
+    selected: set[str] = set()
+    records_seen = 0
+    for query_name, _ in _iter_fastq_records(source_fastq):
+        records_seen += 1
+        if query_name in selected:
+            continue
+        score = _query_name_score(seed, query_name)
+        entry = (-score, query_name)
+        if len(heap) < requested_count:
+            heapq.heappush(heap, entry)
+            selected.add(query_name)
+            continue
+        if score >= -heap[0][0]:
+            continue
+        _, removed_name = heapq.heapreplace(heap, entry)
+        selected.remove(removed_name)
+        selected.add(query_name)
+    return sorted(selected), records_seen
+
+
+def create_deterministic_fastq_subset(
+    *,
+    source_fastq: Path,
+    output_fastq: Path,
+    output_manifest: Path,
+    selected_names_path: Path,
+    dataset_id: str,
+    requested_count: int,
+    seed: str,
+) -> dict[str, object]:
+    """Create a gzip-stable FASTQ subset linked to the complete public run."""
+
+    source_fastq = source_fastq.resolve()
+    output_fastq = output_fastq.resolve()
+    output_manifest = output_manifest.resolve()
+    selected_names_path = selected_names_path.resolve()
+    for path in (output_fastq, output_manifest, selected_names_path):
+        if path.exists():
+            raise FileExistsError(f"Refusing to overwrite deterministic FASTQ artifact: {path}")
+    selected_names, records_seen = select_fastq_query_names(
+        source_fastq,
+        requested_count=requested_count,
+        seed=seed,
+    )
+    if len(selected_names) != requested_count:
+        raise ProvenanceError(
+            f"Requested {requested_count} FASTQ names but selected {len(selected_names)}"
+        )
+    selected_set = set(selected_names)
+    output_fastq.parent.mkdir(parents=True, exist_ok=True)
+    selected_names_path.parent.mkdir(parents=True, exist_ok=True)
+    temp_fd, temp_name = tempfile.mkstemp(
+        prefix=f".{output_fastq.name}.",
+        suffix=".tmp",
+        dir=output_fastq.parent,
+    )
+    os.close(temp_fd)
+    temp_output = Path(temp_name)
+    records_written = 0
+    try:
+        with temp_output.open("wb") as raw_output:
+            with gzip.GzipFile(filename="", mode="wb", fileobj=raw_output, mtime=0) as compressed:
+                with io.TextIOWrapper(compressed, encoding="ascii", newline="") as text_output:
+                    for query_name, record in _iter_fastq_records(source_fastq):
+                        if query_name not in selected_set:
+                            continue
+                        text_output.writelines(record)
+                        records_written += 1
+        if records_written != requested_count:
+            raise ProvenanceError(
+                f"Expected {requested_count} selected FASTQ records, wrote {records_written}"
+            )
+        temp_output.replace(output_fastq)
+    except Exception:
+        temp_output.unlink(missing_ok=True)
+        output_fastq.unlink(missing_ok=True)
+        raise
+
+    selected_names_path.write_text("\n".join(selected_names) + "\n", encoding="utf-8")
+    payload: dict[str, object] = {
+        "schema_version": SCHEMA_VERSION,
+        "provenance_type": "deterministic_fastq_query_name_subset",
+        "dataset_id": dataset_id,
+        "generated_utc": _utc_now(),
+        "selection": {
+            "algorithm": "smallest_sha256_seeded_query_names_v1",
+            "seed": seed,
+            "requested_query_names": requested_count,
+            "selected_query_names": len(selected_names),
+            "source_records_seen": records_seen,
+            "subset_records_written": records_written,
+        },
+        "source_fastq": digest_file(source_fastq, include_md5=True),
+        "subset_fastq": digest_file(output_fastq, include_md5=True),
+        "selected_query_names": digest_file(selected_names_path),
+    }
+    _write_json_exclusive(output_manifest, payload)
+    return payload
+
+
+def verify_deterministic_fastq_subset(
+    *,
+    source_fastq: Path,
+    output_fastq: Path,
+    output_manifest: Path,
+    selected_names_path: Path,
+    dataset_id: str,
+    requested_count: int,
+    seed: str,
+) -> dict[str, object]:
+    payload = load_manifest(output_manifest)
+    if payload.get("schema_version") != SCHEMA_VERSION:
+        raise ProvenanceError("Unsupported deterministic FASTQ provenance schema")
+    if payload.get("provenance_type") != "deterministic_fastq_query_name_subset":
+        raise ProvenanceError("Manifest is not a deterministic FASTQ provenance record")
+    if payload.get("dataset_id") != dataset_id:
+        raise ProvenanceError("Deterministic FASTQ dataset identity mismatch")
+    selection = payload.get("selection")
+    if not isinstance(selection, dict):
+        raise ProvenanceError("Deterministic FASTQ selection metadata is missing")
+    expected_selection = {
+        "algorithm": "smallest_sha256_seeded_query_names_v1",
+        "seed": seed,
+        "requested_query_names": requested_count,
+        "selected_query_names": requested_count,
+        "subset_records_written": requested_count,
+    }
+    for key, expected in expected_selection.items():
+        if selection.get(key) != expected:
+            raise ProvenanceError(
+                f"Deterministic FASTQ {key} mismatch: expected {expected}, "
+                f"observed {selection.get(key)}"
+            )
+    _assert_record_matches("source FASTQ", payload["source_fastq"], source_fastq)
+    _assert_record_matches("subset FASTQ", payload["subset_fastq"], output_fastq)
+    _assert_record_matches(
+        "selected FASTQ query names", payload["selected_query_names"], selected_names_path
+    )
+    selected_names = selected_names_path.read_text(encoding="utf-8").splitlines()
+    if len(selected_names) != requested_count or selected_names != sorted(set(selected_names)):
+        raise ProvenanceError("Selected FASTQ query-name ledger is incomplete or noncanonical")
+    return payload
 
 
 def select_query_names(
