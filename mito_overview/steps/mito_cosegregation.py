@@ -12,8 +12,8 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import pysam
 
+from mito_overview.allele_counting import AlleleFilterPolicy, collect_site_read_calls, policy_rows
 from mito_overview.report_common import df_to_html_table, figure_html, metric_card, render_page
 
 TOP_SITES_LIMIT = 8
@@ -23,7 +23,9 @@ SELECTED_SITE_COLUMNS = [
     "position",
     "ref_base",
     "alt_base",
+    "alt_allele_fraction",
     "heteroplasmy_fraction",
+    "callable_depth",
     "depth",
     "covered_reads",
     "alt_reads",
@@ -51,6 +53,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--report-dir", required=True)
     parser.add_argument("--sample-id", required=True)
     parser.add_argument("--mt-contig", required=True)
+    parser.add_argument("--min-base-quality", type=int, default=13)
+    parser.add_argument("--min-mapping-quality", type=int, default=20)
+    parser.add_argument("--min-read-mean-quality", type=float, default=10.0)
+    parser.add_argument("--max-depth", type=int, default=0)
+    parser.add_argument("--exclude-flags", type=lambda value: int(value, 0), default=3844)
+    parser.add_argument("--ignore-overlaps", type=int, choices=(0, 1), default=1)
     return parser
 
 
@@ -80,7 +88,15 @@ def _load_selected_sites(summary_dir: Path, top_sites_limit: int) -> tuple[pd.Da
         return _empty_selected_sites(), message
 
     candidates_df = pd.read_csv(candidates_path, sep="\t")
-    required = {"position", "ref_base", "alt_base", "heteroplasmy_fraction", "depth"}
+    if "alt_allele_fraction" not in candidates_df.columns and "heteroplasmy_fraction" in candidates_df.columns:
+        candidates_df["alt_allele_fraction"] = candidates_df["heteroplasmy_fraction"]
+    if "heteroplasmy_fraction" not in candidates_df.columns and "alt_allele_fraction" in candidates_df.columns:
+        candidates_df["heteroplasmy_fraction"] = candidates_df["alt_allele_fraction"]
+    if "callable_depth" not in candidates_df.columns and "depth" in candidates_df.columns:
+        candidates_df["callable_depth"] = candidates_df["depth"]
+    if "depth" not in candidates_df.columns and "callable_depth" in candidates_df.columns:
+        candidates_df["depth"] = candidates_df["callable_depth"]
+    required = {"position", "ref_base", "alt_base", "alt_allele_fraction", "callable_depth"}
     missing = sorted(required - set(candidates_df.columns))
     if missing:
         message = (
@@ -92,7 +108,7 @@ def _load_selected_sites(summary_dir: Path, top_sites_limit: int) -> tuple[pd.Da
         return _empty_selected_sites(), message
 
     filtered = candidates_df.copy()
-    filtered = filtered.dropna(subset=["position", "ref_base", "alt_base", "heteroplasmy_fraction", "depth"])
+    filtered = filtered.dropna(subset=["position", "ref_base", "alt_base", "alt_allele_fraction", "callable_depth"])
     filtered["alt_base"] = filtered["alt_base"].astype(str).str.upper()
     filtered["ref_base"] = filtered["ref_base"].astype(str).str.upper()
     filtered = filtered[filtered["alt_base"] != "."]
@@ -102,11 +118,13 @@ def _load_selected_sites(summary_dir: Path, top_sites_limit: int) -> tuple[pd.Da
         return _empty_selected_sites(), message
 
     filtered["position"] = filtered["position"].astype(int)
-    filtered["depth"] = filtered["depth"].astype(int)
-    filtered["heteroplasmy_fraction"] = filtered["heteroplasmy_fraction"].astype(float).round(6)
+    filtered["callable_depth"] = filtered["callable_depth"].astype(int)
+    filtered["depth"] = filtered["callable_depth"]
+    filtered["alt_allele_fraction"] = filtered["alt_allele_fraction"].astype(float).round(6)
+    filtered["heteroplasmy_fraction"] = filtered["alt_allele_fraction"]
     filtered = filtered.drop_duplicates(subset=["position", "alt_base"])
     filtered = filtered.sort_values(
-        ["heteroplasmy_fraction", "depth", "position"],
+        ["alt_allele_fraction", "callable_depth", "position"],
         ascending=[False, False, True],
     ).head(top_sites_limit)
     filtered = filtered.reset_index(drop=True)
@@ -125,50 +143,33 @@ def _collect_read_support(
     bam_path: str | Path,
     contig: str,
     selected_sites: pd.DataFrame,
-) -> tuple[dict[str, set[str]], dict[str, set[str]]]:
+    policy: AlleleFilterPolicy,
+) -> tuple[dict[str, set[str]], dict[str, set[str]], object]:
     coverage_by_site: dict[str, set[str]] = {}
     alt_by_site: dict[str, set[str]] = {}
     if selected_sites.empty:
-        return coverage_by_site, alt_by_site
+        _, _, stats = collect_site_read_calls(bam_path=bam_path, contig=contig, sites={}, policy=policy)
+        return coverage_by_site, alt_by_site, stats
 
-    bam = pysam.AlignmentFile(str(bam_path), "rb")
+    sites = {int(row.position): str(row.alt_base) for row in selected_sites.itertuples(index=False)}
+    coverage_by_position, alt_by_position, stats = collect_site_read_calls(
+        bam_path=bam_path,
+        contig=contig,
+        sites=sites,
+        policy=policy,
+    )
     total_sites = len(selected_sites)
     for idx, row in enumerate(selected_sites.itertuples(index=False), start=1):
-        site_calls: dict[str, bool] = {}
-        for pileupcolumn in bam.pileup(
-            contig,
-            int(row.position) - 1,
-            int(row.position),
-            truncate=True,
-            stepper="all",
-            min_base_quality=0,
-        ):
-            if pileupcolumn.reference_pos != int(row.position) - 1:
-                continue
-            for pileupread in pileupcolumn.pileups:
-                alignment = pileupread.alignment
-                if alignment.is_unmapped or alignment.is_secondary:
-                    continue
-                if pileupread.is_del or pileupread.is_refskip:
-                    continue
-                query_position = pileupread.query_position
-                if query_position is None or alignment.query_sequence is None:
-                    continue
-                read_name = alignment.query_name
-                base = alignment.query_sequence[query_position].upper()
-                site_calls[read_name] = site_calls.get(read_name, False) or base == str(row.alt_base)
-        coverage_by_site[str(row.site_label)] = set(site_calls)
-        alt_by_site[str(row.site_label)] = {
-            read_name for read_name, is_alt in site_calls.items() if is_alt
-        }
+        position = int(row.position)
+        coverage_by_site[str(row.site_label)] = coverage_by_position.get(position, set())
+        alt_by_site[str(row.site_label)] = alt_by_position.get(position, set())
         print(
             f"[cosegregation] collected site {idx}/{total_sites} "
             f"label={row.site_label} covered_reads={len(coverage_by_site[str(row.site_label)])} "
             f"alt_reads={len(alt_by_site[str(row.site_label)])}",
             flush=True,
         )
-    bam.close()
-    return coverage_by_site, alt_by_site
+    return coverage_by_site, alt_by_site, stats
 
 
 def _summarise_pairwise(
@@ -300,7 +301,13 @@ def run_step(
     report_dir: str | Path,
     sample_id: str,
     mt_contig: str,
-) -> dict[str, Path]:
+    min_base_quality: int = 13,
+    min_mapping_quality: int = 20,
+    min_read_mean_quality: float = 10.0,
+    max_depth: int = 0,
+    exclude_flags: int = 3844,
+    ignore_overlaps: bool = True,
+) -> dict[str, Path | str]:
     """Summarize co-occurrence of selected mtDNA heteroplasmy candidates."""
 
     print(
@@ -315,8 +322,16 @@ def run_step(
     figure_dir.mkdir(parents=True, exist_ok=True)
     report_dir.mkdir(parents=True, exist_ok=True)
 
+    policy = AlleleFilterPolicy(
+        min_base_quality=min_base_quality,
+        min_mapping_quality=min_mapping_quality,
+        min_read_mean_quality=min_read_mean_quality,
+        max_depth=max_depth,
+        exclude_flags=exclude_flags,
+        ignore_overlaps=ignore_overlaps,
+    )
     selected_df, status_message = _load_selected_sites(summary_dir, TOP_SITES_LIMIT)
-    coverage_by_site, alt_by_site = _collect_read_support(bam, mt_contig, selected_df)
+    coverage_by_site, alt_by_site, filter_stats = _collect_read_support(bam, mt_contig, selected_df, policy)
     if not selected_df.empty:
         selected_df = selected_df.copy()
         selected_df["covered_reads"] = [
@@ -353,8 +368,10 @@ def run_step(
         strongest_pair = f"{strongest_row['site_i']} | {strongest_row['site_j']}"
         strongest_pair_jaccard_alt = round(float(strongest_row["jaccard_alt"]), 6)
 
-    summary_df = pd.DataFrame(
-        [
+    status = "not_evaluable" if status_message else "ok"
+    summary_rows = [
+            {"metric": "status", "value": status},
+            {"metric": "reason_code", "value": "no_candidate_sites_available" if status_message else ""},
             {"metric": "selected_sites", "value": len(selected_df)},
             {
                 "metric": "pairwise_edges_meeting_shared_threshold",
@@ -375,7 +392,8 @@ def run_step(
                 "value": strongest_pair_jaccard_alt,
             },
         ]
-    )
+    summary_rows.extend(policy_rows(policy, filter_stats))
+    summary_df = pd.DataFrame(summary_rows)
 
     selected_path = summary_dir / "mito_cosegregation_selected_sites.tsv"
     pairwise_path = summary_dir / "mito_cosegregation_pairwise.tsv"
@@ -402,8 +420,8 @@ def run_step(
     else:
         status_html = ""
     intro_html = (
-        '<p class="muted">This page summarizes whether the strongest candidate mitochondrial '
-        "heteroplasmy sites tend to occur on the same long reads. The analysis is based on the "
+        '<p class="muted">This page summarizes whether selected mitochondrial candidate sites '
+        "tend to occur on the same long reads. The analysis uses the same read and base filters as "
         "top candidate sites from the heteroplasmy step and reports pairwise co-occurrence among "
         "reads that span both positions.</p>"
         f"<div class='metrics-grid'>{metrics_html}</div>{status_html}"
@@ -442,6 +460,7 @@ def run_step(
         "".join(body_parts),
     )
     return {
+        "status": status,
         "selected_path": selected_path,
         "pairwise_path": pairwise_path,
         "read_burden_path": read_burden_path,
@@ -459,6 +478,12 @@ def main() -> None:
         report_dir=args.report_dir,
         sample_id=args.sample_id,
         mt_contig=args.mt_contig,
+        min_base_quality=args.min_base_quality,
+        min_mapping_quality=args.min_mapping_quality,
+        min_read_mean_quality=args.min_read_mean_quality,
+        max_depth=args.max_depth,
+        exclude_flags=args.exclude_flags,
+        ignore_overlaps=bool(args.ignore_overlaps),
     )
     for path in outputs.values():
         print(f"Wrote {path}")

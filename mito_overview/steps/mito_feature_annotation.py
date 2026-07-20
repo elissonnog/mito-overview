@@ -13,6 +13,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 
 from mito_overview.report_common import df_to_html_table, figure_html, metric_card, render_page
+from mito_overview.table_contracts import ensure_alt_fraction_columns, validate_module_state
 
 DLOOP_INTERVALS = [(1, 576), (16024, 16569)]
 ATTR_RE = re.compile(r'(\w+) "([^"]+)"')
@@ -84,9 +85,18 @@ def _status_page(
     sample_id: str,
     mt_contig: str,
     mt_length: int,
+    status: str,
+    reason_code: str,
     message: str,
-) -> dict[str, Path]:
-    summary_df = pd.DataFrame([{"metric": "status", "value": message}])
+) -> dict[str, Path | str]:
+    status = validate_module_state(status)
+    summary_df = pd.DataFrame(
+        [
+            {"metric": "status", "value": status},
+            {"metric": "reason_code", "value": reason_code},
+            {"metric": "message", "value": message},
+        ]
+    )
     summary_path = summary_dir / "mito_feature_annotation_summary.tsv"
     summary_df.to_csv(summary_path, sep="\t", index=False)
     intro_html = f'<p class="muted">{message}</p>'
@@ -100,7 +110,7 @@ def _status_page(
         intro_html,
         body_html,
     )
-    return {"summary_path": summary_path, "report_path": report_path}
+    return {"status": status, "summary_path": summary_path, "report_path": report_path}
 
 
 def run_step(
@@ -114,8 +124,8 @@ def run_step(
     mt_contig: str,
     mt_length: int,
     human_mt_gtf: str | Path | None,
-) -> dict[str, Path]:
-    """Annotate heteroplasmy candidates against human mtDNA features."""
+) -> dict[str, Path | str]:
+    """Annotate alternate-allele candidate sites against human mtDNA features."""
 
     print(
         f"[feature_annotation] starting sample={sample_id} species={species} "
@@ -135,6 +145,8 @@ def run_step(
             sample_id=sample_id,
             mt_contig=mt_contig,
             mt_length=mt_length,
+            status="not_applicable",
+            reason_code="non_human_sample",
             message="Feature annotation is currently implemented only for human mitochondrial reports.",
         )
     if not human_mt_gtf or not Path(human_mt_gtf).exists():
@@ -144,6 +156,8 @@ def run_step(
             sample_id=sample_id,
             mt_contig=mt_contig,
             mt_length=mt_length,
+            status="not_configured",
+            reason_code="human_mt_gtf_not_configured",
             message="Human mtDNA feature annotation requires a configured HUMAN_MT_GTF file.",
         )
 
@@ -153,9 +167,18 @@ def run_step(
 
     candidates_path = summary_dir / "mito_heteroplasmy_candidates.tsv"
     if candidates_path.exists():
-        candidates_df = pd.read_csv(candidates_path, sep="\t")
+        candidates_df = ensure_alt_fraction_columns(pd.read_csv(candidates_path, sep="\t"))
     else:
-        candidates_df = pd.DataFrame(columns=["position", "ref_base", "alt_base", "heteroplasmy_fraction", "depth"])
+        candidates_df = pd.DataFrame(
+            columns=[
+                "position",
+                "ref_base",
+                "alt_base",
+                "alt_allele_fraction",
+                "heteroplasmy_fraction",
+                "depth",
+            ]
+        )
 
     feature_catalog = (
         features_df.drop_duplicates(["gene_name", "feature_type", "start", "end"])
@@ -175,26 +198,51 @@ def run_step(
                 "position": int(row.position),
                 "ref_base": row.ref_base,
                 "alt_base": row.alt_base,
-                "heteroplasmy_fraction": row.heteroplasmy_fraction,
+                "alt_allele_fraction": row.alt_allele_fraction,
+                "heteroplasmy_fraction": row.alt_allele_fraction,
                 "depth": row.depth,
                 "feature_class": biotype,
                 "feature_label": label,
             }
         )
-    overlap_df = pd.DataFrame(overlap_rows)
+    overlap_df = pd.DataFrame(
+        overlap_rows,
+        columns=[
+            "position",
+            "ref_base",
+            "alt_base",
+            "alt_allele_fraction",
+            "heteroplasmy_fraction",
+            "depth",
+            "feature_class",
+            "feature_label",
+        ],
+    )
     overlap_path = summary_dir / "mito_feature_overlap_candidates.tsv"
     overlap_df.to_csv(overlap_path, sep="\t", index=False)
 
     if not overlap_df.empty:
         summary_feature_df = (
             overlap_df.groupby(["feature_class", "feature_label"], as_index=False)
-            .agg(candidate_sites=("position", "count"), mean_heteroplasmy=("heteroplasmy_fraction", "mean"))
-            .sort_values(["candidate_sites", "mean_heteroplasmy"], ascending=[False, False])
+            .agg(
+                candidate_sites=("position", "count"),
+                mean_alt_allele_fraction=("alt_allele_fraction", "mean"),
+            )
+            .sort_values(["candidate_sites", "mean_alt_allele_fraction"], ascending=[False, False])
         )
-        summary_feature_df["mean_heteroplasmy"] = summary_feature_df["mean_heteroplasmy"].round(6)
+        summary_feature_df["mean_alt_allele_fraction"] = summary_feature_df[
+            "mean_alt_allele_fraction"
+        ].round(6)
+        summary_feature_df["mean_heteroplasmy"] = summary_feature_df["mean_alt_allele_fraction"]
     else:
         summary_feature_df = pd.DataFrame(
-            columns=["feature_class", "feature_label", "candidate_sites", "mean_heteroplasmy"]
+            columns=[
+                "feature_class",
+                "feature_label",
+                "candidate_sites",
+                "mean_alt_allele_fraction",
+                "mean_heteroplasmy",
+            ]
         )
     summary_path = summary_dir / "mito_feature_annotation_summary.tsv"
     summary_feature_df.to_csv(summary_path, sep="\t", index=False)
@@ -206,7 +254,7 @@ def run_step(
         plt.figure(figsize=(10, 5))
         plt.bar(labels, top["candidate_sites"], color="#0f766e")
         plt.xticks(rotation=90)
-        plt.ylabel("Candidate heteroplasmy sites")
+        plt.ylabel("Candidate sites")
         plt.title(f"{sample_id} mitochondrial feature overlap")
         plt.tight_layout()
         fig_path = figure_dir / "mito_feature_annotation.png"
@@ -222,8 +270,8 @@ def run_step(
         ]
     )
     intro_html = (
-        '<p class="muted">Mitochondrial candidate heteroplasmy sites are mapped to the human mitochondrial gene '
-        "catalog and the control-region interval. This provides biological context for whether candidate variation "
+        '<p class="muted">Mitochondrial alternate-allele candidate sites are mapped to the human mitochondrial gene '
+        "catalog and the control-region interval. This provides biological context for whether observed variation "
         "falls in protein-coding, rRNA, tRNA, or control-region sequence. The annotation source can be used with "
         "standard mitochondrial references that share the canonical human mitochondrial coordinate system.</p>"
         f"<div class='metrics-grid'>{metrics_html}</div>"
@@ -237,7 +285,7 @@ def run_step(
         body_parts.insert(
             1,
             "<section><h2>Feature-overlap summary</h2>"
-            + figure_html(fig_path, "Candidate heteroplasmy sites by mitochondrial feature")
+            + figure_html(fig_path, "Alternate-allele candidate sites by mitochondrial feature")
             + "</section>",
         )
 
@@ -251,6 +299,7 @@ def run_step(
         "".join(body_parts),
     )
     return {
+        "status": "ok",
         "catalog_path": catalog_path,
         "overlap_path": overlap_path,
         "summary_path": summary_path,

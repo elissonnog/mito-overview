@@ -13,15 +13,24 @@ import pandas as pd
 import pysam
 
 from mito_overview.report_common import df_to_html_table, figure_html, metric_card, render_page
+from mito_overview.table_contracts import ensure_alt_fraction_columns, validate_module_state
 
 SUMMARY_COLUMNS = ["metric", "value"]
-CANDIDATE_COLUMNS = ["position", "ref_base", "alt_base", "depth", "heteroplasmy_fraction"]
+CANDIDATE_COLUMNS = [
+    "position",
+    "ref_base",
+    "alt_base",
+    "depth",
+    "alt_allele_fraction",
+    "heteroplasmy_fraction",
+]
 OVERLAP_COLUMNS = ["position", "ref_base", "alt_base", "feature_class", "feature_label"]
 ANNOTATION_COLUMNS = [
     "position",
     "ref_base",
     "alt_base",
     "depth",
+    "alt_allele_fraction",
     "heteroplasmy_fraction",
     "feature_label",
     "feature_class",
@@ -32,7 +41,12 @@ ANNOTATION_COLUMNS = [
     "clinvar_significance",
     "clinvar_disease",
 ]
-CLASS_SUMMARY_COLUMNS = ["consequence_class", "candidate_sites", "mean_heteroplasmy"]
+CLASS_SUMMARY_COLUMNS = [
+    "consequence_class",
+    "candidate_sites",
+    "mean_alt_allele_fraction",
+    "mean_heteroplasmy",
+]
 CLINVAR_SUMMARY_COLUMNS = ["clinvar_significance", "candidate_sites"]
 MT_CODE = {
     "TTT": "F",
@@ -170,8 +184,10 @@ def status_page(
     sample_id: str,
     mt_contig: str,
     mt_length: int | None,
+    status: str,
+    reason_code: str,
     message: str,
-) -> dict[str, Path]:
+) -> dict[str, Path | str]:
     """Write stable empty outputs and a status-only report page."""
 
     annot_path = summary_dir / "mito_variant_consequence_candidates.tsv"
@@ -180,7 +196,15 @@ def status_page(
     summary_path = summary_dir / "mito_variant_consequence_summary.tsv"
     report_path = report_dir / "10_mito_variant_consequence.html"
 
-    summary_df = pd.DataFrame([{"metric": "status", "value": message}], columns=SUMMARY_COLUMNS)
+    status = validate_module_state(status)
+    summary_df = pd.DataFrame(
+        [
+            {"metric": "status", "value": status},
+            {"metric": "reason_code", "value": reason_code},
+            {"metric": "message", "value": message},
+        ],
+        columns=SUMMARY_COLUMNS,
+    )
     _empty_annotation_df().to_csv(annot_path, sep="\t", index=False)
     _empty_class_summary_df().to_csv(class_path, sep="\t", index=False)
     _empty_clinvar_summary_df().to_csv(clinvar_path, sep="\t", index=False)
@@ -197,6 +221,7 @@ def status_page(
         body_html,
     )
     return {
+        "status": status,
         "annot_path": annot_path,
         "class_path": class_path,
         "clinvar_path": clinvar_path,
@@ -338,7 +363,7 @@ def run_step(
     summary_path = summary_dir / "mito_variant_consequence_summary.tsv"
     report_path = report_dir / "10_mito_variant_consequence.html"
 
-    candidates_df = load_table(candidates_path, CANDIDATE_COLUMNS)
+    candidates_df = ensure_alt_fraction_columns(load_table(candidates_path, CANDIDATE_COLUMNS))
     overlap_df = load_table(overlap_path, OVERLAP_COLUMNS)
     feature_catalog = load_table(catalog_path)
     print(
@@ -349,10 +374,11 @@ def run_step(
         flush=True,
     )
 
-    missing_candidate_cols = sorted(set(CANDIDATE_COLUMNS) - set(candidates_df.columns))
+    required_candidate_cols = {"position", "ref_base", "alt_base", "depth", "alt_allele_fraction"}
+    missing_candidate_cols = sorted(required_candidate_cols - set(candidates_df.columns))
     if missing_candidate_cols:
         message = (
-            "The heteroplasmy candidate table is missing required columns "
+            "The alternate-allele candidate table is missing required columns "
             + ",".join(missing_candidate_cols)
             + "; stable empty outputs were written."
         )
@@ -363,26 +389,29 @@ def run_step(
             sample_id=sample_id,
             mt_contig=mt_contig,
             mt_length=mt_length,
+            status="failed",
+            reason_code="candidate_table_missing_columns",
             message=message,
         )
 
     filtered = candidates_df.copy()
     filtered["position"] = pd.to_numeric(filtered["position"], errors="coerce")
     filtered["depth"] = pd.to_numeric(filtered["depth"], errors="coerce")
-    filtered["heteroplasmy_fraction"] = pd.to_numeric(filtered["heteroplasmy_fraction"], errors="coerce")
+    filtered["alt_allele_fraction"] = pd.to_numeric(filtered["alt_allele_fraction"], errors="coerce")
     filtered["ref_base"] = filtered["ref_base"].astype(str).str.upper()
     filtered["alt_base"] = filtered["alt_base"].astype(str).str.upper()
-    filtered = filtered.dropna(subset=["position", "depth", "heteroplasmy_fraction"]).copy()
+    filtered = filtered.dropna(subset=["position", "depth", "alt_allele_fraction"]).copy()
     filtered = filtered[filtered["ref_base"].isin(["A", "C", "G", "T"])]
     filtered = filtered[filtered["alt_base"].isin(["A", "C", "G", "T"])]
     filtered["position"] = filtered["position"].astype(int)
     filtered["depth"] = filtered["depth"].astype(int)
-    filtered["heteroplasmy_fraction"] = filtered["heteroplasmy_fraction"].astype(float).round(6)
+    filtered["alt_allele_fraction"] = filtered["alt_allele_fraction"].astype(float).round(6)
+    filtered["heteroplasmy_fraction"] = filtered["alt_allele_fraction"]
     filtered = filtered.drop_duplicates(subset=["position", "ref_base", "alt_base"]).reset_index(drop=True)
     print(f"[variant_consequence] retained candidate rows={len(filtered)} after filtering", flush=True)
 
     if filtered.empty:
-        message = "No candidate heteroplasmy sites were available for mitochondrial consequence annotation."
+        message = "No alternate-allele candidate sites were available for mitochondrial consequence annotation."
         print(f"[variant_consequence] {message}", flush=True)
         return status_page(
             summary_dir=summary_dir,
@@ -390,6 +419,8 @@ def run_step(
             sample_id=sample_id,
             mt_contig=mt_contig,
             mt_length=mt_length,
+            status="not_evaluable",
+            reason_code="no_candidate_sites_available",
             message=message,
         )
 
@@ -487,7 +518,8 @@ def run_step(
                 "ref_base": str(row.ref_base),
                 "alt_base": str(row.alt_base),
                 "depth": int(row.depth),
-                "heteroplasmy_fraction": round(float(row.heteroplasmy_fraction), 6),
+                "alt_allele_fraction": round(float(row.alt_allele_fraction), 6),
+                "heteroplasmy_fraction": round(float(row.alt_allele_fraction), 6),
                 "feature_label": feature_label,
                 "feature_class": feature_class,
                 "consequence_class": consequence,
@@ -503,7 +535,7 @@ def run_step(
 
     annot_df = pd.DataFrame(annot_rows, columns=ANNOTATION_COLUMNS)
     annot_df = annot_df.sort_values(
-        ["heteroplasmy_fraction", "depth", "position"],
+        ["alt_allele_fraction", "depth", "position"],
         ascending=[False, False, True],
     ).reset_index(drop=True)
     annot_df.to_csv(annot_path, sep="\t", index=False)
@@ -514,11 +546,17 @@ def run_step(
     else:
         class_summary = (
             annot_df.groupby("consequence_class", as_index=False)
-            .agg(candidate_sites=("position", "count"), mean_heteroplasmy=("heteroplasmy_fraction", "mean"))
-            .sort_values(["candidate_sites", "mean_heteroplasmy"], ascending=[False, False])
+            .agg(
+                candidate_sites=("position", "count"),
+                mean_alt_allele_fraction=("alt_allele_fraction", "mean"),
+            )
+            .sort_values(["candidate_sites", "mean_alt_allele_fraction"], ascending=[False, False])
             .reset_index(drop=True)
         )
-        class_summary["mean_heteroplasmy"] = class_summary["mean_heteroplasmy"].round(6)
+        class_summary["mean_alt_allele_fraction"] = class_summary[
+            "mean_alt_allele_fraction"
+        ].round(6)
+        class_summary["mean_heteroplasmy"] = class_summary["mean_alt_allele_fraction"]
     class_summary.to_csv(class_path, sep="\t", index=False)
 
     clinvar_hits = annot_df[annot_df["clinvar_significance"] != "NA"].copy()
@@ -535,6 +573,8 @@ def run_step(
 
     summary_df = pd.DataFrame(
         [
+            {"metric": "status", "value": "ok"},
+            {"metric": "reason_code", "value": ""},
             {"metric": "candidate_sites_annotated", "value": int(len(annot_df))},
             {"metric": "distinct_consequence_classes", "value": int(annot_df["consequence_class"].nunique())},
             {"metric": "sites_with_clinvar_annotation", "value": int((annot_df["clinvar_significance"] != "NA").sum())},
@@ -586,8 +626,8 @@ def run_step(
         ]
     )
     intro_html = (
-        '<p class="muted">This page assigns a local biological consequence class to candidate mitochondrial '
-        "heteroplasmy sites. Protein-coding sites are annotated against mitochondrial CDS intervals and the "
+        '<p class="muted">This page assigns a local biological consequence class to mitochondrial alternate-allele '
+        "candidate sites. Protein-coding sites are annotated against mitochondrial CDS intervals and the "
         "vertebrate mitochondrial genetic code, while tRNA, rRNA, control-region, and intergenic sites are "
         f"classified by feature context. {clinvar_note}</p>"
         f"<div class='metrics-grid'>{metrics_html}</div>"
@@ -626,6 +666,7 @@ def run_step(
     )
     print(f"[variant_consequence] wrote summary table {summary_path}", flush=True)
     return {
+        "status": "ok",
         "annot_path": annot_path,
         "class_path": class_path,
         "clinvar_path": clinvar_path,

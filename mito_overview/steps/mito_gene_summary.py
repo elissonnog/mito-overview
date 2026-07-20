@@ -12,6 +12,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 
 from mito_overview.report_common import df_to_html_table, figure_html, metric_card, render_page
+from mito_overview.table_contracts import ensure_alt_fraction_columns, validate_module_state
 
 CONTROL_REGION_LABEL = "D-loop/control region"
 CONTROL_REGION_INTERVALS = [(1, 576), (16024, 16569)]
@@ -21,6 +22,8 @@ FEATURE_SUMMARY_COLUMNS = [
     "feature_intervals",
     "candidate_sites",
     "selected_coseg_sites",
+    "max_alt_allele_fraction",
+    "mean_alt_allele_fraction",
     "max_heteroplasmy",
     "mean_heteroplasmy",
     "median_depth",
@@ -33,6 +36,7 @@ SITE_DETAIL_COLUMNS = [
     "position",
     "ref_base",
     "alt_base",
+    "alt_allele_fraction",
     "heteroplasmy_fraction",
     "depth",
     "feature_class",
@@ -66,14 +70,23 @@ def _status_page(
     sample_id: str,
     mt_contig: str,
     mt_length: int,
+    status: str,
+    reason_code: str,
     message: str,
-) -> dict[str, Path]:
+) -> dict[str, Path | str]:
     summary_path = summary_dir / "mito_gene_summary.tsv"
     site_details_path = summary_dir / "mito_gene_summary_site_details.tsv"
     run_summary_path = summary_dir / "mito_gene_summary_run_summary.tsv"
     report_path = report_dir / "07_mito_gene_summary.html"
 
-    status_df = pd.DataFrame([{"metric": "status", "value": message}])
+    status = validate_module_state(status)
+    status_df = pd.DataFrame(
+        [
+            {"metric": "status", "value": status},
+            {"metric": "reason_code", "value": reason_code},
+            {"metric": "message", "value": message},
+        ]
+    )
     _empty_feature_summary_df().to_csv(summary_path, sep="\t", index=False)
     _empty_site_detail_df().to_csv(site_details_path, sep="\t", index=False)
     status_df.to_csv(run_summary_path, sep="\t", index=False)
@@ -89,6 +102,7 @@ def _status_page(
         body_html,
     )
     return {
+        "status": status,
         "summary_path": summary_path,
         "site_details_path": site_details_path,
         "run_summary_path": run_summary_path,
@@ -272,13 +286,16 @@ def _prepare_overlap_df(overlap_df: pd.DataFrame) -> pd.DataFrame:
     if overlap_df.empty:
         return _empty_site_detail_df()
 
-    prepared = overlap_df.copy()
+    prepared = ensure_alt_fraction_columns(overlap_df)
     for column in SITE_DETAIL_COLUMNS:
         if column not in prepared.columns:
             prepared[column] = pd.NA
 
     prepared["position"] = pd.to_numeric(prepared["position"], errors="coerce")
-    prepared["heteroplasmy_fraction"] = pd.to_numeric(prepared["heteroplasmy_fraction"], errors="coerce").fillna(0.0)
+    prepared["alt_allele_fraction"] = pd.to_numeric(
+        prepared["alt_allele_fraction"], errors="coerce"
+    ).fillna(0.0)
+    prepared["heteroplasmy_fraction"] = prepared["alt_allele_fraction"]
     prepared["depth"] = pd.to_numeric(prepared["depth"], errors="coerce").fillna(0.0)
     prepared["feature_label"] = prepared["feature_label"].apply(_normalize_label)
     prepared["feature_class"] = prepared["feature_class"].apply(_normalize_label)
@@ -297,14 +314,14 @@ def _candidate_stats_by_feature(overlap_df: pd.DataFrame) -> dict[str, dict[str,
 
     for feature_label, feature_rows in overlap_df.groupby("feature_label", sort=False):
         ordered = feature_rows.sort_values(
-            ["heteroplasmy_fraction", "depth", "position"],
+            ["alt_allele_fraction", "depth", "position"],
             ascending=[False, False, True],
         )
         top_row = ordered.iloc[0]
         stats[str(feature_label)] = {
             "candidate_sites": int(feature_rows["position"].nunique()),
-            "max_heteroplasmy": round(float(feature_rows["heteroplasmy_fraction"].max()), 6),
-            "mean_heteroplasmy": round(float(feature_rows["heteroplasmy_fraction"].mean()), 6),
+            "max_alt_allele_fraction": round(float(feature_rows["alt_allele_fraction"].max()), 6),
+            "mean_alt_allele_fraction": round(float(feature_rows["alt_allele_fraction"].mean()), 6),
             "median_depth": round(float(feature_rows["depth"].median()), 1),
             "top_site": _format_top_site(top_row),
         }
@@ -327,7 +344,7 @@ def _build_site_detail_df(overlap_df: pd.DataFrame) -> pd.DataFrame:
 
     site_detail_df = overlap_df[SITE_DETAIL_COLUMNS].copy()
     site_detail_df = site_detail_df.sort_values(
-        ["feature_label", "heteroplasmy_fraction", "depth", "position"],
+        ["feature_label", "alt_allele_fraction", "depth", "position"],
         ascending=[True, False, False, True],
     ).reset_index(drop=True)
     return site_detail_df
@@ -369,6 +386,8 @@ def run_step(
             sample_id=sample_id,
             mt_contig=mt_contig,
             mt_length=mt_length,
+            status="not_evaluable",
+            reason_code="feature_annotation_outputs_missing",
             message=(
                 "Gene summary requires feature-annotation outputs, including "
                 "mito_feature_catalog.tsv and mito_feature_overlap_candidates.tsv."
@@ -384,6 +403,8 @@ def run_step(
             sample_id=sample_id,
             mt_contig=mt_contig,
             mt_length=mt_length,
+            status="not_evaluable",
+            reason_code="feature_catalog_unusable",
             message=(
                 "Gene summary could not load a usable mitochondrial feature catalog from "
                 "mito_feature_catalog.tsv."
@@ -464,8 +485,8 @@ def run_step(
             feature_label,
             {
                 "candidate_sites": 0,
-                "max_heteroplasmy": 0.0,
-                "mean_heteroplasmy": 0.0,
+                "max_alt_allele_fraction": 0.0,
+                "mean_alt_allele_fraction": 0.0,
                 "median_depth": 0.0,
                 "top_site": "NA",
             },
@@ -490,8 +511,14 @@ def run_step(
                 "feature_intervals": interval_text,
                 "candidate_sites": int(candidate_stat["candidate_sites"]),
                 "selected_coseg_sites": int(selected_counts.get(feature_label, 0)),
-                "max_heteroplasmy": round(float(candidate_stat["max_heteroplasmy"]), 6),
-                "mean_heteroplasmy": round(float(candidate_stat["mean_heteroplasmy"]), 6),
+                "max_alt_allele_fraction": round(
+                    float(candidate_stat["max_alt_allele_fraction"]), 6
+                ),
+                "mean_alt_allele_fraction": round(
+                    float(candidate_stat["mean_alt_allele_fraction"]), 6
+                ),
+                "max_heteroplasmy": round(float(candidate_stat["max_alt_allele_fraction"]), 6),
+                "mean_heteroplasmy": round(float(candidate_stat["mean_alt_allele_fraction"]), 6),
                 "median_depth": round(float(candidate_stat["median_depth"]), 1),
                 "deletion_event_overlaps": int(deletion_event_overlaps),
                 "deletion_cluster_overlaps": int(deletion_cluster_overlaps),
@@ -508,7 +535,7 @@ def run_step(
             "candidate_sites",
             "selected_coseg_sites",
             "deletion_cluster_overlaps",
-            "max_heteroplasmy",
+            "max_alt_allele_fraction",
             "feature_label",
         ],
         ascending=[False, False, False, False, True],
@@ -517,6 +544,8 @@ def run_step(
     site_detail_df = _build_site_detail_df(overlap_df)
     run_summary_df = pd.DataFrame(
         [
+            {"metric": "status", "value": "ok"},
+            {"metric": "reason_code", "value": ""},
             {"metric": "features_summarized", "value": len(summary_df)},
             {
                 "metric": "features_with_candidate_sites",
@@ -597,7 +626,7 @@ def run_step(
     )
     intro_html = (
         '<p class="muted">This page aggregates mitochondrial candidate-site burden at the feature level. '
-        "It highlights which genes or control-region features concentrate heteroplasmy candidates, "
+        "It highlights which genes or control-region features concentrate alternate-allele candidates, "
         "whether selected co-segregation sites cluster in the same features, and whether deletion "
         "intervals overlap those features.</p>"
         f"<div class='metrics-grid'>{metrics_html}</div>"
@@ -637,6 +666,7 @@ def run_step(
         flush=True,
     )
     return {
+        "status": "ok",
         "summary_path": summary_path,
         "site_details_path": site_details_path,
         "run_summary_path": run_summary_path,

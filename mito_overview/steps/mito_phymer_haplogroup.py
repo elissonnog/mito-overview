@@ -15,6 +15,7 @@ import pandas as pd
 import pysam
 
 from mito_overview.report_common import df_to_html_table, figure_html, metric_card, render_page
+from mito_overview.table_contracts import ensure_alt_fraction_columns
 
 RANKING_COLUMNS = ["rank", "haplogroup", "score", "defining_snps"]
 MAJOR_COLUMNS = [
@@ -22,10 +23,11 @@ MAJOR_COLUMNS = [
     "ref_base",
     "alt_base",
     "depth",
+    "alt_allele_fraction",
     "heteroplasmy_fraction",
     "phymer_input",
 ]
-REQUIRED_ALL_SITE_COLUMNS = {"position", "ref_base", "alt_base", "depth", "heteroplasmy_fraction"}
+REQUIRED_ALL_SITE_COLUMNS = {"position", "ref_base", "alt_base", "depth", "alt_allele_fraction"}
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -93,8 +95,14 @@ def build_consensus_fasta(
     min_depth: int,
     major_vaf: float,
 ) -> pd.DataFrame:
-    major = all_sites[(all_sites["depth"] >= min_depth) & (all_sites["heteroplasmy_fraction"] >= major_vaf)].copy()
-    major = major.sort_values(["position", "heteroplasmy_fraction"], ascending=[True, False]).drop_duplicates(["position"])
+    all_sites = ensure_alt_fraction_columns(all_sites)
+    major = all_sites[
+        (all_sites["depth"] >= min_depth) & (all_sites["alt_allele_fraction"] >= major_vaf)
+    ].copy()
+    major = major.sort_values(["position", "alt_allele_fraction"], ascending=[True, False]).drop_duplicates(
+        ["position"]
+    )
+    major["heteroplasmy_fraction"] = major["alt_allele_fraction"]
     major = major[(major["alt_base"] != ".") & (major["ref_base"] != major["alt_base"])].reset_index(drop=True)
 
     fasta = pysam.FastaFile(str(ref_fasta))
@@ -127,7 +135,7 @@ def _write_status_outputs(
     message: str,
     sample_id: str,
     region: str,
-) -> dict[str, Path]:
+) -> dict[str, Path | str]:
     status_df = pd.DataFrame(status_rows)
     summary_path.parent.mkdir(parents=True, exist_ok=True)
     status_df.to_csv(summary_path, sep="\t", index=False)
@@ -136,7 +144,9 @@ def _write_status_outputs(
     intro_html = f"<p class='muted'>{message}</p>"
     body_html = "<section><h2>Status</h2>" + df_to_html_table(status_df, max_rows=20) + "</section>"
     render_page(report_path, "Mito Phy-Mer Haplogroup", sample_id, region, intro_html, body_html)
+    status = next((str(row["value"]) for row in status_rows if row.get("metric") == "status"), "unavailable")
     return {
+        "status": status,
         "summary_path": summary_path,
         "ranking_path": ranking_path,
         "input_path": input_path,
@@ -187,20 +197,26 @@ def run_step(
             summary_path=summary_path,
             ranking_path=ranking_path,
             input_path=input_path,
-            status_rows=[{"metric": "status", "value": "skipped_non_human_sample"}],
+            status_rows=[
+                {"metric": "status", "value": "not_applicable"},
+                {"metric": "reason_code", "value": "non_human_sample"},
+            ],
             message="Phy-Mer haplogroup inference is currently enabled only for human mitochondrial samples.",
             sample_id=sample_id,
             region=region,
         )
 
-    all_sites = load_table(summary_dir / "mito_heteroplasmy_all_sites.tsv")
+    all_sites = ensure_alt_fraction_columns(load_table(summary_dir / "mito_heteroplasmy_all_sites.tsv"))
     if all_sites.empty:
         return _write_status_outputs(
             report_path=report_path,
             summary_path=summary_path,
             ranking_path=ranking_path,
             input_path=input_path,
-            status_rows=[{"metric": "status", "value": "no_all_site_table_available"}],
+            status_rows=[
+                {"metric": "status", "value": "not_evaluable"},
+                {"metric": "reason_code", "value": "no_all_site_table_available"},
+            ],
             message="No mitochondrial all-site table was available to build a consensus-style haplogroup input sequence.",
             sample_id=sample_id,
             region=region,
@@ -213,10 +229,11 @@ def run_step(
             ranking_path=ranking_path,
             input_path=input_path,
             status_rows=[
-                {"metric": "status", "value": "all_site_table_missing_columns"},
+                {"metric": "status", "value": "unavailable"},
+                {"metric": "reason_code", "value": "all_site_table_missing_columns"},
                 {"metric": "missing_columns", "value": ",".join(missing)},
             ],
-            message="The heteroplasmy all-site table is missing required columns for consensus haplogroup reconstruction.",
+            message="The alternate-allele all-site table is missing required columns for consensus haplogroup reconstruction.",
             sample_id=sample_id,
             region=region,
         )
@@ -240,7 +257,8 @@ def run_step(
             ranking_path=ranking_path,
             input_path=input_path,
             status_rows=[
-                {"metric": "status", "value": "phymer_resources_missing"},
+                {"metric": "status", "value": "not_configured"},
+                {"metric": "reason_code", "value": "phymer_resources_missing"},
                 {"metric": "phymer_root", "value": str(phymer_root_path or "")},
             ],
             message="Phy-Mer resources were not available in the configured local vendor directory.",
@@ -264,7 +282,8 @@ def run_step(
             ranking_path=ranking_path,
             input_path=input_path,
             status_rows=[
-                {"metric": "status", "value": "no_major_variants_for_consensus"},
+                {"metric": "status", "value": "not_evaluable"},
+                {"metric": "reason_code", "value": "no_major_variants_for_consensus"},
                 {"metric": "major_variant_threshold", "value": f"depth>={min_depth};vaf>={major_vaf}"},
             ],
             message="No high-fraction mitochondrial variants passed the configured thresholds for Phy-Mer consensus haplogroup inference.",
@@ -299,7 +318,8 @@ def run_step(
             ranking_path=ranking_path,
             input_path=input_path,
             status_rows=[
-                {"metric": "status", "value": "phymer_run_failed"},
+                {"metric": "status", "value": "unavailable"},
+                {"metric": "reason_code", "value": "phymer_run_failed"},
                 {"metric": "return_code", "value": int(completed.returncode)},
                 {"metric": "stderr_preview", "value": completed.stderr.strip()[:200] or "NA"},
             ],
@@ -314,7 +334,8 @@ def run_step(
     best_score = float(ranking.iloc[0]["score"]) if not ranking.empty else 0.0
     status_df = pd.DataFrame(
         [
-            {"metric": "status", "value": "ok" if not ranking.empty else "no_phymer_ranking_rows"},
+            {"metric": "status", "value": "ok" if not ranking.empty else "unavailable"},
+            {"metric": "reason_code", "value": "" if not ranking.empty else "no_phymer_ranking_rows"},
             {"metric": "sample_label", "value": sample_label},
             {"metric": "best_haplogroup", "value": best_hg},
             {"metric": "best_score", "value": round(best_score, 6)},
@@ -346,8 +367,8 @@ def run_step(
         ]
     )
     intro_html = (
-        '<p class="muted">This page runs a local vendor copy of Phy-Mer on a consensus-style mitochondrial FASTA reconstructed from high-fraction mitochondrial variants. '
-        "The goal is to provide a compact haplogroup interpretation layer for human samples without altering the primary heteroplasmy or deletion logic of the mito_overview workflow.</p>"
+        '<p class="muted">This page runs a local vendor copy of Phy-Mer on a consensus-style mitochondrial FASTA reconstructed from high alternate-allele-fraction variants. '
+        "The goal is to provide a compact haplogroup interpretation layer for human samples without altering the primary alternate-allele screening or deletion logic of the mito_overview workflow.</p>"
         f"<div class='metrics-grid'>{metrics_html}</div>"
     )
     body_parts = [
@@ -364,6 +385,7 @@ def run_step(
         )
     render_page(report_path, "Mito Phy-Mer Haplogroup", sample_id, region, intro_html, "".join(body_parts))
     return {
+        "status": "ok" if not ranking.empty else "unavailable",
         "summary_path": summary_path,
         "ranking_path": ranking_path,
         "input_path": input_path,

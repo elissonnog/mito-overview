@@ -13,10 +13,18 @@ import pandas as pd
 import pysam
 
 from mito_overview.report_common import df_to_html_table, figure_html, metric_card, render_page
+from mito_overview.table_contracts import ensure_alt_fraction_columns
 
 SUMMARY_COLUMNS = ["metric", "value"]
 VARIANT_COLUMNS = ["position", "ref", "alt"]
-FINGERPRINT_COLUMNS = ["position", "ref_base", "alt_base", "heteroplasmy_fraction", "depth"]
+FINGERPRINT_COLUMNS = [
+    "position",
+    "ref_base",
+    "alt_base",
+    "alt_allele_fraction",
+    "heteroplasmy_fraction",
+    "depth",
+]
 COMPARE_COLUMNS = ["membership", "position", "ref", "alt"]
 
 
@@ -48,11 +56,13 @@ def load_table(path: Path, columns: list[str] | None = None) -> pd.DataFrame:
     return df
 
 
-def load_mt_variants(vcf_path: str | Path, contig: str) -> pd.DataFrame:
+def load_mt_variants(vcf_path: str | Path | None, contig: str) -> pd.DataFrame:
     """Load unique mitochondrial variant records from a VCF/BCF."""
 
+    if not vcf_path:
+        return pd.DataFrame(columns=VARIANT_COLUMNS)
     path = Path(vcf_path)
-    if not path.exists():
+    if not path.is_file():
         return pd.DataFrame(columns=VARIANT_COLUMNS)
 
     rows: list[dict[str, object]] = []
@@ -81,8 +91,8 @@ def run_step(
     report_dir: str | Path,
     sample_id: str,
     mt_contig: str,
-    phased_snp_vcf: str | Path,
-    np_snp_vcf: str | Path,
+    phased_snp_vcf: str | Path | None,
+    np_snp_vcf: str | Path | None,
     fingerprint_depth: int = 100,
     major_vaf: float = 0.90,
 ) -> dict[str, Path]:
@@ -108,7 +118,7 @@ def run_step(
     overlap_fig = figure_dir / "mito_identity_vcf_overlap.png"
     report_path = report_dir / "09_mito_identity_qc.html"
 
-    hetero_df = load_table(hetero_path, columns=FINGERPRINT_COLUMNS)
+    hetero_df = ensure_alt_fraction_columns(load_table(hetero_path, columns=FINGERPRINT_COLUMNS))
     phased_df = load_mt_variants(phased_snp_vcf, mt_contig)
     np_df = load_mt_variants(np_snp_vcf, mt_contig)
     phymer_summary = load_table(phymer_path, columns=SUMMARY_COLUMNS)
@@ -120,20 +130,23 @@ def run_step(
     )
 
     major_df = pd.DataFrame(columns=FINGERPRINT_COLUMNS)
-    required_fingerprint = {"position", "ref_base", "alt_base", "heteroplasmy_fraction", "depth"}
+    required_fingerprint = {"position", "ref_base", "alt_base", "alt_allele_fraction", "depth"}
     if not hetero_df.empty and required_fingerprint.issubset(hetero_df.columns):
         major_df = hetero_df.copy()
         major_df["position"] = pd.to_numeric(major_df["position"], errors="coerce")
         major_df["depth"] = pd.to_numeric(major_df["depth"], errors="coerce")
-        major_df["heteroplasmy_fraction"] = pd.to_numeric(major_df["heteroplasmy_fraction"], errors="coerce")
-        major_df = major_df.dropna(subset=["position", "depth", "heteroplasmy_fraction"])
+        major_df["alt_allele_fraction"] = pd.to_numeric(
+            major_df["alt_allele_fraction"], errors="coerce"
+        )
+        major_df = major_df.dropna(subset=["position", "depth", "alt_allele_fraction"])
         major_df = major_df[
-            (major_df["depth"] >= fingerprint_depth) & (major_df["heteroplasmy_fraction"] >= major_vaf)
+            (major_df["depth"] >= fingerprint_depth) & (major_df["alt_allele_fraction"] >= major_vaf)
         ].copy()
         major_df = major_df.sort_values(
-            ["heteroplasmy_fraction", "depth", "position"],
+            ["alt_allele_fraction", "depth", "position"],
             ascending=[False, False, True],
         ).reset_index(drop=True)
+        major_df["heteroplasmy_fraction"] = major_df["alt_allele_fraction"]
         major_df["position"] = major_df["position"].astype(int)
     elif hetero_path.exists():
         print(
@@ -175,15 +188,23 @@ def run_step(
             for row in major_df.head(20).itertuples(index=False)
         )
 
-    phymer_best = "not_run"
-    phymer_status = "not_run"
+    phymer_best = "NA"
+    phymer_status = "not_configured"
     if not phymer_summary.empty and {"metric", "value"}.issubset(phymer_summary.columns):
         metric_map = dict(zip(phymer_summary["metric"], phymer_summary["value"]))
-        phymer_best = str(metric_map.get("best_haplogroup", "not_run"))
-        phymer_status = str(metric_map.get("status", "not_run"))
+        phymer_best = str(metric_map.get("best_haplogroup", "NA"))
+        phymer_status = str(metric_map.get("status", "not_configured"))
+
+    phased_vcf_present = bool(phased_snp_vcf and Path(phased_snp_vcf).is_file())
+    np_vcf_present = bool(np_snp_vcf and Path(np_snp_vcf).is_file())
+    comparison_status = "ok" if phased_vcf_present and np_vcf_present else "not_configured"
 
     summary_df = pd.DataFrame(
         [
+            {"metric": "status", "value": "ok"},
+            {"metric": "variant_comparison_status", "value": comparison_status},
+            {"metric": "phased_variant_vcf_present", "value": int(phased_vcf_present)},
+            {"metric": "unphased_variant_vcf_present", "value": int(np_vcf_present)},
             {"metric": "major_fingerprint_sites", "value": int(len(major_df))},
             {"metric": "phased_mt_variant_records", "value": int(len(phased_df))},
             {"metric": "np_mt_variant_records", "value": int(len(np_df))},
@@ -219,7 +240,7 @@ def run_step(
         top = major_df.head(20).copy()
         fingerprint_fig = figure_dir / "mito_identity_major_variants.png"
         plt.figure(figsize=(10, 4))
-        plt.bar(top["position"].astype(str), top["heteroplasmy_fraction"], color="#dc2626")
+        plt.bar(top["position"].astype(str), top["alt_allele_fraction"], color="#dc2626")
         plt.xticks(rotation=90)
         plt.ylabel("Alt fraction")
         plt.title(f"{sample_id} major mitochondrial fingerprint variants")
@@ -241,7 +262,7 @@ def run_step(
     )
     intro_html = (
         '<p class="muted">This page summarizes sample-identity style mitochondrial QC using two '
-        "complementary signals: a major-variant fingerprint derived from high-fraction mitochondrial "
+        "complementary signals: a major-variant fingerprint derived from high alternate-allele-fraction mitochondrial "
         "sites, and concordance between phased and no-phased mitochondrial SNP callsets. When "
         "available, the best haplogroup match from the dedicated Phy-Mer page is also reported here "
         "as a compact identity-style label.</p>"

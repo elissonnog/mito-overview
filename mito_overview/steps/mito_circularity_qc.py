@@ -37,6 +37,7 @@ CANDIDATE_COLUMNS = [
     "alt_base",
     "depth",
     "alt_count",
+    "alt_allele_fraction",
     "heteroplasmy_fraction",
     "A",
     "C",
@@ -104,12 +105,15 @@ def render_status_page(
     sample_id: str,
     mt_contig: str,
     message: str,
-) -> dict[str, Path]:
+) -> dict[str, Path | str]:
     """Write a status-only page when circularity inputs are unavailable."""
 
     print(f"[circularity_qc] {message}", flush=True)
     summary_df = pd.DataFrame(
-        [{"metric": "status", "value": "no_depth_profile_available"}],
+        [
+            {"metric": "status", "value": "not_evaluable"},
+            {"metric": "reason_code", "value": "no_depth_profile_available"},
+        ],
         columns=SUMMARY_COLUMNS,
     )
     summary_df.to_csv(summary_path, sep="\t", index=False)
@@ -127,6 +131,7 @@ def render_status_page(
         body_html,
     )
     return {
+        "status": "not_evaluable",
         "summary_path": summary_path,
         "report_path": report_path,
     }
@@ -141,7 +146,7 @@ def run_step(
     mt_contig: str,
     mt_length: int,
     edge_window: int = 500,
-) -> dict[str, Path]:
+) -> dict[str, Path | str]:
     """Run the public mitochondrial circularity QC step."""
 
     print(
@@ -344,6 +349,7 @@ def run_step(
     )
     print(f"[circularity_qc] wrote report {report_path}", flush=True)
     return {
+        "status": "ok",
         "summary_path": summary_path,
         "depth_figure_path": depth_fig,
         "edge_figure_path": edge_fig,
