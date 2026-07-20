@@ -1,5 +1,7 @@
 # mito-overview v0.2.1 Release Validation Audit
 
+> **Historical immutable-release record.** This audit applies only to v0.2.1 at `2ba62b775a7204c0dc61f5408989603f536c78da`. Its public metrics and method descriptions are superseded for v0.3.0 by [preprint_release_validation_v0.3.0.md](preprint_release_validation_v0.3.0.md); they must not be used as v0.3.0 manuscript or release evidence.
+
 Date: 2026-07-07
 
 Repository: `https://github.com/elissonnog/mito-overview`

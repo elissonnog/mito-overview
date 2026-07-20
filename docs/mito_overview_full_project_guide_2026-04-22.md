@@ -1,5 +1,7 @@
 # mito-overview Full Project Guide and Validation Companion
 
+> **Historical v0.2.1 record.** This document preserves the April 2026 project state and its then-current outputs. It is not release evidence for v0.3.0. Use [preprint_release_validation_v0.3.0.md](preprint_release_validation_v0.3.0.md), [methodology.md](methodology.md), and the current README for corrected counting methods, public results, and release status.
+
 ## Document purpose
 This guide is the detailed technical companion for the current `mito-overview` project state. It is written to support four practical goals:
 
