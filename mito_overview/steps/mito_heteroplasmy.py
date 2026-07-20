@@ -13,7 +13,12 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import pysam
 
-from mito_overview.allele_counting import AlleleFilterPolicy, count_contig_alleles, policy_rows
+from mito_overview.allele_counting import (
+    AlleleFilterPolicy,
+    AlleleFilterStats,
+    count_contig_alleles,
+    policy_rows,
+)
 from mito_overview.report_common import df_to_html_table, figure_html, metric_card, render_page
 
 
@@ -104,11 +109,23 @@ def run_step(
     with pysam.FastaFile(str(ref_fasta)) as fasta:
         ref_seq = fasta.fetch(mt_contig, 0, mt_length).upper()
     print("[heteroplasmy] counting filtered observations across mitochondrial genome", flush=True)
+
+    def report_counting_progress(position: int, length: int, stats: AlleleFilterStats) -> None:
+        accepted = stats.accepted_observations
+        seen = stats.pileup_observations_seen
+        print(
+            f"[heteroplasmy] counted positions {position}/{length} "
+            f"accepted_observations={accepted} excluded_observations_so_far={seen - accepted} "
+            f"elapsed_sec={round(time.time() - start_time, 1)}",
+            flush=True,
+        )
+
     counting = count_contig_alleles(
         bam_path=bam,
         contig=mt_contig,
         length=mt_length,
         policy=policy,
+        progress_callback=report_counting_progress,
     )
     print(
         f"[heteroplasmy] observation counting complete accepted={counting.stats.accepted_observations} "

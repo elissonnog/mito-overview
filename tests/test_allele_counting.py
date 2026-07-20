@@ -42,7 +42,17 @@ def high_depth_case(tmp_path_factory: pytest.TempPathFactory) -> tuple[Path, Pat
 def test_unlimited_depth_filters_and_strand_invariants(high_depth_case: tuple[Path, Path]) -> None:
     _, bam = high_depth_case
     policy = AlleleFilterPolicy()
-    result = count_contig_alleles(bam_path=bam, contig="MT", length=12, policy=policy)
+    progress: list[tuple[int, int, int]] = []
+    result = count_contig_alleles(
+        bam_path=bam,
+        contig="MT",
+        length=12,
+        policy=policy,
+        progress_callback=lambda position, length, stats: progress.append(
+            (position, length, stats.accepted_observations)
+        ),
+        progress_interval=4,
+    )
 
     position = result.base_counts[0]
     assert sum(position.values()) == 8002
@@ -62,6 +72,7 @@ def test_unlimited_depth_filters_and_strand_invariants(high_depth_case: tuple[Pa
     assert result.stats.excluded_deletion_or_refskip >= 1
     assert result.stats.excluded_overlap == 1
     assert result.stats.unique_reads_with_any_exclusion >= 9
+    assert progress[-1] == (12, 12, 8004)
 
 
 def test_cosegregation_read_sets_match_candidate_observations(high_depth_case: tuple[Path, Path]) -> None:

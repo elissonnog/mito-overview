@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from statistics import fmean
-from typing import Iterator
+from typing import Callable, Iterator
 
 import pysam
 
@@ -296,6 +296,8 @@ def count_contig_alleles(
     contig: str,
     length: int,
     policy: AlleleFilterPolicy,
+    progress_callback: Callable[[int, int, AlleleFilterStats], None] | None = None,
+    progress_interval: int = 2000,
 ) -> AlleleCountingResult:
     """Count canonical observations and strands across a compact contig."""
 
@@ -303,6 +305,8 @@ def count_contig_alleles(
     forward_counts = [{base: 0 for base in CANONICAL_BASES} for _ in range(length)]
     reverse_counts = [{base: 0 for base in CANONICAL_BASES} for _ in range(length)]
     stats = AlleleFilterStats()
+    next_progress_position = progress_interval if progress_interval > 0 else length + 1
+    last_reported_position = 0
     for reference_pos, observations in iter_filtered_columns(
         bam_path=bam_path,
         contig=contig,
@@ -315,6 +319,14 @@ def count_contig_alleles(
             base_counts[reference_pos][observation.base] += 1
             strand_counts = reverse_counts if observation.is_reverse else forward_counts
             strand_counts[reference_pos][observation.base] += 1
+        position = reference_pos + 1
+        if progress_callback is not None and position >= next_progress_position:
+            progress_callback(position, length, stats)
+            last_reported_position = position
+            while next_progress_position <= position:
+                next_progress_position += progress_interval
+    if progress_callback is not None and last_reported_position < length:
+        progress_callback(length, length, stats)
     return AlleleCountingResult(base_counts, forward_counts, reverse_counts, stats)
 
 
