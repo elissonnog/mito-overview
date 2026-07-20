@@ -64,6 +64,15 @@ download_if_missing() {
   fi
 }
 
+file_md5() {
+  local path="$1"
+  if command -v md5sum >/dev/null 2>&1; then
+    md5sum "${path}" | awk '{print $1}'
+  else
+    md5 -q "${path}"
+  fi
+}
+
 copy_if_needed() {
   local src="$1"
   local dest="$2"
@@ -92,6 +101,13 @@ if [[ ! -s "${ALIGN_BAM}" || ! -s "${ALIGN_BAM}.bai" ]]; then
       "${FASTQ_GZ}"
   elif [[ ! -s "${FASTQ_GZ}" ]]; then
     echo "Requested MITO_OVERVIEW_LONGREAD_FASTQ_GZ does not exist or is empty: ${FASTQ_GZ}" >&2
+    exit 1
+  fi
+fi
+if [[ "${FASTQ_GZ}" == "${DATA_DIR}/SRR18110025.fastq.gz" && -s "${FASTQ_GZ}" ]]; then
+  observed_md5="$(file_md5 "${FASTQ_GZ}")"
+  if [[ "${observed_md5}" != "d5bfb9aeba04cae5f3dd79462a42e5b0" ]]; then
+    echo "ENA MD5 mismatch for ${FASTQ_GZ}: expected d5bfb9aeba04cae5f3dd79462a42e5b0, observed ${observed_md5}" >&2
     exit 1
   fi
 fi

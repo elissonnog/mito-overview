@@ -66,6 +66,26 @@ download_if_missing() {
   fi
 }
 
+file_md5() {
+  local path="$1"
+  if command -v md5sum >/dev/null 2>&1; then
+    md5sum "${path}" | awk '{print $1}'
+  else
+    md5 -q "${path}"
+  fi
+}
+
+assert_md5() {
+  local path="$1"
+  local expected="$2"
+  local observed
+  observed="$(file_md5 "${path}")"
+  if [[ "${observed}" != "${expected}" ]]; then
+    echo "ENA MD5 mismatch for ${path}: expected ${expected}, observed ${observed}" >&2
+    exit 1
+  fi
+}
+
 copy_if_needed() {
   local src="$1"
   local dest="$2"
@@ -81,6 +101,12 @@ download_if_missing "https://ftp.sra.ebi.ac.uk/vol1/fastq/SRR108/090/SRR10804590
 download_if_missing "https://ftp.sra.ebi.ac.uk/vol1/fastq/SRR108/090/SRR10804590/SRR10804590_2.fastq.gz" "${DATA_DIR}/SRR10804590_2.fastq.gz"
 download_if_missing "https://ftp.sra.ebi.ac.uk/vol1/fastq/SRR108/057/SRR10804657/SRR10804657_1.fastq.gz" "${DATA_DIR}/SRR10804657_1.fastq.gz"
 download_if_missing "https://ftp.sra.ebi.ac.uk/vol1/fastq/SRR108/057/SRR10804657/SRR10804657_2.fastq.gz" "${DATA_DIR}/SRR10804657_2.fastq.gz"
+assert_md5 "${DATA_DIR}/SRR10804585_1.fastq.gz" 3f5ea26a5791894071462d4970bc9e5a
+assert_md5 "${DATA_DIR}/SRR10804585_2.fastq.gz" c5b408425612f63b33cefd2d49c157d1
+assert_md5 "${DATA_DIR}/SRR10804590_1.fastq.gz" e8b5132a8be8c179bfc6dbc0f3e1bee9
+assert_md5 "${DATA_DIR}/SRR10804590_2.fastq.gz" 4d6977526136739de2d90baa8d45b484
+assert_md5 "${DATA_DIR}/SRR10804657_1.fastq.gz" 8f082f73cb64bf56ea8a053fe80eeb06
+assert_md5 "${DATA_DIR}/SRR10804657_2.fastq.gz" 62b7d1b2294a580c021f5fa1f52609be
 
 R1_FASTQ="${DATA_DIR}/GM11906_MERRF_R1.fastq.gz"
 R2_FASTQ="${DATA_DIR}/GM11906_MERRF_R2.fastq.gz"
