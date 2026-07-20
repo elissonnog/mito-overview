@@ -27,6 +27,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--mt-contig", required=True)
     parser.add_argument("--mt-length", type=int, required=True)
     parser.add_argument("--species", required=True)
+    parser.add_argument("--reference-scope", default="whole_genome", choices=("whole_genome", "mt_only", "custom"))
     parser.add_argument("--window-size", type=int, default=100000)
     parser.add_argument("--window-count", type=int, default=5)
     return parser
@@ -66,13 +67,14 @@ def run_step(
     mt_contig: str,
     mt_length: int,
     species: str,
+    reference_scope: str = "whole_genome",
     window_size: int,
     window_count: int,
-) -> dict[str, Path]:
+) -> dict[str, Path | str]:
     """Estimate the mt:nuclear depth proxy from the original alignment source."""
 
     print(
-        f"[copy_number] starting sample={sample_id} species={species} "
+        f"[copy_number] starting sample={sample_id} species={species} reference_scope={reference_scope} "
         f"window_size={window_size} window_count={window_count}"
     )
     summary_dir = Path(summary_dir)
@@ -93,20 +95,21 @@ def run_step(
     refs = {name: length for name, length in zip(bam_handle.references, bam_handle.lengths)}
     preferred = canonical_autosomes(species)
     selected: list[tuple[str, int]] = []
-    for contig in preferred:
-        if contig in refs and contig != mt_contig:
-            selected.append((contig, refs[contig]))
-        if len(selected) >= window_count:
-            break
-    if not selected:
-        for contig, length in refs.items():
-            if contig == mt_contig:
-                continue
-            if "_" in contig or "random" in contig.lower() or "un" in contig.lower():
-                continue
-            selected.append((contig, length))
+    if reference_scope == "whole_genome":
+        for contig in preferred:
+            if contig in refs and contig != mt_contig:
+                selected.append((contig, refs[contig]))
             if len(selected) >= window_count:
                 break
+        if not selected:
+            for contig, length in refs.items():
+                if contig == mt_contig:
+                    continue
+                if "_" in contig or "random" in contig.lower() or "un" in contig.lower():
+                    continue
+                selected.append((contig, length))
+                if len(selected) >= window_count:
+                    break
 
     window_rows: list[dict[str, object]] = []
     for idx, (contig, length) in enumerate(selected, start=1):
@@ -130,13 +133,29 @@ def run_step(
         window_rows,
         columns=["contig", "start", "end", "window_size", "mean_depth"],
     )
-    nuclear_mean = float(windows_df["mean_depth"].mean()) if not windows_df.empty else 0.0
-    ratio = (mt_mean_depth / nuclear_mean) if nuclear_mean else 0.0
+    nuclear_mean = float(windows_df["mean_depth"].mean()) if not windows_df.empty else None
+    if reference_scope != "whole_genome":
+        status = "not_evaluable"
+        reason_code = "no_valid_nuclear_windows"
+        ratio = None
+    elif nuclear_mean is None or nuclear_mean <= 0:
+        status = "not_evaluable"
+        reason_code = "no_valid_nuclear_windows"
+        ratio = None
+    else:
+        status = "ok"
+        reason_code = ""
+        ratio = mt_mean_depth / nuclear_mean
     summary_df = pd.DataFrame(
         [
+            {"metric": "status", "value": status},
+            {"metric": "reason_code", "value": reason_code},
+            {"metric": "reference_scope", "value": reference_scope},
             {"metric": "mt_mean_depth", "value": round(mt_mean_depth, 6)},
-            {"metric": "nuclear_window_mean_depth", "value": round(nuclear_mean, 6)},
-            {"metric": "mt_to_nuclear_depth_ratio", "value": round(ratio, 6)},
+            {"metric": "nuclear_window_mean_depth", "value": "" if nuclear_mean is None else round(nuclear_mean, 6)},
+            {"metric": "mt_to_nuclear_depth_ratio", "value": "" if ratio is None else round(ratio, 6)},
+            {"metric": "nuclear_windows_requested", "value": window_count},
+            {"metric": "nuclear_windows_valid", "value": len(windows_df)},
             {"metric": "nuclear_windows_used", "value": len(windows_df)},
             {"metric": "window_size_bp", "value": window_size},
         ]
@@ -161,15 +180,15 @@ def run_step(
     metrics_html = "".join(
         [
             metric_card("mt mean depth", round(mt_mean_depth, 3)),
-            metric_card("nuclear mean depth", round(nuclear_mean, 3)),
-            metric_card("mt:nuclear ratio", round(ratio, 3)),
+            metric_card("nuclear mean depth", "NA" if nuclear_mean is None else round(nuclear_mean, 3)),
+            metric_card("mt:nuclear ratio", "NA" if ratio is None else round(ratio, 3)),
             metric_card("nuclear windows", len(windows_df)),
         ]
     )
-    if windows_df.empty:
+    if status != "ok":
         windows_note = (
-            '<p class="small-note">No suitable nuclear windows were available in the supplied alignment header. '
-            "The mt:nuclear ratio is therefore reported as 0.0 for this run.</p>"
+            '<p class="small-note">The mt:nuclear ratio is not evaluable for this run. '
+            f"Reason: {reason_code}. Missing nuclear context is represented as NA, not as zero.</p>"
         )
     else:
         windows_note = ""
@@ -200,6 +219,7 @@ def run_step(
         body_html,
     )
     return {
+        "status": status,
         "summary_path": summary_path,
         "windows_path": windows_path,
         "report_path": report_path,
@@ -219,6 +239,7 @@ def main() -> None:
         mt_contig=args.mt_contig,
         mt_length=args.mt_length,
         species=args.species,
+        reference_scope=args.reference_scope,
         window_size=args.window_size,
         window_count=args.window_count,
     )
