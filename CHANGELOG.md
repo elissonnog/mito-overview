@@ -1,10 +1,15 @@
 # Changelog
 
-## Unreleased
-- replaced the lead workflow schematic with public ONT report-native views
-- tightened figure terminology and manuscript caveats for alternate-allele, read co-occurrence, and alignment-QC outputs
-- consolidated the manuscript to one long-read lead figure and one complementary short-read figure
-- added a reproducible deterministic figure builder and removed repository-specific local paths
+## v0.3.0 - 2026-07-20
+- corrected allele-fraction reporting so candidate sites, strand counts, and co-segregation use one auditable callable-observation policy, canonical thresholds, and uncapped default depth
+- made mvTool access explicitly mode-gated and offline by default, with deterministic fixtures and non-fabricated unavailable states for requested network failures
+- defined a portable standalone BAM/CRAM input contract with explicit sidecars and preflight checks for references, indexes, contigs, lengths, and CRAM reference availability
+- corrected the copy-number output to an unscaled within-sample mt-to-nuclear depth ratio, with missing or zero nuclear denominators reported as `not_evaluable` rather than zero
+- added explicit reference-scope handling that suppresses categorical NUMT interpretation for mt-only or custom references and emits exact zero-based, half-open mitochondrial BED intervals
+- bounded the supported claim to a reproducible, mode-gated mtDNA reporting workflow/resource; this release does not establish clinical validity, analytical sensitivity, deletion truth, absolute copy number, formal NUMT classification, or long-read/short-read equivalence
+- added commit-bound validation-packet tooling, known-answer coverage for the five corrections, deterministic public-input provenance, and resource-limited public proof-of-principle reruns
+- replaced the lead workflow schematic with public ONT report-native views, tightened figure terminology and caveats, consolidated the figure set, and added a deterministic figure builder without repository-specific local paths
+- synchronized package and citation metadata for version 0.3.0, release date 2026-07-20, the public repository, and both Medical College of Wisconsin authors
 
 ## v0.2.1 - 2026-07-07
 - synchronized release metadata across `pyproject.toml`, `CITATION.cff`, README, release checklist, and manuscript source

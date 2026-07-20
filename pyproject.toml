@@ -4,13 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mito-overview"
-version = "0.2.1"
+version = "0.3.0"
 description = "Mode-gated mitochondrial DNA evidence reporting workflow"
 readme = "README.md"
 requires-python = ">=3.11"
 authors = [
-  { name = "Elisson Lopes, PhD" },
-  { name = "Xiaowu Gai, PhD" }
+  { name = "Elisson Lopes" },
+  { name = "Xiaowu Gai" }
 ]
 dependencies = [
   "matplotlib>=3.10",
@@ -44,6 +44,9 @@ dev = ["pytest>=8.0", "python-docx>=1.1"]
 
 [project.scripts]
 mito-overview = "mito_overview.cli:main"
+
+[project.urls]
+Repository = "https://github.com/elissonnog/mito-overview"
 
 [tool.setuptools.packages.find]
 include = ["mito_overview*"]

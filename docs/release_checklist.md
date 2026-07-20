@@ -1,84 +1,105 @@
-# Release Checklist
+# v0.3.0 Release Checklist
 
-This checklist defines what must be true before tagging `mito-overview` as a manuscript-supporting release. It is intentionally stricter than a development snapshot because the manuscript frames the repository as a reproducible workflow/resource artifact.
+This checklist governs the intended `mito-overview` v0.3.0 release dated 2026-07-20. Metadata describing the intended release is not evidence that a tag, external archive, or final validation result exists. The prior `v0.2.1` release remains immutable at commit `2ba62b775a7204c0dc61f5408989603f536c78da`.
+
+## Release Identity and Gates
+
+| Item | Required value | Status |
+| --- | --- | --- |
+| package and citation version | `0.3.0` | recorded in release metadata |
+| intended release date | `2026-07-20` | recorded in release metadata |
+| repository | `https://github.com/elissonnog/mito-overview` | recorded in release metadata |
+| authors | Elisson Lopes; Xiaowu Gai | recorded in release metadata |
+| affiliation | Medical College of Wisconsin | recorded in citation and release-control metadata |
+| immutable prior release | `v0.2.1` at `2ba62b775a7204c0dc61f5408989603f536c78da` | verified historical record; do not retag or rewrite |
+| `v0.3.0` Git tag | `v0.3.0` on the accepted release commit | **pending**; no tag is claimed by this checklist |
+| exact `v0.3.0` tag target commit | full 40-character commit hash | **pending** until the tag is created |
+| GitHub Actions CI pass | Linux and macOS jobs for the exact candidate commit | **pending**; no CI pass is claimed by this checklist |
+| final validation packet pass | self-verifying packet bound to the exact candidate commit and CI run | **pending**; no final packet pass is claimed by this checklist |
+| release DOI | DOI assigned by an external archive | **pending**; no DOI has been assigned or added to `CITATION.cff` |
+| Zenodo publication | archived `v0.3.0` release | **pending**; no Zenodo publication is claimed by this checklist |
+| independent reproducibility review | clean-checkout review of the accepted commit | **pending** |
 
 ## Scientific Release Goals
 
-- Preserve the biological logic of the internal mitochondrial reporting workflow while keeping the public package portable outside the MCW HPC layout.
-- Separate core mtDNA report generation from optional human-only or external enrichment layers.
-- Keep all public claims at workflow/resource level unless additional analytical validation is added.
-- Provide enough documentation, examples, and scripts for a reviewer to repeat the public proof-of-principle checks from a clean checkout.
+- Preserve the biological logic of the mitochondrial reporting workflow while keeping the public package portable outside the MCW HPC layout.
+- Apply one auditable allele-observation policy across candidate, strand, and co-segregation outputs.
+- Keep optional network services disabled unless explicitly requested and represent missing integrations without fabricated annotations.
+- Support explicit standalone BAM/CRAM inputs with deterministic preflight validation.
+- Report the copy-number layer only as an mt-to-nuclear depth ratio and gate NUMT interpretation by reference scope.
+- Keep every public claim at a bounded workflow/resource level unless separate analytical or clinical validation is added.
 
-## Current Release-Candidate Status
+## Candidate Contents
 
-| Area | Status | Notes |
+| Area | Repository evidence | Final release status |
 | --- | --- | --- |
-| package structure | present | Python package, CLI, shell wrapper, public configs |
-| synthetic long-read smoke test | present | `tests/smoke_public_pipeline.sh` |
-| synthetic short-read smoke test | present | `tests/smoke_public_pipeline_shortread.sh` |
-| long-read no-methylation smoke test | present | `tests/smoke_public_pipeline_longread_nomethyl.sh` |
-| public GM12878 ONT proof-of-principle assets | present | report-native figures and summary tables under `examples/public_validation/GM12878_ONT_longread/` |
-| public GM11906 reduced short-read proof-of-principle assets | present | marker-focused assets under `examples/public_validation/GM11906_MERRF_shortread/` |
-| manuscript-supporting version | `v0.2.1` tagged; current figure update unreleased | use `v0.2.2` for the next manuscript-supporting release |
-| release DOI or Software Heritage archive | not yet assigned | GitHub tag archive is the active release identifier until an external archive identifier is minted |
-| exact `v0.2.1` release commit | recorded | `2ba62b775a7204c0dc61f5408989603f536c78da` |
-| clean-checkout rerun transcript | pending release freeze | record in `docs/release_validation_audit_2026-07-07.md` |
-| independent reproducibility re-check | pending release freeze | record reviewer/separate-thread outcome in the validation audit |
+| five correction implementations | allele counting, mvTool modes, standalone inputs, copy-number ratio, and reference-scope/NUMT/BED handling | implementation present; **pending** final packet pass |
+| deterministic known-answer tests | focused tests under `tests/` for corrections F1-F5 | present; **pending** exact-commit and CI pass |
+| synthetic workflow checks | long-read, reduced short-read, no-methylation, and standalone smoke scripts | present; **pending** exact-commit and CI pass |
+| public GM11906 proof of principle | provenance-bound reduced short-read workflow and marker-level checks | candidate workflow present; **pending** final packet pass |
+| public GM12878 proof of principle | provenance-bound deterministic reduced-input ONT workflow | candidate workflow present; **pending** final packet pass |
+| portable validation bundle | `scripts/run_release_validation_v0.3.0.sh` and `scripts/build_validation_packet_v0.3.0.py` | tooling present; final packet **pending** |
 
 ## Must-Pass Commands Before Tagging
 
-Run these from a fresh clone or a clean worktree:
+Run local checks first from the exact candidate commit in a clean checkout:
 
 ```bash
+python -m pytest -q
 python -m mito_overview.cli --list-steps
 python -m mito_overview.cli --config examples/configs/human_example.env --dry-run
 ./tests/smoke_public_pipeline.sh
 ./tests/smoke_public_pipeline_shortread.sh
 ./tests/smoke_public_pipeline_longread_nomethyl.sh
+./tests/smoke_standalone_minimal.sh
 ```
 
-Optional but manuscript-relevant public proof-of-principle reruns:
+After Linux and macOS GitHub Actions complete for that same commit, build the final evidence packet with the real completed run ID and an empty output directory:
 
 ```bash
-./scripts/run_public_longread_validation_gm12878.sh /tmp/GM12878_ONT_longread_output
-./scripts/run_public_shortread_validation_gm11906.sh /tmp/GM11906_reduced_shortread_output
+MITO_OVERVIEW_GITHUB_RUN_ID=<completed-run-id> \
+  ./scripts/run_release_validation_v0.3.0.sh <empty-validation-root>
 ```
+
+The final packet must reject missing evidence, metadata-version disagreement, commit mismatch, non-passing required cases, incomplete public provenance, and CI results from a different commit.
 
 ## Evidence to Capture
 
-- Git commit hash and tag.
-- Conda environment export or exact package versions.
-- Command transcripts for each must-pass command.
-- Runtime and maximum memory when feasible.
-- Checksums or file inventories for public output bundles.
-- FASTQ/source retrieval date for public examples.
-- Expected-file and TSV-schema checks for active and `not_applicable` pages.
-- Independent reviewer or separate-thread re-check of the clean checkout.
+- Exact candidate commit, eventual tag target, and clean-worktree state.
+- Python, package, aligner, and platform versions.
+- Commands and transcripts for unit, synthetic, standalone, and public validation cases.
+- Source accessions, retrieval metadata, input hashes, subset parameters, and alignment provenance for public inputs.
+- Runtime, maximum memory when available, expected/observed normalized outputs, and SHA-256 manifests.
+- Linux and macOS GitHub Actions evidence tied to the exact candidate commit.
+- Independent reviewer or separate-thread clean-checkout result.
+- External archive metadata only after an archive actually assigns it.
 
-## Release Archive Steps
+## Release Sequence
 
-1. Ensure the working tree contains only intended release files.
-2. Run the must-pass commands from a clean checkout.
-3. Commit all release files.
-4. Tag the next release as `v0.2.2` after its release freeze.
-5. Archive the tag through Zenodo or Software Heritage.
-6. Update `CITATION.cff`, `README.md`, and the manuscript with the tag, commit, and archive DOI or persistent identifier.
+1. Freeze and commit all intended release changes.
+2. Validate the exact clean candidate commit locally.
+3. Push that commit and wait for Linux and macOS GitHub Actions on the same commit.
+4. Build and independently verify the final validation packet using real CI evidence.
+5. Create `v0.3.0` only after all required evidence passes.
+6. Publish the GitHub release from that tag.
+7. Archive the tagged release with Zenodo or Software Heritage.
+8. Add a DOI or persistent identifier to citation and manuscript metadata only after it is assigned.
 
-## Claims Allowed for This Release
+## Claims Allowed for v0.3.0
 
-- The package exposes the declared workflow steps.
-- Synthetic long- and short-read smoke tests exercise the public output contract.
-- Public GM12878 ONT targeted-mt data can be converted into synchronized report-native long-read outputs under stated thresholds.
-- Public GM11906 short-read/scATAC-derived mtDNA reads can be represented in the reduced short-read report profile under stated thresholds.
-- Unsupported assay layers are emitted as stable status or `not_applicable` pages rather than silent failures.
+- The package exposes a mode-gated mtDNA evidence-reporting workflow with explicit status states.
+- Deterministic synthetic cases can test the public output contract and the five corrected behaviors.
+- Explicitly sourced public data can exercise bounded long-read and reduced short-read proof-of-principle paths under recorded thresholds and provenance.
+- Unsupported assay layers and unevaluable interpretations are emitted explicitly rather than silently converted into results.
 
 ## Claims Not Allowed Without Additional Validation
 
-- Clinical diagnosis or pathogenicity classification.
-- Calibrated low-VAF heteroplasmy sensitivity.
-- Deletion-truth benchmarking or deletion burden accuracy.
-- Absolute mtDNA copy-number truth.
+- Clinical diagnosis, pathogenicity classification, or clinical decision support.
+- Calibrated low-VAF heteroplasmy sensitivity or specificity.
+- Deletion-truth benchmarking or deletion-burden accuracy.
+- Absolute mtDNA copy number or copies per diploid cell.
 - Formal mtDNA-versus-NUMT classifier performance.
 - Biological mtDNA methylation conclusions.
-- Live Phy-Mer or mvTool interoperability unless a documented live run is added.
+- Full-dataset performance or analytical sensitivity inferred from the reduced GM12878 validation subset.
+- Live external-service interoperability unless a documented live run is added.
 - Equivalence between long-read and short-read assays.
