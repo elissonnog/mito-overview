@@ -125,6 +125,7 @@ else
   echo "[longread-gm12878] aligning public ONT mtDNA data to ${REF_FASTA}"
   mkdir -p "$(dirname "${ALIGN_BAM}")"
   minimap2 -t "${THREADS}" -ax map-ont "${REF_FASTA}.mmi" "${FASTQ_GZ}" \
+    | samtools view -@ "${THREADS}" -b -F 4 \
     | samtools sort -@ "${THREADS}" -o "${ALIGN_BAM}"
   samtools index -@ "${THREADS}" "${ALIGN_BAM}"
 fi
