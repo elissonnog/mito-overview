@@ -7,7 +7,7 @@
   - mitochondrial depth profile
   - alternate-allele fraction landscape
   - selected-site read co-occurrence heatmap
-  - mitochondrial alignment span-versus-MAPQ QC
+  - alignment-ambiguity span-versus-MAPQ QC
 - role in manuscript:
   - show representative report-native public ONT output views
   - remove the workflow schematic from the lead figure
@@ -17,7 +17,7 @@
 - file: `paper/figures/figure2_shortread_public_validation_montage.png`
 - source bundle: `examples/public_validation/GM11906_MERRF_shortread`
 - panels:
-  - short-read heteroplasmy landscape
+  - short-read alternate-allele landscape
   - feature annotation
   - gene summary
   - variant consequence class summary
