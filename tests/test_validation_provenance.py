@@ -13,6 +13,7 @@ from mito_overview.validation_provenance import (
     create_deterministic_subset,
     verify_alignment_provenance,
     verify_deterministic_subset,
+    tool_version,
 )
 from tests._helpers import ReadSpec, write_alignment, write_fasta
 
@@ -162,3 +163,23 @@ def test_subset_verification_rejects_seed_or_manifest_tampering(tmp_path: Path) 
             requested_count=3,
             seed="seed-a",
         )
+
+
+def test_tool_version_ignores_failed_version_flag_and_parses_usage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Result:
+        def __init__(self, returncode: int, stdout: str = "", stderr: str = "") -> None:
+            self.returncode = returncode
+            self.stdout = stdout
+            self.stderr = stderr
+
+    responses = iter(
+        [
+            Result(1, stderr="unrecognized --version"),
+            Result(1, stderr="unrecognized version"),
+            Result(1, stderr="Program: bwa\nVersion: 0.7.19-r1273\nUsage: bwa"),
+        ]
+    )
+    monkeypatch.setattr("subprocess.run", lambda *args, **kwargs: next(responses))
+    assert tool_version("bwa") == "0.7.19-r1273"

@@ -86,7 +86,7 @@ def reference_index_path(reference_path: Path) -> Path:
 def tool_version(tool: str) -> str:
     """Capture a concise tool version without assuming one CLI convention."""
 
-    attempts = ([tool, "--version"], [tool, "version"])
+    attempts = ([tool, "--version"], [tool, "version"], [tool])
     for command in attempts:
         try:
             result = subprocess.run(
@@ -99,8 +99,14 @@ def tool_version(tool: str) -> str:
         except (FileNotFoundError, subprocess.TimeoutExpired):
             continue
         output = (result.stdout + "\n" + result.stderr).strip()
-        if output:
-            return output.splitlines()[0].strip()
+        if not output:
+            continue
+        lines = [line.strip() for line in output.splitlines() if line.strip()]
+        if result.returncode == 0:
+            return lines[0]
+        version_lines = [line for line in lines if line.lower().startswith("version:")]
+        if version_lines:
+            return version_lines[0].split(":", 1)[1].strip()
     return "unavailable"
 
 

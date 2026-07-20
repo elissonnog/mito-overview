@@ -9,3 +9,4 @@ This log records release-hardening actions that affect the public repository. It
 - Added portable public-alignment provenance and deterministic query-name subset implementation with focused known-answer and tamper-rejection tests.
 - Closed reviewer-identified edge cases for absent mtDNA depth evidence, zero-support alternate alleles, auditable configured depth caps, and incomplete-reference NUMT scope assertions.
 - Hardened the public validation matrix with portable cache defaults, replayable quoted commands, exact filter-profile assertions, and Python-based relative SHA-256 manifests.
+- Rebuilt the GM11906 public alignment from verified FASTQs, recorded its alignment provenance, and confirmed the corrected default `m.8344A>G` result (`1027` callable depth, `740` alternate observations, `0.720545` alternate allele fraction).
