@@ -16,7 +16,7 @@ jobs:
         os: [ubuntu-latest, macos-latest]
     defaults:
       run:
-        shell: bash -l {0}
+        shell: bash -el -o pipefail {0}
 
     steps:
       - name: Check out repository
@@ -46,16 +46,50 @@ jobs:
       - name: Build and inspect source and wheel distributions
         run: |
           python -m build
-          tar -tf dist/mito_overview-*.tar.gz | grep -q 'resources/schemas/mito_overview_config.schema.yaml'
-          python -m pip install --no-deps --force-reinstall dist/mito_overview-*.whl
+
+          tar -tf dist/mito_overview-*.tar.gz > "$RUNNER_TEMP/sdist-contents.txt"
+          grep -q 'resources/schemas/mito_overview_config.schema.yaml' "$RUNNER_TEMP/sdist-contents.txt"
+
+          wheel_paths=("$GITHUB_WORKSPACE"/dist/mito_overview-*.whl)
+          if [[ ${#wheel_paths[@]} -ne 1 || ! -f "${wheel_paths[0]}" ]]; then
+            printf 'Expected exactly one wheel, found: %s\n' "${wheel_paths[*]}" >&2
+            exit 1
+          fi
+          python -m pip install --no-deps --force-reinstall "${wheel_paths[0]}"
+
+          cd "$RUNNER_TEMP"
           python - <<'PY'
+          import os
           import sys
+          from importlib.metadata import version
           from pathlib import Path
+
+          expected_version = "0.3.0"
+          installed_version = version("mito-overview")
+          if installed_version != expected_version:
+              raise SystemExit(
+                  f"Installed mito-overview version is {installed_version}; "
+                  f"expected {expected_version}"
+              )
+
+          import mito_overview
+
+          module_path = Path(mito_overview.__file__).resolve()
+          workspace = Path(os.environ["GITHUB_WORKSPACE"]).resolve()
+          if module_path.is_relative_to(workspace):
+              raise SystemExit(f"Repository code shadowed the installed package: {module_path}")
+          if mito_overview.__version__ != installed_version:
+              raise SystemExit(
+                  f"Package __version__ {mito_overview.__version__} does not match "
+                  f"installed metadata {installed_version}"
+              )
 
           schema = Path(sys.prefix) / "share" / "mito-overview" / "schemas" / "mito_overview_config.schema.yaml"
           if not schema.is_file() or schema.stat().st_size == 0:
               raise SystemExit(f"Installed configuration schema missing: {schema}")
           PY
+          mito-overview --list-steps
+          python -m mito_overview.cli --list-steps
 
       - name: Run synthetic long-read smoke test
         run: |
