@@ -130,14 +130,55 @@ fi
 
 THREADS="${MITO_OVERVIEW_SHORTREAD_THREADS:-2}"
 ALIGN_BAM="${MITO_OVERVIEW_SHORTREAD_ALIGN_BAM:-${HV_DIR}/GM11906_MERRF_shortread.mt.bam}"
-if [[ -s "${ALIGN_BAM}" && -s "${ALIGN_BAM}.bai" ]]; then
-  echo "[shortread-gm11906] reusing existing aligned BAM ${ALIGN_BAM}"
-else
+ALIGN_PROVENANCE="${MITO_OVERVIEW_SHORTREAD_ALIGN_PROVENANCE:-${ALIGN_BAM}.provenance.json}"
+ALIGN_DERIVATION_ID="bwa-mem-samtools-sort-v1"
+PROVENANCE_INPUTS=(
+  --input "SRR10804585_R1=${DATA_DIR}/SRR10804585_1.fastq.gz"
+  --input "SRR10804585_R2=${DATA_DIR}/SRR10804585_2.fastq.gz"
+  --input "SRR10804590_R1=${DATA_DIR}/SRR10804590_1.fastq.gz"
+  --input "SRR10804590_R2=${DATA_DIR}/SRR10804590_2.fastq.gz"
+  --input "SRR10804657_R1=${DATA_DIR}/SRR10804657_1.fastq.gz"
+  --input "SRR10804657_R2=${DATA_DIR}/SRR10804657_2.fastq.gz"
+  --input "combined_R1=${R1_FASTQ}"
+  --input "combined_R2=${R2_FASTQ}"
+)
+
+alignment_component_count=0
+for component in "${ALIGN_BAM}" "${ALIGN_BAM}.bai" "${ALIGN_PROVENANCE}"; do
+  [[ -s "${component}" ]] && alignment_component_count=$((alignment_component_count + 1))
+done
+if [[ "${alignment_component_count}" -eq 3 ]]; then
+  "${PYTHON_BIN}" "${REPO_ROOT}/scripts/public_alignment_provenance.py" verify \
+    --manifest "${ALIGN_PROVENANCE}" \
+    --dataset GM11906_MERRF_reduced_shortread \
+    --alignment "${ALIGN_BAM}" \
+    --reference "${REF_FASTA}" \
+    --derivation-id "${ALIGN_DERIVATION_ID}" \
+    "${PROVENANCE_INPUTS[@]}"
+  echo "[shortread-gm11906] reusing provenance-verified BAM ${ALIGN_BAM}"
+elif [[ "${alignment_component_count}" -eq 0 ]]; then
   echo "[shortread-gm11906] aligning public GM11906 short-read data to ${REF_FASTA}"
   mkdir -p "$(dirname "${ALIGN_BAM}")"
   bwa mem -t "${THREADS}" "${REF_FASTA}" "${R1_FASTQ}" "${R2_FASTQ}" \
     | samtools sort -@ "${THREADS}" -o "${ALIGN_BAM}"
   samtools index -@ "${THREADS}" "${ALIGN_BAM}"
+  "${PYTHON_BIN}" "${REPO_ROOT}/scripts/public_alignment_provenance.py" record \
+    --manifest "${ALIGN_PROVENANCE}" \
+    --dataset GM11906_MERRF_reduced_shortread \
+    --alignment "${ALIGN_BAM}" \
+    --reference "${REF_FASTA}" \
+    --derivation-id "${ALIGN_DERIVATION_ID}" \
+    --command-template 'bwa mem -t {threads} {reference_fasta} {combined_r1} {combined_r2} | samtools sort -@ {threads} -o {alignment_bam}' \
+    --parameter "threads=${THREADS}" \
+    --tool bwa \
+    --tool samtools \
+    "${PROVENANCE_INPUTS[@]}"
+else
+  echo "Incomplete cached GM11906 alignment provenance. Refusing unsafe reuse:" >&2
+  echo "  BAM: ${ALIGN_BAM}" >&2
+  echo "  BAI: ${ALIGN_BAM}.bai" >&2
+  echo "  manifest: ${ALIGN_PROVENANCE}" >&2
+  exit 1
 fi
 samtools flagstat "${ALIGN_BAM}" > "${WORKDIR}/GM11906_MERRF_shortread.flagstat.txt"
 samtools mpileup -r NC_012920.1:8344-8344 -f "${REF_FASTA}" "${ALIGN_BAM}" > "${WORKDIR}/GM11906_MERRF_shortread.8344.mpileup"
@@ -256,6 +297,8 @@ case "${OUTPUT_MODE}" in
     exit 1
     ;;
 esac
+mkdir -p "${OUTPUT_DIR}/provenance"
+copy_if_needed "${ALIGN_PROVENANCE}" "${OUTPUT_DIR}/provenance/GM11906_MERRF_shortread.alignment.provenance.json"
 copy_if_needed "${WORKDIR}/GM11906_MERRF_shortread.flagstat.txt" "$(dirname "${OUTPUT_DIR}")/GM11906_MERRF_shortread.flagstat.txt"
 copy_if_needed "${WORKDIR}/GM11906_MERRF_shortread.8344.mpileup" "$(dirname "${OUTPUT_DIR}")/GM11906_MERRF_shortread.8344.mpileup"
 

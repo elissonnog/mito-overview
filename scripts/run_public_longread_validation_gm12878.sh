@@ -91,20 +91,24 @@ copy_if_exists() {
 }
 
 THREADS="${MITO_OVERVIEW_LONGREAD_THREADS:-2}"
-ALIGN_BAM="${MITO_OVERVIEW_LONGREAD_ALIGN_BAM:-${HV_DIR}/GM12878_ONT_longread.mt.bam}"
+FULL_ALIGN_BAM="${MITO_OVERVIEW_LONGREAD_FULL_ALIGN_BAM:-${MITO_OVERVIEW_LONGREAD_ALIGN_BAM:-${HV_DIR}/GM12878_ONT_longread.mt.bam}}"
+FULL_ALIGN_PROVENANCE="${MITO_OVERVIEW_LONGREAD_FULL_ALIGN_PROVENANCE:-${FULL_ALIGN_BAM}.provenance.json}"
 FASTQ_GZ="${MITO_OVERVIEW_LONGREAD_FASTQ_GZ:-${DATA_DIR}/SRR18110025.fastq.gz}"
+SUBSET_READ_NAMES="${MITO_OVERVIEW_LONGREAD_SUBSET_READ_NAMES:-2000}"
+SUBSET_SEED="${MITO_OVERVIEW_LONGREAD_SUBSET_SEED:-mito-overview-v0.3.0-GM12878-SRR18110025}"
+SUBSET_BAM="${MITO_OVERVIEW_LONGREAD_SUBSET_BAM:-${FULL_ALIGN_BAM%.bam}.deterministic-qnames-${SUBSET_READ_NAMES}.bam}"
+SUBSET_PROVENANCE="${MITO_OVERVIEW_LONGREAD_SUBSET_PROVENANCE:-${SUBSET_BAM}.provenance.json}"
+SUBSET_NAMES="${MITO_OVERVIEW_LONGREAD_SUBSET_NAMES:-${SUBSET_BAM}.selected_qnames.txt}"
 
-if [[ ! -s "${ALIGN_BAM}" || ! -s "${ALIGN_BAM}.bai" ]]; then
-  if [[ "${FASTQ_GZ}" == "${DATA_DIR}/SRR18110025.fastq.gz" ]]; then
-    download_if_missing \
-      "https://ftp.sra.ebi.ac.uk/vol1/fastq/SRR181/025/SRR18110025/SRR18110025_1.fastq.gz" \
-      "${FASTQ_GZ}"
-  elif [[ ! -s "${FASTQ_GZ}" ]]; then
-    echo "Requested MITO_OVERVIEW_LONGREAD_FASTQ_GZ does not exist or is empty: ${FASTQ_GZ}" >&2
-    exit 1
-  fi
+if [[ "${FASTQ_GZ}" == "${DATA_DIR}/SRR18110025.fastq.gz" ]]; then
+  download_if_missing \
+    "https://ftp.sra.ebi.ac.uk/vol1/fastq/SRR181/025/SRR18110025/SRR18110025_1.fastq.gz" \
+    "${FASTQ_GZ}"
+elif [[ ! -s "${FASTQ_GZ}" ]]; then
+  echo "Requested MITO_OVERVIEW_LONGREAD_FASTQ_GZ does not exist or is empty: ${FASTQ_GZ}" >&2
+  exit 1
 fi
-if [[ "${FASTQ_GZ}" == "${DATA_DIR}/SRR18110025.fastq.gz" && -s "${FASTQ_GZ}" ]]; then
+if [[ "${FASTQ_GZ}" == "${DATA_DIR}/SRR18110025.fastq.gz" ]]; then
   observed_md5="$(file_md5 "${FASTQ_GZ}")"
   if [[ "${observed_md5}" != "d5bfb9aeba04cae5f3dd79462a42e5b0" ]]; then
     echo "ENA MD5 mismatch for ${FASTQ_GZ}: expected d5bfb9aeba04cae5f3dd79462a42e5b0, observed ${observed_md5}" >&2
@@ -119,16 +123,80 @@ if [[ ! -f "${REF_FASTA}.mmi" ]]; then
   minimap2 -d "${REF_FASTA}.mmi" "${REF_FASTA}"
 fi
 
-if [[ -s "${ALIGN_BAM}" && -s "${ALIGN_BAM}.bai" ]]; then
-  echo "[longread-gm12878] reusing existing aligned BAM ${ALIGN_BAM}"
-else
+FULL_ALIGN_DERIVATION_ID="minimap2-map-ont-mapped-only-samtools-sort-v1"
+FULL_PROVENANCE_INPUTS=(--input "SRR18110025=${FASTQ_GZ}")
+full_component_count=0
+for component in "${FULL_ALIGN_BAM}" "${FULL_ALIGN_BAM}.bai" "${FULL_ALIGN_PROVENANCE}"; do
+  [[ -s "${component}" ]] && full_component_count=$((full_component_count + 1))
+done
+if [[ "${full_component_count}" -eq 3 ]]; then
+  "${PYTHON_BIN}" "${REPO_ROOT}/scripts/public_alignment_provenance.py" verify \
+    --manifest "${FULL_ALIGN_PROVENANCE}" \
+    --dataset GM12878_SRR18110025_ONT \
+    --alignment "${FULL_ALIGN_BAM}" \
+    --reference "${REF_FASTA}" \
+    --derivation-id "${FULL_ALIGN_DERIVATION_ID}" \
+    "${FULL_PROVENANCE_INPUTS[@]}"
+  echo "[longread-gm12878] reusing provenance-verified full BAM ${FULL_ALIGN_BAM}"
+elif [[ "${full_component_count}" -eq 0 ]]; then
   echo "[longread-gm12878] aligning public ONT mtDNA data to ${REF_FASTA}"
-  mkdir -p "$(dirname "${ALIGN_BAM}")"
+  mkdir -p "$(dirname "${FULL_ALIGN_BAM}")"
   minimap2 -t "${THREADS}" -ax map-ont "${REF_FASTA}.mmi" "${FASTQ_GZ}" \
     | samtools view -@ "${THREADS}" -b -F 4 \
-    | samtools sort -@ "${THREADS}" -o "${ALIGN_BAM}"
-  samtools index -@ "${THREADS}" "${ALIGN_BAM}"
+    | samtools sort -@ "${THREADS}" -o "${FULL_ALIGN_BAM}"
+  samtools index -@ "${THREADS}" "${FULL_ALIGN_BAM}"
+  "${PYTHON_BIN}" "${REPO_ROOT}/scripts/public_alignment_provenance.py" record \
+    --manifest "${FULL_ALIGN_PROVENANCE}" \
+    --dataset GM12878_SRR18110025_ONT \
+    --alignment "${FULL_ALIGN_BAM}" \
+    --reference "${REF_FASTA}" \
+    --derivation-id "${FULL_ALIGN_DERIVATION_ID}" \
+    --command-template 'minimap2 -t {threads} -ax map-ont {reference_mmi} {fastq} | samtools view -@ {threads} -b -F 4 | samtools sort -@ {threads} -o {alignment_bam}' \
+    --parameter "threads=${THREADS}" \
+    --parameter "unmapped_filter_flag=4" \
+    --tool minimap2 \
+    --tool samtools \
+    "${FULL_PROVENANCE_INPUTS[@]}"
+else
+  echo "Incomplete cached GM12878 full-alignment provenance. Refusing unsafe reuse:" >&2
+  echo "  BAM: ${FULL_ALIGN_BAM}" >&2
+  echo "  BAI: ${FULL_ALIGN_BAM}.bai" >&2
+  echo "  manifest: ${FULL_ALIGN_PROVENANCE}" >&2
+  exit 1
 fi
+
+if ! [[ "${SUBSET_READ_NAMES}" =~ ^[0-9]+$ ]] || [[ "${SUBSET_READ_NAMES}" -lt 1 ]]; then
+  echo "MITO_OVERVIEW_LONGREAD_SUBSET_READ_NAMES must be a positive integer" >&2
+  exit 1
+fi
+subset_component_count=0
+for component in "${SUBSET_BAM}" "${SUBSET_BAM}.bai" "${SUBSET_PROVENANCE}" "${SUBSET_NAMES}"; do
+  [[ -s "${component}" ]] && subset_component_count=$((subset_component_count + 1))
+done
+if [[ "${subset_component_count}" -eq 4 ]]; then
+  subset_action=verify
+elif [[ "${subset_component_count}" -eq 0 ]]; then
+  subset_action=create
+  echo "[longread-gm12878] selecting ${SUBSET_READ_NAMES} deterministic primary query names"
+else
+  echo "Incomplete cached GM12878 deterministic-subset provenance. Refusing unsafe reuse:" >&2
+  echo "  subset BAM: ${SUBSET_BAM}" >&2
+  echo "  subset BAI: ${SUBSET_BAM}.bai" >&2
+  echo "  subset manifest: ${SUBSET_PROVENANCE}" >&2
+  echo "  selected names: ${SUBSET_NAMES}" >&2
+  exit 1
+fi
+"${PYTHON_BIN}" "${REPO_ROOT}/scripts/select_deterministic_bam_subset.py" "${subset_action}" \
+  --source-alignment "${FULL_ALIGN_BAM}" \
+  --source-manifest "${FULL_ALIGN_PROVENANCE}" \
+  --output-alignment "${SUBSET_BAM}" \
+  --output-manifest "${SUBSET_PROVENANCE}" \
+  --selected-names "${SUBSET_NAMES}" \
+  --dataset GM12878_SRR18110025_ONT \
+  --count "${SUBSET_READ_NAMES}" \
+  --seed "${SUBSET_SEED}"
+ALIGN_BAM="${SUBSET_BAM}"
+echo "[longread-gm12878] analysis input is deterministic reduced BAM ${ALIGN_BAM}"
 samtools flagstat "${ALIGN_BAM}" > "${WORKDIR}/GM12878_ONT_longread.flagstat.txt"
 
 MVTOOL_MODE="${MITO_OVERVIEW_LONGREAD_MVTOOL_MODE:-disabled}"
@@ -143,8 +211,8 @@ ALLELE_MIN_MAPPING_QUALITY="${MITO_OVERVIEW_LONGREAD_ALLELE_MIN_MAPPING_QUALITY:
 ALLELE_MIN_READ_MEAN_QUALITY="${MITO_OVERVIEW_LONGREAD_ALLELE_MIN_READ_MEAN_QUALITY:-10}"
 cat > "${WORKDIR}/gm12878_longread.env" <<EOF
 WORK_ROOT=${RUN_ROOT}
-RUN_NAME=mito_GM12878_ONT_longread
-SAMPLE_ID=GM12878_ONT_longread
+RUN_NAME=mito_GM12878_ONT_longread_reduced_qn${SUBSET_READ_NAMES}
+SAMPLE_ID=GM12878_ONT_longread_reduced_qn${SUBSET_READ_NAMES}
 REF_FASTA=${REF_FASTA}
 SOURCE_ALIGN_FILE=${ALIGN_BAM}
 MT_CONTIG=NC_012920.1
@@ -220,6 +288,10 @@ case "${OUTPUT_MODE}" in
     exit 1
     ;;
 esac
+mkdir -p "${OUTPUT_DIR}/provenance"
+copy_if_needed "${FULL_ALIGN_PROVENANCE}" "${OUTPUT_DIR}/provenance/GM12878_ONT_longread.full_alignment.provenance.json"
+copy_if_needed "${SUBSET_PROVENANCE}" "${OUTPUT_DIR}/provenance/GM12878_ONT_longread.subset.provenance.json"
+copy_if_needed "${SUBSET_NAMES}" "${OUTPUT_DIR}/provenance/GM12878_ONT_longread.selected_qnames.txt"
 copy_if_needed "${WORKDIR}/GM12878_ONT_longread.flagstat.txt" "$(dirname "${OUTPUT_DIR}")/GM12878_ONT_longread.flagstat.txt"
 
 if [[ -n "${MITO_OVERVIEW_LONGREAD_ASSET_DIR:-}" ]]; then
@@ -263,7 +335,7 @@ if [[ -n "${MITO_OVERVIEW_LONGREAD_ASSET_DIR:-}" ]]; then
     "${PYTHON_BIN}" scripts/build_report_montage.py \
       --source-dir "${OUTPUT_DIR}/figures" \
       --output "${FIG_DIR}/GM12878_ONT_longread_montage.png" \
-      --title "GM12878 public ONT long-read proof-of-principle"
+      --title "GM12878 public ONT deterministic reduced proof-of-principle"
   else
     echo "[longread-gm12878] skipping montage build because one or more expected long-read panels were not produced"
   fi
@@ -307,7 +379,8 @@ numt_map = dict(zip(numt.get("metric", []), numt.get("value", [])))
 
 findings = pd.DataFrame(
     [
-        {"metric": "sample_id", "value": "GM12878_ONT_longread"},
+        {"metric": "sample_id", "value": "GM12878_ONT_longread_reduced"},
+        {"metric": "input_scope", "value": "deterministic query-name subset"},
         {"metric": "read_mode", "value": "long"},
         {"metric": "assay_type", "value": "targeted_mt"},
         {"metric": "min_callable_depth", "value": het_map.get("min_callable_depth", "NA")},
@@ -341,14 +414,15 @@ if not vc_class.empty and {"consequence_class", "candidate_sites"}.issubset(vc_c
     top_class_count = top_class_row["candidate_sites"]
 
 readme_lines = [
-    "# GM12878 public ONT long-read proof-of-principle example",
+    "# GM12878 public ONT deterministic reduced proof-of-principle example",
     "",
-    "This directory contains light-weight public example assets derived from a real ONT targeted-mt dataset processed with the `mito-overview` long-read profile.",
+    "This directory contains lightweight public example assets from a seeded deterministic query-name subset of a real ONT targeted-mt run processed with the `mito-overview` long-read profile.",
     "",
     "Example context:",
     "- source BioProject: `PRJNA809571`",
     "- run used: `SRR18110025`",
     "- public assay description: `Long read mitochondrial genome sequencing using Cas9-guided adaptor ligation`",
+    "- validation scope: deterministic reduced public proof-of-principle, not the complete run",
     "- profile used: `READ_MODE=long`, `ASSAY_TYPE=targeted_mt`",
     f"- minimum callable depth: `{het_map.get('min_callable_depth', 'NA')}`",
     f"- minimum observed alternate allele fraction: `{het_map.get('min_alt_allele_fraction', 'NA')}`",
