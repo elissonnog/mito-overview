@@ -45,5 +45,9 @@ dev = ["pytest>=8.0", "python-docx>=1.1"]
 [project.scripts]
 mito-overview = "mito_overview.cli:main"
 
+[tool.setuptools.packages.find]
+include = ["mito_overview*"]
+namespaces = false
+
 [tool.setuptools.data-files]
 "share/mito-overview/schemas" = ["resources/schemas/mito_overview_config.schema.yaml"]

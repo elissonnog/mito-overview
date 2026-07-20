@@ -40,7 +40,7 @@ mkdir -p "${MPLCONFIGDIR}"
 export XDG_CACHE_HOME="${WORKDIR}/.cache"
 mkdir -p "${XDG_CACHE_HOME}"
 
-DATA_DIR="${WORKDIR}/downloads"
+DATA_DIR="${MITO_OVERVIEW_SHORTREAD_DATA_DIR:-${WORKDIR}/downloads}"
 REF_DIR="${WORKDIR}/reference"
 SAMPLE_DIR="${WORKDIR}/sample"
 HV_DIR="${SAMPLE_DIR}/human_variation"
@@ -165,7 +165,8 @@ assert_tsv_metric "${SUMMARY_DIR}/mito_copy_number_summary.tsv" status not_appli
 assert_tsv_metric "${SUMMARY_DIR}/mito_numt_qc_summary.tsv" status not_applicable
 assert_tsv_metric "${SUMMARY_DIR}/mito_mvtool_annotation_summary.tsv" status \
   "$([[ "${MVTOOL_MODE}" == "disabled" ]] && printf not_configured || printf ok)"
-"${PYTHON_BIN}" - "${SUMMARY_DIR}/mito_heteroplasmy_candidates.tsv" <<'PY'
+if [[ "${MITO_OVERVIEW_SHORTREAD_REQUIRE_8344:-1}" == "1" ]]; then
+  "${PYTHON_BIN}" - "${SUMMARY_DIR}/mito_heteroplasmy_candidates.tsv" <<'PY'
 import sys
 
 import pandas as pd
@@ -207,6 +208,7 @@ print(
     f"alt_fraction={float(row['alt_allele_fraction']):.6f}"
 )
 PY
+fi
 
 rm -rf "${OUTPUT_DIR}"
 mkdir -p "$(dirname "${OUTPUT_DIR}")"

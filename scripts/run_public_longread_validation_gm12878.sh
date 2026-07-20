@@ -40,7 +40,7 @@ mkdir -p "${MPLCONFIGDIR}"
 export XDG_CACHE_HOME="${WORKDIR}/.cache"
 mkdir -p "${XDG_CACHE_HOME}"
 
-DATA_DIR="${WORKDIR}/downloads"
+DATA_DIR="${MITO_OVERVIEW_LONGREAD_DATA_DIR:-${WORKDIR}/downloads}"
 REF_DIR="${WORKDIR}/reference"
 SAMPLE_DIR="${WORKDIR}/sample"
 HV_DIR="${SAMPLE_DIR}/human_variation"
