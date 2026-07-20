@@ -64,14 +64,14 @@ def test_unlimited_depth_filters_and_strand_invariants(high_depth_case: tuple[Pa
     assert result.stats.pileup_observations_seen == (
         result.stats.accepted_observations + result.stats.excluded_observations
     )
-    assert result.stats.excluded_flag >= 4
+    assert result.stats.excluded_flag == 4
     assert result.stats.excluded_mapping_quality >= 1
     assert result.stats.excluded_read_quality >= 1
     assert result.stats.excluded_base_quality >= 1
     assert result.stats.excluded_noncanonical_base >= 1
     assert result.stats.excluded_deletion_or_refskip >= 1
     assert result.stats.excluded_overlap == 1
-    assert result.stats.unique_reads_with_any_exclusion >= 9
+    assert result.stats.unique_reads_with_any_exclusion == 10
     assert progress[-1] == (12, 12, 8004)
 
 
@@ -87,6 +87,30 @@ def test_cosegregation_read_sets_match_candidate_observations(high_depth_case: t
     assert len(coverage[1]) == 8002
     assert len(alternate[1]) == 3001
     assert stats.accepted_observations == 8002
+
+
+def test_cosegregation_counts_only_selected_sites_with_shared_filters(tmp_path: Path) -> None:
+    bam = write_alignment(
+        tmp_path / "selected_sites.bam",
+        {"MT": 10},
+        [
+            ReadSpec("passing", "MT", 0, "ACCCCCCCCA"),
+            ReadSpec("duplicate", "MT", 0, "ACCCCCCCCA", flag=1024),
+        ],
+    )
+    coverage, alternate, stats = collect_site_read_calls(
+        bam_path=bam,
+        contig="MT",
+        sites={1: "A", 10: "A"},
+        policy=AlleleFilterPolicy(),
+    )
+    assert coverage == {1: {"passing"}, 10: {"passing"}}
+    assert alternate == coverage
+    assert stats.accepted_observations == 2
+    assert stats.excluded_flag == 2
+    assert stats.pileup_observations_seen == 4
+    assert stats.unique_reads_seen == 2
+    assert stats.unique_reads_accepted == 1
 
 
 def test_heteroplasmy_outputs_canonical_fraction_and_compatibility_alias(
@@ -134,6 +158,50 @@ def test_configured_depth_cap_is_deterministic_and_fully_accounted(tmp_path: Pat
     assert result.stats.accepted_observations == 5
     assert result.stats.excluded_max_depth == 15
     assert result.stats.excluded_observations == 15
+
+
+def test_flagged_alignment_observations_are_precounted_exactly(tmp_path: Path) -> None:
+    bam = write_alignment(
+        tmp_path / "flagged.bam",
+        {"MT": 10},
+        [
+            ReadSpec("primary", "MT", 0, "A" * 10),
+            ReadSpec("supplementary", "MT", 0, "A" * 8, flag=2048, cigar=((0, 4), (2, 2), (0, 4))),
+        ],
+    )
+    result = count_contig_alleles(
+        bam_path=bam,
+        contig="MT",
+        length=10,
+        policy=AlleleFilterPolicy(),
+    )
+    assert result.stats.accepted_observations == 10
+    assert result.stats.excluded_flag == 10
+    assert result.stats.pileup_observations_seen == 20
+    assert result.stats.excluded_observations == 10
+    assert result.stats.unique_reads_excluded_flag == 1
+
+
+def test_coordinate_placed_unmapped_record_is_not_precounted(tmp_path: Path) -> None:
+    bam = write_alignment(
+        tmp_path / "placed_unmapped.bam",
+        {"MT": 4},
+        [
+            ReadSpec("primary", "MT", 0, "A" * 4),
+            ReadSpec("placed_unmapped", "MT", 0, "A" * 4, flag=4),
+        ],
+    )
+    result = count_contig_alleles(
+        bam_path=bam,
+        contig="MT",
+        length=4,
+        policy=AlleleFilterPolicy(),
+    )
+    assert result.stats.accepted_observations == 4
+    assert result.stats.pileup_observations_seen == 4
+    assert result.stats.excluded_flag == 0
+    assert result.stats.unique_reads_seen == 1
+    assert result.stats.unique_reads_excluded_flag == 0
 
 
 def test_all_reference_positions_have_no_fabricated_alternate_candidate(tmp_path: Path) -> None:

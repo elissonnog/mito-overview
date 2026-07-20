@@ -115,7 +115,7 @@ def run_step(
         seen = stats.pileup_observations_seen
         print(
             f"[heteroplasmy] counted positions {position}/{length} "
-            f"accepted_observations={accepted} excluded_observations_so_far={seen - accepted} "
+            f"accepted_observations={accepted} excluded_observations_accounted={seen - accepted} "
             f"elapsed_sec={round(time.time() - start_time, 1)}",
             flush=True,
         )

@@ -255,19 +255,56 @@ def _finalize_stats(stats: AlleleFilterStats, read_sets: dict[str, set[str]]) ->
     stats.unique_reads_excluded_max_depth = len(read_sets["max_depth"])
 
 
-def iter_filtered_columns(
+def _reference_overlap_from_cigar(
+    alignment: pysam.AlignedSegment,
+    start: int,
+    end: int,
+) -> int:
+    """Count pileup-visible reference positions overlapping one interval."""
+
+    reference_position = alignment.reference_start
+    overlap = 0
+    for operation, length in alignment.cigartuples or ():
+        if operation not in {0, 2, 3, 7, 8}:
+            continue
+        operation_end = reference_position + length
+        overlap += max(0, min(operation_end, end) - max(reference_position, start))
+        reference_position = operation_end
+    return overlap
+
+
+def _precount_flagged_observations(
+    bam: pysam.AlignmentFile,
     *,
-    bam_path: str | Path,
     contig: str,
     start: int,
     end: int,
-    policy: AlleleFilterPolicy,
+    exclude_flags: int,
     stats: AlleleFilterStats,
-) -> Iterator[tuple[int, list[AlleleObservation]]]:
-    """Yield zero-based positions with observations passing one shared policy."""
+    read_sets: dict[str, set[str]],
+) -> None:
+    """Account for excluded alignments once before the filtered pileup."""
 
-    mean_quality_cache: dict[tuple[str, int, int], float | None] = {}
-    read_sets = {
+    if exclude_flags == 0:
+        return
+    for alignment in bam.fetch(contig, start, end):
+        # HTSlib never emits unmapped records into pileup, even when they carry
+        # coordinates and CIGAR data, so they must not enter the oracle count.
+        if alignment.is_unmapped:
+            continue
+        if not alignment.flag & exclude_flags:
+            continue
+        excluded = _reference_overlap_from_cigar(alignment, start, end)
+        if excluded == 0:
+            continue
+        stats.pileup_observations_seen += excluded
+        stats.excluded_flag += excluded
+        read_sets["seen"].add(alignment.query_name)
+        read_sets["flag"].add(alignment.query_name)
+
+
+def _new_read_sets() -> dict[str, set[str]]:
+    return {
         key: set()
         for key in (
             "seen",
@@ -284,31 +321,78 @@ def iter_filtered_columns(
             "max_depth",
         )
     }
+
+
+def _iter_filtered_columns_from_handle(
+    *,
+    bam: pysam.AlignmentFile,
+    contig: str,
+    start: int,
+    end: int,
+    policy: AlleleFilterPolicy,
+    stats: AlleleFilterStats,
+    mean_quality_cache: dict[tuple[str, int, int], float | None],
+    read_sets: dict[str, set[str]],
+) -> Iterator[tuple[int, list[AlleleObservation]]]:
+    _precount_flagged_observations(
+        bam,
+        contig=contig,
+        start=start,
+        end=end,
+        exclude_flags=policy.exclude_flags,
+        stats=stats,
+        read_sets=read_sets,
+    )
+    for column in bam.pileup(
+        contig,
+        start,
+        end,
+        truncate=True,
+        stepper="all",
+        min_base_quality=0,
+        min_mapping_quality=0,
+        # Apply any configured cap after all observations are visible so
+        # capped observations remain part of explicit provenance.
+        max_depth=UNLIMITED_PILEUP_DEPTH,
+        flag_filter=policy.exclude_flags,
+        ignore_overlaps=False,
+    ):
+        if column.reference_pos < start or column.reference_pos >= end:
+            continue
+        observations = _passing_observations(
+            list(column.pileups),
+            policy,
+            stats,
+            mean_quality_cache,
+            read_sets,
+        )
+        yield int(column.reference_pos), observations
+
+
+def iter_filtered_columns(
+    *,
+    bam_path: str | Path,
+    contig: str,
+    start: int,
+    end: int,
+    policy: AlleleFilterPolicy,
+    stats: AlleleFilterStats,
+) -> Iterator[tuple[int, list[AlleleObservation]]]:
+    """Yield zero-based positions with observations passing one shared policy."""
+
+    mean_quality_cache: dict[tuple[str, int, int], float | None] = {}
+    read_sets = _new_read_sets()
     with pysam.AlignmentFile(str(bam_path), "rb") as bam:
-        for column in bam.pileup(
-            contig,
-            start,
-            end,
-            truncate=True,
-            stepper="all",
-            min_base_quality=0,
-            min_mapping_quality=0,
-            # Apply any configured cap after all observations are visible so
-            # capped observations remain part of explicit provenance.
-            max_depth=UNLIMITED_PILEUP_DEPTH,
-            flag_filter=0,
-            ignore_overlaps=False,
-        ):
-            if column.reference_pos < start or column.reference_pos >= end:
-                continue
-            observations = _passing_observations(
-                list(column.pileups),
-                policy,
-                stats,
-                mean_quality_cache,
-                read_sets,
-            )
-            yield int(column.reference_pos), observations
+        yield from _iter_filtered_columns_from_handle(
+            bam=bam,
+            contig=contig,
+            start=start,
+            end=end,
+            policy=policy,
+            stats=stats,
+            mean_quality_cache=mean_quality_cache,
+            read_sets=read_sets,
+        )
     _finalize_stats(stats, read_sets)
 
 
@@ -366,22 +450,24 @@ def collect_site_read_calls(
     stats = AlleleFilterStats()
     if not sites:
         return coverage, alternate, stats
-    min_position = min(sites)
-    max_position = max(sites)
-    for reference_pos, observations in iter_filtered_columns(
-        bam_path=bam_path,
-        contig=contig,
-        start=min_position - 1,
-        end=max_position,
-        policy=policy,
-        stats=stats,
-    ):
-        position = reference_pos + 1
-        if position not in sites:
-            continue
-        alt_base = sites[position].upper()
-        for observation in observations:
-            coverage[position].add(observation.read_name)
-            if observation.base == alt_base:
-                alternate[position].add(observation.read_name)
+    mean_quality_cache: dict[tuple[str, int, int], float | None] = {}
+    read_sets = _new_read_sets()
+    with pysam.AlignmentFile(str(bam_path), "rb") as bam:
+        for position in sorted(sites):
+            for _, observations in _iter_filtered_columns_from_handle(
+                bam=bam,
+                contig=contig,
+                start=position - 1,
+                end=position,
+                policy=policy,
+                stats=stats,
+                mean_quality_cache=mean_quality_cache,
+                read_sets=read_sets,
+            ):
+                alt_base = sites[position].upper()
+                for observation in observations:
+                    coverage[position].add(observation.read_name)
+                    if observation.base == alt_base:
+                        alternate[position].add(observation.read_name)
+    _finalize_stats(stats, read_sets)
     return coverage, alternate, stats
