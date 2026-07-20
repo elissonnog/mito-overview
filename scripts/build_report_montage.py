@@ -9,11 +9,18 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 
 
-PANELS = [
-    ("A", "Heteroplasmy landscape", "mito_heteroplasmy_landscape.png", 70),
+LONGREAD_PANELS = [
+    ("A", "Alternate-allele landscape", "mito_heteroplasmy_landscape.png", 70),
     ("B", "Co-segregation heatmap", "mito_cosegregation_heatmap.png", 70),
     ("C", "Gene-level summary", "mito_gene_summary_overview.png", 20),
-    ("D", "NUMT-aware QC span vs MAPQ", "mito_numt_qc_mapq_vs_span.png", 70),
+    ("D", "Alignment-ambiguity QC", "mito_numt_qc_mapq_vs_span.png", 70),
+]
+
+SHORTREAD_PANELS = [
+    ("A", "Alternate-allele landscape", "mito_heteroplasmy_landscape.png", 70),
+    ("B", "Mitochondrial feature context", "mito_feature_annotation.png", 70),
+    ("C", "Feature-level burden summary", "mito_gene_summary_overview.png", 20),
+    ("D", "Candidate consequence classes", "mito_variant_consequence_classes.png", 70),
 ]
 
 
@@ -21,6 +28,12 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source-dir", required=True, help="Directory containing report figure PNGs.")
     parser.add_argument("--output", required=True, help="Output PNG path for the montage.")
+    parser.add_argument(
+        "--profile",
+        choices=("long", "short"),
+        default="long",
+        help="Report panel set to assemble.",
+    )
     parser.add_argument(
         "--title",
         default="Representative long-read report-native analytical views",
@@ -88,7 +101,8 @@ def main() -> None:
     title_x = (width - (title_bbox[2] - title_bbox[0])) // 2
     draw.text((title_x, outer_pad // 2), title_text, fill="black", font=title_font)
 
-    for idx, (panel_id, caption, filename, crop_top) in enumerate(PANELS):
+    panels = LONGREAD_PANELS if args.profile == "long" else SHORTREAD_PANELS
+    for idx, (panel_id, caption, filename, crop_top) in enumerate(panels):
         src = source_dir / filename
         if not src.exists():
             raise FileNotFoundError(f"Missing required panel: {src}")

@@ -302,7 +302,8 @@ if [[ -n "${MITO_OVERVIEW_LONGREAD_ASSET_DIR:-}" ]]; then
   ASSET_DIR="${MITO_OVERVIEW_LONGREAD_ASSET_DIR}"
   FIG_DIR="${ASSET_DIR}/figures"
   SUMMARY_DIR="${ASSET_DIR}/summary"
-  mkdir -p "${FIG_DIR}" "${SUMMARY_DIR}"
+  PROVENANCE_DIR="${ASSET_DIR}/provenance"
+  mkdir -p "${FIG_DIR}" "${SUMMARY_DIR}" "${PROVENANCE_DIR}"
 
   copy_if_exists "${OUTPUT_DIR}/figures/mito_heteroplasmy_landscape.png" "${FIG_DIR}"
   copy_if_exists "${OUTPUT_DIR}/figures/mito_cosegregation_heatmap.png" "${FIG_DIR}"
@@ -331,12 +332,19 @@ if [[ -n "${MITO_OVERVIEW_LONGREAD_ASSET_DIR:-}" ]]; then
   copy_if_exists "${OUTPUT_DIR}/summary/mito_mvtool_annotation_summary.tsv" "${SUMMARY_DIR}"
   copy_if_exists "${OUTPUT_DIR}/summary/mito_identity_qc_summary.tsv" "${SUMMARY_DIR}"
   copy_if_needed "${WORKDIR}/GM12878_ONT_longread.flagstat.txt" "${ASSET_DIR}/GM12878_ONT_longread.flagstat.txt"
+  copy_if_needed "${ALIGN_PROVENANCE}" \
+    "${PROVENANCE_DIR}/GM12878_ONT_longread.reduced_alignment.provenance.json"
+  copy_if_needed "${SUBSET_FASTQ_PROVENANCE}" \
+    "${PROVENANCE_DIR}/GM12878_ONT_longread.fastq_subset.provenance.json"
+  copy_if_needed "${SUBSET_NAMES}" \
+    "${PROVENANCE_DIR}/GM12878_ONT_longread.selected_qnames.txt"
 
   if [[ -f "${OUTPUT_DIR}/figures/mito_heteroplasmy_landscape.png" \
      && -f "${OUTPUT_DIR}/figures/mito_cosegregation_heatmap.png" \
      && -f "${OUTPUT_DIR}/figures/mito_gene_summary_overview.png" \
      && -f "${OUTPUT_DIR}/figures/mito_numt_qc_mapq_vs_span.png" ]]; then
     "${PYTHON_BIN}" scripts/build_report_montage.py \
+      --profile long \
       --source-dir "${OUTPUT_DIR}/figures" \
       --output "${FIG_DIR}/GM12878_ONT_longread_montage.png" \
       --title "GM12878 public ONT ${SUBSET_READ_NAMES}-query-name workflow proof-of-principle"

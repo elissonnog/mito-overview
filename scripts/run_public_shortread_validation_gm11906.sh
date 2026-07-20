@@ -306,17 +306,25 @@ if [[ -n "${MITO_OVERVIEW_SHORTREAD_ASSET_DIR:-}" ]]; then
   ASSET_DIR="${MITO_OVERVIEW_SHORTREAD_ASSET_DIR}"
   FIG_DIR="${ASSET_DIR}/figures"
   SUMMARY_DIR="${ASSET_DIR}/summary"
-  mkdir -p "${FIG_DIR}" "${SUMMARY_DIR}"
+  PROVENANCE_DIR="${ASSET_DIR}/provenance"
+  mkdir -p "${FIG_DIR}" "${SUMMARY_DIR}" "${PROVENANCE_DIR}"
   cp "${OUTPUT_DIR}/figures/mito_heteroplasmy_landscape.png" "${FIG_DIR}/"
   cp "${OUTPUT_DIR}/figures/mito_feature_annotation.png" "${FIG_DIR}/"
   cp "${OUTPUT_DIR}/figures/mito_gene_summary_overview.png" "${FIG_DIR}/"
   cp "${OUTPUT_DIR}/figures/mito_variant_consequence_classes.png" "${FIG_DIR}/"
+  "${PYTHON_BIN}" "${REPO_ROOT}/scripts/build_report_montage.py" \
+    --profile short \
+    --source-dir "${OUTPUT_DIR}/figures" \
+    --output "${FIG_DIR}/GM11906_MERRF_shortread_montage.png" \
+    --title "GM11906 public short-read workflow proof-of-principle"
   cp "${OUTPUT_DIR}/summary/mito_qc_summary.tsv" "${SUMMARY_DIR}/"
   cp "${OUTPUT_DIR}/summary/mito_heteroplasmy_candidates.tsv" "${SUMMARY_DIR}/"
   cp "${OUTPUT_DIR}/summary/mito_gene_summary.tsv" "${SUMMARY_DIR}/"
   cp "${OUTPUT_DIR}/summary/mito_variant_consequence_candidates.tsv" "${SUMMARY_DIR}/"
   copy_if_needed "${WORKDIR}/GM11906_MERRF_shortread.flagstat.txt" "${ASSET_DIR}/GM11906_MERRF_shortread.flagstat.txt"
   copy_if_needed "${WORKDIR}/GM11906_MERRF_shortread.8344.mpileup" "${ASSET_DIR}/GM11906_MERRF_shortread.8344.mpileup"
+  copy_if_needed "${ALIGN_PROVENANCE}" \
+    "${PROVENANCE_DIR}/GM11906_MERRF_shortread.alignment.provenance.json"
   "${PYTHON_BIN}" - <<'PY' "${OUTPUT_DIR}" "${ASSET_DIR}"
 import sys
 from pathlib import Path
