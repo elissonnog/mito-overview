@@ -212,7 +212,24 @@ fi
 
 rm -rf "${OUTPUT_DIR}"
 mkdir -p "$(dirname "${OUTPUT_DIR}")"
-cp -R "${FINAL_DIR}/output" "${OUTPUT_DIR}"
+OUTPUT_MODE="${MITO_OVERVIEW_PUBLIC_OUTPUT_MODE:-full}"
+case "${OUTPUT_MODE}" in
+  full)
+    cp -R "${FINAL_DIR}/output" "${OUTPUT_DIR}"
+    ;;
+  evidence)
+    mkdir -p "${OUTPUT_DIR}"
+    for component in summary report figures methylation; do
+      if [[ -d "${FINAL_DIR}/output/${component}" ]]; then
+        cp -R "${FINAL_DIR}/output/${component}" "${OUTPUT_DIR}/"
+      fi
+    done
+    ;;
+  *)
+    echo "Unsupported MITO_OVERVIEW_PUBLIC_OUTPUT_MODE: ${OUTPUT_MODE}" >&2
+    exit 1
+    ;;
+esac
 copy_if_needed "${WORKDIR}/GM11906_MERRF_shortread.flagstat.txt" "$(dirname "${OUTPUT_DIR}")/GM11906_MERRF_shortread.flagstat.txt"
 copy_if_needed "${WORKDIR}/GM11906_MERRF_shortread.8344.mpileup" "$(dirname "${OUTPUT_DIR}")/GM11906_MERRF_shortread.8344.mpileup"
 

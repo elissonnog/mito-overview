@@ -55,6 +55,7 @@ MITO_OVERVIEW_SHORTREAD_ALLELE_MIN_BASE_QUALITY=${baseq} \\
 MITO_OVERVIEW_SHORTREAD_ALLELE_MIN_MAPPING_QUALITY=${mapq} \\
 MITO_OVERVIEW_SHORTREAD_ALLELE_MIN_READ_MEAN_QUALITY=${readq} \\
 MITO_OVERVIEW_SHORTREAD_REQUIRE_8344=${require_8344} \\
+MITO_OVERVIEW_PUBLIC_OUTPUT_MODE=evidence \\
 ${REPO_ROOT}/scripts/run_public_shortread_validation_gm11906.sh ${output_dir}
 EOF
   if env \
@@ -66,8 +67,10 @@ EOF
     MITO_OVERVIEW_SHORTREAD_ALLELE_MIN_MAPPING_QUALITY="${mapq}" \
     MITO_OVERVIEW_SHORTREAD_ALLELE_MIN_READ_MEAN_QUALITY="${readq}" \
     MITO_OVERVIEW_SHORTREAD_REQUIRE_8344="${require_8344}" \
+    MITO_OVERVIEW_PUBLIC_OUTPUT_MODE=evidence \
     "${REPO_ROOT}/scripts/run_public_shortread_validation_gm11906.sh" "${output_dir}" \
     >"${log}" 2>&1; then
+    rm -rf "${workdir}"
     record_case "${case_id}" "public_${profile}" 1 1 PASS "GM11906 short-read workflow completed"
   else
     record_case "${case_id}" "public_${profile}" 1 1 FAIL "see logs/${case_id}.log"
@@ -95,6 +98,7 @@ MITO_OVERVIEW_LONGREAD_ALIGN_BAM=${CACHE_ROOT}/GM12878/alignment/GM12878_ONT_lon
 MITO_OVERVIEW_LONGREAD_ALLELE_MIN_BASE_QUALITY=${baseq} \\
 MITO_OVERVIEW_LONGREAD_ALLELE_MIN_MAPPING_QUALITY=${mapq} \\
 MITO_OVERVIEW_LONGREAD_ALLELE_MIN_READ_MEAN_QUALITY=${readq} \\
+MITO_OVERVIEW_PUBLIC_OUTPUT_MODE=evidence \\
 ${REPO_ROOT}/scripts/run_public_longread_validation_gm12878.sh ${output_dir}
 EOF
   if env \
@@ -106,8 +110,10 @@ EOF
     MITO_OVERVIEW_LONGREAD_ALLELE_MIN_BASE_QUALITY="${baseq}" \
     MITO_OVERVIEW_LONGREAD_ALLELE_MIN_MAPPING_QUALITY="${mapq}" \
     MITO_OVERVIEW_LONGREAD_ALLELE_MIN_READ_MEAN_QUALITY="${readq}" \
+    MITO_OVERVIEW_PUBLIC_OUTPUT_MODE=evidence \
     "${REPO_ROOT}/scripts/run_public_longread_validation_gm12878.sh" "${output_dir}" \
     >"${log}" 2>&1; then
+    rm -rf "${workdir}"
     record_case "${case_id}" "public_${profile}" 1 1 PASS "GM12878 long-read workflow completed"
   else
     record_case "${case_id}" "public_${profile}" 1 1 FAIL "see logs/${case_id}.log"
