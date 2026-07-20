@@ -1,0 +1,2 @@
+MT	test	gene	1	60	.	+	.	gene_id "MT-TEST"; gene_name "MT-TEST"; gene_biotype "protein_coding";
+MT	test	CDS	1	60	.	+	0	gene_id "MT-TEST"; gene_name "MT-TEST"; gene_biotype "protein_coding";

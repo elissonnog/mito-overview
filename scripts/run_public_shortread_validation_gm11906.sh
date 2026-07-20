@@ -15,6 +15,7 @@ if [[ -z "${MITO_OVERVIEW_SHORTREAD_WORKDIR:-}" ]]; then
 fi
 
 source "${SCRIPT_DIR}/lib/mock_optional_integrations.sh"
+source "${SCRIPT_DIR}/lib/test_assertions.sh"
 
 echo "[shortread-gm11906] repo root: ${REPO_ROOT}"
 echo "[shortread-gm11906] workdir: ${WORKDIR}"
@@ -102,35 +103,52 @@ if [[ ! -f "${REF_FASTA}.bwt" ]]; then
 fi
 
 THREADS="${MITO_OVERVIEW_SHORTREAD_THREADS:-2}"
-ALIGN_BAM="${HV_DIR}/GM11906_MERRF_shortread.mt.bam"
-echo "[shortread-gm11906] aligning public GM11906 short-read data to ${REF_FASTA}"
-bwa mem -t "${THREADS}" "${REF_FASTA}" "${R1_FASTQ}" "${R2_FASTQ}" \
-  | samtools sort -@ "${THREADS}" -o "${ALIGN_BAM}"
-samtools index -@ "${THREADS}" "${ALIGN_BAM}"
+ALIGN_BAM="${MITO_OVERVIEW_SHORTREAD_ALIGN_BAM:-${HV_DIR}/GM11906_MERRF_shortread.mt.bam}"
+if [[ -s "${ALIGN_BAM}" && -s "${ALIGN_BAM}.bai" ]]; then
+  echo "[shortread-gm11906] reusing existing aligned BAM ${ALIGN_BAM}"
+else
+  echo "[shortread-gm11906] aligning public GM11906 short-read data to ${REF_FASTA}"
+  mkdir -p "$(dirname "${ALIGN_BAM}")"
+  bwa mem -t "${THREADS}" "${REF_FASTA}" "${R1_FASTQ}" "${R2_FASTQ}" \
+    | samtools sort -@ "${THREADS}" -o "${ALIGN_BAM}"
+  samtools index -@ "${THREADS}" "${ALIGN_BAM}"
+fi
 samtools flagstat "${ALIGN_BAM}" > "${WORKDIR}/GM11906_MERRF_shortread.flagstat.txt"
 samtools mpileup -r NC_012920.1:8344-8344 -f "${REF_FASTA}" "${ALIGN_BAM}" > "${WORKDIR}/GM11906_MERRF_shortread.8344.mpileup"
 
-MVTOOL_API_URL="${MVTOOL_API_URL:-$(mock_mvtool_fixture_url "${REPO_ROOT}")}"
+MVTOOL_MODE="${MITO_OVERVIEW_SHORTREAD_MVTOOL_MODE:-disabled}"
+MVTOOL_FIXTURE_JSON="${MITO_OVERVIEW_SHORTREAD_MVTOOL_FIXTURE_JSON:-}"
+if [[ "${MVTOOL_MODE}" == "fixture" && -z "${MVTOOL_FIXTURE_JSON}" ]]; then
+  MVTOOL_FIXTURE_JSON="$(mock_mvtool_fixture_path "${REPO_ROOT}")"
+fi
+MIN_CALLABLE_DEPTH="${MITO_OVERVIEW_SHORTREAD_MIN_CALLABLE_DEPTH:-${MITO_OVERVIEW_SHORTREAD_HET_MIN_DEPTH:-10}}"
+MIN_ALT_ALLELE_FRACTION="${MITO_OVERVIEW_SHORTREAD_MIN_ALT_ALLELE_FRACTION:-${MITO_OVERVIEW_SHORTREAD_HET_MIN_VAF:-0.20}}"
+ALLELE_MIN_BASE_QUALITY="${MITO_OVERVIEW_SHORTREAD_ALLELE_MIN_BASE_QUALITY:-13}"
+ALLELE_MIN_MAPPING_QUALITY="${MITO_OVERVIEW_SHORTREAD_ALLELE_MIN_MAPPING_QUALITY:-20}"
+ALLELE_MIN_READ_MEAN_QUALITY="${MITO_OVERVIEW_SHORTREAD_ALLELE_MIN_READ_MEAN_QUALITY:-10}"
 cat > "${WORKDIR}/gm11906_shortread.env" <<EOF
-PIPELINE_ROOT=${REPO_ROOT}
 WORK_ROOT=${RUN_ROOT}
 RUN_NAME=mito_GM11906_MERRF_shortread
 SAMPLE_ID=GM11906_MERRF_shortread
-SOURCE_SAMPLE_DIR=${SAMPLE_DIR}
-SOURCE_HV_DIR=${HV_DIR}
 REF_FASTA=${REF_FASTA}
 SOURCE_ALIGN_FILE=${ALIGN_BAM}
-SOURCE_ALIGN_MODE=bam
 MT_CONTIG=NC_012920.1
-MT_LENGTH=16569
 THREADS=${THREADS}
 SPECIES=human
 READ_MODE=short
 ASSAY_TYPE=targeted_mt
-HET_MIN_DEPTH=${MITO_OVERVIEW_SHORTREAD_HET_MIN_DEPTH:-10}
-HET_MIN_VAF=${MITO_OVERVIEW_SHORTREAD_HET_MIN_VAF:-0.20}
+REFERENCE_SCOPE=auto
+MIN_CALLABLE_DEPTH=${MIN_CALLABLE_DEPTH}
+MIN_ALT_ALLELE_FRACTION=${MIN_ALT_ALLELE_FRACTION}
+ALLELE_MIN_BASE_QUALITY=${ALLELE_MIN_BASE_QUALITY}
+ALLELE_MIN_MAPPING_QUALITY=${ALLELE_MIN_MAPPING_QUALITY}
+ALLELE_MIN_READ_MEAN_QUALITY=${ALLELE_MIN_READ_MEAN_QUALITY}
+ALLELE_MAX_DEPTH=0
+ALLELE_EXCLUDE_FLAGS=3844
+ALLELE_IGNORE_OVERLAPS=1
 HUMAN_MT_GTF=${REPO_ROOT}/resources/annotations/human_mt_reference.gtf
-MVTOOL_API_URL=${MVTOOL_API_URL}
+MVTOOL_MODE=${MVTOOL_MODE}
+MVTOOL_FIXTURE_JSON=${MVTOOL_FIXTURE_JSON}
 MSEQDR_TIMEOUT=30
 FINAL_BIOINFO_DIR=${FINAL_DIR}
 EOF
@@ -140,6 +158,55 @@ cd "${REPO_ROOT}"
   --config "${WORKDIR}/gm11906_shortread.env" \
   --strict-files \
   --steps validate,stage,extract,mito_qc,heteroplasmy,deletions,copy_number,feature_annotation,cosegregation,gene_summary,numt_qc,phymer_haplogroup,identity_qc,variant_consequence,mvtool_annotation,circularity_qc,methylation_exploratory,sync_bioinfo
+
+SUMMARY_DIR="${FINAL_DIR}/output/summary"
+assert_allele_table_invariants "${SUMMARY_DIR}/mito_heteroplasmy_all_sites.tsv"
+assert_tsv_metric "${SUMMARY_DIR}/mito_copy_number_summary.tsv" status not_applicable
+assert_tsv_metric "${SUMMARY_DIR}/mito_numt_qc_summary.tsv" status not_applicable
+assert_tsv_metric "${SUMMARY_DIR}/mito_mvtool_annotation_summary.tsv" status \
+  "$([[ "${MVTOOL_MODE}" == "disabled" ]] && printf not_configured || printf ok)"
+"${PYTHON_BIN}" - "${SUMMARY_DIR}/mito_heteroplasmy_candidates.tsv" <<'PY'
+import sys
+
+import pandas as pd
+
+path = sys.argv[1]
+table = pd.read_csv(path, sep="\t")
+required = {
+    "position",
+    "ref_base",
+    "alt_base",
+    "callable_depth",
+    "alt_count",
+    "alt_allele_fraction",
+    "heteroplasmy_fraction",
+    "alt_forward",
+    "alt_reverse",
+}
+missing = sorted(required - set(table.columns))
+if missing:
+    raise SystemExit(f"GM11906 release gate failed: candidate table missing {missing}")
+hit = table[
+    (table["position"] == 8344)
+    & (table["ref_base"].astype(str).str.upper() == "A")
+    & (table["alt_base"].astype(str).str.upper() == "G")
+]
+if len(hit) != 1:
+    raise SystemExit(
+        "GM11906 release gate failed: expected exactly one m.8344A>G candidate, "
+        f"observed {len(hit)}"
+    )
+row = hit.iloc[0]
+if int(row["alt_count"]) != int(row["alt_forward"]) + int(row["alt_reverse"]):
+    raise SystemExit("GM11906 release gate failed: strand-count invariant")
+if abs(float(row["alt_allele_fraction"]) - float(row["heteroplasmy_fraction"])) > 1e-9:
+    raise SystemExit("GM11906 release gate failed: compatibility alias mismatch")
+print(
+    "[shortread-gm11906] release gate m.8344A>G "
+    f"depth={int(row['callable_depth'])} alt_count={int(row['alt_count'])} "
+    f"alt_fraction={float(row['alt_allele_fraction']):.6f}"
+)
+PY
 
 rm -rf "${OUTPUT_DIR}"
 mkdir -p "$(dirname "${OUTPUT_DIR}")"
@@ -173,13 +240,13 @@ summary_dir = output_dir / "summary"
 
 qc = pd.read_csv(summary_dir / "mito_qc_summary.tsv", sep="\t")
 het = pd.read_csv(summary_dir / "mito_heteroplasmy_candidates.tsv", sep="\t")
+het_summary = pd.read_csv(summary_dir / "mito_heteroplasmy_summary.tsv", sep="\t")
 gene = pd.read_csv(summary_dir / "mito_gene_summary.tsv", sep="\t")
 vc = pd.read_csv(summary_dir / "mito_variant_consequence_candidates.tsv", sep="\t")
 
 qc_map = dict(zip(qc["metric"], qc["value"]))
+het_map = dict(zip(het_summary["metric"], het_summary["value"]))
 site_8344 = het[het["position"] == 8344].copy()
-if site_8344.empty:
-    site_8344 = pd.DataFrame([{"position": 8344, "status": "not_detected"}])
 top_gene = gene.head(10).copy()
 site_8344_vc = vc[vc["position"] == 8344].copy()
 
@@ -188,6 +255,8 @@ findings = pd.DataFrame(
         {"metric": "sample_id", "value": "GM11906_MERRF_shortread"},
         {"metric": "read_mode", "value": "short"},
         {"metric": "assay_type", "value": "targeted_mt"},
+        {"metric": "min_callable_depth", "value": het_map.get("min_callable_depth", "NA")},
+        {"metric": "min_alt_allele_fraction", "value": het_map.get("min_alt_allele_fraction", "NA")},
         {"metric": "mapped_reads", "value": qc_map.get("mapped_reads", "NA")},
         {"metric": "mean_depth", "value": qc_map.get("mean_depth", "NA")},
         {"metric": "median_depth", "value": qc_map.get("median_depth", "NA")},

@@ -36,10 +36,10 @@ mkdir -p "${HV_DIR}" "${HV_NP_DIR}" "${RUN_ROOT}"
 
 prepare_synthetic_toy_sample "${REPO_ROOT}" "${WORKDIR}"
 PHYMER_ROOT="$(mock_phymer_root "${REPO_ROOT}")"
-MVTOOL_API_URL="$(mock_mvtool_fixture_url "${REPO_ROOT}")"
+MVTOOL_FIXTURE_JSON="$(mock_mvtool_fixture_path "${REPO_ROOT}")"
 
 echo "[example] phymer root: ${PHYMER_ROOT}"
-echo "[example] mock mvtool api: ${MVTOOL_API_URL}"
+echo "[example] mvTool fixture: ${MVTOOL_FIXTURE_JSON}"
 
 cat > "${WORKDIR}/toy.env" <<EOF
 PIPELINE_ROOT=${REPO_ROOT}
@@ -56,13 +56,14 @@ MT_CONTIG=MT
 MT_LENGTH=60
 THREADS=1
 SPECIES=human
-HET_MIN_DEPTH=2
-HET_MIN_VAF=0.2
+MIN_CALLABLE_DEPTH=2
+MIN_ALT_ALLELE_FRACTION=0.2
 HUMAN_MT_GTF=${WORKDIR}/tiny_mt.gtf
 PHYMER_ROOT=${PHYMER_ROOT}
 PHYMER_MIN_DEPTH=2
 PHYMER_MAJOR_VAF=0.2
-MVTOOL_API_URL=${MVTOOL_API_URL}
+MVTOOL_MODE=fixture
+MVTOOL_FIXTURE_JSON=${MVTOOL_FIXTURE_JSON}
 MSEQDR_TIMEOUT=10
 FINAL_BIOINFO_DIR=${FINAL_DIR}
 EOF

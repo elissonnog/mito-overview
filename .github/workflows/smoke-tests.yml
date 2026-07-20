@@ -8,8 +8,12 @@ on:
 
 jobs:
   synthetic-smoke:
-    name: Synthetic workflow smoke tests
-    runs-on: ubuntu-latest
+    name: Unit and synthetic tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
     defaults:
       run:
         shell: bash -l {0}
@@ -35,6 +39,24 @@ jobs:
           python -m mito_overview.cli --list-steps
           python -m mito_overview.cli --config examples/configs/human_example.env --dry-run
 
+      - name: Run deterministic unit and known-answer tests
+        run: |
+          python -m pytest -q
+
+      - name: Build and inspect source and wheel distributions
+        run: |
+          python -m build
+          tar -tf dist/mito_overview-*.tar.gz | grep -q 'resources/schemas/mito_overview_config.schema.yaml'
+          python -m pip install --no-deps --force-reinstall dist/mito_overview-*.whl
+          python - <<'PY'
+          import sys
+          from pathlib import Path
+
+          schema = Path(sys.prefix) / "share" / "mito-overview" / "schemas" / "mito_overview_config.schema.yaml"
+          if not schema.is_file() or schema.stat().st_size == 0:
+              raise SystemExit(f"Installed configuration schema missing: {schema}")
+          PY
+
       - name: Run synthetic long-read smoke test
         run: |
           MITO_OVERVIEW_PYTHON="$(command -v python)" ./tests/smoke_public_pipeline.sh
@@ -46,3 +68,7 @@ jobs:
       - name: Run long-read no-methylation smoke test
         run: |
           MITO_OVERVIEW_PYTHON="$(command -v python)" ./tests/smoke_public_pipeline_longread_nomethyl.sh
+
+      - name: Run minimal standalone smoke test
+        run: |
+          MITO_OVERVIEW_PYTHON="$(command -v python)" ./tests/smoke_standalone_minimal.sh
