@@ -211,17 +211,22 @@ def detect_reference_scope(
     allowed = {"auto", "mt_only", "whole_genome", "custom"}
     if requested not in allowed:
         raise ValueError(f"Unsupported REFERENCE_SCOPE: {requested}")
-    if requested != "auto":
-        return requested
     contigs = set(contig_lengths)
+    physically_inferred = "custom"
     if contigs == {mt_contig}:
-        return "mt_only"
-    if not contigs:
-        return "custom"
-    bare, chr_prefixed = _canonical_nuclear_contigs(species)
-    if (bare <= contigs or chr_prefixed <= contigs) and mt_contig in contigs:
-        return "whole_genome"
-    return "custom"
+        physically_inferred = "mt_only"
+    elif contigs:
+        bare, chr_prefixed = _canonical_nuclear_contigs(species)
+        if (bare <= contigs or chr_prefixed <= contigs) and mt_contig in contigs:
+            physically_inferred = "whole_genome"
+    if requested == "auto":
+        return physically_inferred
+    if requested == "whole_genome" and physically_inferred != "whole_genome":
+        raise ValueError(
+            "REFERENCE_SCOPE=whole_genome requires a recognized complete nuclear reference; "
+            f"the supplied FASTA resolved as {physically_inferred}"
+        )
+    return requested
 
 
 @dataclass(frozen=True)

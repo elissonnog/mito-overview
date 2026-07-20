@@ -141,7 +141,11 @@ def run_step(
         base_counts = counting.base_counts[position - 1]
         callable_depth = sum(base_counts.values())
         ref_base = ref_seq[position - 1]
-        non_ref = {base: count for base, count in base_counts.items() if base != ref_base}
+        non_ref = {
+            base: count
+            for base, count in base_counts.items()
+            if base != ref_base and count > 0
+        }
         alt_base, alt_count = max(non_ref.items(), key=lambda item: item[1]) if non_ref else (None, 0)
         alt_fraction = (alt_count / callable_depth) if callable_depth else 0.0
         alt_forward = counting.forward_counts[position - 1].get(alt_base or "", 0)
@@ -163,7 +167,7 @@ def run_step(
             "T": base_counts["T"],
         }
         all_rows.append(row)
-        if callable_depth >= min_depth and alt_base and alt_fraction >= min_vaf:
+        if callable_depth >= min_depth and alt_base and alt_count > 0 and alt_fraction >= min_vaf:
             if ref_base in canonical_bases and alt_base in canonical_bases:
                 candidate_rows.append(row.copy())
             else:

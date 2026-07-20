@@ -115,3 +115,48 @@ def test_heteroplasmy_outputs_canonical_fraction_and_compatibility_alias(
     assert summary["allele_max_depth"] == "0"
     assert summary["allele_exclude_flags"] == "3844"
     assert int(summary["accepted_observations"]) > 8000
+
+
+def test_configured_depth_cap_is_deterministic_and_fully_accounted(tmp_path: Path) -> None:
+    bam = write_alignment(
+        tmp_path / "cap.bam",
+        {"MT": 1},
+        [ReadSpec(f"read-{index:02d}", "MT", 0, "A") for index in range(20)],
+    )
+    result = count_contig_alleles(
+        bam_path=bam,
+        contig="MT",
+        length=1,
+        policy=AlleleFilterPolicy(max_depth=5),
+    )
+    assert sum(result.base_counts[0].values()) == 5
+    assert result.stats.pileup_observations_seen == 20
+    assert result.stats.accepted_observations == 5
+    assert result.stats.excluded_max_depth == 15
+    assert result.stats.excluded_observations == 15
+
+
+def test_all_reference_positions_have_no_fabricated_alternate_candidate(tmp_path: Path) -> None:
+    ref = write_fasta(tmp_path / "reference.fa", {"MT": "AAAA"})
+    bam = write_alignment(
+        tmp_path / "reference.bam",
+        {"MT": 4},
+        [ReadSpec(f"ref-{index}", "MT", 0, "AAAA") for index in range(4)],
+    )
+    outputs = run_step(
+        bam=bam,
+        ref_fasta=ref,
+        summary_dir=tmp_path / "summary",
+        figure_dir=tmp_path / "figures",
+        report_dir=tmp_path / "report",
+        sample_id="ALL-REF",
+        mt_contig="MT",
+        mt_length=4,
+        min_depth=0,
+        min_vaf=0.0,
+    )
+    all_sites = pd.read_csv(outputs["all_sites_path"], sep="\t", dtype=str)
+    candidates = pd.read_csv(outputs["candidate_path"], sep="\t", dtype=str)
+    assert set(all_sites["alt_base"]) == {"."}
+    assert set(all_sites["alt_count"]) == {"0"}
+    assert candidates.empty

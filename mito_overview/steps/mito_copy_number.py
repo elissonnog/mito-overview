@@ -85,11 +85,13 @@ def run_step(
     report_dir.mkdir(parents=True, exist_ok=True)
 
     mito_depth_path = summary_dir / "mito_depth_per_base.tsv"
-    if mito_depth_path.exists():
+    mt_mean_depth: float | None = None
+    if mito_depth_path.exists() and mito_depth_path.stat().st_size > 0:
         mito_depth_df = pd.read_csv(mito_depth_path, sep="\t")
-        mt_mean_depth = float(mito_depth_df["depth"].mean()) if not mito_depth_df.empty else 0.0
-    else:
-        mt_mean_depth = 0.0
+        if "depth" in mito_depth_df.columns:
+            observed_depth = pd.to_numeric(mito_depth_df["depth"], errors="coerce").dropna()
+            if not observed_depth.empty:
+                mt_mean_depth = float(observed_depth.mean())
 
     bam_handle = open_alignment(align_file, align_mode, ref_fasta)
     refs = {name: length for name, length in zip(bam_handle.references, bam_handle.lengths)}
@@ -124,6 +126,7 @@ def run_step(
                 "end": end,
                 "window_size": end - start + 1,
                 "mean_depth": round(mean_depth, 6),
+                "valid_for_denominator": int(mean_depth > 0),
             }
         )
         print(f"[copy_number] window {idx}/{len(selected)} contig={contig} mean_depth={mean_depth:.3f}")
@@ -131,10 +134,17 @@ def run_step(
 
     windows_df = pd.DataFrame(
         window_rows,
-        columns=["contig", "start", "end", "window_size", "mean_depth"],
+        columns=["contig", "start", "end", "window_size", "mean_depth", "valid_for_denominator"],
     )
-    nuclear_mean = float(windows_df["mean_depth"].mean()) if not windows_df.empty else None
-    if reference_scope != "whole_genome":
+    valid_windows_df = windows_df[windows_df["valid_for_denominator"] == 1]
+    nuclear_mean = (
+        float(valid_windows_df["mean_depth"].mean()) if not valid_windows_df.empty else None
+    )
+    if mt_mean_depth is None:
+        status = "not_evaluable"
+        reason_code = "no_mito_depth_evidence"
+        ratio = None
+    elif reference_scope != "whole_genome":
         status = "not_evaluable"
         reason_code = "no_valid_nuclear_windows"
         ratio = None
@@ -151,12 +161,12 @@ def run_step(
             {"metric": "status", "value": status},
             {"metric": "reason_code", "value": reason_code},
             {"metric": "reference_scope", "value": reference_scope},
-            {"metric": "mt_mean_depth", "value": round(mt_mean_depth, 6)},
+            {"metric": "mt_mean_depth", "value": "" if mt_mean_depth is None else round(mt_mean_depth, 6)},
             {"metric": "nuclear_window_mean_depth", "value": "" if nuclear_mean is None else round(nuclear_mean, 6)},
             {"metric": "mt_to_nuclear_depth_ratio", "value": "" if ratio is None else round(ratio, 6)},
             {"metric": "nuclear_windows_requested", "value": window_count},
-            {"metric": "nuclear_windows_valid", "value": len(windows_df)},
-            {"metric": "nuclear_windows_used", "value": len(windows_df)},
+            {"metric": "nuclear_windows_valid", "value": len(valid_windows_df)},
+            {"metric": "nuclear_windows_used", "value": len(valid_windows_df)},
             {"metric": "window_size_bp", "value": window_size},
         ]
     )
@@ -168,7 +178,7 @@ def run_step(
 
     fig_path = figure_dir / "mito_copy_number_proxy.png"
     labels = ["mtDNA"] + windows_df["contig"].tolist()
-    values = [mt_mean_depth] + windows_df["mean_depth"].tolist()
+    values = [float("nan") if mt_mean_depth is None else mt_mean_depth] + windows_df["mean_depth"].tolist()
     plt.figure(figsize=(10, 5))
     plt.bar(labels, values, color=["#7c3aed"] + ["#2563eb"] * len(windows_df))
     plt.ylabel("Mean depth")
@@ -179,10 +189,10 @@ def run_step(
 
     metrics_html = "".join(
         [
-            metric_card("mt mean depth", round(mt_mean_depth, 3)),
+            metric_card("mt mean depth", "NA" if mt_mean_depth is None else round(mt_mean_depth, 3)),
             metric_card("nuclear mean depth", "NA" if nuclear_mean is None else round(nuclear_mean, 3)),
             metric_card("mt:nuclear ratio", "NA" if ratio is None else round(ratio, 3)),
-            metric_card("nuclear windows", len(windows_df)),
+            metric_card("valid nuclear windows", len(valid_windows_df)),
         ]
     )
     if status != "ok":

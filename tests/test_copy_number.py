@@ -116,7 +116,43 @@ def test_zero_nuclear_denominator_is_na(tmp_path: Path) -> None:
     metrics = metric_map(outputs["summary_path"])
     assert outputs["status"] == "not_evaluable"
     assert metrics["reason_code"] == "no_valid_nuclear_windows"
-    assert metrics["nuclear_window_mean_depth"] == "0.0"
+    assert metrics["nuclear_window_mean_depth"] == ""
+    assert metrics["mt_to_nuclear_depth_ratio"] == ""
+    assert metrics["nuclear_windows_valid"] == "0"
+
+
+def test_missing_mito_depth_evidence_is_na_not_zero(tmp_path: Path) -> None:
+    contigs = {"MT": "A" * 10, **{f"chr{i}": "A" * 10 for i in range(1, 23)}}
+    ref = write_fasta(tmp_path / "missing_depth_GRCh38.fa", contigs)
+    reads = [
+        ReadSpec(f"nuclear-{index}", "chr1", 0, "A" * 10)
+        for index in range(10)
+    ]
+    bam = write_alignment(
+        tmp_path / "missing_depth.bam",
+        {key: 10 for key in contigs},
+        reads,
+    )
+    outputs = run_step(
+        align_file=bam,
+        align_mode="bam",
+        ref_fasta=ref,
+        summary_dir=tmp_path / "summary",
+        figure_dir=tmp_path / "figures",
+        report_dir=tmp_path / "reports",
+        sample_id="S1",
+        mt_contig="MT",
+        mt_length=10,
+        species="human",
+        reference_scope="whole_genome",
+        window_size=10,
+        window_count=1,
+    )
+    metrics = metric_map(outputs["summary_path"])
+    assert outputs["status"] == "not_evaluable"
+    assert metrics["reason_code"] == "no_mito_depth_evidence"
+    assert metrics["mt_mean_depth"] == ""
+    assert metrics["nuclear_window_mean_depth"] == "10.0"
     assert metrics["mt_to_nuclear_depth_ratio"] == ""
 
 

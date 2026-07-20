@@ -25,6 +25,25 @@ def test_reference_scope_auto_resolution() -> None:
     ) == "custom"
 
 
+@pytest.mark.parametrize(
+    "contigs",
+    [
+        {"MT": 16569},
+        {"MT": 16569, "chr1": 1000},
+    ],
+)
+def test_whole_genome_scope_cannot_override_incomplete_reference(
+    contigs: dict[str, int],
+) -> None:
+    with pytest.raises(ValueError, match="requires a recognized complete nuclear reference"):
+        detect_reference_scope(
+            requested="whole_genome",
+            contig_lengths=contigs,
+            mt_contig="MT",
+            species="human",
+        )
+
+
 def test_mito_bed_is_exact_zero_based_half_open(tmp_path: Path) -> None:
     path = write_mito_region_bed(tmp_path / "mt.bed", "MT", 16569)
     assert path.read_bytes() == b"MT\t0\t16569\n"

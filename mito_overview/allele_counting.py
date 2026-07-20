@@ -42,6 +42,7 @@ class AlleleFilterStats:
     excluded_missing_base: int = 0
     excluded_noncanonical_base: int = 0
     excluded_overlap: int = 0
+    excluded_max_depth: int = 0
     unique_reads_seen: int = 0
     unique_reads_accepted: int = 0
     unique_reads_with_any_exclusion: int = 0
@@ -54,6 +55,7 @@ class AlleleFilterStats:
     unique_reads_excluded_missing_base: int = 0
     unique_reads_excluded_noncanonical_base: int = 0
     unique_reads_excluded_overlap: int = 0
+    unique_reads_excluded_max_depth: int = 0
 
 
 @dataclass(frozen=True)
@@ -187,6 +189,21 @@ def _passing_observations(
             read_sets["overlap"].update(duplicated_names)
         observations = list(best_by_read.values())
 
+    if policy.max_depth > 0 and len(observations) > policy.max_depth:
+        observations.sort(
+            key=lambda item: (
+                -item.base_quality,
+                -item.mapping_quality,
+                item.read_name,
+                item.base,
+                item.is_reverse,
+            )
+        )
+        excluded = observations[policy.max_depth :]
+        stats.excluded_max_depth += len(excluded)
+        read_sets["max_depth"].update(item.read_name for item in excluded)
+        observations = observations[: policy.max_depth]
+
     stats.accepted_observations += len(observations)
     read_sets["accepted"].update(observation.read_name for observation in observations)
     return observations
@@ -205,6 +222,7 @@ def _finalize_stats(stats: AlleleFilterStats, read_sets: dict[str, set[str]]) ->
         "missing_base",
         "noncanonical_base",
         "overlap",
+        "max_depth",
     )
     excluded_reads = set().union(*(read_sets[key] for key in exclusion_keys))
     reason_total = (
@@ -217,6 +235,7 @@ def _finalize_stats(stats: AlleleFilterStats, read_sets: dict[str, set[str]]) ->
         + stats.excluded_missing_base
         + stats.excluded_noncanonical_base
         + stats.excluded_overlap
+        + stats.excluded_max_depth
     )
     if stats.pileup_observations_seen != stats.accepted_observations + reason_total:
         raise RuntimeError("Allele observation accounting invariant failed")
@@ -233,6 +252,7 @@ def _finalize_stats(stats: AlleleFilterStats, read_sets: dict[str, set[str]]) ->
     stats.unique_reads_excluded_missing_base = len(read_sets["missing_base"])
     stats.unique_reads_excluded_noncanonical_base = len(read_sets["noncanonical_base"])
     stats.unique_reads_excluded_overlap = len(read_sets["overlap"])
+    stats.unique_reads_excluded_max_depth = len(read_sets["max_depth"])
 
 
 def iter_filtered_columns(
@@ -246,7 +266,6 @@ def iter_filtered_columns(
 ) -> Iterator[tuple[int, list[AlleleObservation]]]:
     """Yield zero-based positions with observations passing one shared policy."""
 
-    effective_max_depth = policy.max_depth if policy.max_depth > 0 else UNLIMITED_PILEUP_DEPTH
     mean_quality_cache: dict[tuple[str, int, int], float | None] = {}
     read_sets = {
         key: set()
@@ -262,6 +281,7 @@ def iter_filtered_columns(
             "missing_base",
             "noncanonical_base",
             "overlap",
+            "max_depth",
         )
     }
     with pysam.AlignmentFile(str(bam_path), "rb") as bam:
@@ -273,7 +293,9 @@ def iter_filtered_columns(
             stepper="all",
             min_base_quality=0,
             min_mapping_quality=0,
-            max_depth=effective_max_depth,
+            # Apply any configured cap after all observations are visible so
+            # capped observations remain part of explicit provenance.
+            max_depth=UNLIMITED_PILEUP_DEPTH,
             flag_filter=0,
             ignore_overlaps=False,
         ):
