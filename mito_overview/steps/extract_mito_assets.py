@@ -69,6 +69,15 @@ def _write_empty_table(path: str | Path) -> None:
     path.write_text("", encoding="utf-8")
 
 
+def write_mito_region_bed(path: str | Path, mt_contig: str, mt_length: int) -> Path:
+    """Write one zero-based, half-open interval spanning the mitochondrial contig."""
+
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f"{mt_contig}\t0\t{mt_length}\n", encoding="utf-8")
+    return path
+
+
 def subset_bedmethyl(
     *,
     source_gz: str | Path | None,
@@ -138,9 +147,9 @@ def run_step(
     threads: int,
     read_mode: str = "long",
     np_bedmethyl_source_gz: str | Path | None,
-    hp1_bedmethyl_source_gz: str | Path,
-    hp2_bedmethyl_source_gz: str | Path,
-    ungrouped_bedmethyl_source_gz: str | Path,
+    hp1_bedmethyl_source_gz: str | Path | None,
+    hp2_bedmethyl_source_gz: str | Path | None,
+    ungrouped_bedmethyl_source_gz: str | Path | None,
     mito_mods_np: str | Path,
     mito_mods_hp1: str | Path,
     mito_mods_hp2: str | Path,
@@ -182,9 +191,7 @@ def run_step(
         threads=threads,
     )
 
-    mito_region_bed = Path(mito_region_bed)
-    mito_region_bed.parent.mkdir(parents=True, exist_ok=True)
-    mito_region_bed.write_text(f"{mt_contig}\t1\t{mt_length}\n", encoding="utf-8")
+    mito_region_bed = write_mito_region_bed(mito_region_bed, mt_contig, mt_length)
     print(f"[extract] wrote region BED to {mito_region_bed}")
 
     np_rows = hp1_rows = hp2_rows = ungrouped_rows = 0

@@ -132,12 +132,16 @@ def render_no_data_report(
     sample_id: str,
     mt_contig: str,
     track_paths: dict[str, str | Path | None],
-) -> dict[str, Path]:
+    inputs_configured: bool,
+) -> dict[str, Path | str]:
     """Write a status-only report when no mitochondrial bedmethyl rows are present."""
 
+    status = "not_evaluable" if inputs_configured else "not_configured"
+    reason_code = "no_mt_bedmethyl_rows_available" if inputs_configured else "no_bedmethyl_sidecars_configured"
     summary_df = pd.DataFrame(
         [
-            {"metric": "status", "value": "no_mt_bedmethyl_rows_available"},
+            {"metric": "status", "value": status},
+            {"metric": "reason_code", "value": reason_code},
             {
                 "metric": "message",
                 "value": "No mitochondrial bedmethyl rows were available after mitochondrial subsetting.",
@@ -155,7 +159,8 @@ def render_no_data_report(
     ).to_csv(cmp_path, sep="\t", index=False)
     pd.DataFrame(
         [
-            {"metric": "status", "value": "no_mt_bedmethyl_rows_available"},
+            {"metric": "status", "value": status},
+            {"metric": "reason_code", "value": reason_code},
             {"metric": "shared_np_proxy_positions", "value": 0},
         ]
     ).to_csv(cmp_summary_path, sep="\t", index=False)
@@ -170,6 +175,7 @@ def render_no_data_report(
         body_html,
     )
     return {
+        "status": status,
         "summary_path": summary_path,
         "combined_path": combined_path,
         "cmp_path": cmp_path,
@@ -189,7 +195,8 @@ def run_step(
     mito_mods_hp1: str | Path,
     mito_mods_hp2: str | Path,
     mito_mods_ungrouped: str | Path,
-) -> dict[str, Path]:
+    inputs_configured: bool = True,
+) -> dict[str, Path | str]:
     """Run the public exploratory mitochondrial methylation step."""
 
     print(f"[methylation] starting sample={sample_id} contig={mt_contig}", flush=True)
@@ -237,6 +244,7 @@ def run_step(
             sample_id=sample_id,
             mt_contig=mt_contig,
             track_paths=track_paths,
+            inputs_configured=inputs_configured,
         )
 
     combined_df.to_csv(combined_path, sep="\t", index=False)
@@ -381,6 +389,7 @@ def run_step(
     )
     print(f"[methylation] wrote report {report_path}", flush=True)
     return {
+        "status": "ok",
         "track_rows_path": combined_path,
         "summary_path": summary_path,
         "cmp_path": cmp_path,

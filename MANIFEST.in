@@ -1,0 +1,3 @@
+include resources/schemas/mito_overview_config.schema.yaml
+recursive-include examples/configs *.env
+recursive-include examples/synthetic_data *.md *.fa *.sam *.tsv *.gtf *.vcf

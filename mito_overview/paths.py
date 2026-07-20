@@ -8,9 +8,21 @@ from pathlib import Path
 from .config import PipelineConfig
 
 
+def _legacy_sidecar(directory: Path | None, sample_id: str, suffix: str) -> Path | None:
+    return directory / f"{sample_id}.{suffix}" if directory else None
+
+
+def _prefer_explicit(explicit: Path | None, legacy: Path | None) -> tuple[Path | None, str]:
+    if explicit is not None:
+        return explicit, "explicit" if explicit.exists() else "explicit_missing"
+    if legacy is not None and legacy.exists():
+        return legacy, "legacy_discovery"
+    return None, "absent"
+
+
 @dataclass(frozen=True)
 class RunPaths:
-    """Filesystem layout derived from a :class:`PipelineConfig`."""
+    """Filesystem layout and resolved optional inputs for one run."""
 
     region: str
     region_tag: str
@@ -31,15 +43,16 @@ class RunPaths:
     mito_mods_hp1: Path
     mito_mods_hp2: Path
     mito_mods_ungrouped: Path
-    phased_snp_vcf: Path
-    phased_clinvar_vcf: Path
+    phased_snp_vcf: Path | None
+    phased_clinvar_vcf: Path | None
     np_snp_vcf: Path | None
     np_clinvar_vcf: Path | None
     np_bedmethyl_source_gz: Path | None
-    hp1_bedmethyl_source_gz: Path
-    hp2_bedmethyl_source_gz: Path
-    ungrouped_bedmethyl_source_gz: Path
+    hp1_bedmethyl_source_gz: Path | None
+    hp2_bedmethyl_source_gz: Path | None
+    ungrouped_bedmethyl_source_gz: Path | None
     final_bioinfo_dir: Path
+    sidecar_resolution: dict[str, str]
 
     @classmethod
     def from_config(cls, config: PipelineConfig) -> "RunPaths":
@@ -56,10 +69,51 @@ class RunPaths:
         report_dir = output_dir / "report"
         tmp_dir = run_dir / "tmp"
         mito_bam = subset_dir / f"{config.sample_id}.{config.mt_contig}.bam"
-        final_bioinfo_dir = config.final_bioinfo_dir or (config.source_sample_dir.parent / "reports" / "mito_overview" / config.run_name)
+        final_bioinfo_dir = config.final_bioinfo_dir or (config.work_root / f"{config.run_name}_final")
 
-        np_prefix = config.source_hv_np_dir / config.sample_id if config.source_hv_np_dir else None
-        hv_prefix = config.source_hv_dir / config.sample_id
+        phased_snp_vcf, phased_snp_resolution = _prefer_explicit(
+            config.source_variant_vcf,
+            _legacy_sidecar(config.source_hv_dir, config.sample_id, "wf_snp.vcf.gz"),
+        )
+        phased_clinvar_vcf, phased_clinvar_resolution = _prefer_explicit(
+            config.source_clinvar_vcf,
+            _legacy_sidecar(config.source_hv_dir, config.sample_id, "wf_snp_clinvar.vcf.gz"),
+        )
+        np_snp_vcf, np_snp_resolution = _prefer_explicit(
+            config.source_variant_vcf_unphased,
+            _legacy_sidecar(config.source_hv_np_dir, config.sample_id, "wf_snp.vcf.gz"),
+        )
+        np_clinvar_vcf, np_clinvar_resolution = _prefer_explicit(
+            config.source_clinvar_vcf_unphased,
+            _legacy_sidecar(config.source_hv_np_dir, config.sample_id, "wf_snp_clinvar.vcf.gz"),
+        )
+        np_bedmethyl, np_bedmethyl_resolution = _prefer_explicit(
+            config.source_bedmethyl,
+            _legacy_sidecar(config.source_hv_np_dir, config.sample_id, "wf_mods.bedmethyl.gz"),
+        )
+        hp1_bedmethyl, hp1_resolution = _prefer_explicit(
+            config.source_bedmethyl_hp1,
+            _legacy_sidecar(config.source_hv_dir, config.sample_id, "wf_mods.1.bedmethyl.gz"),
+        )
+        hp2_bedmethyl, hp2_resolution = _prefer_explicit(
+            config.source_bedmethyl_hp2,
+            _legacy_sidecar(config.source_hv_dir, config.sample_id, "wf_mods.2.bedmethyl.gz"),
+        )
+        ungrouped_bedmethyl, ungrouped_resolution = _prefer_explicit(
+            config.source_bedmethyl_ungrouped,
+            _legacy_sidecar(config.source_hv_dir, config.sample_id, "wf_mods.ungrouped.bedmethyl.gz"),
+        )
+        resolution = {
+            "source_variant_vcf": phased_snp_resolution,
+            "source_clinvar_vcf": phased_clinvar_resolution,
+            "source_variant_vcf_unphased": np_snp_resolution,
+            "source_clinvar_vcf_unphased": np_clinvar_resolution,
+            "source_bedmethyl": np_bedmethyl_resolution,
+            "source_bedmethyl_hp1": hp1_resolution,
+            "source_bedmethyl_hp2": hp2_resolution,
+            "source_bedmethyl_ungrouped": ungrouped_resolution,
+        }
+
         return cls(
             region=region,
             region_tag=region_tag,
@@ -80,15 +134,16 @@ class RunPaths:
             mito_mods_hp1=methyl_dir / f"{config.sample_id}.{config.mt_contig}.wf_mods.1.tsv",
             mito_mods_hp2=methyl_dir / f"{config.sample_id}.{config.mt_contig}.wf_mods.2.tsv",
             mito_mods_ungrouped=methyl_dir / f"{config.sample_id}.{config.mt_contig}.wf_mods.ungrouped.tsv",
-            phased_snp_vcf=config.source_hv_dir / f"{config.sample_id}.wf_snp.vcf.gz",
-            phased_clinvar_vcf=config.source_hv_dir / f"{config.sample_id}.wf_snp_clinvar.vcf.gz",
-            np_snp_vcf=(np_prefix.parent / f"{config.sample_id}.wf_snp.vcf.gz") if np_prefix else None,
-            np_clinvar_vcf=(np_prefix.parent / f"{config.sample_id}.wf_snp_clinvar.vcf.gz") if np_prefix else None,
-            np_bedmethyl_source_gz=(np_prefix.parent / f"{config.sample_id}.wf_mods.bedmethyl.gz") if np_prefix else None,
-            hp1_bedmethyl_source_gz=hv_prefix.parent / f"{config.sample_id}.wf_mods.1.bedmethyl.gz",
-            hp2_bedmethyl_source_gz=hv_prefix.parent / f"{config.sample_id}.wf_mods.2.bedmethyl.gz",
-            ungrouped_bedmethyl_source_gz=hv_prefix.parent / f"{config.sample_id}.wf_mods.ungrouped.bedmethyl.gz",
+            phased_snp_vcf=phased_snp_vcf,
+            phased_clinvar_vcf=phased_clinvar_vcf,
+            np_snp_vcf=np_snp_vcf,
+            np_clinvar_vcf=np_clinvar_vcf,
+            np_bedmethyl_source_gz=np_bedmethyl,
+            hp1_bedmethyl_source_gz=hp1_bedmethyl,
+            hp2_bedmethyl_source_gz=hp2_bedmethyl,
+            ungrouped_bedmethyl_source_gz=ungrouped_bedmethyl,
             final_bioinfo_dir=final_bioinfo_dir,
+            sidecar_resolution=resolution,
         )
 
     def create_layout(self) -> None:
@@ -109,9 +164,9 @@ class RunPaths:
             path.mkdir(parents=True, exist_ok=True)
 
     def context_rows(self) -> list[tuple[str, str]]:
-        """Return derived path metadata in a table-friendly order."""
+        """Return derived paths and sidecar resolution metadata."""
 
-        return [
+        rows = [
             ("region", self.region),
             ("region_tag", self.region_tag),
             ("run_dir", str(self.run_dir)),
@@ -123,3 +178,5 @@ class RunPaths:
             ("mito_mods_np", str(self.mito_mods_np)),
             ("final_bioinfo_dir", str(self.final_bioinfo_dir)),
         ]
+        rows.extend((f"{key}_resolution", value) for key, value in sorted(self.sidecar_resolution.items()))
+        return rows
