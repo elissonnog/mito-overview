@@ -9,3 +9,8 @@ mock_mvtool_fixture_url() {
   local repo_root="$1"
   printf 'file://%s\n' "${repo_root}/tests/fixtures/mock_mvtool_annotations.json"
 }
+
+mock_mvtool_fixture_path() {
+  local repo_root="$1"
+  printf '%s\n' "${repo_root}/tests/fixtures/mock_mvtool_annotations.json"
+}

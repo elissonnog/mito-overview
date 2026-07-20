@@ -38,6 +38,22 @@ STATUS_COLUMNS = ["Mitomap_status", "candidate_sites"]
 DISEASE_COLUMNS = ["Reported_association", "candidate_sites", "supporting_statuses"]
 POP_BIN_COLUMNS = ["AF_M1_bin", "candidate_sites"]
 SUMMARY_COLUMNS = ["metric", "value"]
+BATCH_COLUMNS = ["batch", "variants_submitted", "records_returned", "http_status"]
+ANNOTATION_COLUMNS = [
+    "position",
+    "ref_base",
+    "alt_base",
+    "callable_depth",
+    "depth",
+    "alt_count",
+    "alt_allele_fraction",
+    "heteroplasmy_fraction",
+    "mvtool_input",
+    *DEFAULT_FIELDS,
+    "Mitomap_status_normalized",
+    "Mitomap_Disease_normalized",
+    "HmtDB_disease_normalized",
+]
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -47,7 +63,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--report-dir", required=True)
     parser.add_argument("--sample-id", required=True)
     parser.add_argument("--species", required=True)
-    parser.add_argument("--api-url", required=True)
+    parser.add_argument("--mode", choices=("disabled", "fixture", "network"), default="disabled")
+    parser.add_argument("--api-url", default="")
+    parser.add_argument("--fixture-json")
     parser.add_argument("--timeout", type=int, default=120)
     parser.add_argument("--batch-size", type=int, default=100)
     return parser
@@ -69,18 +87,32 @@ def write_status_page(
     sample_id: str,
     status_rows: list[dict[str, object]],
     message: str,
-) -> dict[str, Path]:
+) -> dict[str, Path | str]:
     summary_df = pd.DataFrame(status_rows)
     summary_df.to_csv(summary_path, sep="\t", index=False)
-    pd.DataFrame().to_csv(annot_path, sep="\t", index=False)
-    pd.DataFrame().to_csv(batch_log_path, sep="\t", index=False)
+    pd.DataFrame(columns=ANNOTATION_COLUMNS).to_csv(annot_path, sep="\t", index=False)
+    pd.DataFrame(columns=BATCH_COLUMNS).to_csv(batch_log_path, sep="\t", index=False)
+    status_counts_path = summary_path.parent / "mito_mvtool_status_counts.tsv"
+    disease_summary_path = summary_path.parent / "mito_mvtool_disease_summary.tsv"
+    population_bins_path = summary_path.parent / "mito_mvtool_population_bins.tsv"
+    pd.DataFrame(columns=STATUS_COLUMNS).to_csv(status_counts_path, sep="\t", index=False)
+    pd.DataFrame(columns=DISEASE_COLUMNS).to_csv(disease_summary_path, sep="\t", index=False)
+    pd.DataFrame(columns=POP_BIN_COLUMNS).to_csv(population_bins_path, sep="\t", index=False)
     intro_html = f"<p class='muted'>{message}</p>"
     body_html = "<section><h2>Status</h2>" + df_to_html_table(summary_df, max_rows=20) + "</section>"
     render_page(report_path, "Mito mvTool Annotation", sample_id, "MT:whole_mito", intro_html, body_html)
+    status = next(
+        (str(row["value"]) for row in status_rows if row.get("metric") == "status"),
+        "not_evaluable",
+    )
     return {
+        "status": status,
         "summary_path": summary_path,
         "annot_path": annot_path,
         "batch_log_path": batch_log_path,
+        "status_counts_path": status_counts_path,
+        "disease_summary_path": disease_summary_path,
+        "population_bins_path": population_bins_path,
         "report_path": report_path,
     }
 
@@ -153,14 +185,17 @@ def run_step(
     report_dir: str | Path,
     sample_id: str,
     species: str,
-    api_url: str,
+    mode: str = "disabled",
+    api_url: str = "",
+    fixture_json: str | Path | None = None,
     timeout: int = 120,
     batch_size: int = 100,
-) -> dict[str, Path]:
+) -> dict[str, Path | str]:
     """Run the optional mvTool annotation step."""
 
     print(
-        f"[mvtool] starting sample={sample_id} species={species} timeout={timeout} batch_size={batch_size}",
+        f"[mvtool] starting sample={sample_id} species={species} mode={mode} "
+        f"timeout={timeout} batch_size={batch_size}",
         flush=True,
     )
     summary_dir = Path(summary_dir)
@@ -178,6 +213,73 @@ def run_step(
     disease_summary_path = summary_dir / "mito_mvtool_disease_summary.tsv"
     population_bins_path = summary_dir / "mito_mvtool_population_bins.tsv"
 
+    mode = mode.strip().lower()
+    if mode == "disabled":
+        return write_status_page(
+            report_path=report_path,
+            summary_path=summary_path,
+            annot_path=annot_path,
+            batch_log_path=batch_log_path,
+            sample_id=sample_id,
+            status_rows=[
+                {"metric": "status", "value": "not_configured"},
+                {"metric": "reason_code", "value": "mvtool_mode_disabled"},
+                {"metric": "network_request_attempted", "value": 0},
+            ],
+            message=(
+                "mvTool enrichment is disabled. Core mitochondrial reporting completed "
+                "without external network access."
+            ),
+        )
+    if mode == "fixture":
+        if not fixture_json:
+            return write_status_page(
+                report_path=report_path,
+                summary_path=summary_path,
+                annot_path=annot_path,
+                batch_log_path=batch_log_path,
+                sample_id=sample_id,
+                status_rows=[
+                    {"metric": "status", "value": "unavailable"},
+                    {"metric": "reason_code", "value": "mvtool_fixture_not_configured"},
+                    {"metric": "network_request_attempted", "value": 0},
+                ],
+                message="mvTool fixture mode was requested without a fixture JSON path.",
+            )
+        fixture_path = Path(fixture_json).expanduser().resolve()
+        if not fixture_path.exists():
+            return write_status_page(
+                report_path=report_path,
+                summary_path=summary_path,
+                annot_path=annot_path,
+                batch_log_path=batch_log_path,
+                sample_id=sample_id,
+                status_rows=[
+                    {"metric": "status", "value": "unavailable"},
+                    {"metric": "reason_code", "value": "mvtool_fixture_missing"},
+                    {"metric": "network_request_attempted", "value": 0},
+                ],
+                message=f"The configured mvTool fixture does not exist: {fixture_path}",
+            )
+        api_url = fixture_path.as_uri()
+    elif mode == "network":
+        if not api_url.strip():
+            return write_status_page(
+                report_path=report_path,
+                summary_path=summary_path,
+                annot_path=annot_path,
+                batch_log_path=batch_log_path,
+                sample_id=sample_id,
+                status_rows=[
+                    {"metric": "status", "value": "unavailable"},
+                    {"metric": "reason_code", "value": "mvtool_network_url_missing"},
+                    {"metric": "network_request_attempted", "value": 0},
+                ],
+                message="mvTool network mode requires an explicit API URL.",
+            )
+    else:
+        raise ValueError(f"Unsupported mvTool mode: {mode}")
+
     if species.lower() != "human":
         return write_status_page(
             report_path=report_path,
@@ -185,7 +287,10 @@ def run_step(
             annot_path=annot_path,
             batch_log_path=batch_log_path,
             sample_id=sample_id,
-            status_rows=[{"metric": "status", "value": "skipped_non_human_sample"}],
+            status_rows=[
+                {"metric": "status", "value": "not_applicable"},
+                {"metric": "reason_code", "value": "non_human_sample"},
+            ],
             message="mvTool annotation is currently enabled only for human mitochondrial samples.",
         )
 
@@ -197,7 +302,10 @@ def run_step(
             annot_path=annot_path,
             batch_log_path=batch_log_path,
             sample_id=sample_id,
-            status_rows=[{"metric": "status", "value": "no_candidate_sites_available"}],
+            status_rows=[
+                {"metric": "status", "value": "not_evaluable"},
+                {"metric": "reason_code", "value": "no_candidate_sites_available"},
+            ],
             message="No mitochondrial candidate variants were available for mvTool annotation.",
         )
     if not REQUIRED_CANDIDATE_COLUMNS.issubset(candidates.columns):
@@ -209,7 +317,8 @@ def run_step(
             batch_log_path=batch_log_path,
             sample_id=sample_id,
             status_rows=[
-                {"metric": "status", "value": "candidate_table_missing_columns"},
+                {"metric": "status", "value": "unavailable"},
+                {"metric": "reason_code", "value": "candidate_table_missing_columns"},
                 {"metric": "missing_columns", "value": ",".join(missing)},
             ],
             message="The heteroplasmy candidate table is missing columns required for mvTool annotation.",
@@ -248,7 +357,14 @@ def run_step(
             )
             results.extend(entries)
     except Exception as exc:
-        pd.DataFrame(batch_rows).to_csv(batch_log_path, sep="\t", index=False)
+        if isinstance(exc, requests.Timeout):
+            reason_code = "mvtool_network_timeout"
+        elif mode == "fixture":
+            reason_code = "mvtool_fixture_malformed"
+        elif isinstance(exc, ValueError):
+            reason_code = "mvtool_malformed_response"
+        else:
+            reason_code = "mvtool_request_failed"
         return write_status_page(
             report_path=report_path,
             summary_path=summary_path,
@@ -256,8 +372,10 @@ def run_step(
             batch_log_path=batch_log_path,
             sample_id=sample_id,
             status_rows=[
-                {"metric": "status", "value": "mvtool_request_failed"},
+                {"metric": "status", "value": "unavailable"},
+                {"metric": "reason_code", "value": reason_code},
                 {"metric": "api_url", "value": api_url},
+                {"metric": "network_request_attempted", "value": int(mode == "network")},
                 {"metric": "error", "value": f"{type(exc).__name__}: {exc}"[:220]},
             ],
             message="The mvTool annotation request failed before a complete annotation table could be assembled.",
@@ -274,7 +392,8 @@ def run_step(
             batch_log_path=batch_log_path,
             sample_id=sample_id,
             status_rows=[
-                {"metric": "status", "value": "mvtool_returned_no_records"},
+                {"metric": "status", "value": "unavailable"},
+                {"metric": "reason_code", "value": "mvtool_returned_no_records"},
                 {"metric": "submitted_candidates", "value": int(len(unique_inputs))},
             ],
             message="mvTool returned no annotation rows for the submitted mitochondrial candidate variants.",
@@ -288,7 +407,8 @@ def run_step(
             batch_log_path=batch_log_path,
             sample_id=sample_id,
             status_rows=[
-                {"metric": "status", "value": "mvtool_missing_input_column"},
+                {"metric": "status", "value": "unavailable"},
+                {"metric": "reason_code", "value": "mvtool_missing_input_column"},
                 {"metric": "returned_columns", "value": ",".join(map(str, annot_df.columns.tolist()[:20]))},
             ],
             message="mvTool returned rows, but the required Input column was absent, so candidates could not be merged back to the report table.",
@@ -298,9 +418,10 @@ def run_step(
     annot_df = annot_df[keep_fields].copy()
     merged = candidates.merge(annot_df, left_on="mvtool_input", right_on="Input", how="left")
 
-    status_norm = normalize_text_values(merged.get("Mitomap_status", pd.Series(dtype=object)))
-    disease_norm = normalize_text_values(merged.get("Mitomap_Disease", pd.Series(dtype=object)))
-    hmtdb_disease_norm = normalize_text_values(merged.get("HmtDB_disease", pd.Series(dtype=object)))
+    missing_values = pd.Series(pd.NA, index=merged.index, dtype="object")
+    status_norm = normalize_text_values(merged.get("Mitomap_status", missing_values))
+    disease_norm = normalize_text_values(merged.get("Mitomap_Disease", missing_values))
+    hmtdb_disease_norm = normalize_text_values(merged.get("HmtDB_disease", missing_values))
 
     merged["Mitomap_status_normalized"] = status_norm
     merged["Mitomap_Disease_normalized"] = disease_norm
@@ -370,6 +491,8 @@ def run_step(
             {"metric": "sites_with_reported_mitomap_association", "value": usable_disease_rows},
             {"metric": "sites_with_reported_hmtdb_association", "value": usable_hmtdb_rows},
             {"metric": "annotation_source", "value": describe_api_source(api_url)},
+            {"metric": "mvtool_mode", "value": mode},
+            {"metric": "network_request_attempted", "value": int(mode == "network")},
         ]
     )
     summary_df.to_csv(summary_path, sep="\t", index=False)
@@ -410,7 +533,7 @@ def run_step(
         ]
     )
     intro_html = (
-        '<p class="muted">This page sends mitochondrial candidate variants to the MSeqDR mvTool annotation API to recover standardized mtDNA nomenclature and external annotation context, including MITOMAP-style status, disease or phenotype labels, HmtDB links, and population-frequency fields. '
+        '<p class="muted">This optional page enriches mitochondrial candidate variants using an explicitly configured mvTool-compatible source. It can use a deterministic local fixture or an opt-in network endpoint to recover standardized mtDNA nomenclature and external annotation context. '
         "Placeholder values are excluded from the summary metrics and status plot so that the page emphasizes usable external annotation rather than uninformative return rows.</p>"
         f"<div class='metrics-grid'>{metrics_html}</div>"
     )
@@ -448,9 +571,13 @@ def run_step(
     body_parts.append("<section><h2>Authorship</h2><p>Author: Elisson Lopes, PhD</p></section>")
     render_page(report_path, "Mito mvTool Annotation", sample_id, "MT:whole_mito", intro_html, "".join(body_parts))
     return {
+        "status": "ok",
         "summary_path": summary_path,
         "annot_path": annot_path,
         "batch_log_path": batch_log_path,
+        "status_counts_path": status_counts_path,
+        "disease_summary_path": disease_summary_path,
+        "population_bins_path": population_bins_path,
         "report_path": report_path,
     }
 
@@ -463,7 +590,9 @@ def main() -> None:
         report_dir=args.report_dir,
         sample_id=args.sample_id,
         species=args.species,
+        mode=args.mode,
         api_url=args.api_url,
+        fixture_json=args.fixture_json,
         timeout=args.timeout,
         batch_size=args.batch_size,
     )
