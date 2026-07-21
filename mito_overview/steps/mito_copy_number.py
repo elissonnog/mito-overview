@@ -119,14 +119,15 @@ def run_step(
         cov = bam_handle.count_coverage(contig, start - 1, end, quality_threshold=0)
         depth = [sum(x) for x in zip(*cov)]
         mean_depth = float(sum(depth) / len(depth)) if depth else 0.0
+        expected_positions = end - start + 1
         window_rows.append(
             {
                 "contig": contig,
                 "start": start,
                 "end": end,
-                "window_size": end - start + 1,
+                "window_size": expected_positions,
                 "mean_depth": round(mean_depth, 6),
-                "valid_for_denominator": int(mean_depth > 0),
+                "valid_for_denominator": int(len(depth) == expected_positions),
             }
         )
         print(f"[copy_number] window {idx}/{len(selected)} contig={contig} mean_depth={mean_depth:.3f}")
@@ -205,7 +206,9 @@ def run_step(
     intro_html = (
         '<p class="muted">Experimental within-sample mt:nuclear depth ratio using whole-mitochondrion depth '
         "compared with fixed nuclear windows from canonical autosomes. This ratio is not a calibrated or absolute "
-        "mtDNA copy-number measurement.</p>"
+        "mtDNA copy-number measurement. Every successfully measured fixed window contributes to the nuclear "
+        "mean, including windows with observed depth zero. An all-zero nuclear mean cannot define a ratio and is "
+        "reported as not evaluable rather than as zero or infinity.</p>"
         f"<div class='metrics-grid'>{metrics_html}</div>{windows_note}"
     )
     body_html = (

@@ -91,3 +91,29 @@ def test_large_deletion_read_count_deduplicates_alignment_segments(tmp_path: Pat
     assert "Supplementary-alignment status and SA tags are summarized separately" in report
     assert "structural screen" in report
     assert "rather than a finalized SV caller output" in report
+
+
+def test_primary_support_fraction_excludes_supplementary_only_read_names(tmp_path: Path) -> None:
+    deletion_cigar = ((0, 5), (2, 100), (0, 5))
+    outputs = run_deletion_fixture(
+        tmp_path,
+        [
+            ReadSpec("primary-support", "MT", 0, "A" * 10, cigar=deletion_cigar),
+            ReadSpec("supplementary-only-a", "MT", 0, "A" * 10, flag=2048, cigar=deletion_cigar),
+            ReadSpec("supplementary-only-b", "MT", 0, "A" * 10, flag=2048, cigar=deletion_cigar),
+        ],
+    )
+    summary = metric_map(outputs["summary_path"])
+    events = pd.read_csv(outputs["events_path"], sep="\t")
+    clusters = pd.read_csv(outputs["clusters_path"], sep="\t")
+    report = outputs["report_path"].read_text(encoding="utf-8")
+
+    assert int(float(summary["primary_reads"])) == 1
+    assert int(float(summary["reads_with_large_deletion"])) == 3
+    assert len(events) == 3
+    assert clusters["supporting_reads"].tolist() == [3]
+    assert clusters["support_fraction_primary"].tolist() == [1.0]
+    assert clusters["support_fraction_primary"].between(0.0, 1.0).all()
+    assert float(summary["max_support_fraction_primary"]) == 1.0
+    assert "supplementary-only records remain in the event evidence" in report
+    assert "cannot make this fraction exceed one" in report

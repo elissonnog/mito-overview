@@ -151,9 +151,20 @@ def run_step(
             )
             .sort_values(["supporting_reads", "median_deletion_size"], ascending=[False, False])
         )
-        cluster_df["support_fraction_primary"] = cluster_df["supporting_reads"].apply(
-            lambda x: round(x / primary_reads, 6) if primary_reads else 0.0
+        supporting_primary_reads = (
+            event_df.assign(
+                has_primary_alignment=event_df["read_name"].isin(primary_read_names).astype(int)
+            )
+            .loc[lambda frame: frame["has_primary_alignment"] == 1]
+            .groupby(["event_bin_start", "event_bin_end"])["read_name"]
+            .nunique()
         )
+        cluster_keys = pd.MultiIndex.from_frame(cluster_df[["event_bin_start", "event_bin_end"]])
+        primary_support_counts = supporting_primary_reads.reindex(cluster_keys, fill_value=0).to_numpy()
+        cluster_df["support_fraction_primary"] = [
+            round(int(count) / primary_reads, 6) if primary_reads else 0.0
+            for count in primary_support_counts
+        ]
     else:
         cluster_df = pd.DataFrame(columns=CLUSTER_COLUMNS)
 
@@ -210,7 +221,12 @@ def run_step(
         f"{min_deletion_size} bp create or support candidate bins, whether they occur on retained primary or "
         "supplementary alignment records. Supplementary-alignment status and SA tags are summarized separately "
         "as alignment-structure evidence and do not create bin support on their own. This page is intended as a "
-        "structural screen rather than a finalized SV caller output.</p>"
+        "structural screen rather than a finalized SV caller output. The supporting_reads field counts all unique "
+        "read names with qualifying CIGAR-deletion evidence in a bin. The compatibility field "
+        "support_fraction_primary uses only those supporting read names that also have a retained primary "
+        "mitochondrial alignment as its numerator and all unique retained primary mitochondrial read names as "
+        "its denominator; supplementary-only records remain in the event evidence but cannot make this fraction "
+        "exceed one.</p>"
         f"<div class='metrics-grid'>{metrics_html}</div>"
     )
     body_parts = [
