@@ -2,7 +2,7 @@
 
 `mito-overview` is a Python-based workflow for mode-gated mitochondrial DNA (mtDNA) evidence reporting from aligned BAM or CRAM inputs. The current public implementation provides a long-read-oriented profile and a reduced short-read compatibility profile that preserves the analytical layers applicable without long molecules or ONT methylation tracks. The repository emphasizes synchronized HTML, TSV, and figure generation for mitochondrial QC, alternate-allele screening, structural screening, an experimental within-sample mt:nuclear depth ratio when nuclear context is evaluable, feature annotation, same-read co-occurrence, and warning-oriented QC.
 
-Version `0.3.0` is an unreleased workflow/resource release candidate. Historical clean-commit public validation evidence covers report execution, synchronized artifacts, mode/status gating, filter-profile dependence, and repeatability from provenance-verified fixed BAM inputs. Exact-final-commit public reruns, push-event CI on that commit, and the self-verifying audit ZIP remain release gates. Zenodo, an archival DOI, and bioRxiv submission are not required by this GitHub release contract.
+Version `0.3.0` is an unreleased workflow/resource release candidate. Its GitHub release protocol starts from seven identity-checked public FASTQs, reconstructs the pooled short-read or deterministic reduced long-read derivative and alignment on each validation platform, and then tests report execution, synchronized artifacts, mode/status gating, descriptive filter dependence, and fixed-input repeatability. Exact-final-commit macOS and Ubuntu reproduction, push-event CI on that commit, and the self-verifying audit ZIP remain release gates. Zenodo, an archival DOI, and bioRxiv submission are not required by this GitHub release contract.
 
 ## Scope
 - aligned BAM or CRAM input
@@ -91,6 +91,7 @@ Create the public environment:
 ```bash
 conda env create -f environment.yml
 conda activate mito-overview
+python -m pip install .
 ```
 
 List the canonical workflow steps:
@@ -137,14 +138,14 @@ Generate the synthetic public example bundle from the tracked toy inputs:
 
 ```bash
 ./scripts/build_public_example_bundle.sh \
-  examples/expected_reports/TOY-001_output
+  "${TMPDIR:-/tmp}/mito-overview-TOY-001-output"
 ```
 
 Generate the synthetic short-read example bundle:
 
 ```bash
 ./scripts/build_public_shortread_example_bundle.sh \
-  examples/expected_reports/TOY-SR-001_output
+  "${TMPDIR:-/tmp}/mito-overview-TOY-SR-001-output"
 ```
 
 Run the public reduced short-read proof-of-principle example:
@@ -210,7 +211,7 @@ This example uses the public GM12878 targeted-mt ONT dataset reported by Vandive
 - [NCBI BioProject PRJNA809571](https://www.ncbi.nlm.nih.gov/bioproject/PRJNA809571)
 - [ENA run SRR18110025](https://www.ebi.ac.uk/ena/browser/view/SRR18110025)
 
-The tracked historical release-candidate input is exactly a seeded deterministic subset of `1,000` query names selected from `193,043` source FASTQ records. The reads were aligned to `NC_012920.1` with minimap2 `2.31-r1302`; the provenance-verified mapped-only BAM has `728` mapped unique query names represented by `728` primary alignments and `543` supplementary records.
+The release-candidate protocol selects exactly the `1,000` smallest seeded query-name hashes from `193,043` source FASTQ records, then aligns that reconstructed subset to `NC_012920.1` with minimap2 `2.31-r1302`. The expected mapped-only derivative has `728` mapped unique query names represented by `728` primary alignments and `543` supplementary records.
 
 At historical clean validation source commit `dc09114e1a0dcec2baf83d94549dfa41f3e49c8b`, `MIN_CALLABLE_DEPTH=100`, `MIN_ALT_ALLELE_FRACTION=0.10`, and default BaseQ/MAPQ/readQ filters `13/20/10`, the workflow reported `16` candidates, `7,143,152` accepted observations, and `2,047,476` excluded observations. The structural screen emitted `13` singleton CIGAR-deletion bins, each supported by one query name; separately, `542` query names had a supplementary alignment or `SA` tag. Statuses were `not_applicable` for the within-sample mt:nuclear depth ratio and Phy-Mer, `not_configured` for mvTool and methylation, and `not_evaluable` for NUMT interpretation with `reference_scope_mt_only`.
 
@@ -220,13 +221,13 @@ At historical clean validation source commit `dc09114e1a0dcec2baf83d94549dfa41f3
 | default | `13/20/10` | 16 | 7,143,152 |
 | strict | `20/30/15` | 15 | 6,046,355 |
 
-The repeated default invocations start from that same fixed BAM; they do not regenerate the query-name subset or alignment. See [`docs/validation_public_longread.md`](docs/validation_public_longread.md) for the evidence scope.
+Each clean-room platform matrix independently reconstructs the seeded subset and alignment from the sealed raw FASTQ. The two default report invocations within that matrix use the same newly generated derivative so their normalized scientific tables can be compared without conflating report repeatability with a second alignment. See [`docs/validation_public_longread.md`](docs/validation_public_longread.md) for the evidence scope.
 
 ## Complementary short-read compatibility example
 The repository also includes an asset pack from a fixed public short-read input:
 - [`examples/public_validation/GM11906_MERRF_shortread`](examples/public_validation/GM11906_MERRF_shortread)
 
-This example pools paired-end reads from three single-cell ATAC-seq libraries derived from the same GM11906 lymphoblastoid line. It is a short-read compatibility exercise, not short-read WGS, a bulk assay, or a three-patient cohort:
+This example pools paired-end reads from three single-cell ATAC-seq libraries derived from the same GM11906 lymphoblastoid line. It is a short-read compatibility exercise, not short-read WGS, a bulk assay, or a three-patient cohort. Because the libraries contribute unequal callable read depth, pooled allele fractions are read-observation weighted rather than equal-weight per-cell summaries:
 - [Lareau et al., Nat Biotechnol 2021](https://www.nature.com/articles/s41587-020-0645-6)
 - [GEO `GSM4238454` / `SRR10804585`](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSM4238454)
 - [GEO `GSM4238459` / `SRR10804590`](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSM4238459)
@@ -241,7 +242,7 @@ The MitoOverview run uses `READ_MODE=short` and the `ASSAY_TYPE=targeted_mt` rep
 | default | `13/20/10` | 33 | 44,052,664 |
 | strict | `20/30/15` | 33 | 42,676,166 |
 
-The repeated default invocations start from the same provenance-verified BAM and do not regenerate the alignment. See [`docs/validation_public_shortread.md`](docs/validation_public_shortread.md) for the evidence scope.
+Each clean-room platform matrix reconstructs the pooled paired FASTQs and BWA alignment from the six sealed accession FASTQs. The two default report invocations within that matrix use the same newly generated derivative for normalized-table comparison. See [`docs/validation_public_shortread.md`](docs/validation_public_shortread.md) for the evidence scope.
 
 ## Preprint
 A software/resource preprint is in preparation. A citation link and versioned preprint reference will be added here when posted.
