@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=77.0.3", "wheel"]
+requires = ["setuptools==82.0.1", "wheel==0.47.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -7,7 +7,7 @@ name = "mito-overview"
 version = "0.3.0"
 description = "Mode-gated mitochondrial DNA evidence reporting workflow"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12,<3.13"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [
@@ -15,11 +15,11 @@ authors = [
   { name = "Xiaowu Gai" }
 ]
 dependencies = [
-  "matplotlib>=3.10",
-  "numpy>=2.0",
-  "pandas>=2.2",
-  "pysam>=0.22",
-  "requests>=2.32"
+  "matplotlib==3.11.0",
+  "numpy==2.5.1",
+  "pandas==3.0.3",
+  "pysam==0.24.0",
+  "requests==2.34.2"
 ]
 keywords = [
   "mitochondrial DNA",
@@ -34,14 +34,13 @@ classifiers = [
   "Development Status :: 3 - Alpha",
   "Intended Audience :: Science/Research",
   "Programming Language :: Python :: 3",
-  "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Topic :: Scientific/Engineering :: Bio-Informatics"
 ]
 
 [project.optional-dependencies]
 human = []
-dev = ["pytest>=8.0", "python-docx>=1.1"]
+dev = ["build==1.5.0", "pytest==9.1.1", "python-docx==1.2.0"]
 
 [project.scripts]
 mito-overview = "mito_overview.cli:main"
@@ -55,3 +54,8 @@ namespaces = false
 
 [tool.setuptools.data-files]
 "share/mito-overview/schemas" = ["resources/schemas/mito_overview_config.schema.yaml"]
+"share/mito-overview/locks" = [
+  "locks/environment-linux-64.yml",
+  "locks/environment-osx-64.yml",
+  "locks/environment-osx-arm64.yml"
+]

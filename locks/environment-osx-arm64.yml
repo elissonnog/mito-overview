@@ -1,3 +1,5 @@
+# mito-overview v0.3.0 exact-version solver specification
+# platform: osx-arm64
 name: mito-overview
 channels:
   - conda-forge
