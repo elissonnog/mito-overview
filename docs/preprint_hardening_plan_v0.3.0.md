@@ -124,6 +124,8 @@ The human-readable audit is `docs/preprint_release_validation_v0.3.0.md`. The po
 - No internal MCW path, code, or nonpublic sample enters the release.
 - `v0.2.1` remains immutable.
 
+The guarded helper `scripts/capture_zenodo_reservation.py` creates or retrieves an unpublished production deposition using a local environment-only bearer token, then writes a minimized evidence object. The default draft metadata is versioned at `resources/zenodo/mito_overview_v0.3.0_draft.json`; publishing remains a separate, later release action.
+
 The plan remains `UNVERIFIED` until every release gate has corresponding evidence in the completed validation bundle.
 
 ## Primary Technical References

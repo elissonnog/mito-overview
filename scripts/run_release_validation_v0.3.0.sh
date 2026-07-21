@@ -140,6 +140,7 @@ if [[ -n "$(git -C "${REPO_ROOT}" status --porcelain)" ]]; then
   echo "Release validation requires a clean Git worktree." >&2
   exit 1
 fi
+"${PYTHON_BIN}" "${REPO_ROOT}/scripts/check_release_hygiene.py" "${REPO_ROOT}"
 CANDIDATE_COMMIT="$(git -C "${REPO_ROOT}" rev-parse HEAD)"
 if [[ -d "${VALIDATION_ROOT}" && -n "$(find "${VALIDATION_ROOT}" -mindepth 1 -maxdepth 1 -print -quit)" ]]; then
   echo "Validation root must be absent or empty: ${VALIDATION_ROOT}" >&2

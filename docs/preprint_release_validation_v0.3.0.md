@@ -118,7 +118,7 @@ MITO_OVERVIEW_PYTHON="$PWD/.conda-release-check/bin/python" \
 
 | Check | Verdict | Observed evidence |
 | --- | --- | --- |
-| Deterministic unit/known-answer suite | PASS | 145 passed in 10.86 s |
+| Deterministic unit/known-answer suite | PASS | 199 passed in 14.02 s |
 | CLI step listing | PASS | command exited 0 |
 | Generic configured dry-run | PASS | command exited 0 |
 | Synthetic long-read workflow | PASS | all applicable steps completed; fixture mvTool and methylation paths exercised |
@@ -262,7 +262,7 @@ Version `0.3.0` remains unreleased. The final tag, release date, and version-spe
 
 An external reviewer can:
 
-1. Run the 145-test suite and four synthetic workflows with the commands above.
+1. Run the 199-test suite and four synthetic workflows with the commands above.
 2. Verify the GM11906 and GM12878 tracked provenance JSON and SHA-256 records.
 3. Confirm `m.8344A>G` is `1027/740/0.720545` in the default GM11906 output.
 4. Confirm GM12878 uses exactly the labeled 1,000-query-name deterministic subset.

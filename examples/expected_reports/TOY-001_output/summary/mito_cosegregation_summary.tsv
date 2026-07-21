@@ -1,12 +1,17 @@
 metric	value
 status	ok
+status_detail	shared-spanning-read conditional co-segregation completed
 reason_code	
+method	alt_read_set_jaccard_conditioned_on_shared_spanning_reads
+conditional_universe	filtered_reads_spanning_both_sites
+jaccard_alt_compatibility_alias_of	alt_jaccard_within_shared_spanning_reads
 selected_sites	1
 pairwise_edges_meeting_shared_threshold	0
 reads_with_any_selected_site_coverage	10
 min_shared_reads_threshold	25
 top_sites_limit	8
 strongest_pair	NA
+strongest_pair_alt_jaccard_within_shared_spanning_reads	0.0
 strongest_pair_jaccard_alt	0.0
 allele_counting_method	pysam_pileup_shared_filter_v1
 allele_min_base_quality	13

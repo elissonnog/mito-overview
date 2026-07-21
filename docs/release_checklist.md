@@ -46,6 +46,7 @@ This checklist governs the intended `mito-overview` v0.3.0 release dated 2026-07
 Run local checks first from the exact candidate commit in a clean checkout:
 
 ```bash
+python scripts/check_release_hygiene.py
 python -m pytest -q
 python -m mito_overview.cli --list-steps
 python -m mito_overview.cli --config examples/configs/human_example.env --dry-run
@@ -54,6 +55,21 @@ python -m mito_overview.cli --config examples/configs/human_example.env --dry-ru
 ./tests/smoke_public_pipeline_longread_nomethyl.sh
 ./tests/smoke_standalone_minimal.sh
 ```
+
+The hygiene command scans the exact Git-tracked tree, including binary payloads, and fails on internal sample identifiers, MCW/developer paths, or process-only wording in the manuscript. Ignored local analysis outputs are outside the release tree.
+
+The repository provides a guarded production helper. Create a minimum-scope Zenodo personal token with `deposit:write`, set it only in the local environment, and never write it to a command, file, log, or task message. Creating the draft is an external write and requires the explicit guard flag:
+
+```bash
+export ZENODO_ACCESS_TOKEN='<set locally; do not commit>'
+python scripts/capture_zenodo_reservation.py create \
+  --metadata resources/zenodo/mito_overview_v0.3.0_draft.json \
+  --output <private-path>/zenodo_reservation.json \
+  --confirm-create-production-draft
+unset ZENODO_ACCESS_TOKEN
+```
+
+For an existing unpublished draft, use `retrieve --record-id <id> --output <private-path>/zenodo_reservation.json`. Both modes use the bearer token only in the HTTPS authorization header and retain only the sanitized DOI-reservation fields required by the audit packet. Neither mode publishes the deposition.
 
 After reserving the Zenodo DOI, synchronizing it into release metadata, committing those changes, and obtaining passing Linux and macOS GitHub Actions for that exact final commit, build and verify the final evidence packet. Use absolute, non-overlapping paths outside the repository; the validation and packet roots must be absent or empty, the cache may be reused, and the ZIP and its sidecars must not exist:
 
