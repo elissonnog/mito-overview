@@ -6,6 +6,7 @@ import hashlib
 import importlib.util
 import io
 import json
+import shutil
 import struct
 import subprocess
 import sys
@@ -351,7 +352,13 @@ def write_public_provenance(public_root: Path) -> None:
     )
 
 
-def write_acceptance_evidence(root: Path, repo: Path, commit: str) -> None:
+def write_acceptance_evidence(
+    root: Path,
+    repo: Path,
+    commit: str,
+    *,
+    include_public_evidence: bool = True,
+) -> None:
     parent_fields = run(
         ["git", "rev-list", "--parents", "-n", "1", commit], repo
     ).split()
@@ -441,8 +448,9 @@ def write_acceptance_evidence(root: Path, repo: Path, commit: str) -> None:
     for index, role in enumerate(packet_builder.READ_ONLY_AUDIT_CASE_IDS, start=1):
         comment_id = 7000 + index
         payload = {
-            "schema_version": "1.0",
+            "schema_version": "1.1",
             "review_method": "read_only_agent_role_audit",
+            "audit_instance_id": f"00000000-0000-4000-8000-{index:012d}",
             "role": role,
             "reviewed_commit": head_sha,
             "reviewed_tree": final_tree,
@@ -456,6 +464,11 @@ def write_acceptance_evidence(root: Path, repo: Path, commit: str) -> None:
                 "url": f"{repository_api}/issues/comments/{comment_id}",
                 "html_url": f"{pull_html_url}#issuecomment-{comment_id}",
                 "issue_url": issue_api_url,
+                "user": {
+                    "login": "elissonnog",
+                    "html_url": "https://github.com/elissonnog",
+                },
+                "author_association": "OWNER",
                 "body": audit_comment_body(payload),
             }
         )
@@ -597,6 +610,9 @@ def write_acceptance_evidence(root: Path, repo: Path, commit: str) -> None:
         encoding="utf-8",
     )
 
+    if not include_public_evidence:
+        return
+
     public_acceptance = root / "acceptance" / "ubuntu_public_validation"
     public_acceptance.mkdir(parents=True)
     public_run_url = (
@@ -655,6 +671,124 @@ def write_acceptance_evidence(root: Path, repo: Path, commit: str) -> None:
         + "\n",
         encoding="utf-8",
     )
+
+    artifact_root = public_acceptance / "artifact"
+    ubuntu_results = artifact_root / "results"
+    artifact_environment = artifact_root / "environment"
+    artifact_environment.mkdir(parents=True)
+    ubuntu_results.mkdir(parents=True)
+    for name in packet_builder.CROSS_PLATFORM_SCIENTIFIC_TOP_LEVEL:
+        shutil.copy2(root / "public" / name, ubuntu_results / name)
+    shutil.copytree(
+        root / "public" / "observed_normalized",
+        ubuntu_results / "observed_normalized",
+    )
+    shutil.copytree(root / "public" / "environment", ubuntu_results / "environment")
+    write_tsv(
+        ubuntu_results / "environment/network_isolation.tsv",
+        ("field", "value"),
+        [
+            ["schema_version", "1.0"],
+            ["platform", "Linux/x86_64"],
+            ["isolation_method", "linux_unshare_network_namespace"],
+            ["isolation_scope", "process_tree"],
+            ["parent_loopback_control", "reachable"],
+            ["isolated_loopback_probe", "blocked"],
+            ["probe_target", "parent_loopback_listener"],
+            ["probe_error", "PermissionError:1"],
+            ["invoking_uid", "1001"],
+            ["invoking_gid", "1001"],
+            ["child_uid", "1001"],
+            ["child_gid", "1001"],
+            ["network_isolation_verdict", "PASS"],
+        ],
+    )
+    linux_runtime = json.loads(
+        (ubuntu_results / "environment/runtime_versions.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    linux_runtime.update(
+        {
+            "platform_id": "linux-64",
+            "system": "Linux",
+            "machine": "x86_64",
+            "python_executable": "/opt/validation-env/bin/python",
+            "mito_overview_module": (
+                "/opt/validation-env/lib/python3.12/site-packages/"
+                "mito_overview/__init__.py"
+            ),
+        }
+    )
+    (ubuntu_results / "environment/runtime_versions.json").write_text(
+        json.dumps(linux_runtime, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    (ubuntu_results / "environment/conda-explicit.txt").write_text(
+        "# platform: linux-64\n@EXPLICIT\nhttps://example.invalid/pinned-package.conda\n",
+        encoding="utf-8",
+    )
+    (artifact_environment / "identity.txt").write_text(
+        (
+            f"repository={REPOSITORY}\n"
+            f"git_commit={commit}\n"
+            "runner_os=Linux\n"
+            "runner_arch=X64\n"
+            "runner_image=ubuntu24\n"
+            "runner_image_version=fixture\n"
+            f"github_run_id={PUBLIC_VALIDATION_RUN_ID}\n"
+        ),
+        encoding="utf-8",
+    )
+    artifact_files = sorted(
+        path
+        for path in artifact_root.rglob("*")
+        if path.is_file() and path.name != "SHA256SUMS"
+    )
+    (artifact_root / "SHA256SUMS").write_text(
+        "".join(
+            f"{hashlib.sha256(path.read_bytes()).hexdigest()}  "
+            f"./{path.relative_to(artifact_root).as_posix()}\n"
+            for path in artifact_files
+        ),
+        encoding="utf-8",
+    )
+
+    local_public = root / "public"
+    scientific_paths = sorted(
+        packet_builder.public_scientific_paths(local_public),
+        key=lambda path: path.as_posix(),
+    )
+    visual_paths = sorted(
+        packet_builder.public_visual_paths(local_public),
+        key=lambda path: path.as_posix(),
+    )
+    comparison_rows = []
+    for relative in scientific_paths:
+        digest = hashlib.sha256(
+            (local_public / Path(*relative.parts)).read_bytes()
+        ).hexdigest()
+        comparison_rows.append(
+            [
+                "normalized_scientific_table",
+                relative.as_posix(),
+                digest,
+                digest,
+                "PASS",
+                "byte-identical normalized content",
+            ]
+        )
+    comparison_rows.extend(
+        [
+            "visual_structure",
+            relative.as_posix(),
+            "not_compared",
+            "not_compared",
+            "PASS",
+            "path/type/dimensions/integrity; pixel hashes are not cross-platform gates",
+        ]
+        for relative in visual_paths
+    )
     write_tsv(
         root / "acceptance" / "cross_platform_comparison.tsv",
         (
@@ -665,24 +799,7 @@ def write_acceptance_evidence(root: Path, repo: Path, commit: str) -> None:
             "verdict",
             "comparison",
         ),
-        [
-            [
-                "normalized_scientific_table",
-                "observed_normalized/example.tsv",
-                "a" * 64,
-                "a" * 64,
-                "PASS",
-                "byte-identical normalized content",
-            ],
-            [
-                "visual_structure",
-                "observed_normalized/visual_artifact_inventory.tsv",
-                "not_compared",
-                "not_compared",
-                "PASS",
-                "path/type/dimensions/integrity; pixel hashes are not cross-platform gates",
-            ],
-        ],
+        comparison_rows,
     )
     (root / "acceptance" / "cross_platform_public_reproduction.json").write_text(
         json.dumps(
@@ -695,8 +812,8 @@ def write_acceptance_evidence(root: Path, repo: Path, commit: str) -> None:
                 "ubuntu_public_validation_run_id": PUBLIC_VALIDATION_RUN_ID,
                 "macos_platform": "osx-arm64",
                 "ubuntu_platform": "linux-64",
-                "normalized_scientific_tables_compared": 1,
-                "visual_inventories_compared": 1,
+                "normalized_scientific_tables_compared": len(scientific_paths),
+                "visual_inventories_compared": len(visual_paths),
                 "comparison_table": "cross_platform_comparison.tsv",
             },
             indent=2,
@@ -1202,6 +1319,13 @@ def create_validation_root(tmp_path: Path, repo: Path, commit: str) -> Path:
         "public/observed_normalized/gm11906_default_run1",
     ):
         (root / relative).mkdir(parents=True, exist_ok=True)
+    write_public_input_evidence(root / "public")
+    write_public_oracle_evidence(root / "public")
+    write_public_environment(root / "public")
+    write_public_provenance(root / "public")
+    write_distribution_artifacts(root / "dist")
+    write_evidence_tables(root)
+    write_cases(root / "public" / "cases.tsv", required_pass_rows())
     write_acceptance_evidence(root, repo, commit)
     rows = [
         row
@@ -1246,12 +1370,6 @@ def create_validation_root(tmp_path: Path, repo: Path, commit: str) -> Path:
     (root / "expected" / "TOY-SR-001.tsv").write_text(
         "position\talt_count\n1\t1\n", encoding="utf-8"
     )
-    write_public_input_evidence(root / "public")
-    write_public_oracle_evidence(root / "public")
-    write_public_environment(root / "public")
-    write_public_provenance(root / "public")
-    write_distribution_artifacts(root / "dist")
-    write_evidence_tables(root)
     return root
 
 
@@ -1279,6 +1397,20 @@ def rewrite_manifest(packet: Path) -> None:
                 f"{path.relative_to(packet).as_posix()}"
             )
     (packet / "artifacts.sha256").write_text("\n".join(rows) + "\n", encoding="utf-8")
+
+
+def rewrite_public_artifact_manifest(artifact_root: Path) -> None:
+    rows = []
+    for path in sorted(artifact_root.rglob("*")):
+        if path.is_file() and path.name != "SHA256SUMS":
+            rows.append(
+                f"{hashlib.sha256(path.read_bytes()).hexdigest()}  "
+                f"./{path.relative_to(artifact_root).as_posix()}"
+            )
+    (artifact_root / "SHA256SUMS").write_text(
+        "\n".join(rows) + "\n",
+        encoding="utf-8",
+    )
 
 
 def mutate_tsv_value(
@@ -1524,14 +1656,81 @@ def test_packet_rejects_public_validation_identity_drift(
     else:
         mutate_tsv_value(
             validation / "acceptance/cross_platform_comparison.tsv",
-            "evidence_type",
-            "normalized_scientific_table",
+            "relative_path",
+            "cases.tsv",
             "ubuntu_sha256",
             "b" * 64,
         )
 
     with pytest.raises(ValueError, match="Public-validation|public-validation|Cross-platform"):
         packet_builder.build_packet(packet_args(validation, repo, tmp_path / "output"))
+
+
+def test_packet_rejects_public_artifact_hash_or_inventory_drift(tmp_path: Path) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    artifact_root = validation / "acceptance/ubuntu_public_validation/artifact"
+    (artifact_root / "environment/identity.txt").write_text(
+        "tampered=1\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="artifact hash mismatch"):
+        packet_builder.build_packet(packet_args(validation, repo, tmp_path / "output"))
+
+    validation = create_validation_root(tmp_path / "second", repo, commit)
+    artifact_root = validation / "acceptance/ubuntu_public_validation/artifact"
+    (artifact_root / "unexpected.txt").write_text("unmanifested\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="manifest inventory mismatch"):
+        packet_builder.build_packet(packet_args(validation, repo, tmp_path / "output2"))
+
+
+def test_packet_rejects_self_consistent_ubuntu_visual_structure_drift(
+    tmp_path: Path,
+) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    artifact_root = validation / "acceptance/ubuntu_public_validation/artifact"
+    visual = next(
+        (artifact_root / "results/observed_normalized").rglob(
+            "visual_artifact_inventory.tsv"
+        )
+    )
+    with visual.open(encoding="utf-8", newline="") as handle:
+        reader = csv.DictReader(handle, delimiter="\t")
+        fieldnames = tuple(reader.fieldnames or ())
+        rows = list(reader)
+    rows[0]["width_px"] = "2"
+    with visual.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=fieldnames,
+            delimiter="\t",
+            lineterminator="\n",
+        )
+        writer.writeheader()
+        writer.writerows(rows)
+    rewrite_public_artifact_manifest(artifact_root)
+    with pytest.raises(ValueError, match="visual structure differs"):
+        packet_builder.build_packet(packet_args(validation, repo, tmp_path / "output"))
+
+
+def test_extracted_verifier_binds_downloaded_public_artifact_files(
+    tmp_path: Path,
+) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    output = tmp_path / "output"
+    packet_builder.build_packet(packet_args(validation, repo, output))
+    packet = output / "packet"
+    ubuntu_table = next(
+        (packet / "acceptance/ubuntu_public_validation/artifact/results/observed_normalized")
+        .rglob("mito_heteroplasmy_candidates.tsv")
+    )
+    ubuntu_table.write_text("tampered\n", encoding="utf-8")
+    rewrite_manifest(packet)
+    checked = verify_packet(packet)
+    assert checked.returncode != 0
+    assert "public-validation artifact hash mismatch" in checked.stderr
 
 
 def test_extracted_verifier_rejects_resealed_public_validation_run_drift(
@@ -1638,6 +1837,45 @@ def test_packet_rejects_read_only_audit_blockers(tmp_path: Path) -> None:
         1,
     )
     with pytest.raises(ValueError, match="unresolved blockers"):
+        packet_builder.build_packet(packet_args(validation, repo, tmp_path / "output"))
+
+
+def test_packet_rejects_unauthenticated_audit_comment_author(tmp_path: Path) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    comments_path = validation / "acceptance/pull_request_comments.json"
+    comments = read_json(comments_path)
+    assert isinstance(comments, list) and isinstance(comments[0], dict)
+    comments[0]["author_association"] = "NONE"
+    comments[0]["user"] = {
+        "login": "untrusted-reviewer",
+        "html_url": "https://github.com/untrusted-reviewer",
+    }
+    write_json(comments_path, comments)
+    with pytest.raises(ValueError, match="repository-owner post"):
+        packet_builder.build_packet(packet_args(validation, repo, tmp_path / "output"))
+
+
+def test_packet_rejects_reused_audit_instance_id(tmp_path: Path) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    comments_path = validation / "acceptance/pull_request_comments.json"
+    comments = read_json(comments_path)
+    assert isinstance(comments, list)
+    first_body = str(comments[0]["body"])
+    payload = json.loads(
+        first_body.split(packet_builder.READ_ONLY_AUDIT_MARKER, 1)[1]
+        .strip()
+        .removeprefix("```json\n")
+        .removesuffix("\n```")
+    )
+    mutate_audit_payload(
+        comments_path,
+        "bioinformatics",
+        "audit_instance_id",
+        payload["audit_instance_id"],
+    )
+    with pytest.raises(ValueError, match="instance IDs must be unique"):
         packet_builder.build_packet(packet_args(validation, repo, tmp_path / "output"))
 
 
@@ -1834,7 +2072,12 @@ def test_packet_rejects_final_merge_tree_relation_drift(tmp_path: Path) -> None:
     validation = tmp_path / "validation"
     for relative in ("acceptance", "commands", "logs"):
         (validation / relative).mkdir(parents=True, exist_ok=True)
-    write_acceptance_evidence(validation, repo, commit)
+    write_acceptance_evidence(
+        validation,
+        repo,
+        commit,
+        include_public_evidence=False,
+    )
     with pytest.raises(ValueError, match="Reviewed pull-request head tree"):
         packet_builder.validate_pull_request_evidence(
             validation,
@@ -2192,7 +2435,10 @@ def test_packet_rejects_resealed_public_input_hash_mutation(tmp_path: Path) -> N
     (validation / "public" / packet_builder.CACHE_SEAL_PACKET_PATH).write_text(
         f"{changed_digest}  raw_inputs.tsv\n", encoding="utf-8"
     )
-    with pytest.raises(ValueError, match="Public-input manifest mismatch"):
+    with pytest.raises(
+        ValueError,
+        match="Public-input manifest mismatch|Cross-platform scientific row",
+    ):
         packet_builder.build_packet(packet_args(validation, repo, tmp_path / "output"))
 
 
@@ -2246,7 +2492,10 @@ def test_packet_rejects_oracle_assertion_value_mutation(tmp_path: Path) -> None:
         "observed",
         "34",
     )
-    with pytest.raises(ValueError, match="expected value drifted"):
+    with pytest.raises(
+        ValueError,
+        match="expected value drifted|Cross-platform scientific row",
+    ):
         packet_builder.build_packet(packet_args(validation, repo, tmp_path / "output"))
 
 
@@ -2261,7 +2510,10 @@ def test_packet_rejects_filter_profile_oracle_mutation(tmp_path: Path) -> None:
         "candidate_sites",
         "17",
     )
-    with pytest.raises(ValueError, match="Filter-profile oracle mismatch"):
+    with pytest.raises(
+        ValueError,
+        match="Filter-profile oracle mismatch|Cross-platform scientific row",
+    ):
         packet_builder.build_packet(packet_args(validation, repo, tmp_path / "output"))
 
 

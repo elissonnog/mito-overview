@@ -1150,7 +1150,6 @@ fi
 mkdir -p "$(dirname "${CACHE_ROOT}")"
 mkdir "${CACHE_ROOT}"
 run_fresh_clone_validation
-append_acceptance_cases >> "${CASES_TSV}"
 
 run_logged unit_known_answer unit "${PYTHON_BIN}" -m pytest -q
 run_logged cli_step_listing cli "${PYTHON_BIN}" -m mito_overview.cli --list-steps
@@ -1251,6 +1250,7 @@ tail -n +2 "${PUBLIC_ROOT}/cases.tsv" >> "${CASES_TSV}"
 cp -R "${PUBLIC_ROOT}/environment" \
   "${VALIDATION_ROOT}/acceptance/macos_public_environment"
 fetch_and_compare_ubuntu_public_evidence
+append_acceptance_cases >> "${CASES_TSV}"
 
 "${PYTHON_BIN}" - "${VALIDATION_ROOT}" "${PUBLIC_ROOT}" <<'PY'
 import csv
@@ -1609,6 +1609,7 @@ if [[ "$(git -C "${REPO_ROOT}" rev-parse HEAD)" != "${CANDIDATE_COMMIT}" ]] ||  
   echo "Release repository changed while validating candidate ${CANDIDATE_COMMIT}." >&2
   exit 1
 fi
+validate_public_main_tip
 
 if ! "${PYTHON_BIN}" "${REPO_ROOT}/scripts/build_validation_packet_v0.3.0.py"   "${VALIDATION_ROOT}" "${PACKET_ROOT}" "${AUDIT_ZIP}"   --repo-root "${REPO_ROOT}"   --commit "${CANDIDATE_COMMIT}"   --cache-root "${CACHE_ROOT}"   --version "v0.3.0"   --repository "${REPOSITORY}" > "${PACKET_BUILD_LOG}" 2>&1; then
   cat "${PACKET_BUILD_LOG}" >&2
@@ -1714,6 +1715,7 @@ if [[ "$(git -C "${REPO_ROOT}" rev-parse HEAD)" != "${CANDIDATE_COMMIT}" ]] ||  
   echo "Release repository changed while packaging candidate ${CANDIDATE_COMMIT}." >&2
   exit 1
 fi
+validate_public_main_tip
 
 "${PYTHON_BIN}" - \
   "${PACKET_RECEIPT}" "${CANDIDATE_COMMIT}" "${GITHUB_RUN_ID}" \

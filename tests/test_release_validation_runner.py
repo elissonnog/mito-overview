@@ -250,8 +250,9 @@ if args[0] == "api":
         ):
             comment_id = 7000 + index
             audit = {{
-                "schema_version": "1.0",
+                "schema_version": "1.1",
                 "review_method": "read_only_agent_role_audit",
+                "audit_instance_id": f"00000000-0000-4000-8000-{{index:012d}}",
                 "role": role,
                 "reviewed_commit": pr_head,
                 "reviewed_tree": candidate_tree,
@@ -266,6 +267,11 @@ if args[0] == "api":
                     f"{{html_root}}/pull/{{pr_number}}#issuecomment-{{comment_id}}"
                 ),
                 "issue_url": f"{{api_root}}/issues/{{pr_number}}",
+                "user": {{
+                    "login": "elissonnog",
+                    "html_url": "https://github.com/elissonnog",
+                }},
+                "author_association": "OWNER",
                 "body": (
                     "<!-- mito-overview-read-only-audit-v1 -->\\n"
                     "```json\\n"
@@ -560,6 +566,29 @@ def test_runner_binds_ci_evidence_and_receipt_to_all_explicit_ids() -> None:
     ):
         assert f'echo "{field}=' in text
         assert f'"{field}": int(' in text
+
+
+def test_acceptance_cases_are_appended_only_after_ubuntu_evidence_exists() -> None:
+    text = RUNNER.read_text(encoding="utf-8")
+    fetch = text.index("\nfetch_and_compare_ubuntu_public_evidence\n")
+    append = text.index("\nappend_acceptance_cases >>", fetch)
+    packet = text.index("scripts/build_validation_packet_v0.3.0.py", append)
+    assert fetch < append < packet
+
+
+def test_public_main_is_rechecked_at_packet_and_receipt_finalization() -> None:
+    text = RUNNER.read_text(encoding="utf-8")
+    calls = [
+        index
+        for index in range(len(text))
+        if text.startswith("\nvalidate_public_main_tip\n", index)
+    ]
+    assert len(calls) >= 3
+    fetch = text.index("\nfetch_and_compare_ubuntu_public_evidence\n")
+    packet = text.index('scripts/build_validation_packet_v0.3.0.py"', fetch)
+    receipt = text.index('"${PACKET_RECEIPT}" "${CANDIDATE_COMMIT}"', packet)
+    assert any(fetch < index < packet for index in calls)
+    assert any(packet < index < receipt for index in calls)
 
 
 def test_raw_cache_is_created_only_after_all_github_preflights() -> None:

@@ -16,7 +16,7 @@ import tomllib
 import zipfile
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from urllib.parse import urlsplit
 
 
@@ -27,6 +27,7 @@ EXPECTED_CREATORS = ("Elisson Lopes", "Xiaowu Gai")
 PACKET_SCHEMA_VERSION = "2.0"
 VALIDATION_PROFILE = "github_release_validation_v1"
 PUBLIC_ENVIRONMENT_PACKET_PATH = "public_environment"
+PUBLIC_MATRIX_CASES_PACKET_PATH = "public_matrix_cases.tsv"
 PUBLIC_ENVIRONMENT_FILES = (
     "conda-explicit.txt",
     "network_entrypoint_contract.tsv",
@@ -369,6 +370,7 @@ REQUIRED_TOP_LEVEL = (
     CACHE_SEAL_PACKET_PATH,
     FROZEN_ORACLE_PACKET_PATH,
     ORACLE_ASSERTIONS_PACKET_PATH,
+    PUBLIC_MATRIX_CASES_PACKET_PATH,
     "artifacts.sha256",
     "verify_bundle.sh",
 )
@@ -461,7 +463,7 @@ GITHUB_ACTIONS_MACOS_CASE_ID = "github_actions_macos_candidate_commit"
 GITHUB_ACTIONS_MACOS_ARM64_CASE_ID = "github_actions_macos_arm64_candidate_commit"
 PR_HEAD_CI_CASE_ID = "pr_head_ci_candidate_commit"
 READ_ONLY_AUDIT_MARKER = "<!-- mito-overview-read-only-audit-v1 -->"
-READ_ONLY_AUDIT_SCHEMA_VERSION = "1.0"
+READ_ONLY_AUDIT_SCHEMA_VERSION = "1.1"
 READ_ONLY_AUDIT_METHOD = "read_only_agent_role_audit"
 READ_ONLY_AUDIT_CASE_IDS = {
     "release_engineering": "read_only_audit_release_engineering",
@@ -485,7 +487,36 @@ REQUIRED_ACCEPTANCE_FILES = {
 REQUIRED_PUBLIC_VALIDATION_ACCEPTANCE_FILES = {
     "ubuntu_public_validation/workflow_run.json",
     "ubuntu_public_validation/artifacts.json",
+    "ubuntu_public_validation/artifact/SHA256SUMS",
+    "ubuntu_public_validation/artifact/environment/identity.txt",
 }
+
+CROSS_PLATFORM_SCIENTIFIC_TOP_LEVEL = (
+    "cases.tsv",
+    "filter_profile_results.tsv",
+    "inputs.sha256",
+    "oracle_assertions.tsv",
+    "raw_inputs.tsv",
+    "CACHE_SEAL.sha256",
+)
+CROSS_PLATFORM_VISUAL_FIELDS = (
+    "relative_path",
+    "artifact_type",
+    "width_px",
+    "height_px",
+    "integrity_status",
+)
+FORBIDDEN_PUBLIC_ARTIFACT_SUFFIXES = (
+    ".fastq",
+    ".fastq.gz",
+    ".fq",
+    ".fq.gz",
+    ".bam",
+    ".bai",
+    ".cram",
+    ".crai",
+    ".sam",
+)
 ACCEPTANCE_CASE_IDS = {
     FRESH_CLONE_CASE_ID,
     GITHUB_ACTIONS_LINUX_CASE_ID,
@@ -578,6 +609,153 @@ def sha256(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def safe_posix_relative_path(value: str, label: str) -> PurePosixPath:
+    if not value or "\\" in value:
+        raise ValueError(f"{label} is empty or uses a non-POSIX separator: {value!r}")
+    relative = PurePosixPath(value.removeprefix("./"))
+    if relative.is_absolute() or not relative.parts or any(
+        part in {"", ".", ".."} for part in relative.parts
+    ):
+        raise ValueError(f"{label} is unsafe: {value!r}")
+    return relative
+
+
+def parse_public_artifact_manifest(artifact_root: Path) -> dict[str, str]:
+    if artifact_root.is_symlink() or not artifact_root.is_dir():
+        raise ValueError("Downloaded public-validation artifact is not a regular directory")
+    manifest_path = artifact_root / "SHA256SUMS"
+    if manifest_path.is_symlink() or not manifest_path.is_file():
+        raise ValueError("Downloaded public-validation artifact lacks SHA256SUMS")
+    entries: dict[str, str] = {}
+    for line_number, line in enumerate(
+        manifest_path.read_text(encoding="utf-8").splitlines(), start=1
+    ):
+        match = re.fullmatch(r"([0-9a-f]{64}) [ *](.+)", line)
+        if match is None:
+            raise ValueError(
+                f"Malformed public-validation SHA256SUMS line {line_number}: {line!r}"
+            )
+        relative = safe_posix_relative_path(
+            match.group(2), "public-validation manifest path"
+        ).as_posix()
+        if relative == "SHA256SUMS" or relative in entries:
+            raise ValueError(
+                f"Duplicate or self-referential public-validation manifest path: {relative}"
+            )
+        entries[relative] = match.group(1)
+    if not entries:
+        raise ValueError("Downloaded public-validation artifact manifest is empty")
+
+    actual: set[str] = set()
+    for candidate in artifact_root.rglob("*"):
+        if candidate.is_symlink() or (not candidate.is_file() and not candidate.is_dir()):
+            raise ValueError(
+                "Downloaded public-validation artifact contains a symlink or non-regular entry"
+            )
+        if candidate.is_file() and candidate != manifest_path:
+            relative = candidate.relative_to(artifact_root).as_posix()
+            if relative.lower().endswith(FORBIDDEN_PUBLIC_ARTIFACT_SUFFIXES):
+                raise ValueError(
+                    f"Downloaded public-validation artifact contains raw/alignment data: {relative}"
+                )
+            actual.add(relative)
+    if set(entries) != actual:
+        raise ValueError(
+            "Downloaded public-validation artifact manifest inventory mismatch: "
+            f"missing={sorted(actual - set(entries))}; stale={sorted(set(entries) - actual)}"
+        )
+    for relative, expected in entries.items():
+        observed = sha256(artifact_root / relative)
+        if observed != expected:
+            raise ValueError(
+                f"Downloaded public-validation artifact hash mismatch: {relative}"
+            )
+    return entries
+
+
+def public_scientific_paths(root: Path) -> set[PurePosixPath]:
+    normalized_root = root / "observed_normalized"
+    if normalized_root.is_symlink() or not normalized_root.is_dir():
+        raise ValueError("Cross-platform observed_normalized directory is missing")
+    paths = {
+        PurePosixPath(path.relative_to(root).as_posix())
+        for path in normalized_root.rglob("*.tsv")
+        if path.name != "visual_artifact_inventory.tsv"
+        and path.is_file()
+        and not path.is_symlink()
+    }
+    for name in CROSS_PLATFORM_SCIENTIFIC_TOP_LEVEL:
+        path = root / name
+        if path.is_symlink() or not path.is_file():
+            raise ValueError(f"Cross-platform scientific evidence is missing: {name}")
+        paths.add(PurePosixPath(name))
+    if not paths:
+        raise ValueError("Cross-platform scientific evidence inventory is empty")
+    return paths
+
+
+def public_visual_paths(root: Path) -> set[PurePosixPath]:
+    normalized_root = root / "observed_normalized"
+    paths = {
+        PurePosixPath(path.relative_to(root).as_posix())
+        for path in normalized_root.rglob("visual_artifact_inventory.tsv")
+        if path.is_file() and not path.is_symlink()
+    }
+    if not paths:
+        raise ValueError("Cross-platform visual-inventory evidence is empty")
+    return paths
+
+
+def visual_inventory_structure(path: Path) -> list[tuple[str, ...]]:
+    rows = read_tsv_rows(
+        path,
+        (
+            "relative_path",
+            "artifact_type",
+            "bytes",
+            "sha256",
+            "width_px",
+            "height_px",
+            "integrity_status",
+        ),
+        path.name,
+    )
+    structure = sorted(
+        tuple(row[field] for field in CROSS_PLATFORM_VISUAL_FIELDS) for row in rows
+    )
+    if not structure or any(row[-1] != "ok" for row in structure):
+        raise ValueError(f"Cross-platform visual inventory is empty or invalid: {path}")
+    return structure
+
+
+def validate_downloaded_public_artifact_identity(
+    artifact_root: Path,
+    expected_commit: str,
+    expected_run_id: int,
+) -> dict[str, str]:
+    parse_public_artifact_manifest(artifact_root)
+    identity_path = artifact_root / "environment/identity.txt"
+    identity: dict[str, str] = {}
+    for line in identity_path.read_text(encoding="utf-8").splitlines():
+        key, separator, value = line.partition("=")
+        if not separator or not key or key in identity:
+            raise ValueError("Public-validation artifact identity is malformed")
+        identity[key] = value
+    expected = {
+        "git_commit": expected_commit,
+        "runner_os": "Linux",
+        "runner_arch": "X64",
+        "github_run_id": str(expected_run_id),
+    }
+    for field, value in expected.items():
+        if identity.get(field) != value:
+            raise ValueError(
+                f"Public-validation artifact identity mismatch for {field}: "
+                f"{identity.get(field)!r} != {value!r}"
+            )
+    return identity
 
 
 def copy_tree(source: Path, destination: Path) -> None:
@@ -2573,6 +2751,7 @@ def parse_read_only_audit_payload(body: str) -> dict[str, object] | None:
     required_fields = {
         "schema_version",
         "review_method",
+        "audit_instance_id",
         "role",
         "reviewed_commit",
         "reviewed_tree",
@@ -2581,7 +2760,9 @@ def parse_read_only_audit_payload(body: str) -> dict[str, object] | None:
         "summary",
     }
     if not isinstance(payload, dict) or set(payload) != required_fields:
-        raise ValueError("Read-only audit payload fields do not match schema 1.0")
+        raise ValueError(
+            f"Read-only audit payload fields do not match schema {READ_ONLY_AUDIT_SCHEMA_VERSION}"
+        )
     return payload
 
 
@@ -2596,6 +2777,7 @@ def validate_read_only_audit_comments(
         "pull-request issue comments evidence",
     )
     repository_slug = github_repository_slug(repository)
+    repository_owner = repository_slug.split("/", 1)[0]
     repository_api = f"https://api.github.com/repos/{repository_slug}"
     pull_number = int(pull_request["number"])
     head_sha = str(pull_request["head_sha"])
@@ -2622,6 +2804,16 @@ def validate_read_only_audit_comments(
                 raise ValueError(
                     f"Pull-request comment canonical URL mismatch for {field}"
                 )
+        user = value.get("user")
+        if (
+            not isinstance(user, dict)
+            or user.get("login") != repository_owner
+            or user.get("html_url") != f"https://github.com/{repository_owner}"
+            or value.get("author_association") != "OWNER"
+        ):
+            raise ValueError(
+                "Read-only audit comment was not authenticated as a repository-owner post"
+            )
         body = value.get("body")
         if not isinstance(body, str):
             raise ValueError("Pull-request comment body is not text")
@@ -2637,6 +2829,13 @@ def validate_read_only_audit_comments(
             raise ValueError(f"Read-only audit schema mismatch for role: {role}")
         if payload.get("review_method") != READ_ONLY_AUDIT_METHOD:
             raise ValueError(f"Read-only audit method mismatch for role: {role}")
+        audit_instance_id = payload.get("audit_instance_id")
+        if not isinstance(audit_instance_id, str) or re.fullmatch(
+            r"[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}",
+            audit_instance_id,
+            flags=re.IGNORECASE,
+        ) is None:
+            raise ValueError(f"Read-only audit instance ID is invalid for role: {role}")
         if payload.get("reviewed_commit") != head_sha:
             raise ValueError(f"Read-only audit reviewed-commit drift for role: {role}")
         if payload.get("reviewed_tree") != final_tree:
@@ -2654,6 +2853,8 @@ def validate_read_only_audit_comments(
             "summary": summary.strip(),
             "comment_id": comment_id,
             "comment_url": expected_urls["html_url"],
+            "posted_by": repository_owner,
+            "author_association": "OWNER",
         }
 
     missing = sorted(set(READ_ONLY_AUDIT_CASE_IDS) - set(observed))
@@ -2661,6 +2862,11 @@ def validate_read_only_audit_comments(
         raise ValueError(
             "Missing required read-only audit payloads: " + ", ".join(missing)
         )
+    instance_ids = {
+        str(observed[role]["audit_instance_id"]) for role in READ_ONLY_AUDIT_CASE_IDS
+    }
+    if len(instance_ids) != len(READ_ONLY_AUDIT_CASE_IDS):
+        raise ValueError("Read-only audit instance IDs must be unique across roles")
     rows = [
         {
             "case_id": READ_ONLY_AUDIT_CASE_IDS[role],
@@ -3106,6 +3312,35 @@ def validate_public_validation_github_actions_evidence(
     ):
         raise ValueError("Public-validation artifact URLs are not canonical")
 
+    artifact_root = (
+        validation_root / "acceptance/ubuntu_public_validation/artifact"
+    )
+    validate_downloaded_public_artifact_identity(
+        artifact_root,
+        expected_commit,
+        run_id,
+    )
+    local_public_root = validation_root / "public"
+    ubuntu_public_root = artifact_root / "results"
+    local_environment = validate_public_environment(local_public_root / "environment")
+    ubuntu_environment = validate_public_environment(ubuntu_public_root / "environment")
+    if local_environment["platform_id"] not in {"osx-64", "osx-arm64"}:
+        raise ValueError("Cross-platform local public evidence was not produced on macOS")
+    if ubuntu_environment["platform_id"] != "linux-64":
+        raise ValueError("Cross-platform hosted public evidence was not produced on linux-64")
+    local_scientific = public_scientific_paths(local_public_root)
+    ubuntu_scientific = public_scientific_paths(ubuntu_public_root)
+    if local_scientific != ubuntu_scientific:
+        raise ValueError(
+            "Cross-platform scientific path inventories differ: "
+            f"macos_only={sorted(map(str, local_scientific - ubuntu_scientific))}; "
+            f"ubuntu_only={sorted(map(str, ubuntu_scientific - local_scientific))}"
+        )
+    local_visuals = public_visual_paths(local_public_root)
+    ubuntu_visuals = public_visual_paths(ubuntu_public_root)
+    if local_visuals != ubuntu_visuals:
+        raise ValueError("Cross-platform visual-inventory paths differ")
+
     expected_reproduction = {
         "schema_version": PACKET_SCHEMA_VERSION,
         "validation_profile": VALIDATION_PROFILE,
@@ -3127,6 +3362,8 @@ def validate_public_validation_github_actions_evidence(
         raise ValueError(
             f"Cross-platform reproduction has unsupported macOS platform: {macos_platform!r}"
         )
+    if macos_platform != local_environment["platform_id"]:
+        raise ValueError("Cross-platform reproduction macOS environment identity mismatch")
 
     comparison_rows = read_tsv_rows(
         validation_root / comparison_relative,
@@ -3140,28 +3377,67 @@ def validate_public_validation_github_actions_evidence(
         ),
         "cross_platform_comparison.tsv",
     )
-    observed_keys: set[tuple[str, str]] = set()
+    observed_keys: set[tuple[str, PurePosixPath]] = set()
+    observed_paths: dict[str, set[PurePosixPath]] = {
+        "normalized_scientific_table": set(),
+        "visual_structure": set(),
+    }
     counts = {"normalized_scientific_table": 0, "visual_structure": 0}
     for row in comparison_rows:
         evidence_type = row["evidence_type"]
-        key = (evidence_type, row["relative_path"])
-        if evidence_type not in counts or not row["relative_path"] or key in observed_keys:
+        if evidence_type not in counts:
+            raise ValueError("Cross-platform comparison contains an unsupported evidence type")
+        relative = safe_posix_relative_path(
+            row["relative_path"], "cross-platform comparison path"
+        )
+        key = (evidence_type, relative)
+        if key in observed_keys:
             raise ValueError("Cross-platform comparison contains an invalid or duplicate row")
         observed_keys.add(key)
+        observed_paths[evidence_type].add(relative)
         if row["verdict"] != "PASS":
             raise ValueError("Cross-platform comparison contains a nonpassing row")
         if evidence_type == "normalized_scientific_table":
-            if re.fullmatch(r"[0-9a-f]{64}", row["macos_sha256"]) is None or re.fullmatch(
-                r"[0-9a-f]{64}", row["ubuntu_sha256"]
-            ) is None:
-                raise ValueError("Cross-platform scientific hashes are malformed")
-            if row["macos_sha256"] != row["ubuntu_sha256"]:
+            if relative not in local_scientific:
+                raise ValueError(
+                    f"Cross-platform comparison claims an unexpected scientific path: {relative}"
+                )
+            local_hash = sha256(local_public_root / Path(*relative.parts))
+            ubuntu_hash = sha256(ubuntu_public_root / Path(*relative.parts))
+            if (
+                row["macos_sha256"] != local_hash
+                or row["ubuntu_sha256"] != ubuntu_hash
+            ):
+                raise ValueError(
+                    f"Cross-platform scientific row is not bound to file content: {relative}"
+                )
+            if local_hash != ubuntu_hash:
                 raise ValueError("Cross-platform scientific table hashes differ")
-        elif row["macos_sha256"] != "not_compared" or row["ubuntu_sha256"] != "not_compared":
-            raise ValueError("Cross-platform visual rows must not claim bytewise comparison")
+        else:
+            if relative not in local_visuals:
+                raise ValueError(
+                    f"Cross-platform comparison claims an unexpected visual path: {relative}"
+                )
+            if (
+                row["macos_sha256"] != "not_compared"
+                or row["ubuntu_sha256"] != "not_compared"
+            ):
+                raise ValueError("Cross-platform visual rows must not claim bytewise comparison")
+            local_structure = visual_inventory_structure(
+                local_public_root / Path(*relative.parts)
+            )
+            ubuntu_structure = visual_inventory_structure(
+                ubuntu_public_root / Path(*relative.parts)
+            )
+            if local_structure != ubuntu_structure:
+                raise ValueError(
+                    f"Cross-platform visual structure differs: {relative}"
+                )
         counts[evidence_type] += 1
-    if counts["normalized_scientific_table"] <= 0 or counts["visual_structure"] <= 0:
-        raise ValueError("Cross-platform comparison lacks scientific or visual evidence")
+    if observed_paths["normalized_scientific_table"] != local_scientific:
+        raise ValueError("Cross-platform comparison scientific inventory is incomplete")
+    if observed_paths["visual_structure"] != local_visuals:
+        raise ValueError("Cross-platform comparison visual inventory is incomplete")
     if (
         reproduction.get("normalized_scientific_tables_compared")
         != counts["normalized_scientific_table"]
@@ -3543,7 +3819,7 @@ import zipfile
 from collections import Counter
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 root = Path(sys.argv[1])
 schema = "2.0"
@@ -3557,7 +3833,8 @@ required_top_level = {
     "observed_normalized", "public_provenance", "public_environment", "figures",
     "filter_profile_results.tsv", "inputs.sha256", "raw_inputs.tsv",
     "CACHE_SEAL.sha256", "public_validation_oracle_v0.3.0.tsv",
-    "oracle_assertions.tsv", "artifacts.sha256", "verify_bundle.sh",
+    "oracle_assertions.tsv", "public_matrix_cases.tsv", "artifacts.sha256",
+    "verify_bundle.sh",
 }
 missing = sorted(name for name in required_top_level if not (root / name).exists())
 if missing:
@@ -3602,6 +3879,8 @@ if missing_acceptance_files:
 for relative in (
     "ubuntu_public_validation/workflow_run.json",
     "ubuntu_public_validation/artifacts.json",
+    "ubuntu_public_validation/artifact/SHA256SUMS",
+    "ubuntu_public_validation/artifact/environment/identity.txt",
 ):
     evidence = acceptance_root / relative
     if evidence.is_symlink() or not evidence.is_file() or evidence.stat().st_size == 0:
@@ -3613,6 +3892,136 @@ def digest(path):
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             value.update(chunk)
     return value.hexdigest()
+
+def safe_posix_relative(value, label):
+    if not value or "\\" in value:
+        raise SystemExit(f"{label} is empty or uses a non-POSIX separator: {value!r}")
+    relative = PurePosixPath(value.removeprefix("./"))
+    if relative.is_absolute() or not relative.parts or any(
+        part in {"", ".", ".."} for part in relative.parts
+    ):
+        raise SystemExit(f"{label} is unsafe: {value!r}")
+    return relative
+
+forbidden_public_suffixes = (
+    ".fastq", ".fastq.gz", ".fq", ".fq.gz", ".bam", ".bai",
+    ".cram", ".crai", ".sam",
+)
+scientific_top_level = (
+    "cases.tsv", "filter_profile_results.tsv", "inputs.sha256",
+    "oracle_assertions.tsv", "raw_inputs.tsv", "CACHE_SEAL.sha256",
+)
+visual_fields = (
+    "relative_path", "artifact_type", "width_px", "height_px",
+    "integrity_status",
+)
+
+def validate_public_artifact(artifact_root, expected_commit, expected_run_id):
+    if artifact_root.is_symlink() or not artifact_root.is_dir():
+        raise SystemExit("downloaded public-validation artifact is not a regular directory")
+    manifest_path = artifact_root / "SHA256SUMS"
+    entries = {}
+    for line_number, line in enumerate(
+        manifest_path.read_text(encoding="utf-8").splitlines(), start=1
+    ):
+        match = re.fullmatch(r"([0-9a-f]{64}) [ *](.+)", line)
+        if match is None:
+            raise SystemExit(
+                f"malformed public-validation SHA256SUMS line {line_number}: {line!r}"
+            )
+        relative = safe_posix_relative(
+            match.group(2), "public-validation manifest path"
+        ).as_posix()
+        if relative == "SHA256SUMS" or relative in entries:
+            raise SystemExit(
+                f"duplicate or self-referential public-validation manifest path: {relative}"
+            )
+        entries[relative] = match.group(1)
+    if not entries:
+        raise SystemExit("downloaded public-validation artifact manifest is empty")
+    actual = set()
+    for candidate in artifact_root.rglob("*"):
+        if candidate.is_symlink() or (not candidate.is_file() and not candidate.is_dir()):
+            raise SystemExit(
+                "downloaded public-validation artifact contains a symlink or non-regular entry"
+            )
+        if candidate.is_file() and candidate != manifest_path:
+            relative = candidate.relative_to(artifact_root).as_posix()
+            if relative.lower().endswith(forbidden_public_suffixes):
+                raise SystemExit(
+                    f"downloaded public-validation artifact contains raw/alignment data: {relative}"
+                )
+            actual.add(relative)
+    if set(entries) != actual:
+        raise SystemExit("downloaded public-validation artifact manifest inventory mismatch")
+    for relative, expected in entries.items():
+        if digest(artifact_root / relative) != expected:
+            raise SystemExit(
+                f"downloaded public-validation artifact hash mismatch: {relative}"
+            )
+    identity = {}
+    for line in (artifact_root / "environment/identity.txt").read_text(
+        encoding="utf-8"
+    ).splitlines():
+        key, separator, value = line.partition("=")
+        if not separator or not key or key in identity:
+            raise SystemExit("public-validation artifact identity is malformed")
+        identity[key] = value
+    expected_identity = {
+        "git_commit": expected_commit, "runner_os": "Linux",
+        "runner_arch": "X64", "github_run_id": str(expected_run_id),
+    }
+    for field, expected in expected_identity.items():
+        if identity.get(field) != expected:
+            raise SystemExit(
+                f"public-validation artifact identity mismatch for {field}"
+            )
+
+def public_scientific_paths(public_root, cases_override=None):
+    normalized = public_root / "observed_normalized"
+    if normalized.is_symlink() or not normalized.is_dir():
+        raise SystemExit("cross-platform observed_normalized directory is missing")
+    paths = {
+        PurePosixPath(path.relative_to(public_root).as_posix())
+        for path in normalized.rglob("*.tsv")
+        if path.name != "visual_artifact_inventory.tsv"
+        and path.is_file() and not path.is_symlink()
+    }
+    for name in scientific_top_level:
+        path = cases_override if name == "cases.tsv" and cases_override else public_root / name
+        if path.is_symlink() or not path.is_file():
+            raise SystemExit(f"cross-platform scientific evidence is missing: {name}")
+        paths.add(PurePosixPath(name))
+    if not paths:
+        raise SystemExit("cross-platform scientific evidence inventory is empty")
+    return paths
+
+def public_visual_paths(public_root):
+    paths = {
+        PurePosixPath(path.relative_to(public_root).as_posix())
+        for path in (public_root / "observed_normalized").rglob(
+            "visual_artifact_inventory.tsv"
+        )
+        if path.is_file() and not path.is_symlink()
+    }
+    if not paths:
+        raise SystemExit("cross-platform visual-inventory evidence is empty")
+    return paths
+
+def visual_structure(path):
+    with path.open(encoding="utf-8", newline="") as handle:
+        reader = csv.DictReader(handle, delimiter="\t")
+        expected_fields = (
+            "relative_path", "artifact_type", "bytes", "sha256", "width_px",
+            "height_px", "integrity_status",
+        )
+        if tuple(reader.fieldnames or ()) != expected_fields:
+            raise SystemExit(f"cross-platform visual inventory schema mismatch: {path}")
+        rows = list(reader)
+    structure = sorted(tuple(row.get(field, "") for field in visual_fields) for row in rows)
+    if not structure or any(row[-1] != "ok" for row in structure):
+        raise SystemExit(f"cross-platform visual inventory is empty or invalid: {path}")
+    return structure
 
 def parse_manifest(path, *, packet_paths):
     entries = {}
@@ -4799,6 +5208,32 @@ if (
 ):
     raise SystemExit("public-validation artifact URL mismatch")
 
+public_artifact_root = root / "acceptance/ubuntu_public_validation/artifact"
+validate_public_artifact(public_artifact_root, commit, public_run_id)
+macos_public_root = root
+ubuntu_public_root = public_artifact_root / "results"
+macos_public_environment = validate_public_environment(
+    macos_public_root / "public_environment"
+)
+ubuntu_public_environment = validate_public_environment(
+    ubuntu_public_root / "environment"
+)
+if macos_public_environment["platform_id"] not in {"osx-64", "osx-arm64"}:
+    raise SystemExit("cross-platform local public evidence was not produced on macOS")
+if ubuntu_public_environment["platform_id"] != "linux-64":
+    raise SystemExit("cross-platform hosted public evidence was not produced on linux-64")
+macos_cases_path = root / "public_matrix_cases.tsv"
+macos_scientific = public_scientific_paths(
+    macos_public_root, cases_override=macos_cases_path
+)
+ubuntu_scientific = public_scientific_paths(ubuntu_public_root)
+if macos_scientific != ubuntu_scientific:
+    raise SystemExit("cross-platform scientific path inventories differ")
+macos_visuals = public_visual_paths(macos_public_root)
+ubuntu_visuals = public_visual_paths(ubuntu_public_root)
+if macos_visuals != ubuntu_visuals:
+    raise SystemExit("cross-platform visual-inventory paths differ")
+
 cross_reproduction = json.loads(
     (root / "acceptance/cross_platform_public_reproduction.json").read_text(
         encoding="utf-8"
@@ -4814,6 +5249,8 @@ if (
     or cross_reproduction.get("ubuntu_public_validation_run_id") != public_run_id
     or cross_reproduction.get("ubuntu_platform") != "linux-64"
     or cross_reproduction.get("macos_platform") not in {"osx-64", "osx-arm64"}
+    or cross_reproduction.get("macos_platform")
+        != macos_public_environment["platform_id"]
     or cross_reproduction.get("comparison_table") != "cross_platform_comparison.tsv"
 ):
     raise SystemExit("cross-platform public reproduction identity mismatch")
@@ -4829,31 +5266,55 @@ with (root / "acceptance/cross_platform_comparison.tsv").open(
     comparison_rows = list(comparison_reader)
 comparison_counts = {"normalized_scientific_table": 0, "visual_structure": 0}
 comparison_keys = set()
+comparison_paths = {
+    "normalized_scientific_table": set(), "visual_structure": set(),
+}
 for row in comparison_rows:
     evidence_type = row.get("evidence_type")
-    key = (evidence_type, row.get("relative_path"))
-    if (
-        evidence_type not in comparison_counts
-        or not row.get("relative_path")
-        or key in comparison_keys
-        or row.get("verdict") != "PASS"
-    ):
+    if evidence_type not in comparison_counts:
+        raise SystemExit("cross-platform comparison evidence type is invalid")
+    relative = safe_posix_relative(
+        row.get("relative_path", ""), "cross-platform comparison path"
+    )
+    key = (evidence_type, relative)
+    if key in comparison_keys or row.get("verdict") != "PASS":
         raise SystemExit("cross-platform comparison row is invalid")
     comparison_keys.add(key)
+    comparison_paths[evidence_type].add(relative)
     if evidence_type == "normalized_scientific_table":
+        if relative not in macos_scientific:
+            raise SystemExit("cross-platform comparison claims an unexpected scientific path")
+        macos_path = (
+            macos_cases_path
+            if relative == PurePosixPath("cases.tsv")
+            else macos_public_root / Path(*relative.parts)
+        )
+        macos_hash = digest(macos_path)
+        ubuntu_hash = digest(ubuntu_public_root / Path(*relative.parts))
         if (
-            not re.fullmatch(r"[0-9a-f]{64}", row.get("macos_sha256", ""))
-            or row.get("macos_sha256") != row.get("ubuntu_sha256")
+            row.get("macos_sha256") != macos_hash
+            or row.get("ubuntu_sha256") != ubuntu_hash
         ):
+            raise SystemExit("cross-platform scientific row is not bound to file content")
+        if macos_hash != ubuntu_hash:
             raise SystemExit("cross-platform normalized scientific hashes differ")
-    elif (
-        row.get("macos_sha256") != "not_compared"
-        or row.get("ubuntu_sha256") != "not_compared"
-    ):
-        raise SystemExit("cross-platform visual row claims a bytewise comparison")
+    else:
+        if relative not in macos_visuals:
+            raise SystemExit("cross-platform comparison claims an unexpected visual path")
+        if (
+            row.get("macos_sha256") != "not_compared"
+            or row.get("ubuntu_sha256") != "not_compared"
+        ):
+            raise SystemExit("cross-platform visual row claims a bytewise comparison")
+        if visual_structure(
+            macos_public_root / Path(*relative.parts)
+        ) != visual_structure(ubuntu_public_root / Path(*relative.parts)):
+            raise SystemExit("cross-platform visual structure differs")
     comparison_counts[evidence_type] += 1
-if 0 in comparison_counts.values():
-    raise SystemExit("cross-platform comparison evidence is incomplete")
+if comparison_paths["normalized_scientific_table"] != macos_scientific:
+    raise SystemExit("cross-platform comparison scientific inventory is incomplete")
+if comparison_paths["visual_structure"] != macos_visuals:
+    raise SystemExit("cross-platform comparison visual inventory is incomplete")
 if (
     cross_reproduction.get("normalized_scientific_tables_compared")
         != comparison_counts["normalized_scientific_table"]
@@ -5087,6 +5548,8 @@ if not isinstance(comments, list):
     raise SystemExit("pull-request comments evidence is not a JSON array")
 audits = {}
 comment_ids = set()
+audit_instance_ids = set()
+repository_owner = repository_slug.split("/", 1)[0]
 for comment in comments:
     if not isinstance(comment, dict):
         raise SystemExit("pull-request comments evidence contains a non-object")
@@ -5098,6 +5561,10 @@ for comment in comments:
         comment.get("url") != f"{repository_api}/issues/comments/{comment_id}"
         or comment.get("html_url") != f"{pull_html}#issuecomment-{comment_id}"
         or comment.get("issue_url") != issue_api
+        or not isinstance(comment.get("user"), dict)
+        or comment["user"].get("login") != repository_owner
+        or comment["user"].get("html_url") != f"https://github.com/{repository_owner}"
+        or comment.get("author_association") != "OWNER"
         or not isinstance(comment.get("body"), str)
     ):
         raise SystemExit("pull-request comment identity mismatch")
@@ -5118,18 +5585,26 @@ for comment in comments:
     except json.JSONDecodeError as error:
         raise SystemExit("read-only audit JSON payload is malformed") from error
     audit_fields = {
-        "schema_version", "review_method", "role", "reviewed_commit",
+        "schema_version", "review_method", "audit_instance_id", "role", "reviewed_commit",
         "reviewed_tree", "verdict", "unresolved_blockers", "summary",
     }
     if not isinstance(payload, dict) or set(payload) != audit_fields:
-        raise SystemExit("read-only audit payload fields do not match schema 1.0")
+        raise SystemExit("read-only audit payload fields do not match schema 1.1")
     role = payload.get("role")
     if role not in audit_roles or role in audits:
         raise SystemExit(f"missing, duplicate, or unsupported read-only audit role: {role}")
     blockers = payload.get("unresolved_blockers")
+    audit_instance_id = payload.get("audit_instance_id")
     if (
-        payload.get("schema_version") != "1.0"
+        payload.get("schema_version") != "1.1"
         or payload.get("review_method") != "read_only_agent_role_audit"
+        or not isinstance(audit_instance_id, str)
+        or not re.fullmatch(
+            r"[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}",
+            audit_instance_id,
+            flags=re.IGNORECASE,
+        )
+        or audit_instance_id in audit_instance_ids
         or payload.get("reviewed_commit") != head_sha
         or payload.get("reviewed_tree") != final_tree
         or payload.get("verdict") != "PASS"
@@ -5140,9 +5615,11 @@ for comment in comments:
         or not payload["summary"].strip()
     ):
         raise SystemExit(f"read-only audit payload mismatch for role: {role}")
+    audit_instance_ids.add(audit_instance_id)
     audits[role] = {
         **payload, "summary": payload["summary"].strip(),
         "comment_id": comment_id, "comment_url": comment["html_url"],
+        "posted_by": repository_owner, "author_association": "OWNER",
     }
 if set(audits) != set(audit_roles):
     raise SystemExit("required read-only audit role inventory is incomplete")
@@ -5464,6 +5941,10 @@ def build_packet(args: argparse.Namespace) -> Path:
     shutil.copy2(
         public_root / ORACLE_ASSERTIONS_PACKET_PATH,
         args.packet_root / ORACLE_ASSERTIONS_PACKET_PATH,
+    )
+    shutil.copy2(
+        public_root / "cases.tsv",
+        args.packet_root / PUBLIC_MATRIX_CASES_PACKET_PATH,
     )
     shutil.copy2(
         args.repo_root / FROZEN_ORACLE_REPOSITORY_PATH,
