@@ -24,6 +24,7 @@ REQUIRED_SDIST_PATHS = {
     "scripts/check_release_hygiene.py",
     "scripts/hash_validation_inputs.py",
     "scripts/inventory_visual_artifacts.py",
+    "scripts/refresh_tracked_public_validation_assets_v0.3.0.py",
     "scripts/run_mito_pipeline.sh",
     "scripts/safe_extract_validation_zip.py",
     "scripts/summarize_filter_profiles.py",
