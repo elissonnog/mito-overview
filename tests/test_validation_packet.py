@@ -44,6 +44,20 @@ SAFE_SPEC.loader.exec_module(safe_extract)
 REPOSITORY = "https://github.com/elissonnog/mito-overview"
 GITHUB_REPOSITORY = "elissonnog/mito-overview"
 GITHUB_RUN_ID = 123456
+PULL_REQUEST_NUMBER = 3
+PULL_REQUEST_RUN_ID = 123455
+PUBLIC_VALIDATION_RUN_ID = 123457
+PUBLIC_VALIDATION_ARTIFACT_ID = 7654321
+PULL_REQUEST_HEAD_REF = "codex/preprint-hardening-v0.3.0"
+
+
+def audit_comment_body(payload: dict[str, object]) -> str:
+    return (
+        f"{packet_builder.READ_ONLY_AUDIT_MARKER}\n"
+        "```json\n"
+        f"{json.dumps(payload, indent=2)}\n"
+        "```"
+    )
 
 
 def run(command: list[str], cwd: Path) -> str:
@@ -131,7 +145,25 @@ def create_release_repo(tmp_path: Path, version: str = "0.3.0") -> tuple[Path, s
     run(["git", "config", "user.name", "Validation Test"], repo)
     run(["git", "config", "user.email", "validation@example.org"], repo)
     run(["git", "add", "."], repo)
+    run(["git", "commit", "-q", "-m", "base fixture"], repo)
+    run(["git", "branch", "-M", "main"], repo)
+    run(["git", "checkout", "-q", "-b", PULL_REQUEST_HEAD_REF], repo)
+    (repo / "RELEASE_CANDIDATE").write_text("v0.3.0\n", encoding="utf-8")
+    run(["git", "add", "RELEASE_CANDIDATE"], repo)
     run(["git", "commit", "-q", "-m", "release fixture"], repo)
+    run(["git", "checkout", "-q", "main"], repo)
+    run(
+        [
+            "git",
+            "merge",
+            "-q",
+            "--no-ff",
+            PULL_REQUEST_HEAD_REF,
+            "-m",
+            "Merge release fixture",
+        ],
+        repo,
+    )
     return repo, run(["git", "rev-parse", "HEAD"], repo)
 
 
@@ -319,7 +351,20 @@ def write_public_provenance(public_root: Path) -> None:
     )
 
 
-def write_acceptance_evidence(root: Path, commit: str) -> None:
+def write_acceptance_evidence(root: Path, repo: Path, commit: str) -> None:
+    parent_fields = run(
+        ["git", "rev-list", "--parents", "-n", "1", commit], repo
+    ).split()
+    assert len(parent_fields) == 3
+    base_sha, head_sha = parent_fields[1:]
+    final_tree = run(["git", "rev-parse", f"{commit}^{{tree}}"], repo)
+    repository_api = f"https://api.github.com/repos/{GITHUB_REPOSITORY}"
+    repository_object = {
+        "full_name": GITHUB_REPOSITORY,
+        "html_url": REPOSITORY,
+        "url": repository_api,
+    }
+
     fresh_case = packet_builder.FRESH_CLONE_CASE_ID
     (root / "commands" / f"{fresh_case}.sh").write_text(
         f"git clone {REPOSITORY}.git\ngit checkout --detach {commit}\n",
@@ -341,6 +386,7 @@ def write_acceptance_evidence(root: Path, commit: str) -> None:
                 "source_remote": REPOSITORY + ".git",
                 "candidate_commit": commit,
                 "checked_out_commit": commit,
+                "public_main_commit": commit,
                 "detached_head": True,
                 "clone_worktree_clean": True,
                 "public_https_clone": True,
@@ -359,8 +405,67 @@ def write_acceptance_evidence(root: Path, commit: str) -> None:
         encoding="utf-8",
     )
 
+    pull_api_url = f"{repository_api}/pulls/{PULL_REQUEST_NUMBER}"
+    pull_html_url = f"{REPOSITORY}/pull/{PULL_REQUEST_NUMBER}"
+    issue_api_url = f"{repository_api}/issues/{PULL_REQUEST_NUMBER}"
+    (root / "acceptance" / "pull_request.json").write_text(
+        json.dumps(
+            {
+                "url": pull_api_url,
+                "html_url": pull_html_url,
+                "issue_url": issue_api_url,
+                "comments_url": f"{issue_api_url}/comments",
+                "number": PULL_REQUEST_NUMBER,
+                "state": "closed",
+                "merged": True,
+                "merged_at": "2026-07-21T12:00:00Z",
+                "merge_commit_sha": commit,
+                "base": {
+                    "ref": "main",
+                    "sha": base_sha,
+                    "repo": repository_object,
+                },
+                "head": {
+                    "ref": PULL_REQUEST_HEAD_REF,
+                    "sha": head_sha,
+                    "repo": repository_object,
+                },
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    comments = []
+    for index, role in enumerate(packet_builder.READ_ONLY_AUDIT_CASE_IDS, start=1):
+        comment_id = 7000 + index
+        payload = {
+            "schema_version": "1.0",
+            "review_method": "read_only_agent_role_audit",
+            "role": role,
+            "reviewed_commit": head_sha,
+            "reviewed_tree": final_tree,
+            "verdict": "PASS",
+            "unresolved_blockers": 0,
+            "summary": f"{role} read-only checks passed.",
+        }
+        comments.append(
+            {
+                "id": comment_id,
+                "url": f"{repository_api}/issues/comments/{comment_id}",
+                "html_url": f"{pull_html_url}#issuecomment-{comment_id}",
+                "issue_url": issue_api_url,
+                "body": audit_comment_body(payload),
+            }
+        )
+    (root / "acceptance" / "pull_request_comments.json").write_text(
+        json.dumps(comments, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
     run_url = f"https://github.com/{GITHUB_REPOSITORY}/actions/runs/{GITHUB_RUN_ID}"
-    api_url = f"https://api.github.com/repos/{GITHUB_REPOSITORY}/actions/runs/{GITHUB_RUN_ID}"
+    api_url = f"{repository_api}/actions/runs/{GITHUB_RUN_ID}"
     (root / "commands" / "github_actions_candidate_commit.sh").write_text(
         f"gh api repos/{GITHUB_REPOSITORY}/actions/runs/{GITHUB_RUN_ID}\n",
         encoding="utf-8",
@@ -414,6 +519,189 @@ def write_acceptance_evidence(root: Path, commit: str) -> None:
         )
     (root / "acceptance" / "github_actions_jobs.json").write_text(
         json.dumps({"total_count": len(jobs), "jobs": jobs}, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    pr_run_url = (
+        f"https://github.com/{GITHUB_REPOSITORY}/actions/runs/{PULL_REQUEST_RUN_ID}"
+    )
+    pr_api_url = f"{repository_api}/actions/runs/{PULL_REQUEST_RUN_ID}"
+    (root / "acceptance" / "pull_request_github_actions_run.json").write_text(
+        json.dumps(
+            {
+                "id": PULL_REQUEST_RUN_ID,
+                "run_attempt": 1,
+                "name": packet_builder.EXPECTED_GITHUB_WORKFLOW,
+                "event": "pull_request",
+                "head_branch": PULL_REQUEST_HEAD_REF,
+                "path": packet_builder.EXPECTED_GITHUB_WORKFLOW_PATH,
+                "head_sha": head_sha,
+                "status": "completed",
+                "conclusion": "success",
+                "html_url": pr_run_url,
+                "url": pr_api_url,
+                "jobs_url": f"{pr_api_url}/jobs",
+                "repository": {"full_name": GITHUB_REPOSITORY},
+                "head_repository": {"full_name": GITHUB_REPOSITORY},
+                "pull_requests": [
+                    {
+                        "number": PULL_REQUEST_NUMBER,
+                        "url": pull_api_url,
+                        "head": {
+                            "ref": PULL_REQUEST_HEAD_REF,
+                            "sha": head_sha,
+                            "repo": {
+                                "name": "mito-overview",
+                                "url": repository_api,
+                            },
+                        },
+                        "base": {
+                            "ref": "main",
+                            "sha": base_sha,
+                            "repo": {
+                                "name": "mito-overview",
+                                "url": repository_api,
+                            },
+                        },
+                    }
+                ],
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    pr_jobs = []
+    for index, expectation in enumerate(
+        packet_builder.EXPECTED_GITHUB_JOBS.values(), start=1
+    ):
+        job_id = 8000 + index
+        pr_jobs.append(
+            {
+                "id": job_id,
+                "run_id": PULL_REQUEST_RUN_ID,
+                "run_attempt": 1,
+                "workflow_name": packet_builder.EXPECTED_GITHUB_WORKFLOW,
+                "head_sha": head_sha,
+                "name": expectation["name"],
+                "status": "completed",
+                "conclusion": "success",
+                "labels": [expectation["label"]],
+                "html_url": f"{pr_run_url}/job/{job_id}",
+                "url": f"{repository_api}/actions/jobs/{job_id}",
+                "run_url": pr_api_url,
+            }
+        )
+    (root / "acceptance" / "pull_request_github_actions_jobs.json").write_text(
+        json.dumps({"total_count": len(pr_jobs), "jobs": pr_jobs}, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    public_acceptance = root / "acceptance" / "ubuntu_public_validation"
+    public_acceptance.mkdir(parents=True)
+    public_run_url = (
+        f"https://github.com/{GITHUB_REPOSITORY}/actions/runs/"
+        f"{PUBLIC_VALIDATION_RUN_ID}"
+    )
+    public_api_url = (
+        f"{repository_api}/actions/runs/{PUBLIC_VALIDATION_RUN_ID}"
+    )
+    (public_acceptance / "workflow_run.json").write_text(
+        json.dumps(
+            {
+                "id": PUBLIC_VALIDATION_RUN_ID,
+                "run_attempt": 1,
+                "name": packet_builder.EXPECTED_PUBLIC_VALIDATION_WORKFLOW,
+                "event": "workflow_dispatch",
+                "head_branch": "main",
+                "path": packet_builder.EXPECTED_PUBLIC_VALIDATION_WORKFLOW_PATH,
+                "head_sha": commit,
+                "status": "completed",
+                "conclusion": "success",
+                "html_url": public_run_url,
+                "url": public_api_url,
+                "jobs_url": f"{public_api_url}/jobs",
+                "repository": repository_object,
+                "head_repository": repository_object,
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    artifact_api = (
+        f"{repository_api}/actions/artifacts/{PUBLIC_VALIDATION_ARTIFACT_ID}"
+    )
+    (public_acceptance / "artifacts.json").write_text(
+        json.dumps(
+            {
+                "total_count": 1,
+                "artifacts": [
+                    {
+                        "id": PUBLIC_VALIDATION_ARTIFACT_ID,
+                        "name": (
+                            f"public-validation-derived-{commit}-"
+                            f"{PUBLIC_VALIDATION_RUN_ID}"
+                        ),
+                        "expired": False,
+                        "url": artifact_api,
+                        "archive_download_url": f"{artifact_api}/zip",
+                        "workflow_run": {"id": PUBLIC_VALIDATION_RUN_ID},
+                    }
+                ],
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    write_tsv(
+        root / "acceptance" / "cross_platform_comparison.tsv",
+        (
+            "evidence_type",
+            "relative_path",
+            "macos_sha256",
+            "ubuntu_sha256",
+            "verdict",
+            "comparison",
+        ),
+        [
+            [
+                "normalized_scientific_table",
+                "observed_normalized/example.tsv",
+                "a" * 64,
+                "a" * 64,
+                "PASS",
+                "byte-identical normalized content",
+            ],
+            [
+                "visual_structure",
+                "observed_normalized/visual_artifact_inventory.tsv",
+                "not_compared",
+                "not_compared",
+                "PASS",
+                "path/type/dimensions/integrity; pixel hashes are not cross-platform gates",
+            ],
+        ],
+    )
+    (root / "acceptance" / "cross_platform_public_reproduction.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "2.0",
+                "validation_profile": "github_release_validation_v1",
+                "evidence_type": "cross_platform_public_reproduction",
+                "verdict": "PASS",
+                "git_commit": commit,
+                "ubuntu_public_validation_run_id": PUBLIC_VALIDATION_RUN_ID,
+                "macos_platform": "osx-arm64",
+                "ubuntu_platform": "linux-64",
+                "normalized_scientific_tables_compared": 1,
+                "visual_inventories_compared": 1,
+                "comparison_table": "cross_platform_comparison.tsv",
+            },
+            indent=2,
+        )
+        + "\n",
         encoding="utf-8",
     )
 
@@ -902,7 +1190,7 @@ def write_evidence_tables(root: Path) -> None:
         write_tsv(root / name, packet_builder.EVIDENCE_TABLES[name], rows)
 
 
-def create_validation_root(tmp_path: Path, commit: str) -> Path:
+def create_validation_root(tmp_path: Path, repo: Path, commit: str) -> Path:
     root = tmp_path / "validation"
     for relative in (
         "acceptance",
@@ -914,13 +1202,20 @@ def create_validation_root(tmp_path: Path, commit: str) -> Path:
         "public/observed_normalized/gm11906_default_run1",
     ):
         (root / relative).mkdir(parents=True, exist_ok=True)
-    write_acceptance_evidence(root, commit)
+    write_acceptance_evidence(root, repo, commit)
     rows = [
         row
         for row in required_pass_rows()
         if row["case_id"] not in packet_builder.ACCEPTANCE_CASE_IDS
     ]
-    rows.extend(packet_builder.validate_acceptance_evidence(root, commit, REPOSITORY))
+    rows.extend(
+        packet_builder.validate_acceptance_evidence(
+            root,
+            repo,
+            commit,
+            REPOSITORY,
+        )
+    )
     write_cases(root / "cases.tsv", rows)
     (root / "environment.txt").write_text(
         (
@@ -928,6 +1223,10 @@ def create_validation_root(tmp_path: Path, commit: str) -> Path:
             f"git_commit={commit}\n"
             f"repository={REPOSITORY}\n"
             f"github_actions_run_id={GITHUB_RUN_ID}\n"
+            f"final_push_github_actions_run_id={GITHUB_RUN_ID}\n"
+            f"pull_request_number={PULL_REQUEST_NUMBER}\n"
+            f"pull_request_github_actions_run_id={PULL_REQUEST_RUN_ID}\n"
+            f"public_validation_github_actions_run_id={PUBLIC_VALIDATION_RUN_ID}\n"
             "python=3.12\n"
         ),
         encoding="utf-8",
@@ -1016,6 +1315,38 @@ def verify_packet(packet: Path) -> subprocess.CompletedProcess[str]:
     )
 
 
+def read_json(path: Path) -> object:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def write_json(path: Path, value: object) -> None:
+    path.write_text(json.dumps(value, indent=2) + "\n", encoding="utf-8")
+
+
+def mutate_audit_payload(
+    comments_path: Path,
+    role: str,
+    field: str,
+    replacement: object,
+) -> None:
+    comments = read_json(comments_path)
+    assert isinstance(comments, list)
+    for comment in comments:
+        assert isinstance(comment, dict)
+        body = str(comment["body"])
+        if packet_builder.READ_ONLY_AUDIT_MARKER not in body:
+            continue
+        fenced = body.split(packet_builder.READ_ONLY_AUDIT_MARKER, 1)[1].strip()
+        assert fenced.startswith("```json\n") and fenced.endswith("\n```")
+        payload = json.loads(fenced.removeprefix("```json\n").removesuffix("\n```"))
+        if payload["role"] == role:
+            payload[field] = replacement
+            comment["body"] = audit_comment_body(payload)
+            write_json(comments_path, comments)
+            return
+    raise AssertionError(f"audit role not found: {role}")
+
+
 def test_release_case_gate_requires_complete_passing_set(tmp_path: Path) -> None:
     cases = tmp_path / "cases.tsv"
     rows = required_pass_rows()
@@ -1038,7 +1369,7 @@ def test_github_only_packet_builds_and_verifies_from_fresh_extraction(
     tmp_path: Path,
 ) -> None:
     repo, commit = create_release_repo(tmp_path)
-    validation = create_validation_root(tmp_path, commit)
+    validation = create_validation_root(tmp_path, repo, commit)
     output = tmp_path / "output"
     packet_builder.build_packet(packet_args(validation, repo, output))
     packet = output / "packet"
@@ -1048,8 +1379,34 @@ def test_github_only_packet_builds_and_verifies_from_fresh_extraction(
     assert run_record["schema_version"] == "2.0"
     assert run_record["validation_profile"] == "github_release_validation_v1"
     assert run_record["github_actions_run_id"] == GITHUB_RUN_ID
+    assert run_record["final_push_github_actions_run_id"] == GITHUB_RUN_ID
+    assert run_record["pull_request_number"] == PULL_REQUEST_NUMBER
+    assert run_record["pull_request_github_actions_run_id"] == PULL_REQUEST_RUN_ID
+    assert (
+        run_record["public_validation_github_actions_run_id"]
+        == PUBLIC_VALIDATION_RUN_ID
+    )
     assert identity["git_commit"] == commit
     assert identity["github_actions"]["head_sha"] == commit
+    assert identity["pull_request"]["merge_commit_sha"] == commit
+    assert identity["pull_request"]["final_commit_parents"] == [
+        run(["git", "rev-parse", f"{commit}^1"], repo),
+        run(["git", "rev-parse", f"{commit}^2"], repo),
+    ]
+    assert (
+        identity["pull_request"]["final_tree_sha"]
+        == identity["pull_request"]["reviewed_head_tree_sha"]
+    )
+    assert identity["pull_request_github_actions"]["head_sha"] == run(
+        ["git", "rev-parse", f"{commit}^2"], repo
+    )
+    assert identity["public_validation_github_actions"]["run_id"] == (
+        PUBLIC_VALIDATION_RUN_ID
+    )
+    assert identity["public_validation_github_actions"]["head_sha"] == commit
+    assert [item["role"] for item in identity["read_only_audits"]] == list(
+        packet_builder.READ_ONLY_AUDIT_CASE_IDS
+    )
     assert identity["public_environment"]["platform_id"] == "osx-arm64"
     assert identity["public_environment"]["isolation_method"] == (
         "macos_sandbox_exec_deny_network"
@@ -1067,6 +1424,13 @@ def test_github_only_packet_builds_and_verifies_from_fresh_extraction(
     serialized = json.dumps({"run": run_record, "identity": identity}).lower()
     assert "doi" not in serialized
     assert not (packet / "acceptance" / "zenodo_reservation.json").exists()
+    assert {
+        path.name
+        for path in (packet / "acceptance").iterdir()
+        if path.is_file()
+    } == (
+        packet_builder.REQUIRED_ACCEPTANCE_FILES
+    )
     assert not any("paper" in path.parts for path in packet.rglob("*"))
 
     root_check = subprocess.run(
@@ -1087,12 +1451,417 @@ def test_github_only_packet_builds_and_verifies_from_fresh_extraction(
     assert extracted_check.returncode == 0, extracted_check.stderr
 
 
+@pytest.mark.parametrize(
+    "filename",
+    (
+        "pull_request.json",
+        "pull_request_comments.json",
+        "pull_request_github_actions_run.json",
+        "pull_request_github_actions_jobs.json",
+    ),
+)
+def test_packet_requires_pull_request_acceptance_evidence(
+    tmp_path: Path,
+    filename: str,
+) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    (validation / "acceptance" / filename).unlink()
+    with pytest.raises(ValueError, match="Required acceptance evidence is missing"):
+        packet_builder.build_packet(packet_args(validation, repo, tmp_path / "output"))
+
+
+def test_packet_rejects_incomplete_public_validation_run_evidence(
+    tmp_path: Path,
+) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    public_acceptance = validation / "acceptance/ubuntu_public_validation"
+    (public_acceptance / "workflow_run.json").write_text(
+        '{"status":"completed","conclusion":"success"}\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="public-validation run id"):
+        packet_builder.build_packet(
+            packet_args(validation, repo, tmp_path / "output")
+        )
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ("run_id", "head_sha", "artifact_run", "reproduction_run", "comparison_hash"),
+)
+def test_packet_rejects_public_validation_identity_drift(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    public_root = validation / "acceptance/ubuntu_public_validation"
+    if mutation in {"run_id", "head_sha"}:
+        run_path = public_root / "workflow_run.json"
+        payload = read_json(run_path)
+        assert isinstance(payload, dict)
+        if mutation == "run_id":
+            payload["id"] = PUBLIC_VALIDATION_RUN_ID + 1
+        else:
+            payload["head_sha"] = "f" * 40
+        write_json(run_path, payload)
+    elif mutation == "artifact_run":
+        artifacts_path = public_root / "artifacts.json"
+        payload = read_json(artifacts_path)
+        assert isinstance(payload, dict) and isinstance(payload["artifacts"], list)
+        payload["artifacts"][0]["workflow_run"]["id"] = PUBLIC_VALIDATION_RUN_ID + 1
+        write_json(artifacts_path, payload)
+    elif mutation == "reproduction_run":
+        reproduction_path = (
+            validation / "acceptance/cross_platform_public_reproduction.json"
+        )
+        payload = read_json(reproduction_path)
+        assert isinstance(payload, dict)
+        payload["ubuntu_public_validation_run_id"] = PUBLIC_VALIDATION_RUN_ID + 1
+        write_json(reproduction_path, payload)
+    else:
+        mutate_tsv_value(
+            validation / "acceptance/cross_platform_comparison.tsv",
+            "evidence_type",
+            "normalized_scientific_table",
+            "ubuntu_sha256",
+            "b" * 64,
+        )
+
+    with pytest.raises(ValueError, match="Public-validation|public-validation|Cross-platform"):
+        packet_builder.build_packet(packet_args(validation, repo, tmp_path / "output"))
+
+
+def test_extracted_verifier_rejects_resealed_public_validation_run_drift(
+    tmp_path: Path,
+) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    output = tmp_path / "output"
+    packet_builder.build_packet(packet_args(validation, repo, output))
+    packet = output / "packet"
+    run_path = packet / "acceptance/ubuntu_public_validation/workflow_run.json"
+    payload = read_json(run_path)
+    assert isinstance(payload, dict)
+    payload["id"] = PUBLIC_VALIDATION_RUN_ID + 1
+    write_json(run_path, payload)
+    rewrite_manifest(packet)
+
+    checked = verify_packet(packet)
+    assert checked.returncode != 0
+    assert "public-validation" in checked.stderr
+
+
+def test_extracted_verifier_rejects_resealed_public_main_drift(tmp_path: Path) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    output = tmp_path / "output"
+    packet_builder.build_packet(packet_args(validation, repo, output))
+    packet = output / "packet"
+    fresh_path = packet / "acceptance/fresh_clone.json"
+    payload = read_json(fresh_path)
+    assert isinstance(payload, dict)
+    payload["public_main_commit"] = "f" * 40
+    write_json(fresh_path, payload)
+    rewrite_manifest(packet)
+
+    checked = verify_packet(packet)
+    assert checked.returncode != 0
+    assert "fresh-clone acceptance mismatch" in checked.stderr
+
+
+def test_packet_rejects_missing_read_only_audit_role(tmp_path: Path) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    comments_path = validation / "acceptance/pull_request_comments.json"
+    comments = read_json(comments_path)
+    assert isinstance(comments, list)
+    comments.pop()
+    write_json(comments_path, comments)
+    with pytest.raises(ValueError, match="Missing required read-only audit payloads"):
+        packet_builder.build_packet(packet_args(validation, repo, tmp_path / "output"))
+
+
+def test_packet_rejects_duplicate_read_only_audit_role(tmp_path: Path) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    comments_path = validation / "acceptance/pull_request_comments.json"
+    comments = read_json(comments_path)
+    assert isinstance(comments, list) and isinstance(comments[0], dict)
+    duplicate = dict(comments[0])
+    duplicate_id = 7999
+    duplicate["id"] = duplicate_id
+    duplicate["url"] = (
+        f"https://api.github.com/repos/{GITHUB_REPOSITORY}/issues/comments/"
+        f"{duplicate_id}"
+    )
+    duplicate["html_url"] = (
+        f"{REPOSITORY}/pull/{PULL_REQUEST_NUMBER}#issuecomment-{duplicate_id}"
+    )
+    comments.append(duplicate)
+    write_json(comments_path, comments)
+    with pytest.raises(ValueError, match="Duplicate read-only audit payload"):
+        packet_builder.build_packet(packet_args(validation, repo, tmp_path / "output"))
+
+
+@pytest.mark.parametrize(
+    "body",
+    (
+        "<!-- mito-overview-read-only-audit-v1 -->\nnot-a-fence",
+        "<!-- mito-overview-read-only-audit-v1 -->\n```json\n{broken\n```",
+    ),
+)
+def test_packet_rejects_malformed_read_only_audit_comment(
+    tmp_path: Path,
+    body: str,
+) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    comments_path = validation / "acceptance/pull_request_comments.json"
+    comments = read_json(comments_path)
+    assert isinstance(comments, list) and isinstance(comments[0], dict)
+    comments[0]["body"] = body
+    write_json(comments_path, comments)
+    with pytest.raises(ValueError, match="Read-only audit"):
+        packet_builder.build_packet(packet_args(validation, repo, tmp_path / "output"))
+
+
+def test_packet_rejects_read_only_audit_blockers(tmp_path: Path) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    mutate_audit_payload(
+        validation / "acceptance/pull_request_comments.json",
+        "bioinformatics",
+        "unresolved_blockers",
+        1,
+    )
+    with pytest.raises(ValueError, match="unresolved blockers"):
+        packet_builder.build_packet(packet_args(validation, repo, tmp_path / "output"))
+
+
+@pytest.mark.parametrize(
+    ("field", "error"),
+    (
+        ("reviewed_commit", "reviewed-commit drift"),
+        ("reviewed_tree", "reviewed-tree drift"),
+    ),
+)
+def test_packet_rejects_read_only_audit_commit_or_tree_drift(
+    tmp_path: Path,
+    field: str,
+    error: str,
+) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    mutate_audit_payload(
+        validation / "acceptance/pull_request_comments.json",
+        "reproducibility",
+        field,
+        "f" * 40,
+    )
+    with pytest.raises(ValueError, match=error):
+        packet_builder.build_packet(packet_args(validation, repo, tmp_path / "output"))
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ("merged_state", "base_branch", "head_repository", "canonical_url"),
+)
+def test_packet_rejects_wrong_pull_request_identity(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    pull_path = validation / "acceptance/pull_request.json"
+    pull = read_json(pull_path)
+    assert isinstance(pull, dict)
+    if mutation == "merged_state":
+        pull["merged"] = False
+    elif mutation == "base_branch":
+        assert isinstance(pull["base"], dict)
+        pull["base"]["ref"] = "develop"
+    elif mutation == "head_repository":
+        assert isinstance(pull["head"], dict)
+        assert isinstance(pull["head"]["repo"], dict)
+        pull["head"]["repo"]["full_name"] = "someone/else"
+    else:
+        pull["html_url"] = f"{REPOSITORY}/pull/999"
+    write_json(pull_path, pull)
+    with pytest.raises(ValueError, match="Pull-request"):
+        packet_builder.build_packet(packet_args(validation, repo, tmp_path / "output"))
+
+
+def test_packet_rejects_pull_request_other_than_three(tmp_path: Path) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    pull_path = validation / "acceptance/pull_request.json"
+    pull = read_json(pull_path)
+    assert isinstance(pull, dict)
+    pull["number"] = 31
+    pull["url"] = f"https://api.github.com/repos/{GITHUB_REPOSITORY}/pulls/31"
+    pull["html_url"] = f"{REPOSITORY}/pull/31"
+    pull["issue_url"] = f"https://api.github.com/repos/{GITHUB_REPOSITORY}/issues/31"
+    pull["comments_url"] = f"{pull['issue_url']}/comments"
+    write_json(pull_path, pull)
+    with pytest.raises(ValueError, match="must come from pull request 3"):
+        packet_builder.build_packet(packet_args(validation, repo, tmp_path / "output"))
+
+
+def test_packet_rejects_fresh_clone_public_main_drift(tmp_path: Path) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    fresh_path = validation / "acceptance/fresh_clone.json"
+    fresh = read_json(fresh_path)
+    assert isinstance(fresh, dict)
+    fresh["public_main_commit"] = "f" * 40
+    write_json(fresh_path, fresh)
+    with pytest.raises(ValueError, match="public_main_commit"):
+        packet_builder.build_packet(packet_args(validation, repo, tmp_path / "output"))
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ("event", "head_sha", "associated_pr"),
+)
+def test_packet_rejects_wrong_pull_request_ci_identity(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    run_path = validation / "acceptance/pull_request_github_actions_run.json"
+    payload = read_json(run_path)
+    assert isinstance(payload, dict)
+    if mutation == "event":
+        payload["event"] = "push"
+    elif mutation == "head_sha":
+        payload["head_sha"] = "f" * 40
+    else:
+        associations = payload["pull_requests"]
+        assert isinstance(associations, list) and isinstance(associations[0], dict)
+        associations[0]["number"] = 999
+    write_json(run_path, payload)
+    with pytest.raises(ValueError, match="Pull-request (?:GitHub Actions|workflow)"):
+        packet_builder.build_packet(packet_args(validation, repo, tmp_path / "output"))
+
+
+@pytest.mark.parametrize("mutation", ("missing", "extra", "head_sha", "label"))
+def test_packet_rejects_wrong_pull_request_ci_jobs(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    jobs_path = validation / "acceptance/pull_request_github_actions_jobs.json"
+    payload = read_json(jobs_path)
+    assert isinstance(payload, dict) and isinstance(payload["jobs"], list)
+    jobs = payload["jobs"]
+    if mutation == "missing":
+        jobs.pop()
+    elif mutation == "extra":
+        extra = dict(jobs[0])
+        extra["id"] = 8999
+        extra["name"] = "Unexpected job"
+        jobs.append(extra)
+    elif mutation == "head_sha":
+        jobs[0]["head_sha"] = "f" * 40
+    else:
+        jobs[0]["labels"] = ["ubuntu-latest"]
+    payload["total_count"] = len(jobs)
+    write_json(jobs_path, payload)
+    with pytest.raises(ValueError, match="Pull-request GitHub Actions|pinned jobs"):
+        packet_builder.build_packet(packet_args(validation, repo, tmp_path / "output"))
+
+
+def test_packet_accepts_additional_pull_request_ci_runner_labels(tmp_path: Path) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    jobs_path = validation / "acceptance/pull_request_github_actions_jobs.json"
+    payload = read_json(jobs_path)
+    assert isinstance(payload, dict) and isinstance(payload["jobs"], list)
+    payload["jobs"][0]["labels"].append("supplemental-host-label")
+    write_json(jobs_path, payload)
+
+    output = tmp_path / "output"
+    packet_builder.build_packet(packet_args(validation, repo, output))
+    checked = verify_packet(output / "packet")
+    assert checked.returncode == 0, checked.stderr
+
+
+def test_packet_rejects_pull_request_environment_identity_drift(
+    tmp_path: Path,
+) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    environment = validation / "environment.txt"
+    environment.write_text(
+        environment.read_text(encoding="utf-8").replace(
+            f"pull_request_github_actions_run_id={PULL_REQUEST_RUN_ID}",
+            "pull_request_github_actions_run_id=999",
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="pull_request_github_actions_run_id"):
+        packet_builder.build_packet(packet_args(validation, repo, tmp_path / "output"))
+
+
+def test_packet_rejects_final_merge_tree_relation_drift(tmp_path: Path) -> None:
+    repo, _ = create_release_repo(tmp_path)
+    run(["git", "checkout", "-q", "-b", "tree-drift-head"], repo)
+    (repo / "HEAD_ONLY").write_text("reviewed head\n", encoding="utf-8")
+    run(["git", "add", "HEAD_ONLY"], repo)
+    run(["git", "commit", "-q", "-m", "reviewed head fixture"], repo)
+    run(["git", "checkout", "-q", "main"], repo)
+    (repo / "BASE_ONLY").write_text("unreviewed base change\n", encoding="utf-8")
+    run(["git", "add", "BASE_ONLY"], repo)
+    run(["git", "commit", "-q", "-m", "base drift fixture"], repo)
+    run(
+        [
+            "git",
+            "merge",
+            "-q",
+            "--no-ff",
+            "tree-drift-head",
+            "-m",
+            "Merge tree-drift fixture",
+        ],
+        repo,
+    )
+    commit = run(["git", "rev-parse", "HEAD"], repo)
+    validation = tmp_path / "validation"
+    for relative in ("acceptance", "commands", "logs"):
+        (validation / relative).mkdir(parents=True, exist_ok=True)
+    write_acceptance_evidence(validation, repo, commit)
+    with pytest.raises(ValueError, match="Reviewed pull-request head tree"):
+        packet_builder.validate_pull_request_evidence(
+            validation,
+            repo,
+            commit,
+            REPOSITORY,
+        )
+
+
+def test_packet_rejects_final_merge_parent_relation_drift(tmp_path: Path) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    pull_path = validation / "acceptance/pull_request.json"
+    pull = read_json(pull_path)
+    assert isinstance(pull, dict) and isinstance(pull["head"], dict)
+    pull["head"]["sha"] = "f" * 40
+    write_json(pull_path, pull)
+    with pytest.raises(ValueError, match="Final merge parent relationship"):
+        packet_builder.build_packet(packet_args(validation, repo, tmp_path / "output"))
+
+
 @pytest.mark.parametrize("name", sorted(packet_builder.EVIDENCE_TABLES))
 def test_packet_requires_every_structured_evidence_table(
     tmp_path: Path, name: str
 ) -> None:
     repo, commit = create_release_repo(tmp_path)
-    validation = create_validation_root(tmp_path, commit)
+    validation = create_validation_root(tmp_path, repo, commit)
     (validation / name).unlink()
     with pytest.raises(ValueError, match="missing or empty"):
         packet_builder.build_packet(packet_args(validation, repo, tmp_path / "output"))
@@ -1119,7 +1888,7 @@ def test_packet_rejects_invalid_network_isolation_evidence(
     replacement: str,
 ) -> None:
     repo, commit = create_release_repo(tmp_path)
-    validation = create_validation_root(tmp_path, commit)
+    validation = create_validation_root(tmp_path, repo, commit)
     mutate_tsv_value(
         validation / "public/environment/network_isolation.tsv",
         "field",
@@ -1147,7 +1916,7 @@ def test_packet_rejects_invalid_public_runtime_evidence(
     replacement: object,
 ) -> None:
     repo, commit = create_release_repo(tmp_path)
-    validation = create_validation_root(tmp_path, commit)
+    validation = create_validation_root(tmp_path, repo, commit)
     runtime_path = validation / "public/environment/runtime_versions.json"
     runtime = json.loads(runtime_path.read_text(encoding="utf-8"))
     runtime[field] = replacement
@@ -1161,7 +1930,7 @@ def test_packet_rejects_invalid_public_runtime_evidence(
 
 def test_packet_rejects_public_environment_inventory_drift(tmp_path: Path) -> None:
     repo, commit = create_release_repo(tmp_path)
-    validation = create_validation_root(tmp_path, commit)
+    validation = create_validation_root(tmp_path, repo, commit)
     (validation / "public/environment/untracked-runtime.txt").write_text(
         "unexpected\n", encoding="utf-8"
     )
@@ -1171,7 +1940,7 @@ def test_packet_rejects_public_environment_inventory_drift(tmp_path: Path) -> No
 
 def test_packet_requires_offline_isolation_pass_case(tmp_path: Path) -> None:
     repo, commit = create_release_repo(tmp_path)
-    validation = create_validation_root(tmp_path, commit)
+    validation = create_validation_root(tmp_path, repo, commit)
     cases_path = validation / "cases.tsv"
     with cases_path.open(encoding="utf-8", newline="") as handle:
         rows = list(csv.DictReader(handle, delimiter="\t"))
@@ -1182,8 +1951,8 @@ def test_packet_requires_offline_isolation_pass_case(tmp_path: Path) -> None:
 
 
 def test_public_source_timestamp_is_recorded_not_live_checked(tmp_path: Path) -> None:
-    _, commit = create_release_repo(tmp_path)
-    validation = create_validation_root(tmp_path, commit)
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
     with (validation / "public_data_sources.tsv").open(
         encoding="utf-8", newline=""
     ) as handle:
@@ -1194,7 +1963,7 @@ def test_public_source_timestamp_is_recorded_not_live_checked(tmp_path: Path) ->
 
 def test_packet_rejects_secret_like_material(tmp_path: Path) -> None:
     repo, commit = create_release_repo(tmp_path)
-    validation = create_validation_root(tmp_path, commit)
+    validation = create_validation_root(tmp_path, repo, commit)
     (validation / "logs" / "unit_known_answer.log").write_text(
         "access_token=ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ\n", encoding="utf-8"
     )
@@ -1204,7 +1973,7 @@ def test_packet_rejects_secret_like_material(tmp_path: Path) -> None:
 
 def test_packet_normalizes_local_absolute_paths(tmp_path: Path) -> None:
     repo, commit = create_release_repo(tmp_path)
-    validation = create_validation_root(tmp_path, commit)
+    validation = create_validation_root(tmp_path, repo, commit)
     source = validation / "logs" / "unit_known_answer.log"
     source.write_text("source=/Users/alice/private/run.log\n", encoding="utf-8")
     output = tmp_path / "output"
@@ -1218,7 +1987,7 @@ def test_packet_normalizes_local_absolute_paths(tmp_path: Path) -> None:
 
 def test_packet_rejects_ci_run_identity_drift(tmp_path: Path) -> None:
     repo, commit = create_release_repo(tmp_path)
-    validation = create_validation_root(tmp_path, commit)
+    validation = create_validation_root(tmp_path, repo, commit)
     environment = validation / "environment.txt"
     environment.write_text(
         environment.read_text(encoding="utf-8").replace(
@@ -1233,7 +2002,7 @@ def test_packet_rejects_ci_run_identity_drift(tmp_path: Path) -> None:
 
 def test_verifier_rejects_semantic_identity_tampering(tmp_path: Path) -> None:
     repo, commit = create_release_repo(tmp_path)
-    validation = create_validation_root(tmp_path, commit)
+    validation = create_validation_root(tmp_path, repo, commit)
     output = tmp_path / "output"
     packet_builder.build_packet(packet_args(validation, repo, output))
     packet = output / "packet"
@@ -1250,11 +2019,73 @@ def test_verifier_rejects_semantic_identity_tampering(tmp_path: Path) -> None:
     assert "release commit is inconsistent" in checked.stderr
 
 
+def test_extracted_verifier_rejects_rehashed_read_only_audit_blockers(
+    tmp_path: Path,
+) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    output = tmp_path / "output"
+    packet_builder.build_packet(packet_args(validation, repo, output))
+    packet = output / "packet"
+    mutate_audit_payload(
+        packet / "acceptance/pull_request_comments.json",
+        "release_engineering",
+        "unresolved_blockers",
+        1,
+    )
+    rewrite_manifest(packet)
+    checked = verify_packet(packet)
+    assert checked.returncode != 0
+    assert "read-only audit payload mismatch" in checked.stderr
+
+
+def test_extracted_verifier_rejects_rehashed_pr_ci_head_drift(
+    tmp_path: Path,
+) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    output = tmp_path / "output"
+    packet_builder.build_packet(packet_args(validation, repo, output))
+    packet = output / "packet"
+    run_path = packet / "acceptance/pull_request_github_actions_run.json"
+    payload = read_json(run_path)
+    assert isinstance(payload, dict)
+    payload["head_sha"] = "f" * 40
+    write_json(run_path, payload)
+    rewrite_manifest(packet)
+    checked = verify_packet(packet)
+    assert checked.returncode != 0
+    assert "pull-request GitHub Actions run identity mismatch" in checked.stderr
+
+
+def test_extracted_verifier_rejects_rehashed_merge_relation_drift(
+    tmp_path: Path,
+) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    output = tmp_path / "output"
+    packet_builder.build_packet(packet_args(validation, repo, output))
+    packet = output / "packet"
+    identity_path = packet / "release_identity.json"
+    identity = read_json(identity_path)
+    assert isinstance(identity, dict)
+    pull_request = identity["pull_request"]
+    assert isinstance(pull_request, dict)
+    pull_request["final_commit_parents"] = list(
+        reversed(pull_request["final_commit_parents"])
+    )
+    write_json(identity_path, identity)
+    rewrite_manifest(packet)
+    checked = verify_packet(packet)
+    assert checked.returncode != 0
+    assert "final merge parent/tree relationship mismatch" in checked.stderr
+
+
 def test_extracted_verifier_rejects_rehashed_network_isolation_mutation(
     tmp_path: Path,
 ) -> None:
     repo, commit = create_release_repo(tmp_path)
-    validation = create_validation_root(tmp_path, commit)
+    validation = create_validation_root(tmp_path, repo, commit)
     output = tmp_path / "output"
     packet_builder.build_packet(packet_args(validation, repo, output))
     packet = output / "packet"
@@ -1276,7 +2107,7 @@ def test_extracted_verifier_rejects_rehashed_isolation_receipt_change(
     tmp_path: Path,
 ) -> None:
     repo, commit = create_release_repo(tmp_path)
-    validation = create_validation_root(tmp_path, commit)
+    validation = create_validation_root(tmp_path, repo, commit)
     output = tmp_path / "output"
     packet_builder.build_packet(packet_args(validation, repo, output))
     packet = output / "packet"
@@ -1296,7 +2127,7 @@ def test_extracted_verifier_rejects_rehashed_isolation_receipt_change(
 
 def test_extracted_verifier_rejects_rehashed_runtime_mutation(tmp_path: Path) -> None:
     repo, commit = create_release_repo(tmp_path)
-    validation = create_validation_root(tmp_path, commit)
+    validation = create_validation_root(tmp_path, repo, commit)
     output = tmp_path / "output"
     packet_builder.build_packet(packet_args(validation, repo, output))
     packet = output / "packet"
@@ -1316,7 +2147,7 @@ def test_extracted_verifier_rejects_rehashed_runtime_mutation(tmp_path: Path) ->
 
 def test_packet_requires_all_three_fixed_ci_jobs(tmp_path: Path) -> None:
     repo, commit = create_release_repo(tmp_path)
-    validation = create_validation_root(tmp_path, commit)
+    validation = create_validation_root(tmp_path, repo, commit)
     jobs_path = validation / "acceptance" / "github_actions_jobs.json"
     payload = json.loads(jobs_path.read_text(encoding="utf-8"))
     payload["jobs"] = [
@@ -1332,7 +2163,7 @@ def test_packet_requires_all_three_fixed_ci_jobs(tmp_path: Path) -> None:
 
 def test_packet_rejects_generic_or_drifted_ci_runner_label(tmp_path: Path) -> None:
     repo, commit = create_release_repo(tmp_path)
-    validation = create_validation_root(tmp_path, commit)
+    validation = create_validation_root(tmp_path, repo, commit)
     jobs_path = validation / "acceptance" / "github_actions_jobs.json"
     payload = json.loads(jobs_path.read_text(encoding="utf-8"))
     job = next(
@@ -1348,7 +2179,7 @@ def test_packet_rejects_generic_or_drifted_ci_runner_label(tmp_path: Path) -> No
 
 def test_packet_rejects_resealed_public_input_hash_mutation(tmp_path: Path) -> None:
     repo, commit = create_release_repo(tmp_path)
-    validation = create_validation_root(tmp_path, commit)
+    validation = create_validation_root(tmp_path, repo, commit)
     manifest = validation / "public" / packet_builder.RAW_INPUTS_PACKET_PATH
     mutate_tsv_value(
         manifest,
@@ -1367,7 +2198,7 @@ def test_packet_rejects_resealed_public_input_hash_mutation(tmp_path: Path) -> N
 
 def test_packet_rejects_public_source_hash_drift(tmp_path: Path) -> None:
     repo, commit = create_release_repo(tmp_path)
-    validation = create_validation_root(tmp_path, commit)
+    validation = create_validation_root(tmp_path, repo, commit)
     mutate_tsv_value(
         validation / "public_data_sources.tsv",
         "run_accession",
@@ -1381,7 +2212,7 @@ def test_packet_rejects_public_source_hash_drift(tmp_path: Path) -> None:
 
 def test_packet_rejects_incomplete_three_run_shortread_derivation(tmp_path: Path) -> None:
     repo, commit = create_release_repo(tmp_path)
-    validation = create_validation_root(tmp_path, commit)
+    validation = create_validation_root(tmp_path, repo, commit)
     path = (
         validation
         / "public"
@@ -1399,7 +2230,7 @@ def test_packet_rejects_incomplete_three_run_shortread_derivation(tmp_path: Path
 
 def test_packet_rejects_oracle_assertion_value_mutation(tmp_path: Path) -> None:
     repo, commit = create_release_repo(tmp_path)
-    validation = create_validation_root(tmp_path, commit)
+    validation = create_validation_root(tmp_path, repo, commit)
     assertions = validation / "public" / packet_builder.ORACLE_ASSERTIONS_PACKET_PATH
     mutate_tsv_value(
         assertions,
@@ -1421,7 +2252,7 @@ def test_packet_rejects_oracle_assertion_value_mutation(tmp_path: Path) -> None:
 
 def test_packet_rejects_filter_profile_oracle_mutation(tmp_path: Path) -> None:
     repo, commit = create_release_repo(tmp_path)
-    validation = create_validation_root(tmp_path, commit)
+    validation = create_validation_root(tmp_path, repo, commit)
     profiles = validation / "public" / "filter_profile_results.tsv"
     mutate_tsv_value(
         profiles,
@@ -1436,12 +2267,26 @@ def test_packet_rejects_filter_profile_oracle_mutation(tmp_path: Path) -> None:
 
 def test_packet_rejects_tracked_oracle_commit_drift(tmp_path: Path) -> None:
     repo, _ = create_release_repo(tmp_path)
+    run(["git", "checkout", "-q", "-b", "oracle-drift"], repo)
     oracle = repo / packet_builder.FROZEN_ORACLE_REPOSITORY_PATH
     oracle.write_text(oracle.read_text(encoding="utf-8") + "\n", encoding="utf-8")
     run(["git", "add", oracle.relative_to(repo).as_posix()], repo)
     run(["git", "commit", "-q", "-m", "mutate oracle"], repo)
+    run(["git", "checkout", "-q", "main"], repo)
+    run(
+        [
+            "git",
+            "merge",
+            "-q",
+            "--no-ff",
+            "oracle-drift",
+            "-m",
+            "Merge oracle drift fixture",
+        ],
+        repo,
+    )
     commit = run(["git", "rev-parse", "HEAD"], repo)
-    validation = create_validation_root(tmp_path, commit)
+    validation = create_validation_root(tmp_path, repo, commit)
     with pytest.raises(ValueError, match="frozen v0.3.0 oracle"):
         packet_builder.build_packet(packet_args(validation, repo, tmp_path / "output"))
 
@@ -1450,7 +2295,7 @@ def test_extracted_verifier_rejects_rehashed_input_manifest_mutation(
     tmp_path: Path,
 ) -> None:
     repo, commit = create_release_repo(tmp_path)
-    validation = create_validation_root(tmp_path, commit)
+    validation = create_validation_root(tmp_path, repo, commit)
     output = tmp_path / "output"
     packet_builder.build_packet(packet_args(validation, repo, output))
     packet = output / "packet"
@@ -1471,7 +2316,7 @@ def test_extracted_verifier_rejects_rehashed_scientific_oracle_mutation(
     tmp_path: Path,
 ) -> None:
     repo, commit = create_release_repo(tmp_path)
-    validation = create_validation_root(tmp_path, commit)
+    validation = create_validation_root(tmp_path, repo, commit)
     output = tmp_path / "output"
     packet_builder.build_packet(packet_args(validation, repo, output))
     packet = output / "packet"
@@ -1506,7 +2351,7 @@ def test_extracted_verifier_rejects_rehashed_shortread_provenance_mutation(
     tmp_path: Path,
 ) -> None:
     repo, commit = create_release_repo(tmp_path)
-    validation = create_validation_root(tmp_path, commit)
+    validation = create_validation_root(tmp_path, repo, commit)
     output = tmp_path / "output"
     packet_builder.build_packet(packet_args(validation, repo, output))
     packet = output / "packet"

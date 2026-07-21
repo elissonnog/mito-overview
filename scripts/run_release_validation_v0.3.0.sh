@@ -3,12 +3,16 @@ set -euo pipefail
 
 usage() {
   cat >&2 <<EOF
-Usage: MITO_OVERVIEW_GITHUB_RUN_ID=RUN_ID \
+Usage: MITO_OVERVIEW_GITHUB_RUN_ID=PUSH_RUN_ID \
+  MITO_OVERVIEW_PR_NUMBER=PR_NUMBER \
+  MITO_OVERVIEW_PR_RUN_ID=PR_SMOKE_RUN_ID \
+  MITO_OVERVIEW_PUBLIC_RUN_ID=PUBLIC_VALIDATION_RUN_ID \
   $0 VALIDATION_ROOT RAW_CACHE_ROOT PACKET_ROOT \
   mito-overview-v0.3.0-validation.zip
 
 This is the GitHub-only v0.3.0 release-validation interface. Manuscript,
 Zenodo, DOI, archive, and fixed release-date inputs are not accepted.
+RAW_CACHE_ROOT must not exist when this command is invoked.
 EOF
 }
 
@@ -35,13 +39,39 @@ REPOSITORY="https://github.com/elissonnog/mito-overview"
 PUBLIC_REMOTE="${REPOSITORY}.git"
 GITHUB_REPOSITORY="elissonnog/mito-overview"
 GITHUB_RUN_ID="${MITO_OVERVIEW_GITHUB_RUN_ID:-}"
+PR_NUMBER="${MITO_OVERVIEW_PR_NUMBER:-}"
+PR_RUN_ID="${MITO_OVERVIEW_PR_RUN_ID:-}"
+PUBLIC_RUN_ID="${MITO_OVERVIEW_PUBLIC_RUN_ID:-}"
+EXPECTED_PR_NUMBER="3"
 FRESH_CLONE_CASE_ID="fresh_clone_candidate_commit"
 EXPECTED_AUDIT_ZIP="mito-overview-v0.3.0-validation.zip"
 SCHEMA_VERSION="2.0"
 VALIDATION_PROFILE="github_release_validation_v1"
 
-if [[ ! "${GITHUB_RUN_ID}" =~ ^[1-9][0-9]*$ ]]; then
-  echo "MITO_OVERVIEW_GITHUB_RUN_ID must identify a completed GitHub Actions run." >&2
+require_positive_integer() {
+  local name="$1"
+  local value="$2"
+  local purpose="$3"
+  if [[ ! "${value}" =~ ^[1-9][0-9]*$ ]]; then
+    echo "${name} must be a positive integer identifying ${purpose}." >&2
+    exit 2
+  fi
+}
+
+require_positive_integer \
+  MITO_OVERVIEW_GITHUB_RUN_ID "${GITHUB_RUN_ID}" \
+  "the completed post-merge push smoke-tests run"
+require_positive_integer \
+  MITO_OVERVIEW_PR_NUMBER "${PR_NUMBER}" \
+  "the merged release pull request"
+require_positive_integer \
+  MITO_OVERVIEW_PR_RUN_ID "${PR_RUN_ID}" \
+  "the completed pull_request smoke-tests run"
+require_positive_integer \
+  MITO_OVERVIEW_PUBLIC_RUN_ID "${PUBLIC_RUN_ID}" \
+  "the completed workflow_dispatch public-validation run"
+if [[ "${PR_NUMBER}" != "${EXPECTED_PR_NUMBER}" ]]; then
+  echo "MITO_OVERVIEW_PR_NUMBER must be ${EXPECTED_PR_NUMBER} for the v0.3.0 release gate." >&2
   exit 2
 fi
 
@@ -61,7 +91,19 @@ PY
 }
 
 VALIDATION_ROOT="$(resolve_path "Validation root" "$1")"
-CACHE_ROOT="$(resolve_path "Raw cache root" "$2")"
+RAW_CACHE_ARGUMENT="$2"
+"${PYTHON_BIN}" - "${RAW_CACHE_ARGUMENT}" <<'PY'
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1]).expanduser()
+if path.exists() or path.is_symlink():
+    raise SystemExit(
+        f"Raw cache root must be absent at invocation (directories, files, and "
+        f"symlinks are rejected): {path}"
+    )
+PY
+CACHE_ROOT="$(resolve_path "Raw cache root" "${RAW_CACHE_ARGUMENT}")"
 PACKET_ROOT="$(resolve_path "Packet root" "$3")"
 AUDIT_ZIP="$(resolve_path "Audit ZIP" "$4")"
 PACKET_BUILD_LOG="${AUDIT_ZIP}.build.log"
@@ -128,8 +170,8 @@ for directory in "${VALIDATION_ROOT}" "${PACKET_ROOT}"; do
     exit 1
   fi
 done
-if [[ -e "${CACHE_ROOT}" && ! -d "${CACHE_ROOT}" ]]; then
-  echo "Raw cache root exists and is not a directory: ${CACHE_ROOT}" >&2
+if [[ -e "${CACHE_ROOT}" || -L "${CACHE_ROOT}" ]]; then
+  echo "Raw cache root must remain absent through preflight: ${CACHE_ROOT}" >&2
   exit 1
 fi
 for output in   "${AUDIT_ZIP}" "${PACKET_BUILD_LOG}" "${PACKET_VERIFY_LOG}"   "${PACKET_SHA256}" "${PACKET_RECEIPT}"; do
@@ -143,7 +185,7 @@ if ! command -v gh >/dev/null 2>&1; then
   exit 1
 fi
 
-mkdir -p   "${VALIDATION_ROOT}/acceptance"   "${VALIDATION_ROOT}/commands"   "${VALIDATION_ROOT}/logs"   "${VALIDATION_ROOT}/resources"   "${VALIDATION_ROOT}/expected"   "${VALIDATION_ROOT}/work"   "${VALIDATION_ROOT}/dist"   "${CACHE_ROOT}"
+mkdir -p   "${VALIDATION_ROOT}/acceptance"   "${VALIDATION_ROOT}/commands"   "${VALIDATION_ROOT}/logs"   "${VALIDATION_ROOT}/resources"   "${VALIDATION_ROOT}/expected"   "${VALIDATION_ROOT}/work"   "${VALIDATION_ROOT}/dist"
 mkdir -p "$(dirname "${AUDIT_ZIP}")"
 
 FRESH_CLONE_ROOT="${VALIDATION_ROOT}/work/fresh_clone"
@@ -304,6 +346,407 @@ PY
   return 1
 }
 
+fetch_pull_request_evidence() {
+  local command_file="${VALIDATION_ROOT}/commands/pull_request_release_evidence.sh"
+  local log_file="${VALIDATION_ROOT}/logs/pull_request_release_evidence.log"
+  local pull_tmp="${VALIDATION_ROOT}/acceptance/pull_request.json.tmp"
+  local comments_pages_tmp="${VALIDATION_ROOT}/acceptance/pull_request_comments.pages.json.tmp"
+  local comments_tmp="${VALIDATION_ROOT}/acceptance/pull_request_comments.json.tmp"
+  local run_tmp="${VALIDATION_ROOT}/acceptance/pull_request_github_actions_run.json.tmp"
+  local jobs_tmp="${VALIDATION_ROOT}/acceptance/pull_request_github_actions_jobs.json.tmp"
+  local pull_path="${VALIDATION_ROOT}/acceptance/pull_request.json"
+  local comments_path="${VALIDATION_ROOT}/acceptance/pull_request_comments.json"
+  local run_path="${VALIDATION_ROOT}/acceptance/pull_request_github_actions_run.json"
+  local jobs_path="${VALIDATION_ROOT}/acceptance/pull_request_github_actions_jobs.json"
+  {
+    printf 'gh api %q > %q\n' \
+      "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" \
+      "acceptance/pull_request.json"
+    printf 'gh api --paginate --slurp %q > %q\n' \
+      "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments?per_page=100" \
+      "acceptance/pull_request_comments.json"
+    printf 'gh api %q > %q\n' \
+      "repos/${GITHUB_REPOSITORY}/actions/runs/${PR_RUN_ID}" \
+      "acceptance/pull_request_github_actions_run.json"
+    printf 'gh api %q > %q\n' \
+      "repos/${GITHUB_REPOSITORY}/actions/runs/${PR_RUN_ID}/jobs?filter=latest&per_page=100" \
+      "acceptance/pull_request_github_actions_jobs.json"
+  } > "${command_file}"
+
+  if {
+    gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" > "${pull_tmp}"
+    gh api --paginate --slurp \
+      "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments?per_page=100" \
+      > "${comments_pages_tmp}"
+    gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${PR_RUN_ID}" > "${run_tmp}"
+    gh api \
+      "repos/${GITHUB_REPOSITORY}/actions/runs/${PR_RUN_ID}/jobs?filter=latest&per_page=100" \
+      > "${jobs_tmp}"
+    mv "${pull_tmp}" "${pull_path}"
+    mv "${run_tmp}" "${run_path}"
+    mv "${jobs_tmp}" "${jobs_path}"
+    if "${PYTHON_BIN}" - \
+      "${pull_path}" "${comments_pages_tmp}" "${comments_tmp}" \
+      "${run_path}" "${jobs_path}" \
+      "${PR_NUMBER}" "${PR_RUN_ID}" "${CANDIDATE_COMMIT}" \
+      "${GITHUB_REPOSITORY}" <<'PY'
+import json
+import re
+import sys
+from pathlib import Path
+
+pull_path, comments_pages_path, comments_path, run_path, jobs_path = map(
+    Path, sys.argv[1:6]
+)
+expected_pr_number = int(sys.argv[6])
+expected_run_id = int(sys.argv[7])
+expected_commit = sys.argv[8]
+repository = sys.argv[9]
+api_root = f"https://api.github.com/repos/{repository}"
+html_root = f"https://github.com/{repository}"
+
+pull = json.loads(pull_path.read_text(encoding="utf-8"))
+if not isinstance(pull, dict):
+    raise SystemExit("Pull-request evidence must be a JSON object")
+if pull.get("number") != expected_pr_number:
+    raise SystemExit("Pull-request number does not match MITO_OVERVIEW_PR_NUMBER")
+if pull.get("state") != "closed" or pull.get("merged") is not True:
+    raise SystemExit("Release pull request is not merged")
+if pull.get("merge_commit_sha") != expected_commit:
+    raise SystemExit("Pull-request merge commit does not match the release candidate")
+if pull.get("url") != f"{api_root}/pulls/{expected_pr_number}":
+    raise SystemExit("Pull-request API URL does not match the canonical repository")
+if pull.get("html_url") != f"{html_root}/pull/{expected_pr_number}":
+    raise SystemExit("Pull-request HTML URL does not match the canonical repository")
+base = pull.get("base")
+head = pull.get("head")
+if not isinstance(base, dict) or not isinstance(head, dict):
+    raise SystemExit("Pull-request head/base identity is missing")
+if base.get("ref") != "main":
+    raise SystemExit("Release pull request was not merged into main")
+for label, value in (("base", base), ("head", head)):
+    repo = value.get("repo")
+    if not isinstance(repo, dict) or repo.get("full_name") != repository:
+        raise SystemExit(f"Pull-request {label} repository is not canonical")
+pr_head_sha = head.get("sha")
+if not isinstance(pr_head_sha, str) or not re.fullmatch(r"[0-9a-f]{40}", pr_head_sha):
+    raise SystemExit("Pull-request head SHA is not a full lowercase commit")
+pr_head_branch = head.get("ref")
+if not isinstance(pr_head_branch, str) or not pr_head_branch.strip():
+    raise SystemExit("Pull-request head branch is missing")
+
+comment_pages = json.loads(comments_pages_path.read_text(encoding="utf-8"))
+if not isinstance(comment_pages, list) or not all(
+    isinstance(page, list) for page in comment_pages
+):
+    raise SystemExit("Paginated pull-request comments must be a JSON list of pages")
+comments = [comment for page in comment_pages for comment in page]
+if not all(isinstance(comment, dict) for comment in comments):
+    raise SystemExit("Pull-request comment evidence contains a non-object entry")
+comment_ids = []
+expected_issue_url = f"{api_root}/issues/{expected_pr_number}"
+for comment in comments:
+    comment_id = comment.get("id")
+    if not isinstance(comment_id, int) or isinstance(comment_id, bool) or comment_id <= 0:
+        raise SystemExit("Pull-request comment ID must be a positive integer")
+    if comment.get("issue_url") != expected_issue_url:
+        raise SystemExit("Pull-request comment is not associated with the selected PR")
+    comment_ids.append(comment_id)
+if len(comment_ids) != len(set(comment_ids)):
+    raise SystemExit("Pull-request comment evidence contains duplicate IDs")
+comments.sort(key=lambda comment: comment["id"])
+comments_path.write_text(
+    json.dumps(comments, indent=2, sort_keys=True) + "\n",
+    encoding="utf-8",
+)
+
+run = json.loads(run_path.read_text(encoding="utf-8"))
+if not isinstance(run, dict) or run.get("id") != expected_run_id:
+    raise SystemExit("Pull-request smoke run does not match MITO_OVERVIEW_PR_RUN_ID")
+expected_run_fields = {
+    "name": "smoke-tests",
+    "path": ".github/workflows/smoke-tests.yml",
+    "event": "pull_request",
+    "status": "completed",
+    "conclusion": "success",
+    "head_sha": pr_head_sha,
+    "head_branch": pr_head_branch,
+}
+for field, expected in expected_run_fields.items():
+    if run.get(field) != expected:
+        raise SystemExit(
+            f"Pull-request smoke run identity mismatch for {field}: "
+            f"{run.get(field)!r} != {expected!r}"
+        )
+for field in ("repository", "head_repository"):
+    value = run.get(field)
+    if not isinstance(value, dict) or value.get("full_name") != repository:
+        raise SystemExit(f"Pull-request smoke run {field} is not canonical")
+run_api_url = f"{api_root}/actions/runs/{expected_run_id}"
+if run.get("url") != run_api_url or run.get("jobs_url") != f"{run_api_url}/jobs":
+    raise SystemExit("Pull-request smoke run API URLs are not bound to the selected run")
+if run.get("html_url") != f"{html_root}/actions/runs/{expected_run_id}":
+    raise SystemExit("Pull-request smoke run HTML URL is not canonical")
+associations = run.get("pull_requests")
+if not isinstance(associations, list) or not any(
+    isinstance(item, dict)
+    and item.get("number") == expected_pr_number
+    and item.get("url") == f"{api_root}/pulls/{expected_pr_number}"
+    for item in associations
+):
+    raise SystemExit("Pull-request smoke run is not associated with the selected PR")
+run_attempt = run.get("run_attempt")
+if not isinstance(run_attempt, int) or isinstance(run_attempt, bool) or run_attempt <= 0:
+    raise SystemExit("Pull-request smoke run attempt is invalid")
+
+jobs_payload = json.loads(jobs_path.read_text(encoding="utf-8"))
+jobs = jobs_payload.get("jobs") if isinstance(jobs_payload, dict) else None
+if not isinstance(jobs, list) or not all(isinstance(job, dict) for job in jobs):
+    raise SystemExit("Pull-request smoke jobs evidence must contain an object list")
+if jobs_payload.get("total_count") != len(jobs):
+    raise SystemExit("Pull-request smoke jobs total_count does not match its inventory")
+expected_jobs = {
+    "Unit and synthetic tests (ubuntu-24.04)",
+    "Unit and synthetic tests (macos-15-intel)",
+    "Unit and synthetic tests (macos-15)",
+}
+for expected_name in expected_jobs:
+    matches = [job for job in jobs if job.get("name") == expected_name]
+    if len(matches) != 1:
+        raise SystemExit(f"Expected exactly one successful PR smoke job {expected_name!r}")
+    job = matches[0]
+    if (
+        job.get("run_id") != expected_run_id
+        or job.get("run_attempt") != run_attempt
+        or job.get("head_sha") != pr_head_sha
+        or job.get("workflow_name") != "smoke-tests"
+        or job.get("status") != "completed"
+        or job.get("conclusion") != "success"
+    ):
+        raise SystemExit(f"Pull-request smoke job identity is invalid: {expected_name}")
+print(f"pull_request_evidence=PASS comments={len(comments)} pr_head_sha={pr_head_sha}")
+PY
+    then
+      mv "${comments_tmp}" "${comments_path}"
+      rm "${comments_pages_tmp}"
+      echo "pull_request_review_policy=structured_issue_comments_no_review_approval_gate"
+    else
+      false
+    fi
+  } > "${log_file}" 2>&1; then
+    return 0
+  fi
+  tail -100 "${log_file}" >&2
+  return 1
+}
+
+preflight_public_validation_evidence() {
+  local command_file="${VALIDATION_ROOT}/commands/public_validation_run_preflight.sh"
+  local log_file="${VALIDATION_ROOT}/logs/public_validation_run_preflight.log"
+  local acceptance_root="${VALIDATION_ROOT}/acceptance/ubuntu_public_validation"
+  local run_tmp="${acceptance_root}/workflow_run.json.tmp"
+  local run_path="${acceptance_root}/workflow_run.json"
+  local artifacts_tmp="${acceptance_root}/artifacts.json.tmp"
+  local artifacts_path="${acceptance_root}/artifacts.json"
+  local artifact_name="public-validation-derived-${CANDIDATE_COMMIT}-${PUBLIC_RUN_ID}"
+
+  mkdir -p "${acceptance_root}"
+  {
+    printf 'gh api %q > %q\n' \
+      "repos/${GITHUB_REPOSITORY}/actions/runs/${PUBLIC_RUN_ID}" \
+      "acceptance/ubuntu_public_validation/workflow_run.json"
+    printf 'gh api %q > %q\n' \
+      "repos/${GITHUB_REPOSITORY}/actions/runs/${PUBLIC_RUN_ID}/artifacts?per_page=100" \
+      "acceptance/ubuntu_public_validation/artifacts.json"
+  } > "${command_file}"
+
+  if {
+    gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${PUBLIC_RUN_ID}" > "${run_tmp}"
+    gh api \
+      "repos/${GITHUB_REPOSITORY}/actions/runs/${PUBLIC_RUN_ID}/artifacts?per_page=100" \
+      > "${artifacts_tmp}"
+    mv "${run_tmp}" "${run_path}"
+    mv "${artifacts_tmp}" "${artifacts_path}"
+    "${PYTHON_BIN}" - \
+      "${run_path}" "${artifacts_path}" "${PUBLIC_RUN_ID}" \
+      "${CANDIDATE_COMMIT}" "${GITHUB_REPOSITORY}" "${artifact_name}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+run_path = Path(sys.argv[1])
+artifacts_path = Path(sys.argv[2])
+expected_run_id = int(sys.argv[3])
+expected_commit = sys.argv[4]
+repository = sys.argv[5]
+expected_artifact = sys.argv[6]
+api_root = f"https://api.github.com/repos/{repository}"
+html_root = f"https://github.com/{repository}"
+
+run = json.loads(run_path.read_text(encoding="utf-8"))
+if not isinstance(run, dict) or run.get("id") != expected_run_id:
+    raise SystemExit("Public-validation run does not match MITO_OVERVIEW_PUBLIC_RUN_ID")
+expected_fields = {
+    "name": "public-validation",
+    "path": ".github/workflows/public-validation.yml",
+    "event": "workflow_dispatch",
+    "status": "completed",
+    "conclusion": "success",
+    "head_sha": expected_commit,
+    "head_branch": "main",
+}
+for field, expected in expected_fields.items():
+    if run.get(field) != expected:
+        raise SystemExit(
+            f"Public-validation run identity mismatch for {field}: "
+            f"{run.get(field)!r} != {expected!r}"
+        )
+for field in ("repository", "head_repository"):
+    value = run.get(field)
+    if not isinstance(value, dict) or value.get("full_name") != repository:
+        raise SystemExit(f"Public-validation run {field} is not canonical")
+run_api_url = f"{api_root}/actions/runs/{expected_run_id}"
+if run.get("url") != run_api_url:
+    raise SystemExit("Public-validation run API URL is not bound to the selected ID")
+if run.get("html_url") != f"{html_root}/actions/runs/{expected_run_id}":
+    raise SystemExit("Public-validation run HTML URL is not canonical")
+
+payload = json.loads(artifacts_path.read_text(encoding="utf-8"))
+artifacts = payload.get("artifacts") if isinstance(payload, dict) else None
+if not isinstance(artifacts, list):
+    raise SystemExit("Public-validation artifact evidence lacks an artifact list")
+matches = [
+    artifact
+    for artifact in artifacts
+    if isinstance(artifact, dict)
+    and artifact.get("name") == expected_artifact
+    and artifact.get("workflow_run", {}).get("id") == expected_run_id
+    and not artifact.get("expired", False)
+]
+if len(matches) != 1:
+    raise SystemExit(
+        f"Expected exactly one unexpired derived artifact {expected_artifact!r} "
+        f"from run {expected_run_id}"
+    )
+print(f"public_validation_run_preflight=PASS run_id={expected_run_id}")
+PY
+  } > "${log_file}" 2>&1; then
+    return 0
+  fi
+  tail -100 "${log_file}" >&2
+  return 1
+}
+
+validate_github_preflight_evidence() {
+  local command_file="${VALIDATION_ROOT}/commands/github_acceptance_preflight.sh"
+  local log_file="${VALIDATION_ROOT}/logs/github_acceptance_preflight.log"
+  cat > "${command_file}" <<EOF
+#!/usr/bin/env bash
+# Revalidate final push CI, merged PR identity, exact PR-head CI, and the three
+# structured read-only agent-role audit comments before creating RAW_CACHE_ROOT.
+EOF
+  chmod +x "${command_file}"
+  if "${PYTHON_BIN}" - \
+    "${REPO_ROOT}" "${VALIDATION_ROOT}" "${CANDIDATE_COMMIT}" \
+    "${REPOSITORY}" "${GITHUB_RUN_ID}" "${PR_NUMBER}" "${PR_RUN_ID}" \
+    > "${log_file}" 2>&1 <<'PY'
+import importlib.util
+import json
+import sys
+from pathlib import Path
+
+repo_root = Path(sys.argv[1])
+validation_root = Path(sys.argv[2])
+commit = sys.argv[3]
+repository = sys.argv[4]
+expected_push_run_id = int(sys.argv[5])
+expected_pr_number = int(sys.argv[6])
+expected_pr_run_id = int(sys.argv[7])
+script = repo_root / "scripts/build_validation_packet_v0.3.0.py"
+spec = importlib.util.spec_from_file_location("validation_packet_builder", script)
+if spec is None or spec.loader is None:
+    raise SystemExit(f"Unable to import acceptance validator: {script}")
+builder = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(builder)
+
+builder.validate_github_actions_evidence(validation_root, commit, repository)
+push_run = json.loads(
+    (validation_root / "acceptance/github_actions_run.json").read_text(
+        encoding="utf-8"
+    )
+)
+if push_run.get("id") != expected_push_run_id:
+    raise SystemExit("Final push run does not match MITO_OVERVIEW_GITHUB_RUN_ID")
+pull_request = builder.validate_pull_request_evidence(
+    validation_root,
+    repo_root,
+    commit,
+    repository,
+)
+if pull_request.get("number") != expected_pr_number:
+    raise SystemExit("Merged PR does not match MITO_OVERVIEW_PR_NUMBER")
+_, pr_ci = builder.validate_pull_request_github_actions_evidence(
+    validation_root,
+    pull_request,
+    repository,
+)
+if pr_ci.get("run_id") != expected_pr_run_id:
+    raise SystemExit("PR smoke run does not match MITO_OVERVIEW_PR_RUN_ID")
+audit_rows, _ = builder.validate_read_only_audit_comments(
+    validation_root,
+    pull_request,
+    repository,
+)
+if len(audit_rows) != 3:
+    raise SystemExit("Exactly three structured read-only agent-role audits are required")
+print(
+    "github_acceptance_preflight=PASS "
+    f"push_run_id={expected_push_run_id} pr={expected_pr_number} "
+    f"pr_run_id={expected_pr_run_id} read_only_audits={len(audit_rows)}"
+)
+PY
+  then
+    return 0
+  fi
+  tail -100 "${log_file}" >&2
+  return 1
+}
+
+validate_public_main_tip() {
+  local command_file="${VALIDATION_ROOT}/commands/public_main_tip.sh"
+  local log_file="${VALIDATION_ROOT}/logs/public_main_tip.log"
+  printf 'git ls-remote --exit-code %q refs/heads/main\n' "${PUBLIC_REMOTE}" > "${command_file}"
+  chmod +x "${command_file}"
+  local observed
+  if ! observed="$(git ls-remote --exit-code "${PUBLIC_REMOTE}" refs/heads/main 2>"${log_file}")"; then
+    echo "Unable to resolve the public main branch from ${PUBLIC_REMOTE}." >&2
+    cat "${log_file}" >&2
+    return 1
+  fi
+  if ! "${PYTHON_BIN}" - "${observed}" "${CANDIDATE_COMMIT}" >> "${log_file}" 2>&1 <<'PY'
+import re
+import sys
+
+lines = [line for line in sys.argv[1].splitlines() if line.strip()]
+if len(lines) != 1:
+    raise SystemExit(f"Expected one public main ref, observed {len(lines)}")
+fields = lines[0].split("\t")
+if len(fields) != 2 or fields[1] != "refs/heads/main":
+    raise SystemExit("Public main ref response is malformed")
+if re.fullmatch(r"[0-9a-f]{40}", fields[0]) is None:
+    raise SystemExit("Public main ref is not a full commit SHA")
+if fields[0] != sys.argv[2]:
+    raise SystemExit(
+        f"Public main drift: expected release candidate {sys.argv[2]}, observed {fields[0]}"
+    )
+print(f"public_main_commit={fields[0]}")
+PY
+  then
+    cat "${log_file}" >&2
+    return 1
+  fi
+}
+
 run_fresh_clone_validation() {
   local clone_root="${FRESH_CLONE_ROOT}"
   local env_root="${FRESH_ENV_ROOT}"
@@ -334,6 +777,7 @@ run_clean() {
 
 run_clean git clone --no-checkout $(printf '%q' "${PUBLIC_REMOTE}") $(printf '%q' "${clone_root}")
 run_clean git -C $(printf '%q' "${clone_root}") cat-file -e $(printf '%q' "${CANDIDATE_COMMIT}^{commit}")
+test "\$(run_clean git -C $(printf '%q' "${clone_root}") rev-parse refs/remotes/origin/main)" = $(printf '%q' "${CANDIDATE_COMMIT}")
 run_clean git -C $(printf '%q' "${clone_root}") checkout --detach $(printf '%q' "${CANDIDATE_COMMIT}")
 test "\$(run_clean git -C $(printf '%q' "${clone_root}") rev-parse HEAD)" = $(printf '%q' "${CANDIDATE_COMMIT}")
 test "\$(run_clean git -C $(printf '%q' "${clone_root}") remote get-url origin)" = $(printf '%q' "${PUBLIC_REMOTE}")
@@ -392,6 +836,7 @@ evidence = {
     "source_remote": sys.argv[4],
     "candidate_commit": sys.argv[2],
     "checked_out_commit": sys.argv[2],
+    "public_main_commit": sys.argv[2],
     "detached_head": True,
     "clone_worktree_clean": True,
     "public_https_clone": True,
@@ -417,63 +862,39 @@ fetch_and_compare_ubuntu_public_evidence() {
   local command_file="${VALIDATION_ROOT}/commands/cross_platform_public_reproduction.sh"
   local log_file="${VALIDATION_ROOT}/logs/cross_platform_public_reproduction.log"
   local acceptance_root="${VALIDATION_ROOT}/acceptance/ubuntu_public_validation"
-  local runs_json="${acceptance_root}/workflow_runs.json"
-  local run_id_file="${acceptance_root}/run_id.txt"
   local artifacts_json="${acceptance_root}/artifacts.json"
   local artifact_root="${acceptance_root}/artifact"
   local comparison_tsv="${VALIDATION_ROOT}/acceptance/cross_platform_comparison.tsv"
   local comparison_json="${VALIDATION_ROOT}/acceptance/cross_platform_public_reproduction.json"
+  local public_run_id="${PUBLIC_RUN_ID}"
+  local artifact_name="public-validation-derived-${CANDIDATE_COMMIT}-${PUBLIC_RUN_ID}"
 
   mkdir -p "${acceptance_root}" "${artifact_root}"
   cat > "${command_file}" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
-gh api repos/${GITHUB_REPOSITORY}/actions/workflows/public-validation.yml/runs?event=workflow_dispatch\&status=success\&per_page=100
-# Select the successful Ubuntu public-validation run whose head_sha is
-# ${CANDIDATE_COMMIT}, download its derived-only artifact, and compare it with
-# the local macOS normalized matrix using the embedded deterministic comparator.
+gh run download ${PUBLIC_RUN_ID} --repo ${GITHUB_REPOSITORY} \
+  --name ${artifact_name} --dir acceptance/ubuntu_public_validation/artifact
+# The exact run and artifact identities were validated by
+# commands/public_validation_run_preflight.sh before RAW_CACHE_ROOT was created.
 EOF
   chmod +x "${command_file}"
 
   if {
-    gh api \
-      "repos/${GITHUB_REPOSITORY}/actions/workflows/public-validation.yml/runs?event=workflow_dispatch&status=success&per_page=100" \
-      > "${runs_json}"
-    "${PYTHON_BIN}" - "${runs_json}" "${CANDIDATE_COMMIT}" "${run_id_file}" <<'PY'
-import json
-import sys
-from pathlib import Path
-
-payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-commit = sys.argv[2]
-matches = [
-    run for run in payload.get("workflow_runs", [])
-    if run.get("head_sha") == commit
-    and run.get("event") == "workflow_dispatch"
-    and run.get("status") == "completed"
-    and run.get("conclusion") == "success"
-    and run.get("path") == ".github/workflows/public-validation.yml"
-]
-if not matches:
-    raise SystemExit(f"No successful public-validation workflow found at {commit}")
-matches.sort(key=lambda run: (run.get("run_attempt", 0), run.get("id", 0)), reverse=True)
-Path(sys.argv[3]).write_text(str(matches[0]["id"]) + "\n", encoding="utf-8")
-PY
-    local public_run_id
-    public_run_id="$(cat "${run_id_file}")"
-    gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${public_run_id}/artifacts?per_page=100" \
-      > "${artifacts_json}"
-    local artifact_name="public-validation-derived-${CANDIDATE_COMMIT}-${public_run_id}"
-    "${PYTHON_BIN}" - "${artifacts_json}" "${artifact_name}" <<'PY'
+    "${PYTHON_BIN}" - \
+      "${artifacts_json}" "${artifact_name}" "${public_run_id}" <<'PY'
 import json
 import sys
 from pathlib import Path
 
 payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
 expected = sys.argv[2]
+expected_run_id = int(sys.argv[3])
 matches = [
     artifact for artifact in payload.get("artifacts", [])
-    if artifact.get("name") == expected and not artifact.get("expired", False)
+    if artifact.get("name") == expected
+    and artifact.get("workflow_run", {}).get("id") == expected_run_id
+    and not artifact.get("expired", False)
 ]
 if len(matches) != 1:
     raise SystemExit(f"Expected one unexpired public-validation artifact {expected!r}")
@@ -678,7 +1099,7 @@ if spec is None or spec.loader is None:
 builder = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(builder)
 rows = builder.validate_acceptance_evidence(
-    validation_root, sys.argv[3], sys.argv[4]
+    validation_root, repo_root, sys.argv[3], sys.argv[4]
 )
 writer = csv.DictWriter(
     sys.stdout,
@@ -699,6 +1120,10 @@ PY
   echo "git_branch=$(git -C "${REPO_ROOT}" branch --show-current)"
   echo "repository=${REPOSITORY}"
   echo "github_actions_run_id=${GITHUB_RUN_ID}"
+  echo "final_push_github_actions_run_id=${GITHUB_RUN_ID}"
+  echo "pull_request_number=${PR_NUMBER}"
+  echo "pull_request_github_actions_run_id=${PR_RUN_ID}"
+  echo "public_validation_github_actions_run_id=${PUBLIC_RUN_ID}"
   echo "validation_profile=${VALIDATION_PROFILE}"
   echo "generated_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   uname -a
@@ -714,6 +1139,16 @@ PY
 } > "${VALIDATION_ROOT}/environment.txt" 2>&1
 
 fetch_github_actions_evidence
+fetch_pull_request_evidence
+preflight_public_validation_evidence
+validate_github_preflight_evidence
+validate_public_main_tip
+if [[ -e "${CACHE_ROOT}" || -L "${CACHE_ROOT}" ]]; then
+  echo "Raw cache root appeared during preflight and will not be reused: ${CACHE_ROOT}" >&2
+  exit 1
+fi
+mkdir -p "$(dirname "${CACHE_ROOT}")"
+mkdir "${CACHE_ROOT}"
 run_fresh_clone_validation
 append_acceptance_cases >> "${CASES_TSV}"
 
@@ -762,6 +1197,11 @@ for required in "${PREPARE_SCRIPT}" "${PUBLIC_MATRIX}" "${ISOLATION_WRAPPER}" "$
     exit 1
   fi
 done
+if [[ ! -d "${CACHE_ROOT}" || -L "${CACHE_ROOT}" ]] || \
+   [[ -n "$(find "${CACHE_ROOT}" -mindepth 1 -maxdepth 1 -print -quit)" ]]; then
+  echo "Raw cache root must still be an empty regular directory immediately before download: ${CACHE_ROOT}" >&2
+  exit 1
+fi
 run_logged public_cache_prepare public_input \
   "${PREPARE_SCRIPT}" --cache "${CACHE_ROOT}"
 
@@ -1200,15 +1640,22 @@ if ! bash "${ZIP_VERIFY_ROOT}/verify_bundle.sh" >> "${PACKET_VERIFY_LOG}" 2>&1; 
   exit 1
 fi
 
-"${PYTHON_BIN}" -   "${ZIP_VERIFY_ROOT}/run.json" "${PACKET_VERIFY_LOG}"   "${CANDIDATE_COMMIT}" "${GITHUB_RUN_ID}" <<'PY'
+"${PYTHON_BIN}" - \
+  "${ZIP_VERIFY_ROOT}/run.json" "${ZIP_VERIFY_ROOT}/environment.txt" \
+  "${PACKET_VERIFY_LOG}" "${CANDIDATE_COMMIT}" "${GITHUB_RUN_ID}" \
+  "${PR_NUMBER}" "${PR_RUN_ID}" "${PUBLIC_RUN_ID}" <<'PY'
 import json
 import sys
 from pathlib import Path
 
 run = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-log = Path(sys.argv[2]).read_text(encoding="utf-8")
-commit = sys.argv[3]
-run_id = int(sys.argv[4])
+environment_lines = Path(sys.argv[2]).read_text(encoding="utf-8").splitlines()
+log = Path(sys.argv[3]).read_text(encoding="utf-8")
+commit = sys.argv[4]
+run_id = int(sys.argv[5])
+pr_number = int(sys.argv[6])
+pr_run_id = int(sys.argv[7])
+public_run_id = int(sys.argv[8])
 if run.get("schema_version") != "2.0":
     raise SystemExit("Audit ZIP schema version mismatch")
 if run.get("validation_profile") != "github_release_validation_v1":
@@ -1217,6 +1664,29 @@ if run.get("git_commit") != commit:
     raise SystemExit("Audit ZIP commit does not match the validated candidate")
 if run.get("github_actions_run_id") != run_id:
     raise SystemExit("Audit ZIP GitHub Actions run does not match the release gate")
+if run.get("final_push_github_actions_run_id") != run_id:
+    raise SystemExit("Audit ZIP final push run does not match the release gate")
+if run.get("pull_request_number") != pr_number:
+    raise SystemExit("Audit ZIP pull-request number does not match the release gate")
+if run.get("pull_request_github_actions_run_id") != pr_run_id:
+    raise SystemExit("Audit ZIP pull-request run does not match the release gate")
+if run.get("public_validation_github_actions_run_id") != public_run_id:
+    raise SystemExit("Audit ZIP public-validation run does not match the release gate")
+environment = {}
+for line in environment_lines:
+    key, separator, value = line.partition("=")
+    if separator:
+        environment[key] = value
+expected_ids = {
+    "github_actions_run_id": run_id,
+    "final_push_github_actions_run_id": run_id,
+    "pull_request_number": pr_number,
+    "pull_request_github_actions_run_id": pr_run_id,
+    "public_validation_github_actions_run_id": public_run_id,
+}
+for key, expected_id in expected_ids.items():
+    if environment.get(key) != str(expected_id):
+        raise SystemExit(f"Audit ZIP environment identity mismatch for {key}")
 expected = (
     f"verified mito-overview v0.3.0 github_release_validation_v1 "
     f"packet at commit {commit}"
@@ -1245,7 +1715,10 @@ if [[ "$(git -C "${REPO_ROOT}" rev-parse HEAD)" != "${CANDIDATE_COMMIT}" ]] ||  
   exit 1
 fi
 
-"${PYTHON_BIN}" -   "${PACKET_RECEIPT}" "${CANDIDATE_COMMIT}" "${GITHUB_RUN_ID}"   "${EXPECTED_AUDIT_ZIP}" "${AUDIT_ZIP_SHA256}" <<'PY'
+"${PYTHON_BIN}" - \
+  "${PACKET_RECEIPT}" "${CANDIDATE_COMMIT}" "${GITHUB_RUN_ID}" \
+  "${PR_NUMBER}" "${PR_RUN_ID}" "${PUBLIC_RUN_ID}" \
+  "${EXPECTED_AUDIT_ZIP}" "${AUDIT_ZIP_SHA256}" <<'PY'
 import json
 import sys
 from datetime import datetime, timezone
@@ -1259,8 +1732,12 @@ receipt = {
     "release_version": "v0.3.0",
     "git_commit": sys.argv[2],
     "github_actions_run_id": int(sys.argv[3]),
-    "audit_zip": sys.argv[4],
-    "audit_zip_sha256": sys.argv[5],
+    "final_push_github_actions_run_id": int(sys.argv[3]),
+    "pull_request_number": int(sys.argv[4]),
+    "pull_request_github_actions_run_id": int(sys.argv[5]),
+    "public_validation_github_actions_run_id": int(sys.argv[6]),
+    "audit_zip": sys.argv[7],
+    "audit_zip_sha256": sys.argv[8],
     "verifier_runs": ["packet_root", "fresh_audit_zip_extraction"],
     "generated_utc": datetime.now(timezone.utc).isoformat(),
 }

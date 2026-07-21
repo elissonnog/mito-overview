@@ -459,11 +459,40 @@ FRESH_CLONE_CASE_ID = "fresh_clone_candidate_commit"
 GITHUB_ACTIONS_LINUX_CASE_ID = "github_actions_linux_candidate_commit"
 GITHUB_ACTIONS_MACOS_CASE_ID = "github_actions_macos_candidate_commit"
 GITHUB_ACTIONS_MACOS_ARM64_CASE_ID = "github_actions_macos_arm64_candidate_commit"
+PR_HEAD_CI_CASE_ID = "pr_head_ci_candidate_commit"
+READ_ONLY_AUDIT_MARKER = "<!-- mito-overview-read-only-audit-v1 -->"
+READ_ONLY_AUDIT_SCHEMA_VERSION = "1.0"
+READ_ONLY_AUDIT_METHOD = "read_only_agent_role_audit"
+READ_ONLY_AUDIT_CASE_IDS = {
+    "release_engineering": "read_only_audit_release_engineering",
+    "bioinformatics": "read_only_audit_bioinformatics",
+    "reproducibility": "read_only_audit_reproducibility",
+}
+EXPECTED_PULL_REQUEST_NUMBER = 3
+EXPECTED_PUBLIC_VALIDATION_WORKFLOW = "public-validation"
+EXPECTED_PUBLIC_VALIDATION_WORKFLOW_PATH = ".github/workflows/public-validation.yml"
+REQUIRED_ACCEPTANCE_FILES = {
+    "fresh_clone.json",
+    "github_actions_run.json",
+    "github_actions_jobs.json",
+    "pull_request.json",
+    "pull_request_comments.json",
+    "pull_request_github_actions_run.json",
+    "pull_request_github_actions_jobs.json",
+    "cross_platform_comparison.tsv",
+    "cross_platform_public_reproduction.json",
+}
+REQUIRED_PUBLIC_VALIDATION_ACCEPTANCE_FILES = {
+    "ubuntu_public_validation/workflow_run.json",
+    "ubuntu_public_validation/artifacts.json",
+}
 ACCEPTANCE_CASE_IDS = {
     FRESH_CLONE_CASE_ID,
     GITHUB_ACTIONS_LINUX_CASE_ID,
     GITHUB_ACTIONS_MACOS_CASE_ID,
     GITHUB_ACTIONS_MACOS_ARM64_CASE_ID,
+    PR_HEAD_CI_CASE_ID,
+    *READ_ONLY_AUDIT_CASE_IDS.values(),
 }
 EXPECTED_GITHUB_WORKFLOW = "smoke-tests"
 EXPECTED_GITHUB_JOBS = {
@@ -508,6 +537,8 @@ REQUIRED_PASS_CASES = {
     "gm12878_visual_integrity",
     "filter_profiles",
     "offline_isolation",
+    "public_cache_prepare",
+    "cross_platform_public_reproduction",
 } | ACCEPTANCE_CASE_IDS
 
 
@@ -736,6 +767,10 @@ def parse_environment_identity(path: Path) -> dict[str, str]:
         "git_commit",
         "repository",
         "github_actions_run_id",
+        "final_push_github_actions_run_id",
+        "pull_request_number",
+        "pull_request_github_actions_run_id",
+        "public_validation_github_actions_run_id",
     }
     values: dict[str, str] = {}
     for line in path.read_text(encoding="utf-8").splitlines():
@@ -1755,6 +1790,18 @@ def load_json_object(path: Path, label: str) -> dict[str, object]:
     return value
 
 
+def load_json_array(path: Path, label: str) -> list[object]:
+    if not path.is_file():
+        raise FileNotFoundError(f"Required {label} not found: {path}")
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ValueError(f"Unable to parse {label}: {path}") from error
+    if not isinstance(value, list):
+        raise ValueError(f"{label} must contain a JSON array: {path}")
+    return value
+
+
 def _reject_secret_material(value: object, location: str = "root") -> None:
     sensitive_key = re.compile(
         r"(?i)(?:^|_)(?:access_?token|refresh_?token|authorization|password|secret)(?:$|_)"
@@ -2201,6 +2248,438 @@ def positive_json_integer(value: object, label: str) -> int:
     return value
 
 
+def validate_acceptance_inventory(validation_root: Path) -> None:
+    acceptance_root = validation_root / "acceptance"
+    if acceptance_root.is_symlink() or not acceptance_root.is_dir():
+        raise ValueError("Acceptance evidence must be a regular directory")
+    evidence_paths = list(acceptance_root.rglob("*"))
+    if any(
+        path.is_symlink() or (not path.is_file() and not path.is_dir())
+        for path in evidence_paths
+    ):
+        raise ValueError("Acceptance evidence contains a symlink or non-regular entry")
+    observed = {
+        path.name
+        for path in acceptance_root.iterdir()
+        if path.is_file() and not path.is_symlink()
+    }
+    missing = REQUIRED_ACCEPTANCE_FILES - observed
+    if missing:
+        raise ValueError(
+            "Required acceptance evidence is missing: " + ", ".join(sorted(missing))
+        )
+    for relative in sorted(REQUIRED_ACCEPTANCE_FILES):
+        require_nonempty_evidence(validation_root, f"acceptance/{relative}")
+    for relative in sorted(REQUIRED_PUBLIC_VALIDATION_ACCEPTANCE_FILES):
+        require_nonempty_evidence(validation_root, f"acceptance/{relative}")
+
+
+def validate_repository_object(
+    value: object,
+    repository_slug: str,
+    label: str,
+) -> None:
+    if not isinstance(value, dict):
+        raise ValueError(f"{label} repository metadata is not an object")
+    expected_html = f"https://github.com/{repository_slug}"
+    expected_api = f"https://api.github.com/repos/{repository_slug}"
+    if value.get("full_name") != repository_slug:
+        raise ValueError(f"{label} repository full_name mismatch")
+    if value.get("html_url") != expected_html or value.get("url") != expected_api:
+        raise ValueError(f"{label} repository URLs are not canonical")
+
+
+def validate_pull_request_evidence(
+    validation_root: Path,
+    repo_root: Path,
+    expected_commit: str,
+    repository: str,
+) -> dict[str, object]:
+    relative = "acceptance/pull_request.json"
+    pull_request = load_json_object(
+        validation_root / relative,
+        "pull-request metadata evidence",
+    )
+    repository_slug = github_repository_slug(repository)
+    repository_api = f"https://api.github.com/repos/{repository_slug}"
+    pull_number = positive_json_integer(
+        pull_request.get("number"),
+        "pull request number",
+    )
+    if pull_number != EXPECTED_PULL_REQUEST_NUMBER:
+        raise ValueError(
+            f"Release evidence must come from pull request {EXPECTED_PULL_REQUEST_NUMBER}, "
+            f"observed {pull_number}"
+        )
+    canonical_urls = {
+        "url": f"{repository_api}/pulls/{pull_number}",
+        "html_url": f"https://github.com/{repository_slug}/pull/{pull_number}",
+        "issue_url": f"{repository_api}/issues/{pull_number}",
+        "comments_url": f"{repository_api}/issues/{pull_number}/comments",
+    }
+    for field, expected in canonical_urls.items():
+        if pull_request.get(field) != expected:
+            raise ValueError(
+                f"Pull-request canonical URL mismatch for {field}: "
+                f"{pull_request.get(field)!r} != {expected!r}"
+            )
+    if pull_request.get("state") != "closed" or pull_request.get("merged") is not True:
+        raise ValueError("Pull-request metadata does not record a merged, closed PR")
+    if not isinstance(pull_request.get("merged_at"), str) or not str(
+        pull_request["merged_at"]
+    ).strip():
+        raise ValueError("Pull-request metadata lacks merged_at")
+    if pull_request.get("merge_commit_sha") != expected_commit:
+        raise ValueError(
+            "Pull-request merge_commit_sha does not match the final release commit"
+        )
+
+    base = pull_request.get("base")
+    head = pull_request.get("head")
+    if not isinstance(base, dict) or not isinstance(head, dict):
+        raise ValueError("Pull-request base/head metadata is malformed")
+    if base.get("ref") != EXPECTED_GITHUB_BRANCH:
+        raise ValueError(
+            f"Pull-request base branch mismatch: {base.get('ref')!r} "
+            f"!= {EXPECTED_GITHUB_BRANCH!r}"
+        )
+    head_ref = head.get("ref")
+    if not isinstance(head_ref, str) or not head_ref.strip():
+        raise ValueError("Pull-request head branch is missing")
+    validate_repository_object(base.get("repo"), repository_slug, "Pull-request base")
+    validate_repository_object(head.get("repo"), repository_slug, "Pull-request head")
+    base_sha = base.get("sha")
+    head_sha = head.get("sha")
+    for label, value in (("base", base_sha), ("head", head_sha)):
+        if not isinstance(value, str) or re.fullmatch(r"[0-9a-f]{40}", value) is None:
+            raise ValueError(f"Pull-request {label} SHA is not a full Git commit")
+
+    parent_line = git_output(repo_root, "rev-list", "--parents", "-n", "1", expected_commit)
+    parent_fields = parent_line.split()
+    if len(parent_fields) != 3 or parent_fields[0] != expected_commit:
+        raise ValueError("Final release commit is not a two-parent merge commit")
+    base_parent, head_parent = parent_fields[1:]
+    if base_sha != base_parent or head_sha != head_parent:
+        raise ValueError(
+            "Final merge parent relationship does not match pull-request base/head metadata"
+        )
+    final_tree = git_output(repo_root, "rev-parse", f"{expected_commit}^{{tree}}")
+    reviewed_head_tree = git_output(repo_root, "rev-parse", f"{head_sha}^{{tree}}")
+    if final_tree != reviewed_head_tree:
+        raise ValueError(
+            "Reviewed pull-request head tree does not equal the final release tree"
+        )
+
+    return {
+        "number": pull_number,
+        "repository": repository_slug,
+        "url": canonical_urls["html_url"],
+        "api_url": canonical_urls["url"],
+        "issue_api_url": canonical_urls["issue_url"],
+        "comments_api_url": canonical_urls["comments_url"],
+        "state": "closed",
+        "merged": True,
+        "merged_at": pull_request["merged_at"],
+        "merge_commit_sha": expected_commit,
+        "base_ref": EXPECTED_GITHUB_BRANCH,
+        "base_sha": base_sha,
+        "head_ref": head_ref,
+        "head_sha": head_sha,
+        "final_commit_parents": [base_parent, head_parent],
+        "final_tree_sha": final_tree,
+        "reviewed_head_tree_sha": reviewed_head_tree,
+    }
+
+
+def validate_pull_request_github_actions_evidence(
+    validation_root: Path,
+    pull_request: dict[str, object],
+    repository: str,
+) -> tuple[dict[str, str], dict[str, object]]:
+    run_relative = "acceptance/pull_request_github_actions_run.json"
+    jobs_relative = "acceptance/pull_request_github_actions_jobs.json"
+    run = load_json_object(
+        validation_root / run_relative,
+        "pull-request GitHub Actions run evidence",
+    )
+    jobs_payload = load_json_object(
+        validation_root / jobs_relative,
+        "pull-request GitHub Actions jobs evidence",
+    )
+    repository_slug = github_repository_slug(repository)
+    repository_api = f"https://api.github.com/repos/{repository_slug}"
+    pull_number = int(pull_request["number"])
+    head_sha = str(pull_request["head_sha"])
+    head_ref = str(pull_request["head_ref"])
+    base_sha = str(pull_request["base_sha"])
+    run_id = positive_json_integer(run.get("id"), "pull-request run id")
+    run_attempt = positive_json_integer(
+        run.get("run_attempt"),
+        "pull-request run attempt",
+    )
+    expected_run_url = f"https://github.com/{repository_slug}/actions/runs/{run_id}"
+    expected_run_api = f"{repository_api}/actions/runs/{run_id}"
+    expected_run_fields = {
+        "name": EXPECTED_GITHUB_WORKFLOW,
+        "event": "pull_request",
+        "head_branch": head_ref,
+        "path": EXPECTED_GITHUB_WORKFLOW_PATH,
+        "head_sha": head_sha,
+        "status": "completed",
+        "conclusion": "success",
+        "html_url": expected_run_url,
+        "url": expected_run_api,
+        "jobs_url": f"{expected_run_api}/jobs",
+    }
+    for field, expected in expected_run_fields.items():
+        if run.get(field) != expected:
+            raise ValueError(
+                f"Pull-request GitHub Actions run mismatch for {field}: "
+                f"{run.get(field)!r} != {expected!r}"
+            )
+    run_repository = run.get("repository")
+    head_repository = run.get("head_repository")
+    if not isinstance(run_repository, dict) or run_repository.get("full_name") != repository_slug:
+        raise ValueError("Pull-request workflow repository identity mismatch")
+    if not isinstance(head_repository, dict) or head_repository.get("full_name") != repository_slug:
+        raise ValueError("Pull-request workflow head repository identity mismatch")
+
+    associations = run.get("pull_requests")
+    if not isinstance(associations, list) or len(associations) != 1:
+        raise ValueError("Pull-request workflow must be associated with exactly one PR")
+    association = associations[0]
+    if not isinstance(association, dict):
+        raise ValueError("Pull-request workflow association is malformed")
+    if (
+        association.get("number") != pull_number
+        or association.get("url") != f"{repository_api}/pulls/{pull_number}"
+    ):
+        raise ValueError("Pull-request workflow association has the wrong PR identity")
+    association_head = association.get("head")
+    association_base = association.get("base")
+    if not isinstance(association_head, dict) or not isinstance(association_base, dict):
+        raise ValueError("Pull-request workflow association lacks base/head metadata")
+    if (
+        association_head.get("ref") != head_ref
+        or association_head.get("sha") != head_sha
+        or association_base.get("ref") != EXPECTED_GITHUB_BRANCH
+        or association_base.get("sha") != base_sha
+    ):
+        raise ValueError("Pull-request workflow association does not match the reviewed head")
+    for label, nested in (("head", association_head), ("base", association_base)):
+        nested_repo = nested.get("repo")
+        if not isinstance(nested_repo, dict):
+            raise ValueError(f"Pull-request workflow {label} repository is malformed")
+        if (
+            nested_repo.get("name") != repository_slug.split("/", 1)[1]
+            or nested_repo.get("url") != repository_api
+        ):
+            raise ValueError(f"Pull-request workflow {label} repository identity mismatch")
+
+    jobs = jobs_payload.get("jobs")
+    if not isinstance(jobs, list) or not all(isinstance(job, dict) for job in jobs):
+        raise ValueError("Pull-request GitHub Actions jobs evidence is malformed")
+    if jobs_payload.get("total_count") != 3 or len(jobs) != 3:
+        raise ValueError("Pull-request workflow must contain exactly three pinned jobs")
+    expected_names = {item["name"] for item in EXPECTED_GITHUB_JOBS.values()}
+    if {str(job.get("name")) for job in jobs} != expected_names:
+        raise ValueError("Pull-request workflow job inventory does not match the pinned matrix")
+    job_ids = [positive_json_integer(job.get("id"), "pull-request job id") for job in jobs]
+    if len(job_ids) != len(set(job_ids)):
+        raise ValueError("Pull-request workflow contains duplicate job IDs")
+
+    selected_jobs: list[dict[str, object]] = []
+    for expectation in EXPECTED_GITHUB_JOBS.values():
+        job = next(job for job in jobs if job.get("name") == expectation["name"])
+        job_id = int(job["id"])
+        expected_job_url = f"{expected_run_url}/job/{job_id}"
+        expected_job_api = f"{repository_api}/actions/jobs/{job_id}"
+        labels = job.get("labels")
+        if (
+            not isinstance(labels, list)
+            or expectation["label"] not in labels
+            or job.get("head_sha") != head_sha
+            or job.get("run_id") != run_id
+            or job.get("run_attempt") != run_attempt
+            or job.get("workflow_name") != EXPECTED_GITHUB_WORKFLOW
+            or job.get("status") != "completed"
+            or job.get("conclusion") != "success"
+            or job.get("html_url") != expected_job_url
+            or job.get("url") != expected_job_api
+            or job.get("run_url") != expected_run_api
+        ):
+            raise ValueError(
+                f"Pull-request GitHub Actions job identity mismatch: {expectation['name']}"
+            )
+        selected_jobs.append(
+            {
+                "job_id": job_id,
+                "name": job["name"],
+                "labels": job["labels"],
+                "head_sha": job["head_sha"],
+                "url": job["html_url"],
+            }
+        )
+
+    identity = {
+        "provider": "github_actions",
+        "run_id": run_id,
+        "run_attempt": run_attempt,
+        "workflow": EXPECTED_GITHUB_WORKFLOW,
+        "workflow_path": EXPECTED_GITHUB_WORKFLOW_PATH,
+        "event": "pull_request",
+        "pull_request_number": pull_number,
+        "branch": head_ref,
+        "head_sha": head_sha,
+        "status": "completed",
+        "conclusion": "success",
+        "url": expected_run_url,
+        "jobs": selected_jobs,
+    }
+    row = {
+        "case_id": PR_HEAD_CI_CASE_ID,
+        "category": "release_acceptance",
+        "input_available": "1",
+        "expected_available": "1",
+        "verdict": "PASS",
+        "detail": (
+            f"{run_relative}; {jobs_relative}; run_id={run_id}; "
+            f"pull_request={pull_number}; jobs=3; event=pull_request; "
+            f"reviewed_commit={head_sha}"
+        ),
+    }
+    return row, identity
+
+
+def parse_read_only_audit_payload(body: str) -> dict[str, object] | None:
+    if READ_ONLY_AUDIT_MARKER not in body:
+        return None
+    if body.count(READ_ONLY_AUDIT_MARKER) != 1:
+        raise ValueError("Read-only audit comment contains a duplicate marker")
+    _, suffix = body.split(READ_ONLY_AUDIT_MARKER, 1)
+    match = re.fullmatch(
+        r"\s*```json[ \t]*\r?\n(?P<payload>.*?)\r?\n```[ \t]*\s*",
+        suffix,
+        flags=re.DOTALL,
+    )
+    if match is None:
+        raise ValueError(
+            "Read-only audit marker must be followed by exactly one JSON fenced block"
+        )
+    try:
+        payload = json.loads(match.group("payload"))
+    except json.JSONDecodeError as error:
+        raise ValueError("Read-only audit JSON payload is malformed") from error
+    required_fields = {
+        "schema_version",
+        "review_method",
+        "role",
+        "reviewed_commit",
+        "reviewed_tree",
+        "verdict",
+        "unresolved_blockers",
+        "summary",
+    }
+    if not isinstance(payload, dict) or set(payload) != required_fields:
+        raise ValueError("Read-only audit payload fields do not match schema 1.0")
+    return payload
+
+
+def validate_read_only_audit_comments(
+    validation_root: Path,
+    pull_request: dict[str, object],
+    repository: str,
+) -> tuple[list[dict[str, str]], list[dict[str, object]]]:
+    relative = "acceptance/pull_request_comments.json"
+    comments = load_json_array(
+        validation_root / relative,
+        "pull-request issue comments evidence",
+    )
+    repository_slug = github_repository_slug(repository)
+    repository_api = f"https://api.github.com/repos/{repository_slug}"
+    pull_number = int(pull_request["number"])
+    head_sha = str(pull_request["head_sha"])
+    final_tree = str(pull_request["final_tree_sha"])
+    observed: dict[str, dict[str, object]] = {}
+    comment_ids: set[int] = set()
+    for value in comments:
+        if not isinstance(value, dict):
+            raise ValueError("Pull-request comments evidence contains a non-object entry")
+        comment_id = positive_json_integer(value.get("id"), "issue comment id")
+        if comment_id in comment_ids:
+            raise ValueError("Pull-request comments evidence contains duplicate comment IDs")
+        comment_ids.add(comment_id)
+        expected_urls = {
+            "url": f"{repository_api}/issues/comments/{comment_id}",
+            "html_url": (
+                f"https://github.com/{repository_slug}/pull/{pull_number}"
+                f"#issuecomment-{comment_id}"
+            ),
+            "issue_url": f"{repository_api}/issues/{pull_number}",
+        }
+        for field, expected in expected_urls.items():
+            if value.get(field) != expected:
+                raise ValueError(
+                    f"Pull-request comment canonical URL mismatch for {field}"
+                )
+        body = value.get("body")
+        if not isinstance(body, str):
+            raise ValueError("Pull-request comment body is not text")
+        payload = parse_read_only_audit_payload(body)
+        if payload is None:
+            continue
+        role = payload.get("role")
+        if role not in READ_ONLY_AUDIT_CASE_IDS:
+            raise ValueError(f"Unsupported read-only audit role: {role!r}")
+        if role in observed:
+            raise ValueError(f"Duplicate read-only audit payload for role: {role}")
+        if payload.get("schema_version") != READ_ONLY_AUDIT_SCHEMA_VERSION:
+            raise ValueError(f"Read-only audit schema mismatch for role: {role}")
+        if payload.get("review_method") != READ_ONLY_AUDIT_METHOD:
+            raise ValueError(f"Read-only audit method mismatch for role: {role}")
+        if payload.get("reviewed_commit") != head_sha:
+            raise ValueError(f"Read-only audit reviewed-commit drift for role: {role}")
+        if payload.get("reviewed_tree") != final_tree:
+            raise ValueError(f"Read-only audit reviewed-tree drift for role: {role}")
+        blockers = payload.get("unresolved_blockers")
+        if isinstance(blockers, bool) or not isinstance(blockers, int) or blockers != 0:
+            raise ValueError(f"Read-only audit has unresolved blockers for role: {role}")
+        if payload.get("verdict") != "PASS":
+            raise ValueError(f"Read-only audit verdict is not PASS for role: {role}")
+        summary = payload.get("summary")
+        if not isinstance(summary, str) or not summary.strip():
+            raise ValueError(f"Read-only audit summary is empty for role: {role}")
+        observed[str(role)] = {
+            **payload,
+            "summary": summary.strip(),
+            "comment_id": comment_id,
+            "comment_url": expected_urls["html_url"],
+        }
+
+    missing = sorted(set(READ_ONLY_AUDIT_CASE_IDS) - set(observed))
+    if missing:
+        raise ValueError(
+            "Missing required read-only audit payloads: " + ", ".join(missing)
+        )
+    rows = [
+        {
+            "case_id": READ_ONLY_AUDIT_CASE_IDS[role],
+            "category": "release_acceptance",
+            "input_available": "1",
+            "expected_available": "1",
+            "verdict": "PASS",
+            "detail": (
+                f"{relative}; method={READ_ONLY_AUDIT_METHOD}; role={role}; "
+                f"reviewed_commit={head_sha}; reviewed_tree={final_tree}; "
+                f"comment_id={observed[role]['comment_id']}"
+            ),
+        }
+        for role in READ_ONLY_AUDIT_CASE_IDS
+    ]
+    identities = [observed[role] for role in READ_ONLY_AUDIT_CASE_IDS]
+    return rows, identities
+
+
 def validate_fresh_clone_evidence(
     validation_root: Path,
     expected_commit: str,
@@ -2227,7 +2706,7 @@ def validate_fresh_clone_evidence(
         raise ValueError(
             f"Fresh-clone validation evidence is nonpassing: {fresh.get('verdict')!r}"
         )
-    for field in ("candidate_commit", "checked_out_commit"):
+    for field in ("candidate_commit", "checked_out_commit", "public_main_commit"):
         if fresh.get(field) != expected_commit:
             raise ValueError(
                 f"Fresh-clone commit mismatch for {field}: "
@@ -2422,12 +2901,61 @@ def validate_github_actions_evidence(
 
 def validate_acceptance_evidence(
     validation_root: Path,
+    repo_root: Path,
     expected_commit: str,
     repository: str,
 ) -> list[dict[str, str]]:
+    validate_acceptance_inventory(validation_root)
     rows = [validate_fresh_clone_evidence(validation_root, expected_commit, repository)]
     rows.extend(validate_github_actions_evidence(validation_root, expected_commit, repository))
+    pull_request = validate_pull_request_evidence(
+        validation_root,
+        repo_root,
+        expected_commit,
+        repository,
+    )
+    pr_ci_row, _ = validate_pull_request_github_actions_evidence(
+        validation_root,
+        pull_request,
+        repository,
+    )
+    audit_rows, _ = validate_read_only_audit_comments(
+        validation_root,
+        pull_request,
+        repository,
+    )
+    rows.append(pr_ci_row)
+    rows.extend(audit_rows)
     return rows
+
+
+def pull_request_acceptance_identity(
+    validation_root: Path,
+    repo_root: Path,
+    expected_commit: str,
+    repository: str,
+) -> dict[str, object]:
+    pull_request = validate_pull_request_evidence(
+        validation_root,
+        repo_root,
+        expected_commit,
+        repository,
+    )
+    _, pr_ci = validate_pull_request_github_actions_evidence(
+        validation_root,
+        pull_request,
+        repository,
+    )
+    _, audits = validate_read_only_audit_comments(
+        validation_root,
+        pull_request,
+        repository,
+    )
+    return {
+        "pull_request": pull_request,
+        "pull_request_github_actions": pr_ci,
+        "read_only_audits": audits,
+    }
 
 
 def github_actions_identity(
@@ -2486,6 +3014,192 @@ def github_actions_identity(
     }
 
 
+def validate_public_validation_github_actions_evidence(
+    validation_root: Path,
+    expected_commit: str,
+    repository: str,
+    expected_run_id: int,
+) -> dict[str, object]:
+    """Bind the packet to one successful Ubuntu public-data workflow run."""
+
+    run_relative = "acceptance/ubuntu_public_validation/workflow_run.json"
+    artifacts_relative = "acceptance/ubuntu_public_validation/artifacts.json"
+    comparison_relative = "acceptance/cross_platform_comparison.tsv"
+    reproduction_relative = "acceptance/cross_platform_public_reproduction.json"
+    run = load_json_object(
+        validation_root / run_relative,
+        "public-validation GitHub Actions run evidence",
+    )
+    artifacts_payload = load_json_object(
+        validation_root / artifacts_relative,
+        "public-validation GitHub Actions artifact evidence",
+    )
+    reproduction = load_json_object(
+        validation_root / reproduction_relative,
+        "cross-platform public reproduction evidence",
+    )
+    repository_slug = github_repository_slug(repository)
+    repository_api = f"https://api.github.com/repos/{repository_slug}"
+    run_id = positive_json_integer(run.get("id"), "public-validation run id")
+    if run_id != expected_run_id:
+        raise ValueError(
+            "Public-validation GitHub Actions run does not match the selected run ID"
+        )
+    run_attempt = positive_json_integer(
+        run.get("run_attempt"), "public-validation run attempt"
+    )
+    run_url = f"https://github.com/{repository_slug}/actions/runs/{run_id}"
+    run_api = f"{repository_api}/actions/runs/{run_id}"
+    expected_run_fields = {
+        "name": EXPECTED_PUBLIC_VALIDATION_WORKFLOW,
+        "event": "workflow_dispatch",
+        "head_branch": EXPECTED_GITHUB_BRANCH,
+        "path": EXPECTED_PUBLIC_VALIDATION_WORKFLOW_PATH,
+        "head_sha": expected_commit,
+        "status": "completed",
+        "conclusion": "success",
+        "html_url": run_url,
+        "url": run_api,
+        "jobs_url": f"{run_api}/jobs",
+    }
+    for field, expected in expected_run_fields.items():
+        if run.get(field) != expected:
+            raise ValueError(
+                f"Public-validation GitHub Actions run mismatch for {field}: "
+                f"{run.get(field)!r} != {expected!r}"
+            )
+    validate_repository_object(
+        run.get("repository"), repository_slug, "Public-validation run"
+    )
+    validate_repository_object(
+        run.get("head_repository"), repository_slug, "Public-validation head"
+    )
+
+    expected_artifact_name = (
+        f"public-validation-derived-{expected_commit}-{expected_run_id}"
+    )
+    artifacts = artifacts_payload.get("artifacts")
+    if not isinstance(artifacts, list) or not all(
+        isinstance(artifact, dict) for artifact in artifacts
+    ):
+        raise ValueError("Public-validation artifact evidence is malformed")
+    matching = [
+        artifact
+        for artifact in artifacts
+        if artifact.get("name") == expected_artifact_name
+        and artifact.get("expired") is False
+        and isinstance(artifact.get("workflow_run"), dict)
+        and artifact["workflow_run"].get("id") == run_id
+    ]
+    if len(matching) != 1:
+        raise ValueError(
+            "Public-validation evidence must contain exactly one selected, unexpired artifact"
+        )
+    artifact = matching[0]
+    artifact_id = positive_json_integer(
+        artifact.get("id"), "public-validation artifact id"
+    )
+    expected_artifact_api = f"{repository_api}/actions/artifacts/{artifact_id}"
+    if (
+        artifact.get("url") != expected_artifact_api
+        or artifact.get("archive_download_url") != f"{expected_artifact_api}/zip"
+    ):
+        raise ValueError("Public-validation artifact URLs are not canonical")
+
+    expected_reproduction = {
+        "schema_version": PACKET_SCHEMA_VERSION,
+        "validation_profile": VALIDATION_PROFILE,
+        "evidence_type": "cross_platform_public_reproduction",
+        "verdict": "PASS",
+        "git_commit": expected_commit,
+        "ubuntu_public_validation_run_id": run_id,
+        "ubuntu_platform": "linux-64",
+        "comparison_table": "cross_platform_comparison.tsv",
+    }
+    for field, expected in expected_reproduction.items():
+        if reproduction.get(field) != expected:
+            raise ValueError(
+                f"Cross-platform reproduction mismatch for {field}: "
+                f"{reproduction.get(field)!r} != {expected!r}"
+            )
+    macos_platform = reproduction.get("macos_platform")
+    if macos_platform not in {"osx-64", "osx-arm64"}:
+        raise ValueError(
+            f"Cross-platform reproduction has unsupported macOS platform: {macos_platform!r}"
+        )
+
+    comparison_rows = read_tsv_rows(
+        validation_root / comparison_relative,
+        (
+            "evidence_type",
+            "relative_path",
+            "macos_sha256",
+            "ubuntu_sha256",
+            "verdict",
+            "comparison",
+        ),
+        "cross_platform_comparison.tsv",
+    )
+    observed_keys: set[tuple[str, str]] = set()
+    counts = {"normalized_scientific_table": 0, "visual_structure": 0}
+    for row in comparison_rows:
+        evidence_type = row["evidence_type"]
+        key = (evidence_type, row["relative_path"])
+        if evidence_type not in counts or not row["relative_path"] or key in observed_keys:
+            raise ValueError("Cross-platform comparison contains an invalid or duplicate row")
+        observed_keys.add(key)
+        if row["verdict"] != "PASS":
+            raise ValueError("Cross-platform comparison contains a nonpassing row")
+        if evidence_type == "normalized_scientific_table":
+            if re.fullmatch(r"[0-9a-f]{64}", row["macos_sha256"]) is None or re.fullmatch(
+                r"[0-9a-f]{64}", row["ubuntu_sha256"]
+            ) is None:
+                raise ValueError("Cross-platform scientific hashes are malformed")
+            if row["macos_sha256"] != row["ubuntu_sha256"]:
+                raise ValueError("Cross-platform scientific table hashes differ")
+        elif row["macos_sha256"] != "not_compared" or row["ubuntu_sha256"] != "not_compared":
+            raise ValueError("Cross-platform visual rows must not claim bytewise comparison")
+        counts[evidence_type] += 1
+    if counts["normalized_scientific_table"] <= 0 or counts["visual_structure"] <= 0:
+        raise ValueError("Cross-platform comparison lacks scientific or visual evidence")
+    if (
+        reproduction.get("normalized_scientific_tables_compared")
+        != counts["normalized_scientific_table"]
+        or reproduction.get("visual_inventories_compared") != counts["visual_structure"]
+    ):
+        raise ValueError("Cross-platform reproduction row counts do not match its table")
+
+    return {
+        "provider": "github_actions",
+        "run_id": run_id,
+        "run_attempt": run_attempt,
+        "workflow": EXPECTED_PUBLIC_VALIDATION_WORKFLOW,
+        "workflow_path": EXPECTED_PUBLIC_VALIDATION_WORKFLOW_PATH,
+        "event": "workflow_dispatch",
+        "branch": EXPECTED_GITHUB_BRANCH,
+        "head_sha": expected_commit,
+        "status": "completed",
+        "conclusion": "success",
+        "url": run_url,
+        "artifact": {
+            "id": artifact_id,
+            "name": expected_artifact_name,
+            "url": expected_artifact_api,
+            "archive_download_url": f"{expected_artifact_api}/zip",
+        },
+        "cross_platform_reproduction": {
+            "verdict": "PASS",
+            "macos_platform": macos_platform,
+            "ubuntu_platform": "linux-64",
+            "normalized_scientific_tables_compared": counts[
+                "normalized_scientific_table"
+            ],
+            "visual_inventories_compared": counts["visual_structure"],
+            "comparison_sha256": sha256(validation_root / comparison_relative),
+        },
+    }
+
+
 def resolve_release_identity(
     repo_root: Path,
     environment_path: Path,
@@ -2524,8 +3238,23 @@ def resolve_release_identity(
             "environment.txt repository does not match packet repository: "
             f"{environment['repository']} != {repository}"
         )
-    if not re.fullmatch(r"[1-9][0-9]*", environment["github_actions_run_id"]):
-        raise ValueError("environment.txt github_actions_run_id is not a positive integer")
+    for key in (
+        "github_actions_run_id",
+        "final_push_github_actions_run_id",
+        "pull_request_number",
+        "pull_request_github_actions_run_id",
+        "public_validation_github_actions_run_id",
+    ):
+        if not re.fullmatch(r"[1-9][0-9]*", environment[key]):
+            raise ValueError(f"environment.txt {key} is not a positive integer")
+    if (
+        environment["github_actions_run_id"]
+        != environment["final_push_github_actions_run_id"]
+    ):
+        raise ValueError(
+            "environment.txt legacy github_actions_run_id does not match "
+            "final_push_github_actions_run_id"
+        )
 
     metadata = read_release_metadata(repo_root)
     package_name = str(metadata["package_name"])
@@ -2557,6 +3286,18 @@ def resolve_release_identity(
         "environment_git_commit": environment["git_commit"],
         "environment_github_actions_run_id": int(
             environment["github_actions_run_id"]
+        ),
+        "environment_final_push_github_actions_run_id": int(
+            environment["final_push_github_actions_run_id"]
+        ),
+        "environment_pull_request_number": int(
+            environment["pull_request_number"]
+        ),
+        "environment_pull_request_github_actions_run_id": int(
+            environment["pull_request_github_actions_run_id"]
+        ),
+        "environment_public_validation_github_actions_run_id": int(
+            environment["public_validation_github_actions_run_id"]
         ),
         "metadata_versions": versions,
         "metadata_sha256": metadata_hashes,
@@ -2832,6 +3573,39 @@ for relative in (
         candidate.is_file() for candidate in evidence_root.rglob("*")
     ):
         raise SystemExit(f"required evidence directory is empty: {relative}")
+
+required_acceptance_files = {
+    "fresh_clone.json", "github_actions_run.json", "github_actions_jobs.json",
+    "pull_request.json", "pull_request_comments.json",
+    "pull_request_github_actions_run.json",
+    "pull_request_github_actions_jobs.json",
+    "cross_platform_comparison.tsv",
+    "cross_platform_public_reproduction.json",
+}
+acceptance_root = root / "acceptance"
+acceptance_entries = list(acceptance_root.rglob("*"))
+if any(
+    entry.is_symlink() or (not entry.is_file() and not entry.is_dir())
+    for entry in acceptance_entries
+):
+    raise SystemExit("acceptance evidence contains a symlink or non-regular entry")
+observed_acceptance_files = {
+    child.name for child in acceptance_root.iterdir()
+    if child.is_file() and not child.is_symlink()
+}
+missing_acceptance_files = required_acceptance_files - observed_acceptance_files
+if missing_acceptance_files:
+    raise SystemExit(
+        "required acceptance evidence is missing: "
+        f"{sorted(missing_acceptance_files)}"
+    )
+for relative in (
+    "ubuntu_public_validation/workflow_run.json",
+    "ubuntu_public_validation/artifacts.json",
+):
+    evidence = acceptance_root / relative
+    if evidence.is_symlink() or not evidence.is_file() or evidence.stat().st_size == 0:
+        raise SystemExit(f"required public-validation evidence is missing: {relative}")
 
 def digest(path):
     value = hashlib.sha256()
@@ -3758,6 +4532,9 @@ if observed_module_rows != expected_module_rows:
 def parse_environment(path):
     wanted = {
         "release_version", "git_commit", "repository", "github_actions_run_id",
+        "final_push_github_actions_run_id", "pull_request_number",
+        "pull_request_github_actions_run_id",
+        "public_validation_github_actions_run_id",
     }
     values = {}
     for line in path.read_text(encoding="utf-8").splitlines():
@@ -3850,6 +4627,7 @@ if (
     or fresh.get("repository") != repository
     or fresh.get("candidate_commit") != commit
     or fresh.get("checked_out_commit") != commit
+    or fresh.get("public_main_commit") != commit
     or fresh.get("source_remote") != repository + ".git"
     or fresh.get("detached_head") is not True
     or fresh.get("clone_worktree_clean") is not True
@@ -3857,32 +4635,62 @@ if (
 ):
     raise SystemExit("fresh-clone acceptance mismatch")
 
+repository_slug = "elissonnog/mito-overview"
+repository_api = f"https://api.github.com/repos/{repository_slug}"
+
+def positive_integer(value, label):
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise SystemExit(f"{label} is not a positive integer")
+    return value
+
+def canonical_repository(value, label):
+    if not isinstance(value, dict) or value.get("full_name") != repository_slug:
+        raise SystemExit(f"{label} repository identity mismatch")
+    if (
+        value.get("html_url") != repository
+        or value.get("url") != repository_api
+    ):
+        raise SystemExit(f"{label} repository URL mismatch")
+
 actions_run = json.loads(
     (root / "acceptance/github_actions_run.json").read_text(encoding="utf-8")
 )
 actions_jobs = json.loads(
     (root / "acceptance/github_actions_jobs.json").read_text(encoding="utf-8")
 )
-run_id = actions_run.get("id")
+run_id = positive_integer(actions_run.get("id"), "final push run ID")
+run_attempt = positive_integer(actions_run.get("run_attempt"), "final push run attempt")
+final_run_url = f"https://github.com/{repository_slug}/actions/runs/{run_id}"
+final_run_api = f"{repository_api}/actions/runs/{run_id}"
 if (
-    isinstance(run_id, bool)
-    or not isinstance(run_id, int)
-    or run_id <= 0
-    or actions_run.get("name") != "smoke-tests"
+    actions_run.get("name") != "smoke-tests"
     or actions_run.get("event") != "push"
     or actions_run.get("head_branch") != "main"
     or actions_run.get("path") != ".github/workflows/smoke-tests.yml"
     or actions_run.get("head_sha") != commit
     or actions_run.get("status") != "completed"
     or actions_run.get("conclusion") != "success"
+    or actions_run.get("html_url") != final_run_url
+    or actions_run.get("url") != final_run_api
+    or actions_run.get("jobs_url") != f"{final_run_api}/jobs"
 ):
-    raise SystemExit("GitHub Actions run identity mismatch")
+    raise SystemExit("GitHub Actions final push run identity mismatch")
+if (
+    not isinstance(actions_run.get("repository"), dict)
+    or actions_run["repository"].get("full_name") != repository_slug
+    or not isinstance(actions_run.get("head_repository"), dict)
+    or actions_run["head_repository"].get("full_name") != repository_slug
+):
+    raise SystemExit("GitHub Actions final push repository identity mismatch")
 if (
     str(run_id) != environment["github_actions_run_id"]
+    or str(run_id) != environment["final_push_github_actions_run_id"]
     or identity.get("environment_github_actions_run_id") != run_id
+    or identity.get("environment_final_push_github_actions_run_id") != run_id
     or run.get("github_actions_run_id") != run_id
+    or run.get("final_push_github_actions_run_id") != run_id
 ):
-    raise SystemExit("GitHub Actions run ID is inconsistent")
+    raise SystemExit("GitHub Actions final push run ID is inconsistent")
 jobs = actions_jobs.get("jobs")
 job_expectations = {
     "github_actions_linux_candidate_commit": (
@@ -3895,42 +4703,461 @@ job_expectations = {
         "Unit and synthetic tests (macos-15)", "macos-15",
     ),
 }
-if not isinstance(jobs, list):
-    raise SystemExit("GitHub Actions jobs evidence is malformed")
+if (
+    not isinstance(jobs, list)
+    or actions_jobs.get("total_count") != len(jobs)
+    or not all(isinstance(job, dict) for job in jobs)
+):
+    raise SystemExit("GitHub Actions final push jobs evidence is malformed")
 selected_jobs = []
 for case_id, (name, label) in job_expectations.items():
-    matching = [job for job in jobs if isinstance(job, dict) and job.get("name") == name]
+    matching = [job for job in jobs if job.get("name") == name]
     if len(matching) != 1:
         raise SystemExit(f"missing or ambiguous GitHub job: {name}")
     job = matching[0]
+    job_id = positive_integer(job.get("id"), f"final push job ID for {name}")
     if (
         label not in job.get("labels", [])
         or job.get("head_sha") != commit
         or job.get("run_id") != run_id
+        or job.get("run_attempt") != run_attempt
+        or job.get("workflow_name") != "smoke-tests"
         or job.get("status") != "completed"
         or job.get("conclusion") != "success"
+        or job.get("html_url") != f"{final_run_url}/job/{job_id}"
+        or job.get("url") != f"{repository_api}/actions/jobs/{job_id}"
+        or job.get("run_url") != final_run_api
     ):
-        raise SystemExit(f"GitHub Actions job identity mismatch: {name}")
+        raise SystemExit(f"GitHub Actions final push job identity mismatch: {name}")
     selected_jobs.append({
-        "job_id": job["id"], "name": job["name"], "labels": job["labels"],
+        "job_id": job_id, "name": job["name"], "labels": job["labels"],
         "head_sha": job["head_sha"], "url": job["html_url"],
     })
 expected_ci = {
-    "provider": "github_actions",
-    "run_id": run_id,
-    "run_attempt": actions_run["run_attempt"],
-    "workflow": actions_run["name"],
-    "workflow_path": actions_run["path"],
-    "event": actions_run["event"],
-    "branch": actions_run["head_branch"],
-    "head_sha": actions_run["head_sha"],
-    "status": actions_run["status"],
-    "conclusion": actions_run["conclusion"],
-    "url": actions_run["html_url"],
-    "jobs": selected_jobs,
+    "provider": "github_actions", "run_id": run_id,
+    "run_attempt": run_attempt, "workflow": "smoke-tests",
+    "workflow_path": ".github/workflows/smoke-tests.yml", "event": "push",
+    "branch": "main", "head_sha": commit, "status": "completed",
+    "conclusion": "success", "url": final_run_url, "jobs": selected_jobs,
 }
 if identity.get("github_actions") != expected_ci:
     raise SystemExit("release identity GitHub Actions evidence mismatch")
+
+public_run = json.loads(
+    (root / "acceptance/ubuntu_public_validation/workflow_run.json").read_text(
+        encoding="utf-8"
+    )
+)
+public_artifacts = json.loads(
+    (root / "acceptance/ubuntu_public_validation/artifacts.json").read_text(
+        encoding="utf-8"
+    )
+)
+public_run_id = positive_integer(public_run.get("id"), "public-validation run ID")
+public_run_attempt = positive_integer(
+    public_run.get("run_attempt"), "public-validation run attempt"
+)
+public_run_url = f"https://github.com/{repository_slug}/actions/runs/{public_run_id}"
+public_run_api = f"{repository_api}/actions/runs/{public_run_id}"
+if (
+    public_run.get("name") != "public-validation"
+    or public_run.get("event") != "workflow_dispatch"
+    or public_run.get("head_branch") != "main"
+    or public_run.get("path") != ".github/workflows/public-validation.yml"
+    or public_run.get("head_sha") != commit
+    or public_run.get("status") != "completed"
+    or public_run.get("conclusion") != "success"
+    or public_run.get("html_url") != public_run_url
+    or public_run.get("url") != public_run_api
+    or public_run.get("jobs_url") != f"{public_run_api}/jobs"
+):
+    raise SystemExit("public-validation GitHub Actions run identity mismatch")
+canonical_repository(public_run.get("repository"), "public-validation run")
+canonical_repository(public_run.get("head_repository"), "public-validation head")
+expected_public_artifact_name = f"public-validation-derived-{commit}-{public_run_id}"
+artifact_values = public_artifacts.get("artifacts")
+if not isinstance(artifact_values, list):
+    raise SystemExit("public-validation artifact evidence is malformed")
+matching_artifacts = [
+    artifact for artifact in artifact_values
+    if isinstance(artifact, dict)
+    and artifact.get("name") == expected_public_artifact_name
+    and artifact.get("expired") is False
+    and isinstance(artifact.get("workflow_run"), dict)
+    and artifact["workflow_run"].get("id") == public_run_id
+]
+if len(matching_artifacts) != 1:
+    raise SystemExit("selected public-validation artifact identity mismatch")
+public_artifact = matching_artifacts[0]
+public_artifact_id = positive_integer(
+    public_artifact.get("id"), "public-validation artifact ID"
+)
+public_artifact_api = f"{repository_api}/actions/artifacts/{public_artifact_id}"
+if (
+    public_artifact.get("url") != public_artifact_api
+    or public_artifact.get("archive_download_url") != f"{public_artifact_api}/zip"
+):
+    raise SystemExit("public-validation artifact URL mismatch")
+
+cross_reproduction = json.loads(
+    (root / "acceptance/cross_platform_public_reproduction.json").read_text(
+        encoding="utf-8"
+    )
+)
+if (
+    cross_reproduction.get("schema_version") != schema
+    or cross_reproduction.get("validation_profile") != profile
+    or cross_reproduction.get("evidence_type")
+        != "cross_platform_public_reproduction"
+    or cross_reproduction.get("verdict") != "PASS"
+    or cross_reproduction.get("git_commit") != commit
+    or cross_reproduction.get("ubuntu_public_validation_run_id") != public_run_id
+    or cross_reproduction.get("ubuntu_platform") != "linux-64"
+    or cross_reproduction.get("macos_platform") not in {"osx-64", "osx-arm64"}
+    or cross_reproduction.get("comparison_table") != "cross_platform_comparison.tsv"
+):
+    raise SystemExit("cross-platform public reproduction identity mismatch")
+with (root / "acceptance/cross_platform_comparison.tsv").open(
+    encoding="utf-8", newline=""
+) as handle:
+    comparison_reader = csv.DictReader(handle, delimiter="\t")
+    if tuple(comparison_reader.fieldnames or ()) != (
+        "evidence_type", "relative_path", "macos_sha256", "ubuntu_sha256",
+        "verdict", "comparison",
+    ):
+        raise SystemExit("cross-platform comparison schema mismatch")
+    comparison_rows = list(comparison_reader)
+comparison_counts = {"normalized_scientific_table": 0, "visual_structure": 0}
+comparison_keys = set()
+for row in comparison_rows:
+    evidence_type = row.get("evidence_type")
+    key = (evidence_type, row.get("relative_path"))
+    if (
+        evidence_type not in comparison_counts
+        or not row.get("relative_path")
+        or key in comparison_keys
+        or row.get("verdict") != "PASS"
+    ):
+        raise SystemExit("cross-platform comparison row is invalid")
+    comparison_keys.add(key)
+    if evidence_type == "normalized_scientific_table":
+        if (
+            not re.fullmatch(r"[0-9a-f]{64}", row.get("macos_sha256", ""))
+            or row.get("macos_sha256") != row.get("ubuntu_sha256")
+        ):
+            raise SystemExit("cross-platform normalized scientific hashes differ")
+    elif (
+        row.get("macos_sha256") != "not_compared"
+        or row.get("ubuntu_sha256") != "not_compared"
+    ):
+        raise SystemExit("cross-platform visual row claims a bytewise comparison")
+    comparison_counts[evidence_type] += 1
+if 0 in comparison_counts.values():
+    raise SystemExit("cross-platform comparison evidence is incomplete")
+if (
+    cross_reproduction.get("normalized_scientific_tables_compared")
+        != comparison_counts["normalized_scientific_table"]
+    or cross_reproduction.get("visual_inventories_compared")
+        != comparison_counts["visual_structure"]
+):
+    raise SystemExit("cross-platform comparison counts are inconsistent")
+expected_public_validation = {
+    "provider": "github_actions", "run_id": public_run_id,
+    "run_attempt": public_run_attempt, "workflow": "public-validation",
+    "workflow_path": ".github/workflows/public-validation.yml",
+    "event": "workflow_dispatch", "branch": "main", "head_sha": commit,
+    "status": "completed", "conclusion": "success", "url": public_run_url,
+    "artifact": {
+        "id": public_artifact_id, "name": expected_public_artifact_name,
+        "url": public_artifact_api,
+        "archive_download_url": f"{public_artifact_api}/zip",
+    },
+    "cross_platform_reproduction": {
+        "verdict": "PASS", "macos_platform": cross_reproduction["macos_platform"],
+        "ubuntu_platform": "linux-64",
+        "normalized_scientific_tables_compared": comparison_counts[
+            "normalized_scientific_table"
+        ],
+        "visual_inventories_compared": comparison_counts["visual_structure"],
+        "comparison_sha256": digest(
+            root / "acceptance/cross_platform_comparison.tsv"
+        ),
+    },
+}
+if identity.get("public_validation_github_actions") != expected_public_validation:
+    raise SystemExit("release identity public-validation evidence mismatch")
+if (
+    str(public_run_id) != environment["public_validation_github_actions_run_id"]
+    or identity.get("environment_public_validation_github_actions_run_id")
+        != public_run_id
+    or run.get("public_validation_github_actions_run_id") != public_run_id
+):
+    raise SystemExit("public-validation run ID is inconsistent")
+
+pull_request = json.loads(
+    (root / "acceptance/pull_request.json").read_text(encoding="utf-8")
+)
+pull_number = positive_integer(pull_request.get("number"), "pull request number")
+if pull_number != 3:
+    raise SystemExit(f"release evidence is not bound to pull request 3: {pull_number}")
+pull_api = f"{repository_api}/pulls/{pull_number}"
+pull_html = f"https://github.com/{repository_slug}/pull/{pull_number}"
+issue_api = f"{repository_api}/issues/{pull_number}"
+if (
+    pull_request.get("url") != pull_api
+    or pull_request.get("html_url") != pull_html
+    or pull_request.get("issue_url") != issue_api
+    or pull_request.get("comments_url") != f"{issue_api}/comments"
+    or pull_request.get("state") != "closed"
+    or pull_request.get("merged") is not True
+    or not isinstance(pull_request.get("merged_at"), str)
+    or not pull_request["merged_at"].strip()
+    or pull_request.get("merge_commit_sha") != commit
+):
+    raise SystemExit("pull-request metadata identity mismatch")
+pull_base = pull_request.get("base")
+pull_head = pull_request.get("head")
+if not isinstance(pull_base, dict) or not isinstance(pull_head, dict):
+    raise SystemExit("pull-request base/head metadata is malformed")
+canonical_repository(pull_base.get("repo"), "pull-request base")
+canonical_repository(pull_head.get("repo"), "pull-request head")
+base_sha = pull_base.get("sha")
+head_sha = pull_head.get("sha")
+head_ref = pull_head.get("ref")
+if (
+    pull_base.get("ref") != "main"
+    or not isinstance(head_ref, str)
+    or not head_ref.strip()
+    or not re.fullmatch(r"[0-9a-f]{40}", str(base_sha or ""))
+    or not re.fullmatch(r"[0-9a-f]{40}", str(head_sha or ""))
+):
+    raise SystemExit("pull-request branch or commit identity mismatch")
+pr_identity = identity.get("pull_request")
+if not isinstance(pr_identity, dict):
+    raise SystemExit("release identity lacks pull-request evidence")
+parents = pr_identity.get("final_commit_parents")
+final_tree = pr_identity.get("final_tree_sha")
+reviewed_tree = pr_identity.get("reviewed_head_tree_sha")
+if (
+    parents != [base_sha, head_sha]
+    or not re.fullmatch(r"[0-9a-f]{40}", str(final_tree or ""))
+    or reviewed_tree != final_tree
+):
+    raise SystemExit("final merge parent/tree relationship mismatch")
+expected_pr_identity = {
+    "number": pull_number, "repository": repository_slug, "url": pull_html,
+    "api_url": pull_api, "issue_api_url": issue_api,
+    "comments_api_url": f"{issue_api}/comments", "state": "closed",
+    "merged": True, "merged_at": pull_request["merged_at"],
+    "merge_commit_sha": commit, "base_ref": "main", "base_sha": base_sha,
+    "head_ref": head_ref, "head_sha": head_sha,
+    "final_commit_parents": [base_sha, head_sha],
+    "final_tree_sha": final_tree, "reviewed_head_tree_sha": final_tree,
+}
+if pr_identity != expected_pr_identity:
+    raise SystemExit("release identity pull-request evidence mismatch")
+if (
+    str(pull_number) != environment["pull_request_number"]
+    or identity.get("environment_pull_request_number") != pull_number
+    or run.get("pull_request_number") != pull_number
+):
+    raise SystemExit("pull-request number is inconsistent")
+
+pr_actions_run = json.loads(
+    (root / "acceptance/pull_request_github_actions_run.json")
+    .read_text(encoding="utf-8")
+)
+pr_actions_jobs = json.loads(
+    (root / "acceptance/pull_request_github_actions_jobs.json")
+    .read_text(encoding="utf-8")
+)
+pr_run_id = positive_integer(pr_actions_run.get("id"), "pull-request run ID")
+pr_run_attempt = positive_integer(
+    pr_actions_run.get("run_attempt"), "pull-request run attempt"
+)
+pr_run_url = f"https://github.com/{repository_slug}/actions/runs/{pr_run_id}"
+pr_run_api = f"{repository_api}/actions/runs/{pr_run_id}"
+if (
+    pr_actions_run.get("name") != "smoke-tests"
+    or pr_actions_run.get("event") != "pull_request"
+    or pr_actions_run.get("head_branch") != head_ref
+    or pr_actions_run.get("path") != ".github/workflows/smoke-tests.yml"
+    or pr_actions_run.get("head_sha") != head_sha
+    or pr_actions_run.get("status") != "completed"
+    or pr_actions_run.get("conclusion") != "success"
+    or pr_actions_run.get("html_url") != pr_run_url
+    or pr_actions_run.get("url") != pr_run_api
+    or pr_actions_run.get("jobs_url") != f"{pr_run_api}/jobs"
+):
+    raise SystemExit("pull-request GitHub Actions run identity mismatch")
+if (
+    not isinstance(pr_actions_run.get("repository"), dict)
+    or pr_actions_run["repository"].get("full_name") != repository_slug
+    or not isinstance(pr_actions_run.get("head_repository"), dict)
+    or pr_actions_run["head_repository"].get("full_name") != repository_slug
+):
+    raise SystemExit("pull-request GitHub Actions repository identity mismatch")
+associations = pr_actions_run.get("pull_requests")
+if not isinstance(associations, list) or len(associations) != 1:
+    raise SystemExit("pull-request GitHub Actions association inventory mismatch")
+association = associations[0]
+association_head = association.get("head") if isinstance(association, dict) else None
+association_base = association.get("base") if isinstance(association, dict) else None
+if (
+    not isinstance(association_head, dict)
+    or not isinstance(association_base, dict)
+    or association.get("number") != pull_number
+    or association.get("url") != pull_api
+    or association_head.get("ref") != head_ref
+    or association_head.get("sha") != head_sha
+    or association_base.get("ref") != "main"
+    or association_base.get("sha") != base_sha
+):
+    raise SystemExit("pull-request GitHub Actions association identity mismatch")
+for label, nested in (("head", association_head), ("base", association_base)):
+    nested_repo = nested.get("repo")
+    if (
+        not isinstance(nested_repo, dict)
+        or nested_repo.get("name") != "mito-overview"
+        or nested_repo.get("url") != repository_api
+    ):
+        raise SystemExit(f"pull-request GitHub Actions {label} repository mismatch")
+pr_jobs = pr_actions_jobs.get("jobs")
+expected_job_names = {name for name, _ in job_expectations.values()}
+if (
+    not isinstance(pr_jobs, list)
+    or not all(isinstance(job, dict) for job in pr_jobs)
+    or pr_actions_jobs.get("total_count") != 3
+    or len(pr_jobs) != 3
+    or {job.get("name") for job in pr_jobs} != expected_job_names
+):
+    raise SystemExit("pull-request GitHub Actions pinned job inventory mismatch")
+pr_selected_jobs = []
+for name, label in job_expectations.values():
+    job = next(job for job in pr_jobs if job.get("name") == name)
+    job_id = positive_integer(job.get("id"), f"pull-request job ID for {name}")
+    if (
+        not isinstance(job.get("labels"), list)
+        or label not in job["labels"]
+        or job.get("head_sha") != head_sha
+        or job.get("run_id") != pr_run_id
+        or job.get("run_attempt") != pr_run_attempt
+        or job.get("workflow_name") != "smoke-tests"
+        or job.get("status") != "completed"
+        or job.get("conclusion") != "success"
+        or job.get("html_url") != f"{pr_run_url}/job/{job_id}"
+        or job.get("url") != f"{repository_api}/actions/jobs/{job_id}"
+        or job.get("run_url") != pr_run_api
+    ):
+        raise SystemExit(f"pull-request GitHub Actions job identity mismatch: {name}")
+    pr_selected_jobs.append({
+        "job_id": job_id, "name": name, "labels": job["labels"],
+        "head_sha": head_sha, "url": job["html_url"],
+    })
+expected_pr_ci = {
+    "provider": "github_actions", "run_id": pr_run_id,
+    "run_attempt": pr_run_attempt, "workflow": "smoke-tests",
+    "workflow_path": ".github/workflows/smoke-tests.yml",
+    "event": "pull_request", "pull_request_number": pull_number,
+    "branch": head_ref, "head_sha": head_sha, "status": "completed",
+    "conclusion": "success", "url": pr_run_url, "jobs": pr_selected_jobs,
+}
+if identity.get("pull_request_github_actions") != expected_pr_ci:
+    raise SystemExit("release identity pull-request GitHub Actions evidence mismatch")
+if (
+    str(pr_run_id) != environment["pull_request_github_actions_run_id"]
+    or identity.get("environment_pull_request_github_actions_run_id") != pr_run_id
+    or run.get("pull_request_github_actions_run_id") != pr_run_id
+):
+    raise SystemExit("pull-request GitHub Actions run ID is inconsistent")
+
+audit_marker = "<!-- mito-overview-read-only-audit-v1 -->"
+audit_roles = (
+    "release_engineering", "bioinformatics", "reproducibility",
+)
+audit_cases = {
+    "release_engineering": "read_only_audit_release_engineering",
+    "bioinformatics": "read_only_audit_bioinformatics",
+    "reproducibility": "read_only_audit_reproducibility",
+}
+comments = json.loads(
+    (root / "acceptance/pull_request_comments.json").read_text(encoding="utf-8")
+)
+if not isinstance(comments, list):
+    raise SystemExit("pull-request comments evidence is not a JSON array")
+audits = {}
+comment_ids = set()
+for comment in comments:
+    if not isinstance(comment, dict):
+        raise SystemExit("pull-request comments evidence contains a non-object")
+    comment_id = positive_integer(comment.get("id"), "pull-request comment ID")
+    if comment_id in comment_ids:
+        raise SystemExit("pull-request comments evidence contains duplicate IDs")
+    comment_ids.add(comment_id)
+    if (
+        comment.get("url") != f"{repository_api}/issues/comments/{comment_id}"
+        or comment.get("html_url") != f"{pull_html}#issuecomment-{comment_id}"
+        or comment.get("issue_url") != issue_api
+        or not isinstance(comment.get("body"), str)
+    ):
+        raise SystemExit("pull-request comment identity mismatch")
+    body = comment["body"]
+    if audit_marker not in body:
+        continue
+    if body.count(audit_marker) != 1:
+        raise SystemExit("read-only audit comment contains a duplicate marker")
+    suffix = body.split(audit_marker, 1)[1]
+    fenced = re.fullmatch(
+        r"\s*```json[ \t]*\r?\n(?P<payload>.*?)\r?\n```[ \t]*\s*",
+        suffix, flags=re.DOTALL,
+    )
+    if fenced is None:
+        raise SystemExit("read-only audit comment JSON fence is malformed")
+    try:
+        payload = json.loads(fenced.group("payload"))
+    except json.JSONDecodeError as error:
+        raise SystemExit("read-only audit JSON payload is malformed") from error
+    audit_fields = {
+        "schema_version", "review_method", "role", "reviewed_commit",
+        "reviewed_tree", "verdict", "unresolved_blockers", "summary",
+    }
+    if not isinstance(payload, dict) or set(payload) != audit_fields:
+        raise SystemExit("read-only audit payload fields do not match schema 1.0")
+    role = payload.get("role")
+    if role not in audit_roles or role in audits:
+        raise SystemExit(f"missing, duplicate, or unsupported read-only audit role: {role}")
+    blockers = payload.get("unresolved_blockers")
+    if (
+        payload.get("schema_version") != "1.0"
+        or payload.get("review_method") != "read_only_agent_role_audit"
+        or payload.get("reviewed_commit") != head_sha
+        or payload.get("reviewed_tree") != final_tree
+        or payload.get("verdict") != "PASS"
+        or isinstance(blockers, bool)
+        or not isinstance(blockers, int)
+        or blockers != 0
+        or not isinstance(payload.get("summary"), str)
+        or not payload["summary"].strip()
+    ):
+        raise SystemExit(f"read-only audit payload mismatch for role: {role}")
+    audits[role] = {
+        **payload, "summary": payload["summary"].strip(),
+        "comment_id": comment_id, "comment_url": comment["html_url"],
+    }
+if set(audits) != set(audit_roles):
+    raise SystemExit("required read-only audit role inventory is incomplete")
+expected_audits = [audits[role] for role in audit_roles]
+if identity.get("read_only_audits") != expected_audits:
+    raise SystemExit("release identity read-only audit evidence mismatch")
+expected_acceptance_cases = [
+    "fresh_clone_candidate_commit", "github_actions_linux_candidate_commit",
+    "github_actions_macos_candidate_commit",
+    "github_actions_macos_arm64_candidate_commit",
+    "pr_head_ci_candidate_commit", "read_only_audit_release_engineering",
+    "read_only_audit_bioinformatics", "read_only_audit_reproducibility",
+]
+if identity.get("acceptance_cases") != expected_acceptance_cases:
+    raise SystemExit("release identity acceptance-case inventory mismatch")
 
 required_pass = {
     "unit_known_answer", "cli_step_listing", "strict_generic_dry_run",
@@ -3941,10 +5168,12 @@ required_pass = {
     "gm12878_default_run1", "gm12878_default_run2", "gm12878_lenient",
     "gm12878_strict", "gm11906_repeatability", "gm12878_repeatability",
     "gm11906_visual_integrity", "gm12878_visual_integrity", "filter_profiles",
-    "offline_isolation",
+    "offline_isolation", "public_cache_prepare", "cross_platform_public_reproduction",
     "fresh_clone_candidate_commit", "github_actions_linux_candidate_commit",
     "github_actions_macos_candidate_commit",
     "github_actions_macos_arm64_candidate_commit",
+    "pr_head_ci_candidate_commit", "read_only_audit_release_engineering",
+    "read_only_audit_bioinformatics", "read_only_audit_reproducibility",
 }
 with (root / "cases.tsv").open(encoding="utf-8", newline="") as handle:
     cases = list(csv.DictReader(handle, delimiter="\t"))
@@ -4103,6 +5332,7 @@ def build_packet(args: argparse.Namespace) -> Path:
     )
     acceptance_rows = validate_acceptance_evidence(
         args.validation_root,
+        args.repo_root,
         str(release_identity["git_commit"]),
         str(release_identity["repository"]),
     )
@@ -4114,6 +5344,47 @@ def build_packet(args: argparse.Namespace) -> Path:
     if release_identity["environment_github_actions_run_id"] != ci_identity["run_id"]:
         raise ValueError(
             "environment.txt github_actions_run_id does not match GitHub Actions evidence"
+        )
+    if (
+        release_identity["environment_final_push_github_actions_run_id"]
+        != ci_identity["run_id"]
+    ):
+        raise ValueError(
+            "environment.txt final_push_github_actions_run_id does not match "
+            "the final push GitHub Actions evidence"
+        )
+    public_validation_identity = validate_public_validation_github_actions_evidence(
+        args.validation_root,
+        str(release_identity["git_commit"]),
+        str(release_identity["repository"]),
+        int(release_identity["environment_public_validation_github_actions_run_id"]),
+    )
+    pr_acceptance = pull_request_acceptance_identity(
+        args.validation_root,
+        args.repo_root,
+        str(release_identity["git_commit"]),
+        str(release_identity["repository"]),
+    )
+    pull_request_identity = pr_acceptance["pull_request"]
+    pull_request_ci_identity = pr_acceptance["pull_request_github_actions"]
+    if not isinstance(pull_request_identity, dict) or not isinstance(
+        pull_request_ci_identity, dict
+    ):
+        raise ValueError("Pull-request acceptance identity is malformed")
+    if (
+        release_identity["environment_pull_request_number"]
+        != pull_request_identity["number"]
+    ):
+        raise ValueError(
+            "environment.txt pull_request_number does not match pull-request evidence"
+        )
+    if (
+        release_identity["environment_pull_request_github_actions_run_id"]
+        != pull_request_ci_identity["run_id"]
+    ):
+        raise ValueError(
+            "environment.txt pull_request_github_actions_run_id does not match "
+            "pull-request GitHub Actions evidence"
         )
     case_count, verdict_counts = validate_cases(
         args.validation_root / "cases.tsv",
@@ -4206,6 +5477,8 @@ def build_packet(args: argparse.Namespace) -> Path:
     release_identity["dist_artifacts"] = dist_artifacts
     release_identity["acceptance_cases"] = [row["case_id"] for row in acceptance_rows]
     release_identity["github_actions"] = ci_identity
+    release_identity["public_validation_github_actions"] = public_validation_identity
+    release_identity.update(pr_acceptance)
     release_identity["public_provenance"] = public_provenance
     release_identity["public_environment"] = public_environment
     release_identity["public_input_evidence"] = {
@@ -4233,6 +5506,10 @@ def build_packet(args: argparse.Namespace) -> Path:
         "git_commit": release_identity["git_commit"],
         "repository": release_identity["repository"],
         "github_actions_run_id": ci_identity["run_id"],
+        "final_push_github_actions_run_id": ci_identity["run_id"],
+        "pull_request_number": pull_request_identity["number"],
+        "pull_request_github_actions_run_id": pull_request_ci_identity["run_id"],
+        "public_validation_github_actions_run_id": public_validation_identity["run_id"],
         "generated_utc": datetime.now(timezone.utc).isoformat(),
         "case_count": case_count,
         "verdict_counts": verdict_counts,
