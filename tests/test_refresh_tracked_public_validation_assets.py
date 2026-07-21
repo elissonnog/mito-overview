@@ -11,7 +11,7 @@ import sys
 from pathlib import Path
 
 import pytest
-from PIL import Image
+from PIL import Image, ImageChops
 
 
 REPO_ROOT = Path(__file__).parents[1]
@@ -205,7 +205,11 @@ def test_refreshes_exact_deterministic_inventory_and_preserves_frozen_inputs(
     ):
         with Image.open(destination / relative) as montage:
             montage.load()
-            assert montage.size == (1775, 1457)
+            assert montage.size == (1800, 1382)
+            bottom = montage.crop((0, montage.height - 20, montage.width, montage.height))
+            assert ImageChops.difference(
+                bottom.convert("RGB"), Image.new("RGB", bottom.size, "white")
+            ).getbbox() is None
 
     first_hashes = tree_hashes(destination)
     second = run_refresher(matrix, destination, supply_preserved=False)
