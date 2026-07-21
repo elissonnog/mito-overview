@@ -423,6 +423,25 @@ def test_missing_or_tampered_fresh_tag_evidence_blocks_before_github_mutation(
     assert runner.calls == []
 
 
+def test_remote_tag_object_must_match_fresh_tag_evidence_before_mutation(
+    tmp_path: Path,
+) -> None:
+    runner = FakeGhRunner()
+    assert runner.tag_ref is not None and runner.tag_object is not None
+    runner.tag_ref["object"]["sha"] = OTHER_TAG_OBJECT_SHA
+    runner.tag_object["sha"] = OTHER_TAG_OBJECT_SHA
+
+    with pytest.raises(
+        publication.PublicationError,
+        match="Fresh public-tag validation tag object differs",
+    ):
+        publication.publish_github_release(
+            _config(tmp_path / "publication", "create-draft"), runner
+        )
+
+    assert runner.mutations == []
+
+
 @pytest.mark.parametrize("tag_problem", ["missing", "lightweight"])
 def test_missing_or_lightweight_tag_blocks_draft_without_mutation(
     tmp_path: Path, tag_problem: str

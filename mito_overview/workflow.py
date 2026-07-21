@@ -102,7 +102,14 @@ STEP_STATUS_OUTPUTS: dict[str, dict[str, object]] = {
         "report_filename": "04_mito_copy_number.html",
         "status_files": ["mito_copy_number_summary.tsv"],
         "empty_tables": {
-            "mito_copy_number_windows.tsv": ["contig", "start", "end", "window_size", "mean_depth"],
+            "mito_copy_number_windows.tsv": [
+                "contig",
+                "start",
+                "end",
+                "window_size",
+                "mean_depth",
+                "valid_for_denominator",
+            ],
         },
     },
     "cosegregation": {
@@ -125,12 +132,12 @@ STEP_STATUS_OUTPUTS: dict[str, dict[str, object]] = {
             "mito_cosegregation_pairwise.tsv": [
                 "site_i",
                 "site_j",
+                "conditional_universe",
                 "shared_reads",
                 "alt_i_shared_reads",
                 "alt_j_shared_reads",
                 "co_alt_reads",
                 "co_alt_fraction_shared",
-                "conditional_universe",
                 "alt_jaccard_within_shared_spanning_reads",
                 "jaccard_alt",
                 "fraction_alt_i_also_alt_j",

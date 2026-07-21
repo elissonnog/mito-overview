@@ -1016,6 +1016,19 @@ def _assert_tag_matches_receipt(
     return tag_ref, tag_object
 
 
+def _assert_tag_matches_validation_receipt(
+    config: PublicationConfig, tag_ref: dict[str, Any]
+) -> None:
+    """Bind fresh-tag evidence to the currently advertised annotated tag object."""
+
+    validation = _validate_tag_validation_receipt(config)
+    if validation["tag_object_sha"] != tag_ref.get("object_sha"):
+        raise PublicationError(
+            "Fresh public-tag validation tag object differs from the current "
+            "remote annotated tag"
+        )
+
+
 def _assert_release_matches_receipt(
     receipt: dict[str, Any], release: dict[str, Any]
 ) -> None:
@@ -1075,6 +1088,7 @@ def _create_draft_mode(runner: Runner, config: PublicationConfig) -> Path:
     _require_remote_commit(runner, config)
     ref_payload, tag_payload = _verify_tag(runner, config)
     tag_ref, tag_object = _tag_record(ref_payload, tag_payload)
+    _assert_tag_matches_validation_receipt(config, tag_ref)
     hosting_state = _ensure_hosting_protection_state(runner, config)
     release = _find_release(runner, config)
     existing_draft_path = config.output_directory / "github_publication.draft.json"
@@ -1116,6 +1130,7 @@ def _create_draft_mode(runner: Runner, config: PublicationConfig) -> Path:
         raise PublicationError("Queried draft release is not empty")
     ref_payload, tag_payload = _verify_tag(runner, config)
     queried_ref, queried_object = _tag_record(ref_payload, tag_payload)
+    _assert_tag_matches_validation_receipt(config, queried_ref)
     if queried_ref != tag_ref or queried_object != tag_object:
         raise PublicationError("Annotated tag changed while creating the draft")
     confirmed_hosting_state = _require_hosting_protection_state(runner, config)
@@ -1149,6 +1164,7 @@ def _upload_verify_mode(
     _require_remote_commit(runner, config)
     ref_payload, tag_payload = _verify_tag(runner, config)
     tag_ref, tag_object = _assert_tag_matches_receipt(draft, ref_payload, tag_payload)
+    _assert_tag_matches_validation_receipt(config, tag_ref)
     release = _find_release(runner, config)
     if release is None:
         raise PublicationError("The recorded draft release no longer exists")
@@ -1203,6 +1219,7 @@ def _upload_verify_mode(
     _require_remote_commit(runner, config)
     ref_payload, tag_payload = _verify_tag(runner, config)
     tag_ref, tag_object = _assert_tag_matches_receipt(draft, ref_payload, tag_payload)
+    _assert_tag_matches_validation_receipt(config, tag_ref)
     return _write_draft_receipt(
         config,
         release,
@@ -1289,7 +1306,8 @@ def _publish_mode(
     _assert_inventory_unchanged(inventory)
     _require_remote_commit(runner, config)
     ref_payload, tag_payload = _verify_tag(runner, config)
-    _assert_tag_matches_receipt(draft, ref_payload, tag_payload)
+    queried_tag_ref, _ = _assert_tag_matches_receipt(draft, ref_payload, tag_payload)
+    _assert_tag_matches_validation_receipt(config, queried_tag_ref)
 
     if release.get("draft") is True:
         release_id = int(release["id"])
@@ -1351,6 +1369,7 @@ def _publish_mode(
     _require_remote_commit(runner, config)
     ref_payload, tag_payload = _verify_tag(runner, config)
     tag_ref, tag_object = _assert_tag_matches_receipt(draft, ref_payload, tag_payload)
+    _assert_tag_matches_validation_receipt(config, tag_ref)
     remote_assets = _normalized_remote_assets(release, inventory, allow_subset=False)
     published_download = _download_assets(
         runner, config, inventory, sorted(inventory.by_name)

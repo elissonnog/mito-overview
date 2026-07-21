@@ -129,6 +129,8 @@ EOF
 run_case locked_environment "pinned interpreter, packages, and command-line tools matched"
 
 cat > "${EVIDENCE_ROOT}/environment.txt" <<EOF
+operating_system=$(uname -s)
+architecture=$(uname -m)
 python=3.12.13
 samtools=1.23.1
 htslib=1.23.1
@@ -216,8 +218,12 @@ set -euo pipefail
 cd $(printf '%q' "${CLONE_ROOT}")
 MITO_OVERVIEW_PYTHON=$(printf '%q' "${VENV_ROOT}/bin/python") MITO_OVERVIEW_REQUIRE_INSTALLED=1 ./scripts/build_public_example_bundle.sh $(printf '%q' "${EXAMPLE_ROOT}/longread")
 MITO_OVERVIEW_PYTHON=$(printf '%q' "${VENV_ROOT}/bin/python") MITO_OVERVIEW_REQUIRE_INSTALLED=1 ./scripts/build_public_shortread_example_bundle.sh $(printf '%q' "${EXAMPLE_ROOT}/shortread")
-test -s $(printf '%q' "${EXAMPLE_ROOT}/longread/report/index.html")
-test -s $(printf '%q' "${EXAMPLE_ROOT}/shortread/report/index.html")
+test "\$(find $(printf '%q' "${EXAMPLE_ROOT}/longread/report") -maxdepth 1 -type f -name '*.html' | wc -l | tr -d ' ')" = 14
+test "\$(find $(printf '%q' "${EXAMPLE_ROOT}/shortread/report") -maxdepth 1 -type f -name '*.html' | wc -l | tr -d ' ')" = 14
+test -s $(printf '%q' "${EXAMPLE_ROOT}/longread/report/01_mito_qc.html")
+test -s $(printf '%q' "${EXAMPLE_ROOT}/longread/report/14_mito_mvtool_annotation.html")
+test -s $(printf '%q' "${EXAMPLE_ROOT}/shortread/report/01_mito_qc.html")
+test -s $(printf '%q' "${EXAMPLE_ROOT}/shortread/report/14_mito_mvtool_annotation.html")
 EOF
 run_case example_builders "both tracked-mode example builders passed"
 

@@ -153,6 +153,36 @@ def test_large_deletion_read_count_deduplicates_alignment_segments(tmp_path: Pat
     assert "rather than a finalized SV caller output" in report
 
 
+def test_breakpoint_bins_use_zero_based_10_bp_anchors_at_exact_boundary(
+    tmp_path: Path,
+) -> None:
+    outputs = run_deletion_fixture(
+        tmp_path,
+        [
+            ReadSpec(
+                "start-at-10",
+                "MT",
+                0,
+                "A" * 10,
+                cigar=((0, 9), (2, 100), (0, 1)),
+            ),
+            ReadSpec(
+                "start-at-11",
+                "MT",
+                0,
+                "A" * 11,
+                cigar=((0, 10), (2, 100), (0, 1)),
+            ),
+        ],
+    )
+    events = pd.read_csv(outputs["events_path"], sep="\t").set_index("read_name")
+
+    assert events.loc["start-at-10", ["event_start", "event_bin_start"]].tolist() == [10, 0]
+    assert events.loc["start-at-11", ["event_start", "event_bin_start"]].tolist() == [11, 10]
+    report = outputs["report_path"].read_text(encoding="utf-8")
+    assert "positions 1-10 map to anchor 0" in report
+
+
 def test_primary_support_fraction_excludes_supplementary_only_read_names(tmp_path: Path) -> None:
     deletion_cigar = ((0, 5), (2, 100), (0, 5))
     outputs = run_deletion_fixture(

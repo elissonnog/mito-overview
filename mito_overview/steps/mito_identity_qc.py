@@ -148,6 +148,7 @@ def run_step(
         ).reset_index(drop=True)
         major_df["heteroplasmy_fraction"] = major_df["alt_allele_fraction"]
         major_df["position"] = major_df["position"].astype(int)
+        major_df = major_df.loc[:, FINGERPRINT_COLUMNS]
     elif hetero_path.exists():
         print(
             "[identity_qc] heteroplasmy table did not include the expected fingerprint columns; "

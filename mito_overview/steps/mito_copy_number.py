@@ -14,6 +14,15 @@ import pysam
 
 from mito_overview.report_common import df_to_html_table, figure_html, metric_card, render_page
 
+WINDOW_COLUMNS = [
+    "contig",
+    "start",
+    "end",
+    "window_size",
+    "mean_depth",
+    "valid_for_denominator",
+]
+
 
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
@@ -135,7 +144,7 @@ def run_step(
 
     windows_df = pd.DataFrame(
         window_rows,
-        columns=["contig", "start", "end", "window_size", "mean_depth", "valid_for_denominator"],
+        columns=WINDOW_COLUMNS,
     )
     valid_windows_df = windows_df[windows_df["valid_for_denominator"] == 1]
     nuclear_mean = (

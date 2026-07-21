@@ -41,6 +41,15 @@ READ_COLUMNS = [
     "is_supplementary",
     "has_sa_tag",
 ]
+BREAKPOINT_BIN_SIZE = 10
+
+
+def breakpoint_bin_anchor(position_1based: int) -> int:
+    """Return the zero-based anchor of a 10-bp bin for a one-based position."""
+
+    if position_1based < 1:
+        raise ValueError("Breakpoint positions must be one-based positive integers")
+    return ((position_1based - 1) // BREAKPOINT_BIN_SIZE) * BREAKPOINT_BIN_SIZE
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -110,7 +119,7 @@ def run_step(
                 if op == CIGAR_DEL and length >= min_deletion_size:
                     start = ref_pos
                     end = ref_pos + length - 1
-                    key = (int(start / 10) * 10, int(end / 10) * 10)
+                    key = (breakpoint_bin_anchor(start), breakpoint_bin_anchor(end))
                     event_counter[key] += 1
                     event_rows.append(
                         {
@@ -227,7 +236,10 @@ def run_step(
         f"{min_deletion_size} bp create or support candidate bins, whether they occur on retained primary or "
         "supplementary alignment records. Supplementary-alignment status and SA tags are summarized separately "
         "as alignment-structure evidence and do not create bin support on their own. This page is intended as a "
-        "structural screen rather than a finalized SV caller output. The supporting_reads field counts all unique "
+        "structural screen rather than a finalized SV caller output. "
+        "Breakpoints are grouped by zero-based 10-bp bin anchors derived from the one-based inclusive event "
+        "coordinates; positions 1-10 map to anchor 0, positions 11-20 to anchor 10, and so forth. The "
+        "supporting_reads field counts all unique "
         "read names with qualifying CIGAR-deletion evidence in a bin. The compatibility field "
         "support_fraction_primary uses only those supporting read names that also have a retained primary "
         "mitochondrial alignment as its numerator and all unique retained primary mitochondrial read names as "

@@ -7,6 +7,9 @@ import pytest
 
 from mito_overview.config import PipelineConfig
 from mito_overview.paths import RunPaths
+from mito_overview.steps.mito_copy_number import WINDOW_COLUMNS
+from mito_overview.steps.mito_cosegregation import PAIRWISE_COLUMNS
+from mito_overview.steps.mito_identity_qc import FINGERPRINT_COLUMNS
 from mito_overview.workflow import STEP_STATUS_OUTPUTS, run_pipeline, validate_config
 
 from ._helpers import ReadSpec, write_alignment, write_fasta
@@ -232,15 +235,16 @@ def test_explicit_species_overrides_complete_profile_inference(tmp_path: Path) -
     assert config.reference_scope == "custom"
 
 
-def test_cosegregation_empty_table_contract_includes_conditional_jaccard() -> None:
-    columns = STEP_STATUS_OUTPUTS["cosegregation"]["empty_tables"][  # type: ignore[index]
-        "mito_cosegregation_pairwise.tsv"
-    ]
-    assert columns[7:10] == [
-        "conditional_universe",
-        "alt_jaccard_within_shared_spanning_reads",
-        "jaccard_alt",
-    ]
+def test_status_only_table_schemas_match_active_module_contracts() -> None:
+    empty_tables = {
+        step: spec["empty_tables"]  # type: ignore[index]
+        for step, spec in STEP_STATUS_OUTPUTS.items()
+    }
+    assert empty_tables["copy_number"]["mito_copy_number_windows.tsv"] == WINDOW_COLUMNS
+    assert empty_tables["cosegregation"]["mito_cosegregation_pairwise.tsv"] == PAIRWISE_COLUMNS
+    assert empty_tables["identity_qc"]["mito_identity_major_variant_fingerprint.tsv"] == (
+        FINGERPRINT_COLUMNS
+    )
 
 
 def test_minimal_cram_contract_opens_with_reference(
