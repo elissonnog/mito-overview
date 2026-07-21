@@ -159,7 +159,7 @@ def write_public_provenance(public_root: Path) -> None:
     short = {
         "schema_version": "1.0",
         "provenance_type": "public_alignment",
-        "dataset_id": "GM11906_MERRF_reduced_shortread",
+        "dataset_id": "GM11906_pooled_scATAC",
         "alignment": provenance_record("GM11906_MERRF_shortread.mt.bam"),
         "alignment_index": provenance_record("GM11906_MERRF_shortread.mt.bam.bai"),
         "reference": provenance_record("GM11906_reference.fa"),
@@ -171,6 +171,17 @@ def write_public_provenance(public_root: Path) -> None:
     }
     paths["shortread_alignment"].write_text(
         json.dumps(short, indent=2) + "\n", encoding="utf-8"
+    )
+    paths["shortread_source_libraries"].write_text(
+        "run_accession\tgeo_accession\tsource_sample_id\tlibrary_strategy\t"
+        "library_unit\tcombination_role\tsource_record_url\n"
+        "SRR10804585\tGSM4238454\tGM11906\tATAC-seq\tsingle_cell_library\t"
+        "pooled_pseudobulk\thttps://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSM4238454\n"
+        "SRR10804590\tGSM4238459\tGM11906\tATAC-seq\tsingle_cell_library\t"
+        "pooled_pseudobulk\thttps://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSM4238459\n"
+        "SRR10804657\tGSM4238526\tGM11906\tATAC-seq\tsingle_cell_library\t"
+        "pooled_pseudobulk\thttps://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSM4238526\n",
+        encoding="utf-8",
     )
 
     paths["selected_query_names"].write_text(

@@ -34,12 +34,12 @@ The v0.3.0 filter-dependence matrix uses lenient `0/0/0`, default `13/20/10`, an
 
 Callable depth is the sum of passing canonical `A`, `C`, `G`, and `T` observations. The alternate allele fraction is the largest non-reference canonical count divided by callable depth. Candidate selection and same-read co-occurrence use the same shared observation engine. For a site pair, co-occurrence is calculated only among reads with a passing callable observation at both sites; the pair-conditioned alternate-read sets and their shared callable universe are recorded explicitly. This conditional Jaccard statistic is descriptive and is not equivalent to a Jaccard index calculated from unconditioned genome-wide candidate read sets. The default excluded SAM flag mask is `3844`, overlapping paired observations are suppressed, and `ALLELE_MAX_DEPTH=0` means no pileup cap.
 
-For GM11906, candidate counts are lenient=`33`, default=`33`, and strict=`33`, while accepted observations are lenient=`44,052,664`, default=`44,052,664`, and strict=`42,676,166`. For GM12878 qn1000, candidate counts are lenient=`32`, default=`16`, and strict=`15`, while accepted observations are lenient=`8,278,969`, default=`7,143,152`, and strict=`6,046,355`.
+For the GM11906 pseudo-bulk formed from three single-cell ATAC-seq libraries, candidate counts are lenient=`33`, default=`33`, and strict=`33`, while accepted observations are lenient=`44,052,664`, default=`44,052,664`, and strict=`42,676,166`. These are pooled read-observation summaries, not per-cell or calibrated sample heteroplasmy estimates. For GM12878 qn1000, candidate counts are lenient=`32`, default=`16`, and strict=`15`, while accepted observations are lenient=`8,278,969`, default=`7,143,152`, and strict=`6,046,355`.
 
 | Dataset | Metric | Lenient | Default | Strict |
 | --- | --- | ---: | ---: | ---: |
-| GM11906 | candidate sites | 33 | 33 | 33 |
-| GM11906 | accepted observations | 44,052,664 | 44,052,664 | 42,676,166 |
+| GM11906 pooled scATAC | candidate sites | 33 | 33 | 33 |
+| GM11906 pooled scATAC | accepted observations | 44,052,664 | 44,052,664 | 42,676,166 |
 | GM12878 qn1000 | candidate sites | 32 | 16 | 15 |
 | GM12878 qn1000 | accepted observations | 8,278,969 | 7,143,152 | 6,046,355 |
 

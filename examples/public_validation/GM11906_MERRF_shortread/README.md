@@ -1,9 +1,10 @@
 # GM11906 public reduced short-read workflow example
 
-This directory contains v0.3.0 public workflow-evidence assets from short-read/scATAC-derived mtDNA reads processed with the `mito-overview` reduced short-read profile.
+This directory contains v0.3.0 public workflow-evidence assets from a pseudo-bulk made by pooling three GM11906 single-cell ATAC-seq libraries and processing their mtDNA-aligned reads with the `mito-overview` reduced short-read profile.
 
 Example context:
-- source sample: GM11906 short-read/scATAC-derived mtDNA reads
+- source sample: one GM11906 lymphoblastoid cell line
+- source libraries: three single-cell ATAC-seq libraries (`GSM4238454`, `GSM4238459`, and `GSM4238526`) pooled as a pseudo-bulk
 - runs used: `SRR10804585`, `SRR10804590`, `SRR10804657`
 - profile used: `READ_MODE=short` with the package's `ASSAY_TYPE=targeted_mt` report profile
 - candidate thresholds: `MIN_CALLABLE_DEPTH=10`, `MIN_ALT_ALLELE_FRACTION=0.20`
@@ -25,7 +26,7 @@ Observed default-profile values:
 - candidate sites: `33`
 - accepted observations: `44,052,664`
 - excluded observations: `7,293,106`
-- `m.8344A>G`: depth `1,027`, alternate count `740`, `AF=0.720545`
+- `m.8344A>G`: depth `1,027`, alternate count `740`, pooled observed alternate allele fraction `0.720545`
 - feature/consequence output: `MT-TK`, `tRNA_variant`
 
 Filter profiles:
@@ -41,6 +42,7 @@ Mode-gated status values:
 - `mvtool_annotation`: `not_configured`
 
 Repeatability scope:
+- the pooled fraction summarizes passing read observations across three libraries; it is not a per-cell estimate, a calibrated sample heteroplasmy estimate, or a modality benchmark
 - two default invocations produced matching normalized TSVs and structurally consistent HTML/PNG artifacts
 - this result is conditional on the provenance-verified fixed BAM and does not include alignment regeneration
 - the asset pack supports workflow execution and report/resource inspection for this fixed input

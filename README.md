@@ -2,7 +2,7 @@
 
 `mito-overview` is a Python-based workflow for mode-gated mitochondrial DNA (mtDNA) evidence reporting from aligned BAM or CRAM inputs. The current public implementation provides a long-read-oriented profile and a reduced short-read compatibility profile that preserves the analytical layers applicable without long molecules or ONT methylation tracks. The repository emphasizes synchronized HTML, TSV, and figure generation for mitochondrial QC, alternate-allele screening, structural screening, an experimental within-sample mt:nuclear depth ratio when nuclear context is evaluable, feature annotation, same-read co-occurrence, and warning-oriented QC.
 
-Version `0.3.0` is an unreleased workflow/resource release candidate. Historical clean-commit public validation evidence covers report execution, synchronized artifacts, mode/status gating, filter-profile dependence, and repeatability from provenance-verified fixed BAM inputs. Exact-final-commit public reruns, push-event CI on that commit, captured DOI-reservation evidence, and the self-verifying audit ZIP remain release gates; no final tag, release date, or version-specific DOI is claimed.
+Version `0.3.0` is an unreleased workflow/resource release candidate. Historical clean-commit public validation evidence covers report execution, synchronized artifacts, mode/status gating, filter-profile dependence, and repeatability from provenance-verified fixed BAM inputs. Exact-final-commit public reruns, push-event CI on that commit, and the self-verifying audit ZIP remain release gates. Zenodo, an archival DOI, and bioRxiv submission are not required by this GitHub release contract.
 
 ## Scope
 - aligned BAM or CRAM input
@@ -81,7 +81,7 @@ The panels show depth, alternate-allele fractions, selected-site read co-occurre
 
 Regenerate the lead figure with `python scripts/build_workflow_architecture_figure.py`.
 
-The repository also includes a complementary real public short-read proof-of-principle montage from GM11906:
+The repository also includes a complementary proof-of-principle montage from a pseudo-bulk formed by pooling three public GM11906 single-cell ATAC-seq libraries:
 
 ![GM11906 reduced short-read proof-of-principle report montage](examples/public_validation/GM11906_MERRF_shortread/figures/GM11906_MERRF_shortread_montage.png)
 
@@ -226,12 +226,14 @@ The repeated default invocations start from that same fixed BAM; they do not reg
 The repository also includes an asset pack from a fixed public short-read input:
 - [`examples/public_validation/GM11906_MERRF_shortread`](examples/public_validation/GM11906_MERRF_shortread)
 
-This example uses public GM11906 short-read/scATAC-derived mtDNA reads from the single-cell mtDNA/chromatin profiling study by Lareau and colleagues:
+This example pools paired-end reads from three single-cell ATAC-seq libraries derived from the same GM11906 lymphoblastoid line. It is a short-read compatibility exercise, not short-read WGS, a bulk assay, or a three-patient cohort:
 - [Lareau et al., Nat Biotechnol 2021](https://www.nature.com/articles/s41587-020-0645-6)
-- [GEO sample metadata example](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSM4238489)
+- [GEO `GSM4238454` / `SRR10804585`](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSM4238454)
+- [GEO `GSM4238459` / `SRR10804590`](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSM4238459)
+- [GEO `GSM4238526` / `SRR10804657`](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSM4238526)
 - [Coriell GM11906](https://www.coriell.org/0/Sections/Search/Sample_Detail.aspx?Ref=GM11906)
 
-The tracked historical short-read example uses `READ_MODE=short` and `ASSAY_TYPE=targeted_mt`. At clean validation source commit `dc09114e1a0dcec2baf83d94549dfa41f3e49c8b`, `MIN_CALLABLE_DEPTH=10`, `MIN_ALT_ALLELE_FRACTION=0.20`, and default BaseQ/MAPQ/readQ filters `13/20/10`, it reported `33` candidates, `44,052,664` accepted observations, and `7,293,106` excluded observations. The `m.8344A>G` row had depth `1,027`, alternate count `740`, `AF=0.720545`, and `MT-TK` / `tRNA_variant` annotation.
+The MitoOverview run uses `READ_MODE=short` and the `ASSAY_TYPE=targeted_mt` report profile because the regenerated alignment contains only mtDNA. At clean validation source commit `dc09114e1a0dcec2baf83d94549dfa41f3e49c8b`, `MIN_CALLABLE_DEPTH=10`, `MIN_ALT_ALLELE_FRACTION=0.20`, and default BaseQ/MAPQ/readQ filters `13/20/10`, it reported `33` candidates, `44,052,664` accepted observations, and `7,293,106` excluded observations. The `m.8344A>G` row had depth `1,027`, alternate count `740`, observed alternate allele fraction `0.720545`, and `MT-TK` / `tRNA_variant` annotation. This fraction is calculated across pooled passing read observations and is not a per-cell or independently calibrated sample heteroplasmy estimate.
 
 | GM11906 profile | BaseQ/MAPQ/readQ | Candidates | Accepted observations |
 | --- | --- | ---: | ---: |

@@ -652,7 +652,7 @@ write_table(
 checked = datetime.now(timezone.utc).isoformat()
 public_rows = [
     {
-        "dataset": "GM11906 reduced short-read proof-of-principle",
+        "dataset": "GM11906 pooled single-cell ATAC-seq pseudo-bulk",
         "run_accession": "SRR10804585",
         "study_accession": "PRJNA598179",
         "sample_accession": "SAMN13699362",
@@ -666,7 +666,7 @@ public_rows = [
         "fastq_bytes": "8795676;8817420",
     },
     {
-        "dataset": "GM11906 reduced short-read proof-of-principle",
+        "dataset": "GM11906 pooled single-cell ATAC-seq pseudo-bulk",
         "run_accession": "SRR10804590",
         "study_accession": "PRJNA598179",
         "sample_accession": "SAMN13699398",
@@ -680,7 +680,7 @@ public_rows = [
         "fastq_bytes": "1006749;795885",
     },
     {
-        "dataset": "GM11906 reduced short-read proof-of-principle",
+        "dataset": "GM11906 pooled single-cell ATAC-seq pseudo-bulk",
         "run_accession": "SRR10804657",
         "study_accession": "PRJNA598179",
         "sample_accession": "SAMN13699338",

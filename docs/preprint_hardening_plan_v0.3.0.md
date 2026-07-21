@@ -1,5 +1,7 @@
 # MitoOverview v0.3.0 Preprint-Hardening Plan
 
+> **Superseded release-control document.** This frozen plan records the earlier DOI/archive-oriented proposal. The active GitHub-only release gate is [`clean_room_validation_protocol_v0.3.0.md`](clean_room_validation_protocol_v0.3.0.md); Zenodo, a DOI, manuscript changes, and bioRxiv submission are outside the current release acceptance criteria.
+
 ## Material Passport
 
 - Origin: approved implementation plan

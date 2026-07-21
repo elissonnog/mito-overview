@@ -71,18 +71,18 @@ COUNTS_PATH="$(mktemp "${TMPDIR:-/tmp}/mito-overview-public-cache-counts.XXXXXX"
 trap 'rm -f "${SPEC_PATH}" "${COUNTS_PATH}"' EXIT
 
 cat > "${SPEC_PATH}" <<'EOF'
-dataset_id	run_accession	sample_accession	sample_alias	sample_title	filename	bytes	md5	sha256	url
-GM11906_pooled_MERRF	SRR10804585	SAMN13699362	GSM4238454	MERFF-29-S42	SRR10804585_1.fastq.gz	8795676	3f5ea26a5791894071462d4970bc9e5a	b69746cb61d8bf3bc25887d6ece3c60db3acc7baaefd84a9a8b5d6ffce33288d	https://ftp.sra.ebi.ac.uk/vol1/fastq/SRR108/085/SRR10804585/SRR10804585_1.fastq.gz
-GM11906_pooled_MERRF	SRR10804585	SAMN13699362	GSM4238454	MERFF-29-S42	SRR10804585_2.fastq.gz	8817420	c5b408425612f63b33cefd2d49c157d1	1fca2c35a955a4ed232465d8392bc04683828229178aee7915929e67b2aac961	https://ftp.sra.ebi.ac.uk/vol1/fastq/SRR108/085/SRR10804585/SRR10804585_2.fastq.gz
-GM11906_pooled_MERRF	SRR10804590	SAMN13699398	GSM4238459	MERFF-33-S46	SRR10804590_1.fastq.gz	1006749	e8b5132a8be8c179bfc6dbc0f3e1bee9	e47ceceb03d44483b4948fe9c631ebff307f5ec68a1deec978f1122695fa58fc	https://ftp.sra.ebi.ac.uk/vol1/fastq/SRR108/090/SRR10804590/SRR10804590_1.fastq.gz
-GM11906_pooled_MERRF	SRR10804590	SAMN13699398	GSM4238459	MERFF-33-S46	SRR10804590_2.fastq.gz	795885	4d6977526136739de2d90baa8d45b484	05b2375b30b02c02e9206981eb2fe2d08babbc2a5809f8354ef56d0ac1550776	https://ftp.sra.ebi.ac.uk/vol1/fastq/SRR108/090/SRR10804590/SRR10804590_2.fastq.gz
-GM11906_pooled_MERRF	SRR10804657	SAMN13699338	GSM4238526	MERFF-94-S107	SRR10804657_1.fastq.gz	21510555	8f082f73cb64bf56ea8a053fe80eeb06	1afaf310ce9ffa77e1c3d61a0714e839d21000941d414cc7bf6fb590c3b665f2	https://ftp.sra.ebi.ac.uk/vol1/fastq/SRR108/057/SRR10804657/SRR10804657_1.fastq.gz
-GM11906_pooled_MERRF	SRR10804657	SAMN13699338	GSM4238526	MERFF-94-S107	SRR10804657_2.fastq.gz	21573731	62b7d1b2294a580c021f5fa1f52609be	bfc555c7e722695b02110027757bba4d7fc88f487798423cd6809e8a771a5184	https://ftp.sra.ebi.ac.uk/vol1/fastq/SRR108/057/SRR10804657/SRR10804657_2.fastq.gz
-GM12878_ONT	SRR18110025	SAMN26195906	GM12878_mtDNA	Human GM12878 Cell Line	SRR18110025.fastq.gz	2033558460	d5bfb9aeba04cae5f3dd79462a42e5b0	c0872ee9ceb772ee5a4b76735c0d670e2159764b23dd800b6eb1f4933da11320	https://ftp.sra.ebi.ac.uk/vol1/fastq/SRR181/025/SRR18110025/SRR18110025_1.fastq.gz
+dataset_id	run_accession	sample_accession	sample_alias	sample_title	source_sample_id	library_strategy	library_unit	source_record_url	filename	bytes	md5	sha256	url
+GM11906_pooled_scATAC	SRR10804585	SAMN13699362	GSM4238454	MERFF-29-S42	GM11906	ATAC-seq	single_cell_library	https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSM4238454	SRR10804585_1.fastq.gz	8795676	3f5ea26a5791894071462d4970bc9e5a	b69746cb61d8bf3bc25887d6ece3c60db3acc7baaefd84a9a8b5d6ffce33288d	https://ftp.sra.ebi.ac.uk/vol1/fastq/SRR108/085/SRR10804585/SRR10804585_1.fastq.gz
+GM11906_pooled_scATAC	SRR10804585	SAMN13699362	GSM4238454	MERFF-29-S42	GM11906	ATAC-seq	single_cell_library	https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSM4238454	SRR10804585_2.fastq.gz	8817420	c5b408425612f63b33cefd2d49c157d1	1fca2c35a955a4ed232465d8392bc04683828229178aee7915929e67b2aac961	https://ftp.sra.ebi.ac.uk/vol1/fastq/SRR108/085/SRR10804585/SRR10804585_2.fastq.gz
+GM11906_pooled_scATAC	SRR10804590	SAMN13699398	GSM4238459	MERFF-33-S46	GM11906	ATAC-seq	single_cell_library	https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSM4238459	SRR10804590_1.fastq.gz	1006749	e8b5132a8be8c179bfc6dbc0f3e1bee9	e47ceceb03d44483b4948fe9c631ebff307f5ec68a1deec978f1122695fa58fc	https://ftp.sra.ebi.ac.uk/vol1/fastq/SRR108/090/SRR10804590/SRR10804590_1.fastq.gz
+GM11906_pooled_scATAC	SRR10804590	SAMN13699398	GSM4238459	MERFF-33-S46	GM11906	ATAC-seq	single_cell_library	https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSM4238459	SRR10804590_2.fastq.gz	795885	4d6977526136739de2d90baa8d45b484	05b2375b30b02c02e9206981eb2fe2d08babbc2a5809f8354ef56d0ac1550776	https://ftp.sra.ebi.ac.uk/vol1/fastq/SRR108/090/SRR10804590/SRR10804590_2.fastq.gz
+GM11906_pooled_scATAC	SRR10804657	SAMN13699338	GSM4238526	MERFF-94-S107	GM11906	ATAC-seq	single_cell_library	https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSM4238526	SRR10804657_1.fastq.gz	21510555	8f082f73cb64bf56ea8a053fe80eeb06	1afaf310ce9ffa77e1c3d61a0714e839d21000941d414cc7bf6fb590c3b665f2	https://ftp.sra.ebi.ac.uk/vol1/fastq/SRR108/057/SRR10804657/SRR10804657_1.fastq.gz
+GM11906_pooled_scATAC	SRR10804657	SAMN13699338	GSM4238526	MERFF-94-S107	GM11906	ATAC-seq	single_cell_library	https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSM4238526	SRR10804657_2.fastq.gz	21573731	62b7d1b2294a580c021f5fa1f52609be	bfc555c7e722695b02110027757bba4d7fc88f487798423cd6809e8a771a5184	https://ftp.sra.ebi.ac.uk/vol1/fastq/SRR108/057/SRR10804657/SRR10804657_2.fastq.gz
+GM12878_ONT	SRR18110025	SAMN26195906	GM12878_mtDNA	Human GM12878 Cell Line	GM12878	OTHER	targeted_mt_library	https://www.ebi.ac.uk/ena/browser/view/SRR18110025	SRR18110025.fastq.gz	2033558460	d5bfb9aeba04cae5f3dd79462a42e5b0	c0872ee9ceb772ee5a4b76735c0d670e2159764b23dd800b6eb1f4933da11320	https://ftp.sra.ebi.ac.uk/vol1/fastq/SRR181/025/SRR18110025/SRR18110025_1.fastq.gz
 EOF
 
 expected_names() {
-  awk -F '\t' 'NR > 1 {print $6}' "${SPEC_PATH}"
+  awk -F '\t' 'NR > 1 {print $10}' "${SPEC_PATH}"
 }
 
 sha256_file() {
@@ -251,8 +251,9 @@ with open(manifest_path, encoding="utf-8", newline="") as handle:
     observed = list(csv.DictReader(handle, delimiter="\t"))
 expected_fields = [
     "schema_version", "dataset_id", "run_accession", "sample_accession",
-    "sample_alias", "sample_title", "filename", "bytes", "md5", "sha256",
-    "fastq_records", "url",
+    "sample_alias", "sample_title", "source_sample_id", "library_strategy",
+    "library_unit", "source_record_url", "filename", "bytes", "md5",
+    "sha256", "fastq_records", "url",
 ]
 if not observed or list(observed[0]) != expected_fields:
     raise SystemExit("raw cache manifest schema mismatch")
@@ -276,7 +277,7 @@ for name, expected_row in expected_by_name.items():
 PY
 
   : > "${COUNTS_PATH}"
-  while IFS=$'\t' read -r dataset run sample alias title filename bytes md5 sha url; do
+  while IFS=$'\t' read -r dataset run sample alias title source_sample strategy unit source_record filename bytes md5 sha url; do
     [[ "${dataset}" == dataset_id ]] && continue
     local records
     records="$(verify_one_fastq "${CACHE_ROOT}/${filename}" "${bytes}" "${md5}" "${sha}")"
@@ -311,7 +312,7 @@ if [[ -e "${SEAL_PATH}" || -e "${MANIFEST_PATH}" ]]; then
 fi
 assert_allowed_unsealed_contents
 
-while IFS=$'\t' read -r dataset run sample alias title filename bytes md5 sha url; do
+while IFS=$'\t' read -r dataset run sample alias title source_sample strategy unit source_record filename bytes md5 sha url; do
   [[ "${dataset}" == dataset_id ]] && continue
   destination="${CACHE_ROOT}/${filename}"
   partial="${destination}.partial"
@@ -354,8 +355,9 @@ with open(spec_path, encoding="utf-8", newline="") as handle:
     rows = list(csv.DictReader(handle, delimiter="\t"))
 fields = [
     "schema_version", "dataset_id", "run_accession", "sample_accession",
-    "sample_alias", "sample_title", "filename", "bytes", "md5", "sha256",
-    "fastq_records", "url",
+    "sample_alias", "sample_title", "source_sample_id", "library_strategy",
+    "library_unit", "source_record_url", "filename", "bytes", "md5",
+    "sha256", "fastq_records", "url",
 ]
 with open(manifest_path, "x", encoding="utf-8", newline="") as handle:
     writer = csv.DictWriter(handle, fieldnames=fields, delimiter="\t", lineterminator="\n")

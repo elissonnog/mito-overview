@@ -1,81 +1,81 @@
-# v0.3.0 Reproducibility Run Ledger
+# v0.3.0 GitHub Release Reproducibility Ledger
 
-This ledger tracks evidence required for the intended `mito-overview` v0.3.0 release dated 2026-07-20. It supports audit planning and does not convert incomplete work into release evidence. A row marked **pending** is not a pass.
+This ledger tracks the active GitHub-only release gate for `mito-overview` v0.3.0. A pending row is not evidence of a pass. The controlling specification is [`clean_room_validation_protocol_v0.3.0.md`](clean_room_validation_protocol_v0.3.0.md). Zenodo, a DOI, manuscript changes, bioRxiv submission, Notion, and MCW/HPC deployment are outside this release gate.
 
-The historical `v0.2.1` release remains immutable at commit `2ba62b775a7204c0dc61f5408989603f536c78da`. Its dated audit remains in `docs/release_validation_audit_2026-07-07.md`; v0.2.1 observations must not be relabeled as v0.3.0 results.
+The historical `v0.2.1` release remains immutable at `2ba62b775a7204c0dc61f5408989603f536c78da`. Historical outputs must not be relabeled as v0.3.0 evidence.
 
-## Release Identity Ledger
+## Release Identity
 
-| Field | Intended or historical value | Evidence status |
+| Field | Required value | Current status |
 | --- | --- | --- |
-| release-candidate version | `0.3.0` | recorded in `pyproject.toml`, `mito_overview/__init__.py`, and `CITATION.cff` |
-| release metadata date | `2026-07-20` | recorded |
+| version | `0.3.0` | recorded in package metadata; final agreement check pending |
 | repository | `https://github.com/elissonnog/mito-overview` | recorded |
-| authors | Elisson Lopes; Xiaowu Gai | recorded |
-| affiliation | Medical College of Wisconsin | recorded in citation and release-control metadata |
-| immutable prior release | `v0.2.1` at `2ba62b775a7204c0dc61f5408989603f536c78da` | historical record preserved |
-| `v0.3.0` Git tag | intended tag `v0.3.0` | **pending**; tag not claimed |
-| exact `v0.3.0` tag target | full candidate commit | **pending** until tagging |
-| GitHub Actions CI pass | Linux and macOS jobs explicitly checking out the exact PR head; final evidence from a successful push event on the exact candidate commit | **pending**; final CI pass not claimed |
-| final validation packet pass | self-verifying v0.3.0 audit ZIP bound to the exact final commit, CI run, and reserved DOI | **pending**; final packet pass not claimed |
-| Zenodo DOI reservation | DOI reserved in an unpublished draft with sanitized reservation-record evidence captured before final metadata synchronization | **pending**; no DOI reserved |
-| release DOI | reserved DOI resolving to the published tagged archive | **pending**; no published DOI claimed |
-| Zenodo publication | archive of the tagged release | **pending**; no Zenodo publication claimed |
+| prior release | `v0.2.1` at `2ba62b775a7204c0dc61f5408989603f536c78da` | preserved |
+| frozen manuscript tree | `bfb5664db9c8b43ed5de33ecbddef88071fc6378` | frozen; `paper/**` excluded from this phase |
+| final commit | one exact 40-character public `main` commit | pending |
+| GitHub Actions | successful Ubuntu and macOS jobs with `head_sha=FINAL_SHA` | pending |
+| tag | annotated `v0.3.0` peeled to `FINAL_SHA` | pending |
+| release assets | wheel, sdist, validation ZIP, reports, environment records, release notes, and `SHA256SUMS` | pending |
+| archive/DOI | not required | outside scope |
 
 ## Scientific Claim Boundary
 
-The intended release supports only a reproducible workflow/resource claim for mode-gated mtDNA evidence reporting. It does not support diagnostic use, pathogenicity classification, calibrated low-VAF performance, deletion-truth benchmarking, absolute mtDNA copy-number estimation, formal NUMT classification, biological methylation conclusions, or clinical equivalence between long- and short-read assays.
+The release may support workflow execution, declared output contracts, fixed-input repeatability, representation of a known public marker, and descriptive dependence on prespecified quality filters. It does not establish diagnostic performance, sensitivity or specificity, a limit of detection, pathogenicity classification, deletion accuracy, absolute mtDNA copy number, formal NUMT classification, modality equivalence, population generalization, or clinical utility.
 
-The GM12878 path uses an explicitly labeled deterministic reduced-input subset for resource-bounded workflow validation. It cannot support claims about full-run performance, analytical sensitivity, or population biology. The folder label `GM11906_MERRF_shortread` is historical; the supported claim is representation of the literature-associated `m.8344A>G` marker in applicable reduced short-read report layers, not confirmation of disease status or clinical pathogenicity.
+The GM12878 exercise uses a deterministic 1,000-query-name reduced ONT input and cannot support full-run performance claims. The GM11906 exercise is a three-cell, read-depth-weighted C1 scATAC-seq pseudo-bulk from one donor-derived cell line. Its pooled `m.8344A>G` alternate allele fraction is not a per-cell, donor-level, cell-line-population, or calibrated sample heteroplasmy estimate.
 
-The tracked GM11906 and GM12878 outputs are derived from the historical clean validation source commit `dc09114e1a0dcec2baf83d94549dfa41f3e49c8b`. Later tracking or documentation commits do not change that provenance, and these files must not be relabeled as generated by the eventual v0.3.0 commit. They remain historical supporting evidence until a final packet reruns the public matrix and binds its commands, logs, normalized outputs, provenance, hashes, CI evidence, and release identity to the exact final release candidate.
+## Five Corrections
 
-## Five-Correction Evidence Map
-
-| ID | Corrected behavior | Deterministic evidence source | Required final verdict |
+| ID | Contract | Primary deterministic evidence | Final status |
 | --- | --- | --- | --- |
-| F1 | shared callable A/C/G/T depth, alternate and strand counts, uncapped default depth, common filters, auditable exclusions, and explicitly pair-conditioned co-occurrence | `tests/test_allele_counting.py`; `tests/test_table_contracts.py`; `tests/test_cosegregation_semantics.py` | **pending** final packet pass |
-| F2 | mvTool disabled by default; fixture and explicit network modes; unavailable failures and exact one-to-one response integrity without fabricated annotations | `tests/test_mvtool_modes.py` | **pending** final packet pass |
-| F3 | generic BAM/CRAM inputs, explicit sidecar precedence, legacy compatibility, index/contig/length/reference preflight, alignment-header scope, and record-independent CRAM MD5 identity | `tests/test_config_and_inputs.py`; `tests/test_alignment_reference_contract.py`; `tests/smoke_standalone_minimal.sh` | **pending** final packet pass |
-| F4 | `mt_mean_depth / nuclear_mean_depth`, no diploid multiplier, and NA/`not_evaluable` for an invalid denominator | `tests/test_copy_number.py` | **pending** final packet pass |
-| F5 | concordant exact FASTA/alignment scope, no categorical NUMT result for mt-only/custom/reduced or augmented references, and exact zero-based half-open BED output | `tests/test_reference_scope_and_bed.py`; `tests/test_alignment_reference_contract.py` | **pending** final packet pass |
+| F1 | shared filtered A/C/G/T observation engine, uncapped depth, exact strand/count invariants, and shared co-occurrence observations | `tests/test_allele_counting.py`, `tests/test_cosegregation_semantics.py`, `tests/test_table_contracts.py` | pending final exact-commit run |
+| F2 | mvTool disabled by default; explicit fixture/network modes; bounded unavailable state | `tests/test_mvtool_modes.py` | pending final exact-commit run |
+| F3 | standalone BAM/CRAM contract, sidecar precedence, index/contig/reference preflight | `tests/test_config_and_inputs.py`, `tests/test_alignment_reference_contract.py`, `tests/smoke_standalone_minimal.sh` | pending final exact-commit run |
+| F4 | experimental mt:nuclear depth ratio only; no diploid multiplier; invalid denominator is NA/not evaluable | `tests/test_copy_number.py` | pending final exact-commit run |
+| F5 | reference-scope-gated alignment-ambiguity interpretation and exact zero-based BED | `tests/test_reference_scope_and_bed.py`, `tests/test_numt_qc_inputs.py` | pending final exact-commit run |
 
-## Validation Evidence Tiers
+## Validation Matrix
 
-| Tier | Purpose | Command or script | Expected evidence | Supported claim if passing | Explicitly not supported | Status |
-| --- | --- | --- | --- | --- | --- | --- |
-| package and known-answer tests | verify package wiring and corrections F1-F5 | `python -m pytest -q`; `python -m mito_overview.cli --list-steps` | test transcript, step registry, package metadata agreement | declared components and corrected invariants work in the tested environment | correctness on untested biological data | **pending** exact-commit and CI evidence |
-| synthetic long-read fixture | verify active long-read layers and output contract | `tests/smoke_public_pipeline.sh` | normalized outputs, transcript, hashes | controlled long-read fixture executes | biological realism or diagnostic performance | **pending** final packet pass |
-| synthetic reduced short-read fixture | verify assay gating and stable inactive pages | `tests/smoke_public_pipeline_shortread.sh` | normalized outputs, transcript, hashes | reduced mode preserves the applicable contract | equivalence to long-read behavior | **pending** final packet pass |
-| no-methylation and standalone fixtures | verify absent optional data and portable generic inputs | `tests/smoke_public_pipeline_longread_nomethyl.sh`; `tests/smoke_standalone_minimal.sh` | status pages, preflight evidence, transcript, hashes | optional layers and generic inputs are handled explicitly | external-service or cohort portability | **pending** final packet pass |
-| public GM11906 proof of principle | rerun applicable reduced short-read layers under recorded filter profiles | `scripts/run_public_shortread_validation_gm11906.sh` through the public matrix | historical tracked outputs plus exact-final-commit FASTQ/alignment provenance, marker checks, repeatability, visual inventory, commands, logs, and hashes | the named marker is representable in applicable report layers under stated settings | disease confirmation, pathogenicity, calibrated sensitivity | historical `dc09114…` outputs present; **pending** exact-final-commit packet binding |
-| public GM12878 proof of principle | rerun long-read layers on a provenance-bound deterministic subset | `scripts/run_public_longread_validation_gm12878.sh` through the public matrix | historical tracked outputs plus exact-final-commit source/subset hashes, alignment provenance, repeatability, visual inventory, commands, logs, and hashes | a resource-limited public ONT subset can exercise applicable workflow layers | full-run performance, sensitivity, deletion truth, formal NUMT classification | historical `dc09114...` outputs present; **pending** exact-final-commit packet binding |
-| release acceptance | bind all evidence to one clean commit, real CI run, and reserved DOI | `scripts/run_release_validation_v0.3.0.sh VALIDATION_ROOT CACHE_ROOT PACKET_ROOT AUDIT_ZIP [ARCHIVE_DOI]` | clean-clone transcript, Linux/macOS CI records, distributions, cases, manifests, required audit ZIP, two verifier runs, ZIP hash, and PASS receipt | reproducibility of the bounded release artifact in the recorded environments | universal portability or analytical validation | **pending** |
+| Gate | Required evidence | Current status |
+| --- | --- | --- |
+| package and known answers | complete `pytest`, CLI step list, strict generic dry-run | provisional local pass; final exact-commit rerun pending |
+| synthetic workflows | standard long read, reduced short read, long read without methylation, standalone minimal | provisional local pass; final exact-commit rerun pending |
+| package isolation | build wheel and sdist; install and execute outside checkout with empty `PYTHONPATH` | pending final runner |
+| sealed public cache | exactly seven raw FASTQs plus manifest/seal; hashes, gzip, FASTQ structure, pairing, and metadata identity pass | pending clean-room download |
+| GM11906 public matrix | three filter profiles plus exact default repeat, marker/inventory/status oracles | pending exact-final-commit rerun |
+| GM12878 public matrix | deterministic subset/alignment rebuild, three profiles, exact default repeat, inventory/status oracles | pending exact-final-commit rerun |
+| cross-platform reproduction | macOS clean room and Ubuntu public-data workflow agree on normalized scientific outputs and states | pending |
+| packet verification | packet root and fresh ZIP extraction both pass `verify_bundle.sh` | pending |
+| visual QA | final report-native HTML/PNG inventory and report DOCX/PDF rendering inspected | pending |
+| GitHub publication | PR merged, push CI green, immutable annotated tag and verified assets published | pending |
 
-## Required Public Provenance
+## Public Input Provenance
 
-- Accession and retrieval metadata for each public FASTQ.
-- SHA-256 hashes for source inputs and deterministic subsets.
-- Exact subset algorithm, seed, query-name count, selected-name file, and selected-name hash for GM12878.
-- Reference source, contig dictionary, aligner command/version, subset provenance JSON, and alignment provenance JSON.
-- Canonical allele-filter profile and the tested lenient/default/strict profile values.
-- Commands, environment, runtime, memory when available, and output manifests.
-- Expected-versus-observed checks for the GM11906 marker and bounded GM12878 workflow statuses.
+- `SRR10804585` / `GSM4238454`, `SRR10804590` / `GSM4238459`, and `SRR10804657` / `GSM4238526` are separate C1 single-cell ATAC-seq libraries from the GM11906 lymphoblastoid line.
+- The three paired-end libraries are concatenated as a deliberately selected read-depth-weighted pseudo-bulk for marker-representation testing.
+- `SRR18110025` is the GM12878 ONT targeted-mt source; the clean-room process deterministically selects 1,000 query names with seed `mito-overview-v0.3.0-GM12878-SRR18110025`.
+- Raw FASTQs remain outside Git and the validation ZIP. Derived alignments are rebuilt in each clean-room workspace.
 
-## Required Before Tagging
+## Active Release Command
 
-1. Stabilize intended release contents; treat checks before DOI synchronization as provisional.
-2. Create an unpublished Zenodo draft and reserve a DOI; do not treat reservation as archive publication.
-3. Synchronize the reserved DOI and all release identity fields across Zenodo and repository/manuscript metadata, then commit those changes to establish the final candidate.
-4. Repeat unit, known-answer, synthetic, standalone, packaging, and public matrix checks on that exact clean final commit.
-5. Push the exact commit and obtain real passing Linux and macOS GitHub Actions evidence that explicitly checks out the same full commit. Final packet evidence must use a successful push-event run rather than a pull-request merge ref.
-6. Capture sanitized Zenodo reservation-record evidence for the same DOI, set `MITO_OVERVIEW_ARCHIVE_DOI` (or pass the documented DOI argument), and run the release command with explicit validation, cache, packet, and audit-ZIP paths. The runner must reject an empty DOI and `UNRESERVED`, pass `--doi` explicitly, build `mito-overview-v0.3.0-validation.zip`, and verify both the packet root and a fresh ZIP extraction.
-7. Require the ZIP SHA-256, build log, verification log, and PASS receipt, then complete an independent clean-checkout review against that exact commit and packet.
-8. Create `v0.3.0` only after all required evidence passes and record its full target commit.
-9. Publish the GitHub release and then the matching tagged Zenodo archive; confirm DOI resolution and metadata/artifact agreement.
+```bash
+MITO_OVERVIEW_GITHUB_RUN_ID=<run-id> \
+./scripts/run_release_validation_v0.3.0.sh \
+  <validation-root> <raw-cache-root> <packet-root> \
+  <mito-overview-v0.3.0-validation.zip>
+```
 
-## Final Packet Contract
+The runner must reject legacy DOI/Zenodo arguments, clone public GitHub HTTPS at an exact 40-character commit, build/install distributions outside the checkout, collect CI identity and resource evidence, build schema `2.0` profile `github_release_validation_v1`, and verify both the packet root and a fresh ZIP extraction.
 
-The final packet is an external release artifact and is not committed to this repository. It must be named `mito-overview-v0.3.0-validation.zip` and contain release identity, the explicitly supplied reserved DOI, sanitized Zenodo reservation-record evidence, case and claim-evidence tables, public data-source records, selected query names, subset/alignment provenance, environment and command transcripts, expected and normalized observed outputs, distributions, input and artifact SHA-256 manifests, successful exact-commit push-event CI evidence, and a verifier. Raw public data remain outside Git. The verifier must reject normalized archive-path collisions. A packet created with the builder default `UNRESERVED`, without captured reservation evidence, without the generated verifier being executed, or without a matching exact-commit PASS receipt is not a final packet.
+## Ordered Finish Gate
 
-At this ledger revision, the exact final commit, CI pass, DOI reservation, final packet pass, independent review, v0.3.0 tag, release DOI publication, and Zenodo publication all remain **pending**. Historical tracked outputs do not satisfy any of those gates.
+1. Stabilize and review the GitHub-only branch without modifying `paper/**`.
+2. Run complete local tests, all four synthetic workflows, both example builders, package-isolation checks, and hygiene scans.
+3. Obtain independent release-engineering, bioinformatics, and reproducibility reviews; resolve every blocker and rerun affected gates.
+4. Push PR #3 and require green Ubuntu/macOS CI at the exact head.
+5. Merge to `main`; record `FINAL_SHA`; require successful push-event CI at that exact SHA.
+6. Run a fresh macOS public clean-room reproduction from an empty cache and the Ubuntu public workflow at `FINAL_SHA`; compare normalized outputs and module states.
+7. Build and verify the audit ZIP and human-readable MD/DOCX/PDF report, including report-native figures.
+8. Tag exactly `FINAL_SHA` as annotated `v0.3.0`, rerun tag-clone package/unit/synthetic checks, publish verified GitHub assets, and record the publication receipt.
+
+Any commit after `FINAL_SHA` invalidates the release evidence. Any defect after publication is corrected forward as `v0.3.1`; the `v0.3.0` tag is never moved.

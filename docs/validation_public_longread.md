@@ -31,7 +31,7 @@ The historical validation matrix reused that fixed BAM. Its repeatability result
 
 ## Final v0.3.0 release binding
 
-Before these observations can support final v0.3.0 release acceptance, the public matrix must be rerun from the exact clean final candidate created after DOI/metadata synchronization. The required audit packet must bind that same full commit to fixed-input provenance and hashes, commands, logs, normalized observed outputs, filter-profile checks, package artifacts, and passing Linux/macOS CI evidence. Until that packet exists and passes, the values below remain historical `dc09114...`-derived observations and all final release, CI, DOI, tag, and archive gates remain pending.
+Before these observations can support final v0.3.0 release acceptance, the public matrix must be rerun from the exact clean final candidate. The required audit packet must bind that same full commit to fixed-input provenance and hashes, commands, logs, normalized observed outputs, filter-profile checks, package artifacts, and passing Linux/macOS CI evidence. Until that packet exists and passes, the values below remain historical `dc09114...`-derived observations and all final release, CI, tag, and GitHub-asset gates remain pending.
 
 ## Default profile
 The example-specific candidate thresholds are `MIN_CALLABLE_DEPTH=100` and `MIN_ALT_ALLELE_FRACTION=0.10`. The default observation filters are `ALLELE_MIN_BASE_QUALITY=13`, `ALLELE_MIN_MAPPING_QUALITY=20`, and `ALLELE_MIN_READ_MEAN_QUALITY=10`.

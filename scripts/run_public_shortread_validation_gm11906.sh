@@ -21,6 +21,7 @@ echo "[shortread-gm11906] repo root: ${REPO_ROOT}"
 echo "[shortread-gm11906] workdir: ${WORKDIR}"
 echo "[shortread-gm11906] output dir: ${OUTPUT_DIR}"
 echo "[shortread-gm11906] python: ${MITO_OVERVIEW_PYTHON:-python3}"
+echo "[shortread-gm11906] source: pooled pseudo-bulk of three GM11906 single-cell ATAC-seq libraries"
 
 INPUT_MODE="${MITO_OVERVIEW_PUBLIC_INPUT_MODE:-download}"
 case "${INPUT_MODE}" in
@@ -129,6 +130,14 @@ assert_md5 "${RAW_DATA_DIR}/SRR10804590_2.fastq.gz" 4d6977526136739de2d90baa8d45
 assert_md5 "${RAW_DATA_DIR}/SRR10804657_1.fastq.gz" 8f082f73cb64bf56ea8a053fe80eeb06
 assert_md5 "${RAW_DATA_DIR}/SRR10804657_2.fastq.gz" 62b7d1b2294a580c021f5fa1f52609be
 
+SOURCE_METADATA_TSV="${WORKDIR}/GM11906_MERRF_shortread.source_libraries.tsv"
+cat > "${SOURCE_METADATA_TSV}" <<'EOF'
+run_accession	geo_accession	source_sample_id	library_strategy	library_unit	combination_role	source_record_url
+SRR10804585	GSM4238454	GM11906	ATAC-seq	single_cell_library	pooled_pseudobulk	https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSM4238454
+SRR10804590	GSM4238459	GM11906	ATAC-seq	single_cell_library	pooled_pseudobulk	https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSM4238459
+SRR10804657	GSM4238526	GM11906	ATAC-seq	single_cell_library	pooled_pseudobulk	https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSM4238526
+EOF
+
 R1_FASTQ="${DERIVED_DIR}/GM11906_MERRF_R1.fastq.gz"
 R2_FASTQ="${DERIVED_DIR}/GM11906_MERRF_R2.fastq.gz"
 cat \
@@ -171,21 +180,21 @@ done
 if [[ "${alignment_component_count}" -eq 3 ]]; then
   "${PYTHON_BIN}" "${REPO_ROOT}/scripts/public_alignment_provenance.py" verify \
     --manifest "${ALIGN_PROVENANCE}" \
-    --dataset GM11906_MERRF_reduced_shortread \
+    --dataset GM11906_pooled_scATAC \
     --alignment "${ALIGN_BAM}" \
     --reference "${REF_FASTA}" \
     --derivation-id "${ALIGN_DERIVATION_ID}" \
     "${PROVENANCE_INPUTS[@]}"
   echo "[shortread-gm11906] reusing provenance-verified BAM ${ALIGN_BAM}"
 elif [[ "${alignment_component_count}" -eq 0 ]]; then
-  echo "[shortread-gm11906] aligning public GM11906 short-read data to ${REF_FASTA}"
+  echo "[shortread-gm11906] aligning pooled GM11906 single-cell ATAC-seq reads to ${REF_FASTA}"
   mkdir -p "$(dirname "${ALIGN_BAM}")"
   bwa mem -t "${THREADS}" "${REF_FASTA}" "${R1_FASTQ}" "${R2_FASTQ}" \
     | samtools sort -@ "${THREADS}" -o "${ALIGN_BAM}"
   samtools index -@ "${THREADS}" "${ALIGN_BAM}"
   "${PYTHON_BIN}" "${REPO_ROOT}/scripts/public_alignment_provenance.py" record \
     --manifest "${ALIGN_PROVENANCE}" \
-    --dataset GM11906_MERRF_reduced_shortread \
+    --dataset GM11906_pooled_scATAC \
     --alignment "${ALIGN_BAM}" \
     --reference "${REF_FASTA}" \
     --derivation-id "${ALIGN_DERIVATION_ID}" \
@@ -320,6 +329,7 @@ case "${OUTPUT_MODE}" in
 esac
 mkdir -p "${OUTPUT_DIR}/provenance"
 copy_if_needed "${ALIGN_PROVENANCE}" "${OUTPUT_DIR}/provenance/GM11906_MERRF_shortread.alignment.provenance.json"
+copy_if_needed "${SOURCE_METADATA_TSV}" "${OUTPUT_DIR}/provenance/GM11906_MERRF_shortread.source_libraries.tsv"
 copy_if_needed "${WORKDIR}/GM11906_MERRF_shortread.flagstat.txt" "$(dirname "${OUTPUT_DIR}")/GM11906_MERRF_shortread.flagstat.txt"
 copy_if_needed "${WORKDIR}/GM11906_MERRF_shortread.8344.mpileup" "$(dirname "${OUTPUT_DIR}")/GM11906_MERRF_shortread.8344.mpileup"
 
@@ -337,7 +347,7 @@ if [[ -n "${MITO_OVERVIEW_SHORTREAD_ASSET_DIR:-}" ]]; then
     --profile short \
     --source-dir "${OUTPUT_DIR}/figures" \
     --output "${FIG_DIR}/GM11906_MERRF_shortread_montage.png" \
-    --title "GM11906 public short-read workflow proof-of-principle"
+    --title "GM11906 pooled scATAC mtDNA workflow proof-of-principle"
   cp "${OUTPUT_DIR}/summary/mito_qc_summary.tsv" "${SUMMARY_DIR}/"
   cp "${OUTPUT_DIR}/summary/mito_heteroplasmy_candidates.tsv" "${SUMMARY_DIR}/"
   cp "${OUTPUT_DIR}/summary/mito_gene_summary.tsv" "${SUMMARY_DIR}/"
@@ -346,6 +356,8 @@ if [[ -n "${MITO_OVERVIEW_SHORTREAD_ASSET_DIR:-}" ]]; then
   copy_if_needed "${WORKDIR}/GM11906_MERRF_shortread.8344.mpileup" "${ASSET_DIR}/GM11906_MERRF_shortread.8344.mpileup"
   copy_if_needed "${ALIGN_PROVENANCE}" \
     "${PROVENANCE_DIR}/GM11906_MERRF_shortread.alignment.provenance.json"
+  copy_if_needed "${SOURCE_METADATA_TSV}" \
+    "${PROVENANCE_DIR}/GM11906_MERRF_shortread.source_libraries.tsv"
   "${PYTHON_BIN}" - <<'PY' "${OUTPUT_DIR}" "${ASSET_DIR}"
 import sys
 from pathlib import Path
@@ -372,6 +384,13 @@ findings = pd.DataFrame(
         {"metric": "sample_id", "value": "GM11906_MERRF_shortread"},
         {"metric": "read_mode", "value": "short"},
         {"metric": "assay_type", "value": "targeted_mt"},
+        {"metric": "source_library_strategy", "value": "ATAC-seq"},
+        {"metric": "source_library_unit", "value": "single_cell_library"},
+        {"metric": "pooled_source_library_count", "value": 3},
+        {
+            "metric": "allele_fraction_interpretation",
+            "value": "pooled_read_observation_fraction",
+        },
         {"metric": "min_callable_depth", "value": het_map.get("min_callable_depth", "NA")},
         {"metric": "min_alt_allele_fraction", "value": het_map.get("min_alt_allele_fraction", "NA")},
         {"metric": "mapped_reads", "value": qc_map.get("mapped_reads", "NA")},

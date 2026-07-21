@@ -48,6 +48,13 @@ ZENODO_PUBLIC_METADATA_FIELDS = {
 }
 
 PUBLIC_PROVENANCE_FILES = {
+    "shortread_source_libraries": {
+        "source": (
+            "outputs/gm11906_default_run1/provenance/"
+            "GM11906_MERRF_shortread.source_libraries.tsv"
+        ),
+        "packet": "public_provenance/GM11906_MERRF_shortread.source_libraries.tsv",
+    },
     "shortread_alignment": {
         "source": (
             "outputs/gm11906_default_run1/provenance/"
@@ -893,10 +900,72 @@ def validate_public_provenance(public_root: Path) -> list[dict[str, str]]:
     if not names_path.is_file() or names_path.stat().st_size == 0:
         raise FileNotFoundError(f"Required selected-query-name evidence not found: {names_path}")
 
+    with paths["shortread_source_libraries"].open(
+        encoding="utf-8", newline=""
+    ) as handle:
+        source_rows = list(csv.DictReader(handle, delimiter="\t"))
+    expected_source_header = (
+        "run_accession",
+        "geo_accession",
+        "source_sample_id",
+        "library_strategy",
+        "library_unit",
+        "combination_role",
+        "source_record_url",
+    )
+    if (
+        not source_rows
+        or tuple(source_rows[0]) != expected_source_header
+        or [
+            (
+                row["run_accession"],
+                row["geo_accession"],
+                row["source_sample_id"],
+                row["library_strategy"],
+                row["library_unit"],
+                row["combination_role"],
+            )
+            for row in source_rows
+        ]
+        != [
+            (
+                "SRR10804585",
+                "GSM4238454",
+                "GM11906",
+                "ATAC-seq",
+                "single_cell_library",
+                "pooled_pseudobulk",
+            ),
+            (
+                "SRR10804590",
+                "GSM4238459",
+                "GM11906",
+                "ATAC-seq",
+                "single_cell_library",
+                "pooled_pseudobulk",
+            ),
+            (
+                "SRR10804657",
+                "GSM4238526",
+                "GM11906",
+                "ATAC-seq",
+                "single_cell_library",
+                "pooled_pseudobulk",
+            ),
+        ]
+        or any(
+            row["source_record_url"]
+            != "https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc="
+            + row["geo_accession"]
+            for row in source_rows
+        )
+    ):
+        raise ValueError("Public GM11906 source-library provenance is invalid")
+
     alignment_expectations = (
         (
             short,
-            "GM11906_MERRF_reduced_shortread",
+            "GM11906_pooled_scATAC",
             "bwa-mem-samtools-sort-v1",
             "short-read",
         ),
@@ -993,7 +1062,11 @@ def validate_public_provenance(public_root: Path) -> list[dict[str, str]]:
         {
             "path": str(specification["packet"]),
             "sha256": sha256(paths[key]),
-            "source_case": "gm11906_default_run1" if key == "shortread_alignment" else "gm12878_default_run1",
+            "source_case": (
+                "gm11906_default_run1"
+                if key.startswith("shortread_")
+                else "gm12878_default_run1"
+            ),
         }
         for key, specification in PUBLIC_PROVENANCE_FILES.items()
     ]

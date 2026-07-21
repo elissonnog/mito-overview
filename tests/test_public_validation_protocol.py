@@ -243,6 +243,27 @@ def test_owned_shell_scripts_are_syntactically_valid() -> None:
     )
 
 
+def test_gm11906_source_provenance_identifies_the_pooled_scatac_libraries() -> None:
+    cache_contract = PREPARE.read_text(encoding="utf-8")
+    runner_contract = SHORT_RUNNER.read_text(encoding="utf-8")
+
+    assert "GM11906_pooled_scATAC" in cache_contract
+    assert "source_sample_id" in cache_contract
+    assert "library_strategy" in cache_contract
+    assert "single_cell_library" in cache_contract
+    for run, geo in (
+        ("SRR10804585", "GSM4238454"),
+        ("SRR10804590", "GSM4238459"),
+        ("SRR10804657", "GSM4238526"),
+    ):
+        assert run in cache_contract
+        assert f"acc={geo}" in cache_contract
+
+    assert "pooled pseudo-bulk of three GM11906 single-cell ATAC-seq libraries" in runner_contract
+    assert "pooled_read_observation_fraction" in runner_contract
+    assert "--dataset GM11906_pooled_scATAC" in runner_contract
+
+
 def test_oracle_accepts_exact_six_profile_fixture(tmp_path: Path) -> None:
     matrix_root = tmp_path / "matrix"
     build_matrix_fixture(matrix_root)

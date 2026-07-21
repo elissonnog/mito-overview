@@ -10,7 +10,7 @@ This document records public validation evidence for the unreleased MitoOverview
 - Release status: **unreleased release candidate**
 - Validation status: **historical bounded evidence recorded; exact-final-commit validation pending**
 
-The final `v0.3.0` tag, release date, and version-specific archival DOI have not been assigned.
+The final `v0.3.0` tag has not been assigned. Zenodo, an archival DOI, and manuscript work are outside this GitHub-only validation gate.
 
 ## Claim boundary
 
@@ -256,7 +256,7 @@ Module states are restricted to `ok`, `not_configured`, `not_applicable`, `not_e
 
 ## Release-candidate status
 
-Version `0.3.0` remains unreleased. The final tag, release date, and version-specific archival DOI are pending and are not represented as completed validation results.
+Version `0.3.0` remains unreleased. The final GitHub tag, release assets, and exact-commit validation packet are pending and are not represented as completed validation results.
 
 ## Independent reproducibility checklist
 
