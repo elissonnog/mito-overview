@@ -1014,7 +1014,7 @@ write_table(
     table_rows,
 )
 
-checked = datetime.now(timezone.utc).isoformat()
+recorded = datetime.now(timezone.utc).isoformat()
 public_rows = [
     {
         "dataset": "GM11906 pooled single-cell ATAC-seq pseudo-bulk",
@@ -1076,7 +1076,7 @@ public_rows = [
 for row in public_rows:
     row.update(
         {
-            "metadata_checked_utc": checked,
+            "metadata_recorded_utc": recorded,
             "role": "fixed-input reproducibility and descriptive filter profile",
             "redistribution": "raw reads excluded from Git and validation ZIP",
         }
@@ -1087,7 +1087,7 @@ write_table(
         "dataset", "run_accession", "study_accession", "sample_accession",
         "cell_line", "platform", "instrument_model", "library_strategy",
         "fastq_url", "fastq_md5", "fastq_sha256", "fastq_bytes",
-        "metadata_checked_utc", "role", "redistribution",
+        "metadata_recorded_utc", "role", "redistribution",
     ],
     public_rows,
 )

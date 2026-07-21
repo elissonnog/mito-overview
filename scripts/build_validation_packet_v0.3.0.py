@@ -26,6 +26,70 @@ EXPECTED_LICENSE = "MIT"
 EXPECTED_CREATORS = ("Elisson Lopes", "Xiaowu Gai")
 PACKET_SCHEMA_VERSION = "2.0"
 VALIDATION_PROFILE = "github_release_validation_v1"
+PUBLIC_ENVIRONMENT_PACKET_PATH = "public_environment"
+PUBLIC_ENVIRONMENT_FILES = (
+    "conda-explicit.txt",
+    "network_entrypoint_contract.tsv",
+    "network_isolation.tsv",
+    "pip-freeze.txt",
+    "runtime_versions.json",
+)
+EXPECTED_RUNTIME_PACKAGES = {
+    "mito-overview": "0.3.0",
+    "pysam": "0.24.0",
+    "pandas": "3.0.3",
+    "numpy": "2.5.1",
+    "matplotlib": "3.11.0",
+    "requests": "2.34.2",
+    "pytest": "9.1.1",
+    "build": "1.5.0",
+    "setuptools": "82.0.1",
+    "wheel": "0.47.0",
+    "python-docx": "1.2.0",
+}
+PUBLIC_RUNTIME_PLATFORMS = {
+    "linux-64": {
+        "system": "Linux",
+        "machine": "x86_64",
+        "network_platform": "Linux/x86_64",
+        "isolation_method": "linux_unshare_network_namespace",
+    },
+    "osx-64": {
+        "system": "Darwin",
+        "machine": "x86_64",
+        "network_platform": "Darwin/x86_64",
+        "isolation_method": "macos_sandbox_exec_deny_network",
+    },
+    "osx-arm64": {
+        "system": "Darwin",
+        "machine": "arm64",
+        "network_platform": "Darwin/arm64",
+        "isolation_method": "macos_sandbox_exec_deny_network",
+    },
+}
+NETWORK_ISOLATION_FIELDS = (
+    "schema_version",
+    "platform",
+    "isolation_method",
+    "isolation_scope",
+    "parent_loopback_control",
+    "isolated_loopback_probe",
+    "probe_target",
+    "probe_error",
+    "invoking_uid",
+    "invoking_gid",
+    "child_uid",
+    "child_gid",
+    "network_isolation_verdict",
+)
+EXPECTED_NETWORK_ENTRYPOINT_CONTRACT = (
+    "entrypoint\tcontrol\tscope\n"
+    "all IP sockets\tOS process-tree isolation\t"
+    "macOS sandbox-exec deny network* or Linux network namespace\n"
+    "curl\tPATH canary\trelease public-data runners\n"
+    "wget\tPATH canary\tdefensive command guard\n"
+    "mvTool requests\tMVTOOL_MODE=disabled\tpipeline external annotation module\n"
+)
 ZENODO_DOI_PATTERN = r"10\.5281/zenodo\.[1-9][0-9]*"
 ZENODO_RESERVATION_PACKET_PATH = "acceptance/zenodo_reservation.json"
 ZENODO_RESERVATION_SOURCE = "authenticated_zenodo_deposition_api"
@@ -297,6 +361,7 @@ REQUIRED_TOP_LEVEL = (
     "expected",
     "observed_normalized",
     "public_provenance",
+    PUBLIC_ENVIRONMENT_PACKET_PATH,
     "figures",
     "filter_profile_results.tsv",
     "inputs.sha256",
@@ -369,7 +434,7 @@ EVIDENCE_TABLES = {
         "fastq_md5",
         "fastq_sha256",
         "fastq_bytes",
-        "metadata_checked_utc",
+        "metadata_recorded_utc",
         "role",
         "redistribution",
     ),
@@ -442,6 +507,7 @@ REQUIRED_PASS_CASES = {
     "gm11906_visual_integrity",
     "gm12878_visual_integrity",
     "filter_profiles",
+    "offline_isolation",
 } | ACCEPTANCE_CASE_IDS
 
 
@@ -683,6 +749,192 @@ def parse_environment_identity(path: Path) -> dict[str, str]:
     if missing:
         raise ValueError(f"environment.txt is missing release identity keys: {', '.join(missing)}")
     return values
+
+
+def parse_network_isolation_evidence(path: Path) -> dict[str, str]:
+    if path.is_symlink() or not path.is_file():
+        raise ValueError("Network-isolation evidence must be a regular non-symlink file")
+    with path.open(encoding="utf-8", newline="") as handle:
+        reader = csv.DictReader(handle, delimiter="\t")
+        if tuple(reader.fieldnames or ()) != ("field", "value"):
+            raise ValueError("Network-isolation evidence has an invalid schema")
+        rows = list(reader)
+    if any(
+        set(row) != {"field", "value"}
+        or row.get("field") is None
+        or row.get("value") is None
+        for row in rows
+    ):
+        raise ValueError("Network-isolation evidence contains malformed rows")
+    fields = tuple(row.get("field", "") for row in rows)
+    if fields != NETWORK_ISOLATION_FIELDS:
+        raise ValueError(
+            "Network-isolation evidence field inventory or order is invalid: "
+            f"{fields!r}"
+        )
+    values = {row["field"]: row.get("value", "") for row in rows}
+    if len(values) != len(rows):
+        raise ValueError("Network-isolation evidence contains duplicate fields")
+
+    platform_matches = [
+        specification
+        for specification in PUBLIC_RUNTIME_PLATFORMS.values()
+        if specification["network_platform"] == values["platform"]
+    ]
+    if len(platform_matches) != 1:
+        raise ValueError(
+            f"Network-isolation platform is unsupported: {values['platform']!r}"
+        )
+    specification = platform_matches[0]
+    expected = {
+        "schema_version": "1.0",
+        "isolation_method": specification["isolation_method"],
+        "isolation_scope": "process_tree",
+        "parent_loopback_control": "reachable",
+        "isolated_loopback_probe": "blocked",
+        "probe_target": "parent_loopback_listener",
+        "network_isolation_verdict": "PASS",
+    }
+    for field, expected_value in expected.items():
+        if values[field] != expected_value:
+            raise ValueError(
+                f"Network-isolation evidence mismatch for {field}: "
+                f"{values[field]!r} != {expected_value!r}"
+            )
+    if not values["probe_error"].strip():
+        raise ValueError("Network-isolation evidence lacks a blocked-probe error")
+    for field in ("invoking_uid", "invoking_gid", "child_uid", "child_gid"):
+        if not re.fullmatch(r"[0-9]+", values[field]):
+            raise ValueError(f"Network-isolation identity is invalid for {field}")
+    if values["invoking_uid"] != values["child_uid"]:
+        raise ValueError("Network-isolation child UID does not match the invoking UID")
+    if values["invoking_gid"] != values["child_gid"]:
+        raise ValueError("Network-isolation child GID does not match the invoking GID")
+    return values
+
+
+def validate_public_environment(
+    environment_root: Path,
+    repo_root: Path | None = None,
+) -> dict[str, object]:
+    if environment_root.is_symlink() or not environment_root.is_dir():
+        raise ValueError("Public environment evidence must be a regular directory")
+    children = list(environment_root.iterdir())
+    if any(child.is_symlink() or not child.is_file() for child in children):
+        raise ValueError("Public environment evidence must contain only regular files")
+    observed_files = tuple(sorted(child.name for child in children))
+    if observed_files != PUBLIC_ENVIRONMENT_FILES:
+        raise ValueError(
+            "Public environment evidence inventory mismatch: "
+            f"{observed_files!r} != {PUBLIC_ENVIRONMENT_FILES!r}"
+        )
+
+    isolation = parse_network_isolation_evidence(
+        environment_root / "network_isolation.tsv"
+    )
+    runtime_path = environment_root / "runtime_versions.json"
+    try:
+        runtime = json.loads(runtime_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as error:
+        raise ValueError("Public runtime version evidence is malformed JSON") from error
+    expected_runtime_keys = {
+        "schema_version",
+        "platform_id",
+        "system",
+        "machine",
+        "python",
+        "python_executable",
+        "mito_overview_module",
+        "packages",
+        "samtools",
+        "htslib",
+        "minimap2",
+        "bwa",
+        "threads",
+        "installed_distribution_required",
+    }
+    if not isinstance(runtime, dict) or set(runtime) != expected_runtime_keys:
+        raise ValueError("Public runtime version evidence has an invalid schema")
+    platform_id = runtime.get("platform_id")
+    if platform_id not in PUBLIC_RUNTIME_PLATFORMS:
+        raise ValueError(f"Public runtime platform is unsupported: {platform_id!r}")
+    platform_specification = PUBLIC_RUNTIME_PLATFORMS[str(platform_id)]
+    expected_runtime = {
+        "schema_version": "1.0",
+        "system": platform_specification["system"],
+        "machine": platform_specification["machine"],
+        "python": "3.12.13",
+        "packages": EXPECTED_RUNTIME_PACKAGES,
+        "samtools": "samtools 1.23.1",
+        "htslib": "Using htslib 1.23.1",
+        "minimap2": "2.31-r1302",
+        "bwa": "0.7.19-r1273",
+        "threads": 4,
+        "installed_distribution_required": True,
+    }
+    for field, expected_value in expected_runtime.items():
+        if runtime.get(field) != expected_value:
+            raise ValueError(
+                f"Public runtime evidence mismatch for {field}: "
+                f"{runtime.get(field)!r} != {expected_value!r}"
+            )
+    if isolation["platform"] != platform_specification["network_platform"]:
+        raise ValueError("Runtime and network-isolation platform identities disagree")
+
+    python_executable = runtime.get("python_executable")
+    if not isinstance(python_executable, str) or not python_executable.strip():
+        raise ValueError("Public runtime Python executable is missing")
+    module_text = runtime.get("mito_overview_module")
+    if not isinstance(module_text, str) or not module_text.replace("\\", "/").endswith(
+        "/site-packages/mito_overview/__init__.py"
+    ):
+        raise ValueError("Public runtime did not resolve mito-overview from site-packages")
+    if repo_root is not None and Path(module_text).is_absolute():
+        resolved_module = Path(module_text).resolve(strict=False)
+        resolved_repo = repo_root.resolve(strict=False)
+        if resolved_module == resolved_repo or resolved_repo in resolved_module.parents:
+            raise ValueError("Public runtime imported mito-overview from the checkout")
+
+    freeze_lines = [
+        line.strip()
+        for line in (environment_root / "pip-freeze.txt")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+    frozen_names: set[str] = set()
+    for line in freeze_lines:
+        if "==" in line:
+            name = line.split("==", 1)[0]
+        elif " @ " in line:
+            name = line.split(" @ ", 1)[0]
+        else:
+            continue
+        frozen_names.add(normalize_project_name(name.strip()))
+    expected_names = {normalize_project_name(name) for name in EXPECTED_RUNTIME_PACKAGES}
+    missing_names = sorted(expected_names - frozen_names)
+    if missing_names:
+        raise ValueError(
+            f"Public pip-freeze evidence is missing pinned packages: {missing_names}"
+        )
+    if not (environment_root / "conda-explicit.txt").read_text(
+        encoding="utf-8"
+    ).strip():
+        raise ValueError("Public conda environment evidence is empty")
+    if (environment_root / "network_entrypoint_contract.tsv").read_text(
+        encoding="utf-8"
+    ) != EXPECTED_NETWORK_ENTRYPOINT_CONTRACT:
+        raise ValueError("Public network-entrypoint contract is inconsistent")
+
+    return {
+        "path": PUBLIC_ENVIRONMENT_PACKET_PATH,
+        "platform_id": platform_id,
+        "network_platform": isolation["platform"],
+        "isolation_method": isolation["isolation_method"],
+        "isolation_scope": isolation["isolation_scope"],
+        "threads": runtime["threads"],
+        "installed_distribution_required": runtime["installed_distribution_required"],
+    }
 
 
 def read_release_metadata(repo_root: Path) -> dict[str, object]:
@@ -1029,14 +1281,14 @@ def validate_public_input_evidence(
                 f"public_data_sources.tsv mismatch for {run_accession}: {mismatches!r}"
             )
         try:
-            checked = datetime.fromisoformat(
-                source["metadata_checked_utc"].replace("Z", "+00:00")
+            recorded = datetime.fromisoformat(
+                source["metadata_recorded_utc"].replace("Z", "+00:00")
             )
         except ValueError as error:
             raise ValueError(
                 f"public_data_sources.tsv has an invalid metadata timestamp for {run_accession}"
             ) from error
-        if checked.tzinfo is None or checked.utcoffset() is None:
+        if recorded.tzinfo is None or recorded.utcoffset() is None:
             raise ValueError(
                 f"public_data_sources.tsv metadata timestamp lacks a timezone for {run_accession}"
             )
@@ -2465,7 +2717,7 @@ def sanitize_packet_paths(packet_root: Path, replacements: dict[Path, str]) -> N
             sanitized = sanitized.replace(absolute, marker)
         sanitized = re.sub(r"/Users/[^/\s]+", "${HOME}", sanitized)
         sanitized = re.sub(r"/home/[^/\s]+", "${HOME}", sanitized)
-        sanitized = re.sub(r"/private/tmp(?:/[^\s'\";]*)?", "${TMPDIR}", sanitized)
+        sanitized = sanitized.replace("/private/tmp", "${TMPDIR}")
         sanitized = re.sub(
             r"(?i)[A-Z]:\\Users\\[^\\\s]+",
             "${HOME}",
@@ -2548,6 +2800,7 @@ import sys
 import tarfile
 import zipfile
 from collections import Counter
+from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
@@ -2560,7 +2813,7 @@ required_top_level = {
     "resource_usage.tsv", "figure_provenance.tsv", "table_provenance.tsv",
     "public_data_sources.tsv", "manuscript_handoff.tsv", "limitations.tsv",
     "environment.txt", "commands", "logs", "dist", "expected",
-    "observed_normalized", "public_provenance", "figures",
+    "observed_normalized", "public_provenance", "public_environment", "figures",
     "filter_profile_results.tsv", "inputs.sha256", "raw_inputs.tsv",
     "CACHE_SEAL.sha256", "public_validation_oracle_v0.3.0.tsv",
     "oracle_assertions.tsv", "artifacts.sha256", "verify_bundle.sh",
@@ -2571,7 +2824,8 @@ if missing:
 
 for relative in (
     "acceptance", "commands", "commands/public", "logs", "logs/public",
-    "dist", "expected", "observed_normalized", "public_provenance", "figures",
+    "dist", "expected", "observed_normalized", "public_provenance",
+    "public_environment", "figures",
 ):
     evidence_root = root / relative
     if not evidence_root.is_dir() or not any(
@@ -2619,6 +2873,198 @@ if set(artifact_hashes) != actual_artifacts:
 for relative, expected in artifact_hashes.items():
     if digest(root / relative) != expected:
         raise SystemExit(f"artifact hash mismatch: {relative}")
+
+public_environment_files = (
+    "conda-explicit.txt", "network_entrypoint_contract.tsv",
+    "network_isolation.tsv", "pip-freeze.txt", "runtime_versions.json",
+)
+runtime_packages = {
+    "mito-overview": "0.3.0", "pysam": "0.24.0", "pandas": "3.0.3",
+    "numpy": "2.5.1", "matplotlib": "3.11.0", "requests": "2.34.2",
+    "pytest": "9.1.1", "build": "1.5.0", "setuptools": "82.0.1",
+    "wheel": "0.47.0", "python-docx": "1.2.0",
+}
+runtime_platforms = {
+    "linux-64": {
+        "system": "Linux", "machine": "x86_64",
+        "network_platform": "Linux/x86_64",
+        "isolation_method": "linux_unshare_network_namespace",
+    },
+    "osx-64": {
+        "system": "Darwin", "machine": "x86_64",
+        "network_platform": "Darwin/x86_64",
+        "isolation_method": "macos_sandbox_exec_deny_network",
+    },
+    "osx-arm64": {
+        "system": "Darwin", "machine": "arm64",
+        "network_platform": "Darwin/arm64",
+        "isolation_method": "macos_sandbox_exec_deny_network",
+    },
+}
+network_fields = (
+    "schema_version", "platform", "isolation_method", "isolation_scope",
+    "parent_loopback_control", "isolated_loopback_probe", "probe_target",
+    "probe_error", "invoking_uid", "invoking_gid", "child_uid", "child_gid",
+    "network_isolation_verdict",
+)
+network_contract = (
+    "entrypoint\tcontrol\tscope\n"
+    "all IP sockets\tOS process-tree isolation\t"
+    "macOS sandbox-exec deny network* or Linux network namespace\n"
+    "curl\tPATH canary\trelease public-data runners\n"
+    "wget\tPATH canary\tdefensive command guard\n"
+    "mvTool requests\tMVTOOL_MODE=disabled\tpipeline external annotation module\n"
+)
+
+def normalized_project_name(value):
+    return re.sub(r"[-_.]+", "-", value).lower()
+
+def validate_public_environment(environment_root):
+    if environment_root.is_symlink() or not environment_root.is_dir():
+        raise SystemExit("public environment evidence is not a regular directory")
+    children = list(environment_root.iterdir())
+    if any(child.is_symlink() or not child.is_file() for child in children):
+        raise SystemExit("public environment evidence contains a non-regular file")
+    observed = tuple(sorted(child.name for child in children))
+    if observed != public_environment_files:
+        raise SystemExit("public environment evidence inventory mismatch")
+
+    with (environment_root / "network_isolation.tsv").open(
+        encoding="utf-8", newline=""
+    ) as handle:
+        reader = csv.DictReader(handle, delimiter="\t")
+        if tuple(reader.fieldnames or ()) != ("field", "value"):
+            raise SystemExit("network-isolation evidence schema mismatch")
+        isolation_rows = list(reader)
+    if any(
+        set(row) != {"field", "value"}
+        or row.get("field") is None
+        or row.get("value") is None
+        for row in isolation_rows
+    ):
+        raise SystemExit("network-isolation evidence contains malformed rows")
+    if tuple(row.get("field", "") for row in isolation_rows) != network_fields:
+        raise SystemExit("network-isolation field inventory or order mismatch")
+    isolation = {row["field"]: row.get("value", "") for row in isolation_rows}
+    if len(isolation) != len(isolation_rows):
+        raise SystemExit("network-isolation evidence contains duplicate fields")
+    matching_platforms = [
+        spec for spec in runtime_platforms.values()
+        if spec["network_platform"] == isolation["platform"]
+    ]
+    if len(matching_platforms) != 1:
+        raise SystemExit("network-isolation platform is unsupported")
+    network_platform = matching_platforms[0]
+    expected_isolation = {
+        "schema_version": "1.0",
+        "isolation_method": network_platform["isolation_method"],
+        "isolation_scope": "process_tree",
+        "parent_loopback_control": "reachable",
+        "isolated_loopback_probe": "blocked",
+        "probe_target": "parent_loopback_listener",
+        "network_isolation_verdict": "PASS",
+    }
+    for field, expected in expected_isolation.items():
+        if isolation[field] != expected:
+            raise SystemExit(f"network-isolation evidence mismatch for {field}")
+    if not isolation["probe_error"].strip():
+        raise SystemExit("network-isolation blocked-probe error is missing")
+    for field in ("invoking_uid", "invoking_gid", "child_uid", "child_gid"):
+        if not re.fullmatch(r"[0-9]+", isolation[field]):
+            raise SystemExit(f"network-isolation identity is invalid for {field}")
+    if isolation["invoking_uid"] != isolation["child_uid"]:
+        raise SystemExit("network-isolation child UID does not match invoking UID")
+    if isolation["invoking_gid"] != isolation["child_gid"]:
+        raise SystemExit("network-isolation child GID does not match invoking GID")
+
+    try:
+        runtime = json.loads(
+            (environment_root / "runtime_versions.json").read_text(encoding="utf-8")
+        )
+    except json.JSONDecodeError as error:
+        raise SystemExit("public runtime version evidence is malformed") from error
+    runtime_keys = {
+        "schema_version", "platform_id", "system", "machine", "python",
+        "python_executable", "mito_overview_module", "packages", "samtools",
+        "htslib", "minimap2", "bwa", "threads",
+        "installed_distribution_required",
+    }
+    if not isinstance(runtime, dict) or set(runtime) != runtime_keys:
+        raise SystemExit("public runtime version evidence schema mismatch")
+    platform_id = runtime.get("platform_id")
+    if platform_id not in runtime_platforms:
+        raise SystemExit("public runtime platform is unsupported")
+    platform_spec = runtime_platforms[platform_id]
+    expected_runtime = {
+        "schema_version": "1.0", "system": platform_spec["system"],
+        "machine": platform_spec["machine"], "python": "3.12.13",
+        "packages": runtime_packages, "samtools": "samtools 1.23.1",
+        "htslib": "Using htslib 1.23.1", "minimap2": "2.31-r1302",
+        "bwa": "0.7.19-r1273", "threads": 4,
+        "installed_distribution_required": True,
+    }
+    for field, expected in expected_runtime.items():
+        if runtime.get(field) != expected:
+            raise SystemExit(f"public runtime evidence mismatch for {field}")
+    if isolation["platform"] != platform_spec["network_platform"]:
+        raise SystemExit("runtime and network-isolation platform identities disagree")
+    if not isinstance(runtime.get("python_executable"), str) or not runtime[
+        "python_executable"
+    ].strip():
+        raise SystemExit("public runtime Python executable is missing")
+    module_path = runtime.get("mito_overview_module")
+    if not isinstance(module_path, str) or not module_path.replace("\\", "/").endswith(
+        "/site-packages/mito_overview/__init__.py"
+    ):
+        raise SystemExit("public runtime did not use the installed distribution")
+
+    freeze_names = set()
+    for line in (environment_root / "pip-freeze.txt").read_text(
+        encoding="utf-8"
+    ).splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "==" in line:
+            name = line.split("==", 1)[0]
+        elif " @ " in line:
+            name = line.split(" @ ", 1)[0]
+        else:
+            continue
+        freeze_names.add(normalized_project_name(name.strip()))
+    expected_names = {normalized_project_name(name) for name in runtime_packages}
+    if expected_names - freeze_names:
+        raise SystemExit("public pip-freeze evidence lacks pinned packages")
+    if not (environment_root / "conda-explicit.txt").read_text(
+        encoding="utf-8"
+    ).strip():
+        raise SystemExit("public conda environment evidence is empty")
+    if (environment_root / "network_entrypoint_contract.tsv").read_text(
+        encoding="utf-8"
+    ) != network_contract:
+        raise SystemExit("public network-entrypoint contract mismatch")
+
+    return {
+        "path": "public_environment",
+        "platform_id": platform_id,
+        "network_platform": isolation["platform"],
+        "isolation_method": isolation["isolation_method"],
+        "isolation_scope": isolation["isolation_scope"],
+        "threads": runtime["threads"],
+        "installed_distribution_required": runtime[
+            "installed_distribution_required"
+        ],
+        "files": [
+            {
+                "path": f"public_environment/{name}",
+                "sha256": digest(environment_root / name),
+                "bytes": (environment_root / name).stat().st_size,
+            }
+            for name in public_environment_files
+        ],
+    }
+
+public_environment = validate_public_environment(root / "public_environment")
 
 frozen_input_hashes = {
     "SRR10804585_1.fastq.gz": "b69746cb61d8bf3bc25887d6ece3c60db3acc7baaefd84a9a8b5d6ffce33288d",
@@ -2894,7 +3340,7 @@ table_headers = {
         "dataset", "run_accession", "study_accession", "sample_accession",
         "cell_line", "platform", "instrument_model", "library_strategy",
         "fastq_url", "fastq_md5", "fastq_sha256", "fastq_bytes",
-        "metadata_checked_utc", "role", "redistribution",
+        "metadata_recorded_utc", "role", "redistribution",
     ),
     "manuscript_handoff.tsv": (
         "result_id", "dataset", "metric", "value", "unit", "source_table",
@@ -2972,6 +3418,18 @@ for run_accession, inputs in raw_by_run.items():
         or row["redistribution"] != "raw reads excluded from Git and validation ZIP"
     ):
         raise SystemExit(f"public source claim boundary mismatch: {run_accession}")
+    try:
+        recorded = datetime.fromisoformat(
+            row["metadata_recorded_utc"].replace("Z", "+00:00")
+        )
+    except ValueError as error:
+        raise SystemExit(
+            f"public source metadata-recorded timestamp is invalid: {run_accession}"
+        ) from error
+    if recorded.tzinfo is None or recorded.utcoffset() is None:
+        raise SystemExit(
+            f"public source metadata-recorded timestamp lacks timezone: {run_accession}"
+        )
 
 def read_rows(path):
     with path.open(encoding="utf-8", newline="") as handle:
@@ -3360,6 +3818,8 @@ if run.get("diagnostic_validation_claimed") is not False:
     raise SystemExit("packet exceeds its bounded non-diagnostic claim scope")
 if run.get("evidence_tables") != sorted(table_headers):
     raise SystemExit("run record evidence-table inventory mismatch")
+if identity.get("public_environment") != public_environment:
+    raise SystemExit("release identity public-environment evidence mismatch")
 if identity.get("public_input_evidence") != {
     "manifest_path": "raw_inputs.tsv",
     "manifest_sha256": frozen_raw_manifest_sha256,
@@ -3481,6 +3941,7 @@ required_pass = {
     "gm12878_default_run1", "gm12878_default_run2", "gm12878_lenient",
     "gm12878_strict", "gm11906_repeatability", "gm12878_repeatability",
     "gm11906_visual_integrity", "gm12878_visual_integrity", "filter_profiles",
+    "offline_isolation",
     "fresh_clone_candidate_commit", "github_actions_linux_candidate_commit",
     "github_actions_macos_candidate_commit",
     "github_actions_macos_arm64_candidate_commit",
@@ -3659,6 +4120,10 @@ def build_packet(args: argparse.Namespace) -> Path:
         acceptance_rows,
     )
     validate_evidence_tables(args.validation_root)
+    public_environment = validate_public_environment(
+        public_root / "environment",
+        args.repo_root,
+    )
     public_inputs = validate_public_input_evidence(
         public_root,
         args.validation_root / "public_data_sources.tsv",
@@ -3705,6 +4170,10 @@ def build_packet(args: argparse.Namespace) -> Path:
         public_root / "observed_normalized",
         args.packet_root / "observed_normalized",
     )
+    copy_tree(
+        public_root / "environment",
+        args.packet_root / PUBLIC_ENVIRONMENT_PACKET_PATH,
+    )
     shutil.copy2(
         public_root / "filter_profile_results.tsv",
         args.packet_root / "filter_profile_results.tsv",
@@ -3738,6 +4207,7 @@ def build_packet(args: argparse.Namespace) -> Path:
     release_identity["acceptance_cases"] = [row["case_id"] for row in acceptance_rows]
     release_identity["github_actions"] = ci_identity
     release_identity["public_provenance"] = public_provenance
+    release_identity["public_environment"] = public_environment
     release_identity["public_input_evidence"] = {
         "manifest_path": RAW_INPUTS_PACKET_PATH,
         "manifest_sha256": public_inputs["manifest_sha256"],
@@ -3785,6 +4255,27 @@ def build_packet(args: argparse.Namespace) -> Path:
     if cache_root is not None:
         replacements[cache_root] = "${PUBLIC_CACHE}"
     sanitize_packet_paths(args.packet_root, replacements)
+
+    packaged_environment = validate_public_environment(
+        args.packet_root / PUBLIC_ENVIRONMENT_PACKET_PATH
+    )
+    if packaged_environment != public_environment:
+        raise ValueError("Packaged public environment semantics changed during sanitization")
+    packaged_environment["files"] = [
+        {
+            "path": f"{PUBLIC_ENVIRONMENT_PACKET_PATH}/{name}",
+            "sha256": sha256(args.packet_root / PUBLIC_ENVIRONMENT_PACKET_PATH / name),
+            "bytes": (args.packet_root / PUBLIC_ENVIRONMENT_PACKET_PATH / name).stat().st_size,
+        }
+        for name in PUBLIC_ENVIRONMENT_FILES
+    ]
+    identity_path = args.packet_root / "release_identity.json"
+    packaged_identity = json.loads(identity_path.read_text(encoding="utf-8"))
+    packaged_identity["public_environment"] = packaged_environment
+    identity_path.write_text(
+        json.dumps(packaged_identity, indent=2) + "\n",
+        encoding="utf-8",
+    )
 
     for name in ("figure_provenance.tsv", "table_provenance.tsv"):
         with (args.packet_root / name).open(encoding="utf-8", newline="") as handle:

@@ -527,6 +527,68 @@ def write_public_oracle_evidence(public_root: Path) -> None:
     )
 
 
+def write_public_environment(public_root: Path) -> None:
+    environment = public_root / "environment"
+    environment.mkdir(parents=True, exist_ok=True)
+    write_tsv(
+        environment / "network_isolation.tsv",
+        ("field", "value"),
+        [
+            ["schema_version", "1.0"],
+            ["platform", "Darwin/arm64"],
+            ["isolation_method", "macos_sandbox_exec_deny_network"],
+            ["isolation_scope", "process_tree"],
+            ["parent_loopback_control", "reachable"],
+            ["isolated_loopback_probe", "blocked"],
+            ["probe_target", "parent_loopback_listener"],
+            ["probe_error", "PermissionError:1"],
+            ["invoking_uid", "501"],
+            ["invoking_gid", "20"],
+            ["child_uid", "501"],
+            ["child_gid", "20"],
+            ["network_isolation_verdict", "PASS"],
+        ],
+    )
+    runtime = {
+        "schema_version": "1.0",
+        "platform_id": "osx-arm64",
+        "system": "Darwin",
+        "machine": "arm64",
+        "python": "3.12.13",
+        "python_executable": "/private/tmp/validation-env/bin/python",
+        "mito_overview_module": (
+            "/private/tmp/validation-env/lib/python3.12/site-packages/"
+            "mito_overview/__init__.py"
+        ),
+        "packages": packet_builder.EXPECTED_RUNTIME_PACKAGES,
+        "samtools": "samtools 1.23.1",
+        "htslib": "Using htslib 1.23.1",
+        "minimap2": "2.31-r1302",
+        "bwa": "0.7.19-r1273",
+        "threads": 4,
+        "installed_distribution_required": True,
+    }
+    (environment / "runtime_versions.json").write_text(
+        json.dumps(runtime, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    (environment / "pip-freeze.txt").write_text(
+        "".join(
+            f"{name}=={version}\n"
+            for name, version in packet_builder.EXPECTED_RUNTIME_PACKAGES.items()
+        ),
+        encoding="utf-8",
+    )
+    (environment / "conda-explicit.txt").write_text(
+        "# platform: osx-arm64\n@EXPLICIT\nhttps://example.invalid/pinned-package.conda\n",
+        encoding="utf-8",
+    )
+    (environment / "network_entrypoint_contract.tsv").write_text(
+        packet_builder.EXPECTED_NETWORK_ENTRYPOINT_CONTRACT,
+        encoding="utf-8",
+    )
+
+
 def metric_table(path: Path, rows: list[tuple[str, str]]) -> None:
     write_tsv(path, ("metric", "value"), [[key, value] for key, value in rows])
 
@@ -887,6 +949,7 @@ def create_validation_root(tmp_path: Path, commit: str) -> Path:
     )
     write_public_input_evidence(root / "public")
     write_public_oracle_evidence(root / "public")
+    write_public_environment(root / "public")
     write_public_provenance(root / "public")
     write_distribution_artifacts(root / "dist")
     write_evidence_tables(root)
@@ -987,6 +1050,15 @@ def test_github_only_packet_builds_and_verifies_from_fresh_extraction(
     assert run_record["github_actions_run_id"] == GITHUB_RUN_ID
     assert identity["git_commit"] == commit
     assert identity["github_actions"]["head_sha"] == commit
+    assert identity["public_environment"]["platform_id"] == "osx-arm64"
+    assert identity["public_environment"]["isolation_method"] == (
+        "macos_sandbox_exec_deny_network"
+    )
+    assert identity["public_environment"]["threads"] == 4
+    assert len(identity["public_environment"]["files"]) == len(
+        packet_builder.PUBLIC_ENVIRONMENT_FILES
+    )
+    assert (packet / packet_builder.PUBLIC_ENVIRONMENT_PACKET_PATH).is_dir()
     assert set(identity["metadata_sources"]) == {
         "pyproject.toml",
         "mito_overview/__init__.py",
@@ -1024,6 +1096,100 @@ def test_packet_requires_every_structured_evidence_table(
     (validation / name).unlink()
     with pytest.raises(ValueError, match="missing or empty"):
         packet_builder.build_packet(packet_args(validation, repo, tmp_path / "output"))
+
+
+@pytest.mark.parametrize(
+    ("field", "replacement"),
+    (
+        ("schema_version", "2.0"),
+        ("platform", "Darwin/ppc64"),
+        ("isolation_method", "curl_canary_only"),
+        ("isolation_scope", "single_process"),
+        ("parent_loopback_control", "unreachable"),
+        ("isolated_loopback_probe", "reachable"),
+        ("probe_error", ""),
+        ("child_uid", "502"),
+        ("child_gid", "21"),
+        ("network_isolation_verdict", "FAIL"),
+    ),
+)
+def test_packet_rejects_invalid_network_isolation_evidence(
+    tmp_path: Path,
+    field: str,
+    replacement: str,
+) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, commit)
+    mutate_tsv_value(
+        validation / "public/environment/network_isolation.tsv",
+        "field",
+        field,
+        "value",
+        replacement,
+    )
+    with pytest.raises(ValueError, match="Network-isolation"):
+        packet_builder.build_packet(packet_args(validation, repo, tmp_path / "output"))
+
+
+@pytest.mark.parametrize(
+    ("field", "replacement"),
+    (
+        ("python", "3.12.12"),
+        ("samtools", "samtools 1.22"),
+        ("threads", 8),
+        ("installed_distribution_required", False),
+        ("mito_overview_module", "/checkout/mito_overview/__init__.py"),
+    ),
+)
+def test_packet_rejects_invalid_public_runtime_evidence(
+    tmp_path: Path,
+    field: str,
+    replacement: object,
+) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, commit)
+    runtime_path = validation / "public/environment/runtime_versions.json"
+    runtime = json.loads(runtime_path.read_text(encoding="utf-8"))
+    runtime[field] = replacement
+    runtime_path.write_text(
+        json.dumps(runtime, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="Public runtime"):
+        packet_builder.build_packet(packet_args(validation, repo, tmp_path / "output"))
+
+
+def test_packet_rejects_public_environment_inventory_drift(tmp_path: Path) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, commit)
+    (validation / "public/environment/untracked-runtime.txt").write_text(
+        "unexpected\n", encoding="utf-8"
+    )
+    with pytest.raises(ValueError, match="environment evidence inventory"):
+        packet_builder.build_packet(packet_args(validation, repo, tmp_path / "output"))
+
+
+def test_packet_requires_offline_isolation_pass_case(tmp_path: Path) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, commit)
+    cases_path = validation / "cases.tsv"
+    with cases_path.open(encoding="utf-8", newline="") as handle:
+        rows = list(csv.DictReader(handle, delimiter="\t"))
+    rows = [row for row in rows if row["case_id"] != "offline_isolation"]
+    write_cases(cases_path, rows)
+    with pytest.raises(ValueError, match="offline_isolation"):
+        packet_builder.build_packet(packet_args(validation, repo, tmp_path / "output"))
+
+
+def test_public_source_timestamp_is_recorded_not_live_checked(tmp_path: Path) -> None:
+    _, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, commit)
+    with (validation / "public_data_sources.tsv").open(
+        encoding="utf-8", newline=""
+    ) as handle:
+        reader = csv.DictReader(handle, delimiter="\t")
+        assert "metadata_recorded_utc" in tuple(reader.fieldnames or ())
+        assert "metadata_checked_utc" not in tuple(reader.fieldnames or ())
 
 
 def test_packet_rejects_secret_like_material(tmp_path: Path) -> None:
@@ -1082,6 +1248,70 @@ def test_verifier_rejects_semantic_identity_tampering(tmp_path: Path) -> None:
     )
     assert checked.returncode != 0
     assert "release commit is inconsistent" in checked.stderr
+
+
+def test_extracted_verifier_rejects_rehashed_network_isolation_mutation(
+    tmp_path: Path,
+) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, commit)
+    output = tmp_path / "output"
+    packet_builder.build_packet(packet_args(validation, repo, output))
+    packet = output / "packet"
+    mutate_tsv_value(
+        packet / "public_environment/network_isolation.tsv",
+        "field",
+        "isolated_loopback_probe",
+        "value",
+        "reachable",
+    )
+    rewrite_manifest(packet)
+
+    checked = verify_packet(packet)
+    assert checked.returncode != 0
+    assert "network-isolation evidence mismatch" in checked.stderr
+
+
+def test_extracted_verifier_rejects_rehashed_isolation_receipt_change(
+    tmp_path: Path,
+) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, commit)
+    output = tmp_path / "output"
+    packet_builder.build_packet(packet_args(validation, repo, output))
+    packet = output / "packet"
+    mutate_tsv_value(
+        packet / "public_environment/network_isolation.tsv",
+        "field",
+        "probe_error",
+        "value",
+        "PermissionError:13",
+    )
+    rewrite_manifest(packet)
+
+    checked = verify_packet(packet)
+    assert checked.returncode != 0
+    assert "release identity public-environment evidence mismatch" in checked.stderr
+
+
+def test_extracted_verifier_rejects_rehashed_runtime_mutation(tmp_path: Path) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, commit)
+    output = tmp_path / "output"
+    packet_builder.build_packet(packet_args(validation, repo, output))
+    packet = output / "packet"
+    runtime_path = packet / "public_environment/runtime_versions.json"
+    runtime = json.loads(runtime_path.read_text(encoding="utf-8"))
+    runtime["threads"] = 8
+    runtime_path.write_text(
+        json.dumps(runtime, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    rewrite_manifest(packet)
+
+    checked = verify_packet(packet)
+    assert checked.returncode != 0
+    assert "public runtime evidence mismatch for threads" in checked.stderr
 
 
 def test_packet_requires_all_three_fixed_ci_jobs(tmp_path: Path) -> None:
