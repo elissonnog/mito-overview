@@ -1,6 +1,6 @@
 # Historical public ONT long-read reduced-input evidence
 
-The repository tracks a bounded public GM12878 ONT targeted-mt example for exercising the long-read report workflow and its assay-mode status handling. These outputs are historical derived evidence for the unreleased `mito-overview` v0.3.0 candidate; they are not represented as having been generated at the eventual final release commit.
+The repository tracks a bounded public GM12878 ONT targeted-mt example for exercising the long-read report workflow and its assay-mode status handling. These outputs are historical derived evidence from the then-unreleased `mito-overview` v0.3.0 candidate; they are not represented as having been generated at the eventual final release commit.
 
 ## Evidence scope
 - historical evidence snapshot: `2026-07-20`

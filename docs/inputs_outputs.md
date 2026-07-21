@@ -82,7 +82,7 @@ A reviewer should be able to audit a run by checking these conditions:
 4. Public proof-of-principle scripts record read mode, assay type, reference, contig, and thresholds.
 5. Key public-example values match the v0.3.0 validation matrix within the documented threshold-specific context.
 6. HTML and PNG outputs are compared by existence and visual/content tolerance, not byte identity.
-7. Repeatability is described as conditional on the provenance-verified fixed BAM; subset and alignment regeneration are separate operations.
+7. Each clean-room platform reconstructs derivatives and alignments from the sealed seven-FASTQ cache. Within one platform matrix, the two default workflow invocations reuse that newly generated BAM so report repeatability is evaluated separately from alignment reconstruction.
 
 ## Claim Boundary
 This output contract supports workflow execution, report/resource generation, explicit status handling, and fixed-input reviewer inspection.

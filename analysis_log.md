@@ -61,3 +61,12 @@ This log records release-hardening actions that affect the public repository. It
 - Expanded release hygiene checks for private home paths, credential-bearing URLs, private-key headers, and plausible GitHub/AWS/assignment secrets without printing detected values. The complete tracked tree passed and the frozen `paper/` tree remained unchanged.
 - Added path-free synthetic BAM generation and regression checks. Rebuilt the tracked TOY-001 bundle with identical ten alignment records and updated only the deletion-denominator and zero-depth copy-proxy report explanations. Focused bundle, packaging, scientific, and hygiene tests passed (`54 passed`).
 - At commit `56c378f5cf9c6d21dae6000561efca84357fd0db`, the complete deterministic suite passed (`294 passed in 70.61 s`), all four synthetic smoke workflows and both example builders passed, installed-package CLI listing and strict dry-run passed, and the macOS network-isolation control passed. Exact-final-commit public reruns, GitHub CI, merge/tag publication, and clean-room packet/report generation remain pending release gates.
+
+## 2026-07-21 - GitHub v0.3.0 release resumption
+
+- Confirmed branch `codex/preprint-hardening-v0.3.0` at `9734a381e69b49db92f0a02be4d512b19f57291a` with the `paper/**` tree still frozen.
+- Resumed the provisional sealed-cache public validation matrix under OS-level network isolation; GM11906 default repeat 1 completed with the prespecified `m.8344A>G` known answer and repeat 2 advanced into the lenient profile.
+- Audited release-facing text for stale fixed-BAM, historical-commit, DOI, and unreleased-candidate language.
+- Updated README, citation metadata, changelog, methodology, and the input/output contract to describe the seven-FASTQ per-platform reconstruction design and within-matrix report-repeatability scope. Historical and superseded records were not relabeled as final evidence.
+- A read-only documentation audit identified premature final-release tense, stale historical navigation, and ambiguity between the 13-case fixed-BAM snapshot and the active 17-case seven-FASTQ gate. Release-facing files were corrected to candidate/future tense; the dated 239-test/13-case/46-file evidence was retained and explicitly labeled historical.
+- The first provisional matrix PTY was severed by an application restart after two default GM11906 runs and one lenient run; its empty verdict table means it is not evidence. A fresh matrix was started under the same sealed-cache and OS-level network-isolation controls with a new work/output root.

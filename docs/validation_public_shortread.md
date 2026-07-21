@@ -1,6 +1,6 @@
 # Historical public reduced short-read workflow evidence
 
-The repository tracks a GM11906 compatibility example made by pooling three public single-cell ATAC-seq libraries into a pseudo-bulk for the reduced short-read report profile. These outputs are historical derived evidence for the unreleased `mito-overview` v0.3.0 candidate; they are not represented as having been generated at the eventual final release commit.
+The repository tracks a GM11906 compatibility example made by pooling three public single-cell ATAC-seq libraries into a pseudo-bulk for the reduced short-read report profile. These outputs are historical derived evidence from the then-unreleased `mito-overview` v0.3.0 candidate; they are not represented as having been generated at the eventual final release commit.
 
 ## Evidence scope
 - historical evidence snapshot: `2026-07-20`

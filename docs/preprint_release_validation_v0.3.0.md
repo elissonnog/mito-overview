@@ -1,5 +1,13 @@
 # MitoOverview v0.3.0 Release-Candidate Validation
 
+> **Historical candidate-validation snapshot.** The 239-test, 13-case,
+> 46-normalized-file, fixed-BAM results below record the bounded 2026-07-20
+> candidate evidence. They are not the active v0.3.0 release gate. The active
+> seven-FASTQ, 17-case protocol is defined in
+> [`clean_room_validation_protocol_v0.3.0.md`](clean_room_validation_protocol_v0.3.0.md),
+> and its current state is tracked in
+> [`reproducibility_run_ledger.md`](reproducibility_run_ledger.md).
+
 ## Document status
 
 This document records public validation evidence for the unreleased MitoOverview v0.3.0 release candidate. It does not claim a final tagged release.
@@ -165,7 +173,7 @@ The GM12878 subset used the 1,000 smallest seeded query-name hashes under `small
 
 ### Matrix verdicts
 
-All 13 prespecified matrix cases passed at the historical clean source commit. Their final-release status remains pending until the same matrix passes and is packet-bound at the exact final candidate commit.
+All 13 prespecified historical fixed-BAM matrix cases passed at the historical clean source commit. The active seven-FASTQ protocol defines 17 required matrix cases and remains pending until those cases pass and are packet-bound at the exact final candidate commit.
 
 | Evidence class | Cases | Verdict |
 | --- | ---: | --- |
@@ -177,7 +185,7 @@ All 13 prespecified matrix cases passed at the historical clean source commit. T
 | HTML/PNG integrity and structural consistency | 2 | PASS |
 | Filter-profile summary | 1 | PASS |
 
-Both normalized repeat diffs were empty. Both visual-structure diffs were empty. Each default normalized summary inventory contained 46 files. Default public output contained 14 HTML pages and 15 report PNGs before selection of representative tracked figures.
+Both normalized repeat diffs were empty. Both visual-structure diffs were empty. Each default normalized inventory contained 46 files under the historical normalizer. Both default workflows contained 14 HTML pages; GM11906 contained seven report PNGs and GM12878 contained 15 before representative tracked figures were selected.
 
 ### GM11906 reduced short-read proof of principle
 
@@ -262,7 +270,7 @@ Version `0.3.0` remains unreleased. The final GitHub tag, release assets, and ex
 
 An external reviewer can:
 
-1. Run the 239-test suite and four synthetic workflows with the commands above.
+1. Reproduce the historical 239-test snapshot if auditing this record; for the active release gate, run the complete current test suite and record its exact count and commit in the final packet.
 2. Verify the GM11906 and GM12878 tracked provenance JSON and SHA-256 records.
 3. Confirm `m.8344A>G` is `1027/740/0.720545` in the default GM11906 output.
 4. Confirm GM12878 uses exactly the labeled 1,000-query-name deterministic subset.
