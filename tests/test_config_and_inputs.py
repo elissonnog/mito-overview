@@ -258,6 +258,38 @@ def test_minimal_cram_contract_opens_with_reference(
     assert validate_config(config) == []
 
 
+@pytest.mark.parametrize(
+    ("extension", "requested_mode"),
+    [
+        pytest.param(".bam", "cram", id="bam-declared-cram"),
+        pytest.param(".cram", "bam", id="cram-declared-bam"),
+    ],
+)
+def test_explicit_alignment_mode_cannot_conflict_with_recognized_extension(
+    minimal_inputs: tuple[Path, Path],
+    tmp_path: Path,
+    extension: str,
+    requested_mode: str,
+) -> None:
+    ref, bam = minimal_inputs
+    alignment = bam
+    if extension == ".cram":
+        alignment = write_alignment(
+            tmp_path / "minimal.cram",
+            {"MT": 10},
+            [ReadSpec("read1", "MT", 0, "A" * 10)],
+            reference_fasta=ref,
+        )
+    mapping = minimal_mapping(tmp_path, ref, alignment)
+    mapping["SOURCE_ALIGN_MODE"] = requested_mode
+
+    with pytest.raises(
+        ValueError,
+        match=rf"SOURCE_ALIGN_MODE={requested_mode} conflicts with .*{extension}",
+    ):
+        PipelineConfig.from_mapping(mapping)
+
+
 def test_canonical_and_legacy_threshold_conflict_fails(minimal_inputs: tuple[Path, Path], tmp_path: Path) -> None:
     ref, bam = minimal_inputs
     mapping = minimal_mapping(tmp_path, ref, bam)

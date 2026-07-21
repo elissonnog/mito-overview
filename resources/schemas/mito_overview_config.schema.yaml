@@ -45,6 +45,7 @@ properties:
   SOURCE_ALIGN_MODE:
     type: string
     enum: ["", bam, cram]
+    description: Optional compatibility key; when set, it must match the .bam or .cram filename extension.
   MT_CONTIG:
     type: string
     minLength: 1

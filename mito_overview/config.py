@@ -191,15 +191,19 @@ def _read_fai_lengths(reference_fasta: Path) -> dict[str, int]:
 
 def _infer_alignment_mode(path: Path, requested: str) -> str:
     requested = requested.strip().lower()
+    suffix = path.suffix.lower()
+    inferred = {".bam": "bam", ".cram": "cram"}.get(suffix)
     if requested:
         if requested not in {"bam", "cram"}:
             raise ValueError(f"Unsupported SOURCE_ALIGN_MODE: {requested}")
+        if inferred is not None and requested != inferred:
+            raise ValueError(
+                f"SOURCE_ALIGN_MODE={requested} conflicts with "
+                f"SOURCE_ALIGN_FILE extension {suffix}"
+            )
         return requested
-    suffix = path.suffix.lower()
-    if suffix == ".bam":
-        return "bam"
-    if suffix == ".cram":
-        return "cram"
+    if inferred is not None:
+        return inferred
     raise ValueError("SOURCE_ALIGN_MODE is required when SOURCE_ALIGN_FILE is not .bam or .cram")
 
 
