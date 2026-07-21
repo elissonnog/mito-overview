@@ -8,6 +8,8 @@ from setuptools import build_meta
 
 
 REQUIRED_SDIST_PATHS = {
+    ".github/workflows/public-validation.yml",
+    ".github/workflows/smoke-tests.yml",
     "CITATION.cff",
     "docs/preprint_release_validation_v0.3.0.md",
     "examples/expected_reports/TOY-001_output/report/01_mito_qc.html",
