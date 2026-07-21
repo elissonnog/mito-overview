@@ -1,0 +1,550 @@
+from __future__ import annotations
+
+import csv
+import hashlib
+import importlib.util
+import json
+import subprocess
+import sys
+import zipfile
+from pathlib import Path
+
+import pytest
+from PIL import Image, ImageDraw
+
+
+ROOT = Path(__file__).parents[1]
+SCRIPT = ROOT / "scripts" / "build_release_validation_report_v0.3.0.py"
+SPEC = importlib.util.spec_from_file_location("build_release_report_v030", SCRIPT)
+assert SPEC is not None and SPEC.loader is not None
+report_builder = importlib.util.module_from_spec(SPEC)
+sys.modules[SPEC.name] = report_builder
+SPEC.loader.exec_module(report_builder)
+
+COMMIT = "a" * 40
+REPOSITORY = "https://github.com/elissonnog/mito-overview"
+RUN_ID = 987654321
+
+
+def digest(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def write_tsv(path: Path, columns: tuple[str, ...], rows: list[list[str]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.writer(handle, delimiter="\t", lineterminator="\n")
+        writer.writerow(columns)
+        writer.writerows(rows)
+
+
+def write_report_figure(path: Path, accent: str, label: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    image = Image.new("RGB", (800, 450), "white")
+    draw = ImageDraw.Draw(image)
+    draw.rectangle((0, 0, 800, 55), fill=accent)
+    draw.line((80, 370, 750, 370), fill="black", width=3)
+    draw.line((80, 85, 80, 370), fill="black", width=3)
+    points = [(90, 330), (200, 290), (310, 305), (420, 180), (530, 215), (650, 120), (740, 145)]
+    draw.line(points, fill=accent, width=6)
+    draw.text((25, 18), label, fill="white")
+    image.save(path)
+
+
+def rewrite_artifact_manifest(packet: Path) -> None:
+    rows = []
+    for path in sorted(packet.rglob("*")):
+        if path.is_file() and path.name != "artifacts.sha256":
+            rows.append(f"{digest(path)}  {path.relative_to(packet).as_posix()}")
+    (packet / "artifacts.sha256").write_text(
+        "\n".join(rows) + "\n", encoding="utf-8"
+    )
+
+
+def make_packet(tmp_path: Path) -> tuple[Path, Path, list[Path]]:
+    packet = tmp_path / "packet"
+    packet.mkdir()
+    case_ids = sorted(report_builder.REQUIRED_CASE_IDS)
+    cases = [
+        [case_id, "release_validation", "1", "1", "PASS", "evidence available"]
+        for case_id in case_ids
+    ]
+    write_tsv(packet / "cases.tsv", report_builder.EVIDENCE_COLUMNS["cases.tsv"], cases)
+
+    run = {
+        "schema_version": "2.0",
+        "validation_profile": "github_release_validation_v1",
+        "release_version": "v0.3.0",
+        "git_commit": COMMIT,
+        "repository": REPOSITORY,
+        "github_actions_run_id": RUN_ID,
+        "generated_utc": "2026-07-21T12:00:00+00:00",
+        "case_count": len(cases),
+        "verdict_counts": {
+            "PASS": len(cases),
+            "FAIL": 0,
+            "SKIP": 0,
+            "XFAIL": 0,
+            "BLOCKED": 0,
+        },
+        "claim_scope": "reproducible mode-gated mtDNA reporting workflow/resource",
+        "diagnostic_validation_claimed": False,
+    }
+    (packet / "run.json").write_text(json.dumps(run, indent=2) + "\n", encoding="utf-8")
+    release = {
+        "schema_version": "2.0",
+        "validation_profile": "github_release_validation_v1",
+        "release_version": "v0.3.0",
+        "package_name": "mito-overview",
+        "package_version": "0.3.0",
+        "repository": REPOSITORY,
+        "git_commit": COMMIT,
+    }
+    (packet / "release_identity.json").write_text(
+        json.dumps(release, indent=2) + "\n", encoding="utf-8"
+    )
+
+    normalized_paths: list[Path] = []
+    figures: list[Path] = []
+    figure_rows: list[list[str]] = []
+    table_rows: list[list[str]] = []
+    for index, (dataset, case_id, filename, accent) in enumerate(
+        (
+            (
+                "GM11906",
+                "gm11906_default_run1",
+                "mito_heteroplasmy_landscape.png",
+                "#1F77B4",
+            ),
+            (
+                "GM12878",
+                "gm12878_default_run1",
+                "mito_deletion_clusters.png",
+                "#D95F02",
+            ),
+        ),
+        1,
+    ):
+        normalized = packet / "observed_normalized" / case_id / "summary.tsv"
+        write_tsv(normalized, ("metric", "value"), [["status", "ok"], ["candidate_sites", str(30 + index)]])
+        normalized_paths.append(normalized)
+        visual_inventory = normalized.parent / "visual_artifact_inventory.tsv"
+        write_tsv(
+            visual_inventory,
+            ("relative_path", "artifact_type", "width_px", "height_px", "integrity_status"),
+            [[f"figures/{filename}", "png", "800", "450", "ok"]],
+        )
+        figure = packet / "figures" / case_id / filename
+        write_report_figure(figure, accent, f"{dataset} report-native panel")
+        figures.append(figure)
+        figure_rows.append(
+            [
+                f"F{index}",
+                dataset,
+                case_id,
+                figure.relative_to(packet).as_posix(),
+                digest(figure),
+                str(figure.stat().st_size),
+                "800",
+                "450",
+                "ok",
+                visual_inventory.relative_to(packet).as_posix(),
+            ]
+        )
+        table_rows.append(
+            [
+                f"T{index}",
+                dataset,
+                case_id,
+                normalized.relative_to(packet).as_posix(),
+                digest(normalized),
+                "2",
+                "2",
+                "normalized public result",
+            ]
+        )
+
+    write_tsv(
+        packet / "figure_provenance.tsv",
+        report_builder.EVIDENCE_COLUMNS["figure_provenance.tsv"],
+        figure_rows,
+    )
+    write_tsv(
+        packet / "table_provenance.tsv",
+        report_builder.EVIDENCE_COLUMNS["table_provenance.tsv"],
+        table_rows,
+    )
+    write_tsv(
+        packet / "claim_evidence_matrix.tsv",
+        report_builder.EVIDENCE_COLUMNS["claim_evidence_matrix.tsv"],
+        [
+            [
+                "C1",
+                "Fixed-input workflow execution is repeatable",
+                "gm11906_repeatability; gm12878_repeatability",
+                "No diagnostic performance inference",
+            ]
+        ],
+    )
+    write_tsv(
+        packet / "module_status_matrix.tsv",
+        report_builder.EVIDENCE_COLUMNS["module_status_matrix.tsv"],
+        [
+            [
+                "GM11906",
+                "gm11906_default_run1",
+                "mito_qc",
+                "ok",
+                "",
+                "observed_normalized/gm11906_default_run1/summary.tsv",
+            ],
+            [
+                "GM12878",
+                "gm12878_default_run1",
+                "numt_interpretation",
+                "not_evaluable",
+                "reference_scope_mt_only",
+                "observed_normalized/gm12878_default_run1/summary.tsv",
+            ],
+        ],
+    )
+    write_tsv(
+        packet / "resource_usage.tsv",
+        report_builder.EVIDENCE_COLUMNS["resource_usage.tsv"],
+        [
+            ["gm11906_default_run1", "12.4", "10.0", "1.2", "204800", "4", "osx-arm64", "measured", ""],
+            ["gm12878_default_run1", "31.8", "28.0", "2.0", "307200", "4", "linux-64", "measured", ""],
+        ],
+    )
+    sha_short = hashlib.sha256(b"short-input").hexdigest()
+    sha_long = hashlib.sha256(b"long-input").hexdigest()
+    raw_rows = [
+        [
+            "1.0",
+            "GM11906_pooled_scATAC",
+            "SRR10804585",
+            "SAMN13699362",
+            "GSM4238454",
+            "MERFF-29-S42",
+            "GM11906",
+            "ATAC-seq",
+            "single_cell_library",
+            "https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSM4238454",
+            "SRR10804585_1.fastq.gz",
+            "8795676",
+            "3f5ea26a5791894071462d4970bc9e5a",
+            sha_short,
+            "377587",
+            "https://ftp.sra.ebi.ac.uk/example/SRR10804585_1.fastq.gz",
+        ],
+        [
+            "1.0",
+            "GM12878_ONT",
+            "SRR18110025",
+            "SAMN26195906",
+            "GM12878_mtDNA",
+            "Human GM12878 Cell Line",
+            "GM12878",
+            "OTHER",
+            "targeted_mt_library",
+            "https://www.ebi.ac.uk/ena/browser/view/SRR18110025",
+            "SRR18110025.fastq.gz",
+            "2033558460",
+            "d5bfb9aeba04cae5f3dd79462a42e5b0",
+            sha_long,
+            "193043",
+            "https://ftp.sra.ebi.ac.uk/example/SRR18110025.fastq.gz",
+        ],
+    ]
+    write_tsv(packet / "raw_inputs.tsv", report_builder.RAW_INPUT_COLUMNS, raw_rows)
+    (packet / "inputs.sha256").write_text(
+        f"{sha_short}  SRR10804585_1.fastq.gz\n"
+        f"{sha_long}  SRR18110025.fastq.gz\n",
+        encoding="utf-8",
+    )
+    (packet / "CACHE_SEAL.sha256").write_text(
+        f"{digest(packet / 'raw_inputs.tsv')}  raw_inputs.tsv\n",
+        encoding="utf-8",
+    )
+    write_tsv(
+        packet / "public_data_sources.tsv",
+        report_builder.EVIDENCE_COLUMNS["public_data_sources.tsv"],
+        [
+            [
+                "GM11906 pooled single-cell ATAC-seq pseudo-bulk",
+                "SRR10804585",
+                "PRJNA598179",
+                "SAMN13699362",
+                "GM11906",
+                "ILLUMINA",
+                "NextSeq 550",
+                "ATAC-seq",
+                raw_rows[0][-1],
+                raw_rows[0][12],
+                sha_short,
+                raw_rows[0][11],
+                "2026-07-21T12:00:00+00:00",
+                "fixed-input marker representation",
+                "raw reads excluded",
+            ],
+            [
+                "GM12878 ONT targeted-mt proof-of-principle",
+                "SRR18110025",
+                "PRJNA809571",
+                "SAMN26195906",
+                "GM12878",
+                "OXFORD_NANOPORE",
+                "GridION",
+                "OTHER",
+                raw_rows[1][-1],
+                raw_rows[1][12],
+                sha_long,
+                raw_rows[1][11],
+                "2026-07-21T12:00:00+00:00",
+                "bounded long-read reproduction",
+                "raw reads excluded",
+            ],
+        ],
+    )
+    write_tsv(
+        packet / "manuscript_handoff.tsv",
+        report_builder.EVIDENCE_COLUMNS["manuscript_handoff.tsv"],
+        [
+            ["R1", "GM11906", "m.8344A>G allele fraction", "0.720545", "fraction", "filter_profile_results.tsv", "descriptive marker representation only"],
+            ["R2", "GM12878", "default candidate sites", "16", "sites", "filter_profile_results.tsv", "fixed-input descriptive count"],
+        ],
+    )
+    write_tsv(
+        packet / "limitations.tsv",
+        report_builder.EVIDENCE_COLUMNS["limitations.tsv"],
+        [
+            ["L1", "clinical", "No clinical validation", "No diagnostic claim"],
+            ["L2", "public data", "Reduced fixed-input examples", "No population generalization"],
+        ],
+    )
+    write_tsv(
+        packet / "filter_profile_results.tsv",
+        report_builder.EVIDENCE_COLUMNS["filter_profile_results.tsv"],
+        [
+            ["gm11906_default", "GM11906", "default", "13", "20", "10", "33", "44052664", "7293106", "1", "0.720545"],
+            ["gm12878_default", "GM12878", "default", "13", "20", "10", "16", "7143152", "2047476", "0", ""],
+        ],
+    )
+    write_tsv(
+        packet / "public_validation_oracle_v0.3.0.tsv",
+        report_builder.EVIDENCE_COLUMNS["public_validation_oracle_v0.3.0.tsv"],
+        [
+            ["GM11906", "default", "33", "44052664", "7293106", "0.720545", "44", "14", "7"],
+            ["GM12878", "default", "16", "7143152", "2047476", "", "44", "14", "15"],
+        ],
+    )
+    write_tsv(
+        packet / "oracle_assertions.tsv",
+        report_builder.EVIDENCE_COLUMNS["oracle_assertions.tsv"],
+        [
+            ["gm11906_m8344", "PASS", "0.720545", "0.720545", "marker represented"],
+            ["gm12878_candidates", "PASS", "16", "16", "default profile"],
+        ],
+    )
+
+    normalized_hash = digest(normalized_paths[0])
+    write_tsv(
+        packet / "cross_platform_comparison.tsv",
+        report_builder.EVIDENCE_COLUMNS["cross_platform_comparison.tsv"],
+        [
+            [
+                "normalized_scientific_table",
+                "observed_normalized/gm11906_default_run1/summary.tsv",
+                normalized_hash,
+                normalized_hash,
+                "PASS",
+                "byte-identical normalized content",
+            ],
+            [
+                "visual_structure",
+                "observed_normalized/gm11906_default_run1/visual_artifact_inventory.tsv",
+                "not_compared",
+                "not_compared",
+                "PASS",
+                "path/type/dimensions/integrity",
+            ],
+        ],
+    )
+    acceptance = packet / "acceptance" / "cross_platform_public_reproduction.json"
+    acceptance.parent.mkdir(parents=True)
+    acceptance.write_text(
+        json.dumps(
+            {
+                "schema_version": "2.0",
+                "validation_profile": "github_release_validation_v1",
+                "evidence_type": "cross_platform_public_reproduction",
+                "verdict": "PASS",
+                "git_commit": COMMIT,
+                "ubuntu_public_validation_run_id": 123456789,
+                "macos_platform": "osx-arm64",
+                "ubuntu_platform": "linux-64",
+                "normalized_scientific_tables_compared": 1,
+                "visual_inventories_compared": 1,
+                "comparison_table": "cross_platform_comparison.tsv",
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (packet / "environment.txt").write_text(
+        "release_version=v0.3.0\n"
+        f"git_commit={COMMIT}\n"
+        "python=3.12.13\n"
+        "samtools=1.23.1\n"
+        "threads=4\n"
+        "LC_ALL=C\n"
+        "TZ=UTC\n",
+        encoding="utf-8",
+    )
+    (packet / "verify_bundle.sh").write_text(
+        "#!/usr/bin/env bash\nset -euo pipefail\necho PASS\n",
+        encoding="utf-8",
+    )
+    rewrite_artifact_manifest(packet)
+
+    publication = tmp_path / "github_publication.json"
+    publication.write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "release_version": "v0.3.0",
+                "git_commit": COMMIT,
+                "repository": REPOSITORY,
+                "release_tag": "v0.3.0",
+                "github_release_url": f"{REPOSITORY}/releases/tag/v0.3.0",
+                "github_actions_run_id": RUN_ID,
+                "publication_state": "published",
+                "published_utc": "2026-07-21T18:00:00+00:00",
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return packet, publication, figures
+
+
+def test_builds_markdown_docx_and_embeds_verified_packet_figures(tmp_path: Path) -> None:
+    packet, publication, source_figures = make_packet(tmp_path)
+    output = tmp_path / "report"
+
+    generated = report_builder.generate_report(packet, publication, output)
+
+    assert generated["markdown"].is_file()
+    assert generated["docx"].is_file()
+    assert generated["assets"].is_dir()
+    markdown = generated["markdown"].read_text(encoding="utf-8")
+    assert "Five preprint-hardening corrections" in markdown
+    assert "AF_alt = N_alt / (N_A + N_C + N_G + N_T)" in markdown
+    assert "R_mt:nuclear = mean(D_mt) / mean(D_nuclear windows)" in markdown
+    assert COMMIT in markdown
+    assert "No simplified replacement chart is generated" in markdown
+    assert markdown.count("![Figure") == 2
+
+    manifest = generated["assets"] / "figure_manifest.tsv"
+    rows = list(csv.DictReader(manifest.open(encoding="utf-8"), delimiter="\t"))
+    assert len(rows) == 2
+    assert {row["sha256"] for row in rows} == {digest(path) for path in source_figures}
+
+    with zipfile.ZipFile(generated["docx"]) as archive:
+        media = [name for name in archive.namelist() if name.startswith("word/media/")]
+        embedded_hashes = {hashlib.sha256(archive.read(name)).hexdigest() for name in media}
+        document_xml = archive.read("word/document.xml").decode("utf-8")
+        settings_xml = archive.read("word/settings.xml").decode("utf-8")
+    assert {digest(path) for path in source_figures} <= embedded_hashes
+    assert "Five preprint-hardening corrections" in document_xml
+    assert document_xml.count("w:cantSplit") >= 1
+    assert "w:evenAndOddHeaders" in settings_xml
+    assert 'w:headerReference w:type="even"' in document_xml
+    assert 'w:footerReference w:type="even"' in document_xml
+
+
+@pytest.mark.parametrize(
+    ("target", "field", "value", "message"),
+    [
+        ("publication", "git_commit", "b" * 40, "identity mismatch"),
+        ("run", "validation_profile", "wrong_profile", "validation profile"),
+        ("release", "release_version", "v0.3.1", "release must be v0.3.0"),
+    ],
+)
+def test_fails_closed_on_release_identity_drift(
+    tmp_path: Path, target: str, field: str, value: str, message: str
+) -> None:
+    packet, publication, _ = make_packet(tmp_path)
+    identity_paths = {
+        "run": packet / "run.json",
+        "release": packet / "release_identity.json",
+    }
+    path = publication if target == "publication" else identity_paths[target]
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload[field] = value
+    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    if target != "publication":
+        rewrite_artifact_manifest(packet)
+
+    with pytest.raises(report_builder.ReportValidationError, match=message):
+        report_builder.generate_report(packet, publication, tmp_path / "report")
+
+
+def test_fails_closed_on_nonpass_case(tmp_path: Path) -> None:
+    packet, publication, _ = make_packet(tmp_path)
+    rows = list(csv.DictReader((packet / "cases.tsv").open(encoding="utf-8"), delimiter="\t"))
+    rows[0]["verdict"] = "FAIL"
+    write_tsv(
+        packet / "cases.tsv",
+        report_builder.EVIDENCE_COLUMNS["cases.tsv"],
+        [[row[column] for column in report_builder.EVIDENCE_COLUMNS["cases.tsv"]] for row in rows],
+    )
+    rewrite_artifact_manifest(packet)
+
+    with pytest.raises(report_builder.ReportValidationError, match="Non-PASS"):
+        report_builder.generate_report(packet, publication, tmp_path / "report")
+
+
+def test_fails_closed_on_cross_platform_difference(tmp_path: Path) -> None:
+    packet, publication, _ = make_packet(tmp_path)
+    rows = list(
+        csv.DictReader(
+            (packet / "cross_platform_comparison.tsv").open(encoding="utf-8"),
+            delimiter="\t",
+        )
+    )
+    rows[0]["ubuntu_sha256"] = "f" * 64
+    rows[0]["verdict"] = "FAIL"
+    columns = report_builder.EVIDENCE_COLUMNS["cross_platform_comparison.tsv"]
+    write_tsv(
+        packet / "cross_platform_comparison.tsv",
+        columns,
+        [[row[column] for column in columns] for row in rows],
+    )
+    rewrite_artifact_manifest(packet)
+
+    with pytest.raises(report_builder.ReportValidationError, match="Cross-platform comparison failed"):
+        report_builder.generate_report(packet, publication, tmp_path / "report")
+
+
+def test_fails_closed_on_report_figure_hash_drift(tmp_path: Path) -> None:
+    packet, publication, figures = make_packet(tmp_path)
+    with figures[0].open("ab") as handle:
+        handle.write(b"tampered")
+    rewrite_artifact_manifest(packet)
+
+    with pytest.raises(report_builder.ReportValidationError, match="Figure hash mismatch"):
+        report_builder.generate_report(packet, publication, tmp_path / "report")
+
+
+def test_cli_exposes_optional_pdf_handoff(tmp_path: Path) -> None:
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--help"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert "--emit-pdf" in result.stdout
+    assert "separate rendered-page QA workflow" in " ".join(result.stdout.split())
