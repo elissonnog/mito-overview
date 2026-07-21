@@ -184,7 +184,7 @@ if [[ -n "${MITO_OVERVIEW_LONGREAD_ASSET_DIR:-}" ]]; then
     "${PYTHON_BIN}" scripts/build_report_montage.py \
       --source-dir "${OUTPUT_DIR}/figures" \
       --output "${FIG_DIR}/GM12878_ONT_longread_montage.png" \
-      --title "GM12878 public ONT long-read validation"
+      --title "GM12878 public ONT long-read proof-of-principle"
   else
     echo "[longread-gm12878] skipping montage build because one or more expected long-read panels were not produced"
   fi
