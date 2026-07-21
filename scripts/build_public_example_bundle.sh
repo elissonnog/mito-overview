@@ -14,6 +14,7 @@ trap 'rm -rf "${WORKDIR}"' EXIT
 
 source "${SCRIPT_DIR}/lib/prepare_synthetic_toy_sample.sh"
 source "${SCRIPT_DIR}/lib/mock_optional_integrations.sh"
+source "${SCRIPT_DIR}/lib/sanitize_synthetic_subset_bam.sh"
 
 echo "[example] repo root: ${REPO_ROOT}"
 echo "[example] workdir: ${WORKDIR}"
@@ -77,5 +78,6 @@ cd "${REPO_ROOT}"
 rm -rf "${OUTPUT_DIR}"
 mkdir -p "$(dirname "${OUTPUT_DIR}")"
 cp -R "${FINAL_DIR}/output" "${OUTPUT_DIR}"
+sanitize_synthetic_subset_bam "${OUTPUT_DIR}/subset/TOY-001.MT.bam" "MT"
 
 echo "[example] public example bundle created at ${OUTPUT_DIR}"
