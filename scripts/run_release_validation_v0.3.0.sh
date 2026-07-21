@@ -3,10 +3,13 @@ set -euo pipefail
 
 usage() {
   cat >&2 <<EOF
-Usage: MITO_OVERVIEW_GITHUB_RUN_ID=RUN_ID $0 \\
+Usage: MITO_OVERVIEW_GITHUB_RUN_ID=RUN_ID \\
+  MITO_OVERVIEW_ZENODO_RESERVATION_EVIDENCE=SANITIZED_JSON $0 \\
   VALIDATION_ROOT CACHE_ROOT PACKET_ROOT \\
   AUDIT_ZIP [ARCHIVE_DOI]
 DOI may instead be supplied as MITO_OVERVIEW_ARCHIVE_DOI.
+The sanitized evidence must be captured from an authenticated Zenodo deposition
+response. Authentication and token handling stay outside this workflow.
 EOF
 }
 
@@ -21,6 +24,7 @@ PYTHON_BIN="${MITO_OVERVIEW_PYTHON:-python3}"
 REPOSITORY="https://github.com/elissonnog/mito-overview"
 GITHUB_REPOSITORY="elissonnog/mito-overview"
 GITHUB_RUN_ID="${MITO_OVERVIEW_GITHUB_RUN_ID:-}"
+ZENODO_RESERVATION_EVIDENCE_INPUT="${MITO_OVERVIEW_ZENODO_RESERVATION_EVIDENCE:-}"
 FRESH_CLONE_CASE_ID="fresh_clone_candidate_commit"
 EXPECTED_AUDIT_ZIP="mito-overview-v0.3.0-validation.zip"
 
@@ -44,6 +48,12 @@ VALIDATION_ROOT="$(resolve_path "Validation root" "$1")"
 CACHE_ROOT="$(resolve_path "Cache root" "$2")"
 PACKET_ROOT="$(resolve_path "Packet root" "$3")"
 AUDIT_ZIP="$(resolve_path "Audit ZIP" "$4")"
+if [[ -z "${ZENODO_RESERVATION_EVIDENCE_INPUT}" ]]; then
+  echo "MITO_OVERVIEW_ZENODO_RESERVATION_EVIDENCE is required; a DOI string alone is insufficient." >&2
+  exit 1
+fi
+ZENODO_RESERVATION_EVIDENCE="$(resolve_path \
+  "Zenodo reservation evidence" "${ZENODO_RESERVATION_EVIDENCE_INPUT}")"
 DOI_ARGUMENT="${5:-}"
 DOI_ENVIRONMENT="${MITO_OVERVIEW_ARCHIVE_DOI:-}"
 PACKET_BUILD_LOG="${AUDIT_ZIP}.build.log"
@@ -58,7 +68,11 @@ if [[ -n "${DOI_ARGUMENT}" ]] && [[ -n "${DOI_ENVIRONMENT}" ]] && \
 fi
 ARCHIVE_DOI="${DOI_ARGUMENT:-${DOI_ENVIRONMENT}}"
 if [[ ! "${ARCHIVE_DOI}" =~ ^10\.5281/zenodo\.[1-9][0-9]*$ ]]; then
-  echo "A canonical reserved Zenodo DOI (10.5281/zenodo.<record-id>) is required; UNRESERVED is not accepted." >&2
+  echo "A canonical Zenodo DOI (10.5281/zenodo.<record-id>) is required." >&2
+  exit 1
+fi
+if [[ ! -f "${ZENODO_RESERVATION_EVIDENCE}" || ! -s "${ZENODO_RESERVATION_EVIDENCE}" ]]; then
+  echo "Sanitized Zenodo reservation evidence is missing or empty: ${ZENODO_RESERVATION_EVIDENCE}" >&2
   exit 1
 fi
 
@@ -421,6 +435,7 @@ if ! "${PYTHON_BIN}" "${REPO_ROOT}/scripts/build_validation_packet_v0.3.0.py" \
   --cache-root "${CACHE_ROOT}" \
   --version "v0.3.0" \
   --repository "${REPOSITORY}" \
+  --zenodo-reservation-evidence "${ZENODO_RESERVATION_EVIDENCE}" \
   --doi "${ARCHIVE_DOI}" > "${PACKET_BUILD_LOG}" 2>&1; then
   cat "${PACKET_BUILD_LOG}" >&2
   exit 1
@@ -444,42 +459,8 @@ if ! "${PACKET_ROOT}/verify_bundle.sh" >> "${PACKET_VERIFY_LOG}" 2>&1; then
 fi
 
 ZIP_VERIFY_ROOT="${VALIDATION_ROOT}/work/audit_zip_verify"
-mkdir -p "${ZIP_VERIFY_ROOT}"
-"${PYTHON_BIN}" - "${AUDIT_ZIP}" "${ZIP_VERIFY_ROOT}" <<'PY'
-import shutil
-import stat
-import sys
-import zipfile
-from pathlib import Path, PurePosixPath
-
-zip_path = Path(sys.argv[1])
-extract_root = Path(sys.argv[2]).resolve()
-with zipfile.ZipFile(zip_path) as archive:
-    infos = archive.infolist()
-    names = [info.filename for info in infos]
-    if not names or len(names) != len(set(names)):
-        raise SystemExit("Audit ZIP is empty or contains duplicate member names")
-    for info in infos:
-        member = PurePosixPath(info.filename)
-        mode = (info.external_attr >> 16) & 0o170000
-        if (
-            not info.filename
-            or "\\" in info.filename
-            or member.is_absolute()
-            or ".." in member.parts
-            or stat.S_ISLNK(mode)
-        ):
-            raise SystemExit(f"Unsafe audit ZIP member: {info.filename!r}")
-        destination = (extract_root / Path(*member.parts)).resolve()
-        if extract_root != destination and extract_root not in destination.parents:
-            raise SystemExit(f"Audit ZIP member escapes extraction root: {info.filename!r}")
-        if info.is_dir():
-            destination.mkdir(parents=True, exist_ok=True)
-            continue
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        with archive.open(info) as source, destination.open("wb") as target:
-            shutil.copyfileobj(source, target)
-PY
+"${PYTHON_BIN}" "${REPO_ROOT}/scripts/safe_extract_validation_zip.py" \
+  "${AUDIT_ZIP}" "${ZIP_VERIFY_ROOT}"
 
 echo "[audit-zip-verifier] ${AUDIT_ZIP}" >> "${PACKET_VERIFY_LOG}"
 if ! bash "${ZIP_VERIFY_ROOT}/verify_bundle.sh" >> "${PACKET_VERIFY_LOG}" 2>&1; then

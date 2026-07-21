@@ -21,6 +21,44 @@ from pathlib import Path
 EXPECTED_RELEASE_VERSION = "v0.3.0"
 EXPECTED_PACKAGE_NAME = "mito-overview"
 ZENODO_DOI_PATTERN = r"10\.5281/zenodo\.[1-9][0-9]*"
+ZENODO_RESERVATION_PACKET_PATH = "acceptance/zenodo_reservation.json"
+ZENODO_RESERVATION_SOURCE = "authenticated_zenodo_deposition_api"
+EXPECTED_GITHUB_BRANCH = "main"
+EXPECTED_GITHUB_WORKFLOW_PATH = ".github/workflows/smoke-tests.yml"
+
+PUBLIC_PROVENANCE_FILES = {
+    "shortread_alignment": {
+        "source": (
+            "outputs/gm11906_default_run1/provenance/"
+            "GM11906_MERRF_shortread.alignment.provenance.json"
+        ),
+        "packet": "public_provenance/GM11906_MERRF_shortread.alignment.provenance.json",
+    },
+    "longread_subset": {
+        "source": (
+            "outputs/gm12878_default_run1/provenance/"
+            "GM12878_ONT_longread.fastq_subset.provenance.json"
+        ),
+        "packet": "public_provenance/GM12878_ONT_longread.fastq_subset.provenance.json",
+    },
+    "longread_alignment": {
+        "source": (
+            "outputs/gm12878_default_run1/provenance/"
+            "GM12878_ONT_longread.reduced_alignment.provenance.json"
+        ),
+        "packet": (
+            "public_provenance/"
+            "GM12878_ONT_longread.reduced_alignment.provenance.json"
+        ),
+    },
+    "selected_query_names": {
+        "source": (
+            "outputs/gm12878_default_run1/provenance/"
+            "GM12878_ONT_longread.selected_qnames.txt"
+        ),
+        "packet": "public_provenance/GM12878_ONT_longread.selected_qnames.txt",
+    },
+}
 
 REQUIRED_TOP_LEVEL = (
     "run.json",
@@ -35,6 +73,7 @@ REQUIRED_TOP_LEVEL = (
     "dist",
     "expected",
     "observed_normalized",
+    "public_provenance",
     "filter_profile_results.tsv",
     "inputs.sha256",
     "artifacts.sha256",
@@ -111,6 +150,12 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--version", default=EXPECTED_RELEASE_VERSION)
     parser.add_argument("--repository", default="https://github.com/elissonnog/mito-overview")
+    parser.add_argument(
+        "--zenodo-reservation-evidence",
+        type=Path,
+        required=True,
+        help="Sanitized evidence captured from an authenticated Zenodo deposition response",
+    )
     parser.add_argument("--doi", required=True)
     return parser.parse_args()
 
@@ -317,6 +362,284 @@ def load_json_object(path: Path, label: str) -> dict[str, object]:
     return value
 
 
+def _reject_secret_material(value: object, location: str = "root") -> None:
+    sensitive_key = re.compile(
+        r"(?i)(?:^|_)(?:access_?token|refresh_?token|authorization|password|secret)(?:$|_)"
+    )
+    sensitive_value = re.compile(
+        r"(?i)(?:access[_-]?token\s*=|authorization\s*:|bearer\s+|client[_-]?secret)"
+    )
+    if isinstance(value, dict):
+        for key, child in value.items():
+            if sensitive_key.search(str(key)):
+                raise ValueError(f"Zenodo reservation evidence contains a sensitive key at {location}")
+            _reject_secret_material(child, f"{location}.{key}")
+    elif isinstance(value, list):
+        for index, child in enumerate(value):
+            _reject_secret_material(child, f"{location}[{index}]")
+    elif isinstance(value, str) and sensitive_value.search(value):
+        raise ValueError(f"Zenodo reservation evidence contains secret-like material at {location}")
+
+
+def validate_zenodo_reservation_evidence(
+    path: Path | None,
+    expected_doi: str,
+) -> dict[str, object]:
+    if re.fullmatch(ZENODO_DOI_PATTERN, expected_doi) is None:
+        raise ValueError(f"A canonical Zenodo DOI is required: {expected_doi!r}")
+    if path is None:
+        raise ValueError(
+            "A sanitized Zenodo reservation evidence file is required; DOI text alone is insufficient"
+        )
+    evidence = load_json_object(path, "Zenodo reservation evidence")
+    _reject_secret_material(evidence)
+
+    required_top_level = {
+        "schema_version",
+        "evidence_type",
+        "source",
+        "captured_utc",
+        "reservation_status",
+        "doi",
+        "record_id",
+        "zenodo_api_url",
+        "deposition_response",
+    }
+    if set(evidence) != required_top_level:
+        raise ValueError(
+            "Zenodo reservation evidence fields are not the required sanitized set: "
+            f"missing={sorted(required_top_level - set(evidence))}, "
+            f"unexpected={sorted(set(evidence) - required_top_level)}"
+        )
+    expected_fields = {
+        "schema_version": "1.0",
+        "evidence_type": "zenodo_doi_reservation",
+        "source": ZENODO_RESERVATION_SOURCE,
+        "reservation_status": "reserved",
+        "doi": expected_doi,
+    }
+    for field, expected in expected_fields.items():
+        if evidence.get(field) != expected:
+            raise ValueError(
+                f"Zenodo reservation evidence mismatch for {field}: "
+                f"{evidence.get(field)!r} != {expected!r}"
+            )
+
+    captured_utc = evidence.get("captured_utc")
+    if not isinstance(captured_utc, str):
+        raise ValueError("Zenodo reservation captured_utc must be an ISO-8601 timestamp")
+    try:
+        captured = datetime.fromisoformat(captured_utc.replace("Z", "+00:00"))
+    except ValueError as error:
+        raise ValueError("Zenodo reservation captured_utc must be an ISO-8601 timestamp") from error
+    if captured.tzinfo is None or captured.utcoffset() is None:
+        raise ValueError("Zenodo reservation captured_utc must include a timezone")
+
+    record_id = evidence.get("record_id")
+    if isinstance(record_id, bool) or not isinstance(record_id, int) or record_id <= 0:
+        raise ValueError(f"Zenodo reservation record_id must be a positive integer: {record_id!r}")
+    canonical_doi = f"10.5281/zenodo.{record_id}"
+    canonical_api_url = f"https://zenodo.org/api/deposit/depositions/{record_id}"
+    if expected_doi != canonical_doi:
+        raise ValueError(
+            f"Zenodo reservation DOI is not tied to record_id {record_id}: {expected_doi!r}"
+        )
+    if evidence.get("zenodo_api_url") != canonical_api_url:
+        raise ValueError(
+            "Zenodo reservation API URL mismatch: "
+            f"{evidence.get('zenodo_api_url')!r} != {canonical_api_url!r}"
+        )
+
+    response = evidence.get("deposition_response")
+    if not isinstance(response, dict):
+        raise ValueError("Zenodo reservation deposition_response must be an object")
+    required_response = {"id", "record_id", "links", "metadata", "state", "submitted"}
+    if set(response) != required_response:
+        raise ValueError("Zenodo deposition_response is not the required sanitized field set")
+    if response.get("id") != record_id or response.get("record_id") != record_id:
+        raise ValueError("Zenodo deposition response IDs do not match the reserved record_id")
+    if response.get("state") != "unsubmitted" or response.get("submitted") is not False:
+        raise ValueError("Zenodo deposition response does not describe an unsubmitted reservation")
+
+    links = response.get("links")
+    if not isinstance(links, dict) or set(links) != {"self"}:
+        raise ValueError("Zenodo deposition links must contain only the sanitized self URL")
+    if links.get("self") != canonical_api_url:
+        raise ValueError("Zenodo deposition self URL does not match the reserved record")
+    metadata = response.get("metadata")
+    if not isinstance(metadata, dict) or set(metadata) != {"prereserve_doi"}:
+        raise ValueError("Zenodo deposition metadata must contain only prereserve_doi evidence")
+    reservation = metadata.get("prereserve_doi")
+    if not isinstance(reservation, dict) or set(reservation) != {"doi", "recid"}:
+        raise ValueError("Zenodo prereserve_doi evidence is malformed")
+    if reservation.get("doi") != expected_doi or reservation.get("recid") != record_id:
+        raise ValueError("Zenodo prereserve_doi does not match the requested DOI and record ID")
+
+    return {
+        "evidence_path": ZENODO_RESERVATION_PACKET_PATH,
+        "evidence_sha256": sha256(path),
+        "doi": expected_doi,
+        "record_id": record_id,
+        "zenodo_api_url": canonical_api_url,
+        "reservation_status": "reserved",
+        "source": ZENODO_RESERVATION_SOURCE,
+        "captured_utc": captured_utc,
+    }
+
+
+def validate_digest_record(value: object, label: str) -> dict[str, object]:
+    if not isinstance(value, dict):
+        raise ValueError(f"Public provenance {label} must be an object")
+    name = value.get("name")
+    size = value.get("bytes")
+    digest = value.get("sha256")
+    if not isinstance(name, str) or not name or Path(name).name != name:
+        raise ValueError(f"Public provenance {label} has an invalid file name")
+    if isinstance(size, bool) or not isinstance(size, int) or size <= 0:
+        raise ValueError(f"Public provenance {label} has an invalid byte count")
+    if not isinstance(digest, str) or re.fullmatch(r"[0-9a-f]{64}", digest) is None:
+        raise ValueError(f"Public provenance {label} has an invalid SHA-256")
+    md5 = value.get("md5")
+    if md5 is not None and (
+        not isinstance(md5, str) or re.fullmatch(r"[0-9a-f]{32}", md5) is None
+    ):
+        raise ValueError(f"Public provenance {label} has an invalid MD5")
+    return value
+
+
+def _require_record_content(record: dict[str, object], path: Path, label: str) -> None:
+    if record["bytes"] != path.stat().st_size or record["sha256"] != sha256(path):
+        raise ValueError(f"Public provenance {label} does not match packaged evidence")
+
+
+def _records_match(
+    left: dict[str, object],
+    right: dict[str, object],
+    label: str,
+) -> None:
+    for field in ("name", "bytes", "sha256", "md5"):
+        if left.get(field) != right.get(field):
+            raise ValueError(f"Public provenance linkage mismatch for {label} field {field}")
+
+
+def validate_public_provenance(public_root: Path) -> list[dict[str, str]]:
+    paths = {
+        key: public_root / str(specification["source"])
+        for key, specification in PUBLIC_PROVENANCE_FILES.items()
+    }
+    short = load_json_object(paths["shortread_alignment"], "short-read alignment provenance")
+    subset = load_json_object(paths["longread_subset"], "long-read subset provenance")
+    long = load_json_object(paths["longread_alignment"], "long-read alignment provenance")
+    names_path = paths["selected_query_names"]
+    if not names_path.is_file() or names_path.stat().st_size == 0:
+        raise FileNotFoundError(f"Required selected-query-name evidence not found: {names_path}")
+
+    alignment_expectations = (
+        (
+            short,
+            "GM11906_MERRF_reduced_shortread",
+            "bwa-mem-samtools-sort-v1",
+            "short-read",
+        ),
+        (
+            long,
+            "GM12878_SRR18110025_ONT_reduced_qn1000",
+            "minimap2-map-ont-deterministic-fastq-subset-mapped-only-v1",
+            "long-read",
+        ),
+    )
+    for manifest, dataset_id, derivation_id, label in alignment_expectations:
+        if manifest.get("schema_version") != "1.0" or manifest.get("provenance_type") != "public_alignment":
+            raise ValueError(f"Public {label} alignment provenance identity is invalid")
+        if manifest.get("dataset_id") != dataset_id:
+            raise ValueError(f"Public {label} alignment dataset identity is invalid")
+        for field in ("alignment", "alignment_index", "reference", "reference_index"):
+            validate_digest_record(manifest.get(field), f"{label} {field}")
+        derivation = manifest.get("derivation")
+        if not isinstance(derivation, dict) or derivation.get("derivation_id") != derivation_id:
+            raise ValueError(f"Public {label} alignment derivation identity is invalid")
+        public_inputs = manifest.get("public_inputs")
+        if not isinstance(public_inputs, list) or not public_inputs:
+            raise ValueError(f"Public {label} alignment inputs are missing")
+        for index, record in enumerate(public_inputs):
+            validated = validate_digest_record(record, f"{label} input {index}")
+            if not isinstance(validated.get("label"), str) or not validated["label"]:
+                raise ValueError(f"Public {label} alignment input label is invalid")
+
+    if (
+        subset.get("schema_version") != "1.0"
+        or subset.get("provenance_type") != "deterministic_fastq_query_name_subset"
+        or subset.get("dataset_id") != "GM12878_SRR18110025_ONT"
+    ):
+        raise ValueError("Public long-read subset provenance identity is invalid")
+    source_fastq = validate_digest_record(subset.get("source_fastq"), "subset source FASTQ")
+    subset_fastq = validate_digest_record(subset.get("subset_fastq"), "subset FASTQ")
+    selected_names = validate_digest_record(
+        subset.get("selected_query_names"), "selected query names"
+    )
+    _require_record_content(selected_names, names_path, "selected query names")
+
+    try:
+        query_names = names_path.read_text(encoding="utf-8").splitlines()
+    except UnicodeDecodeError as error:
+        raise ValueError("Selected-query-name evidence must be UTF-8 text") from error
+    if not query_names or any(not name or name != name.strip() or any(c.isspace() for c in name) for name in query_names):
+        raise ValueError("Selected-query-name evidence contains an invalid query name")
+    if len(query_names) != len(set(query_names)):
+        raise ValueError("Selected-query-name evidence contains duplicate query names")
+
+    selection = subset.get("selection")
+    if not isinstance(selection, dict):
+        raise ValueError("Public long-read subset selection metadata is missing")
+    selected_count = selection.get("selected_query_names")
+    if (
+        selection.get("algorithm") != "smallest_sha256_seeded_query_names_v1"
+        or isinstance(selected_count, bool)
+        or not isinstance(selected_count, int)
+        or selected_count <= 0
+        or selection.get("requested_query_names") != selected_count
+        or selected_count != len(query_names)
+    ):
+        raise ValueError("Public long-read subset selection count or algorithm is invalid")
+
+    long_inputs = {
+        record.get("label"): record
+        for record in long["public_inputs"]
+        if isinstance(record, dict) and isinstance(record.get("label"), str)
+    }
+    required_labels = {
+        "SRR18110025_full_fastq",
+        "deterministic_subset_fastq",
+        "deterministic_subset_manifest",
+        "selected_query_names",
+    }
+    if set(long_inputs) != required_labels:
+        raise ValueError("Public long-read alignment input inventory is incomplete")
+    _records_match(source_fastq, long_inputs["SRR18110025_full_fastq"], "source FASTQ")
+    _records_match(subset_fastq, long_inputs["deterministic_subset_fastq"], "subset FASTQ")
+    _records_match(selected_names, long_inputs["selected_query_names"], "selected names")
+    _require_record_content(
+        long_inputs["deterministic_subset_manifest"],
+        paths["longread_subset"],
+        "subset manifest",
+    )
+    derivation_parameters = long["derivation"].get("parameters")
+    if not isinstance(derivation_parameters, dict) or (
+        derivation_parameters.get("selected_query_names") != str(selected_count)
+        or derivation_parameters.get("selection_seed") != selection.get("seed")
+    ):
+        raise ValueError("Public long-read alignment is not tied to the selected query-name subset")
+
+    return [
+        {
+            "path": str(specification["packet"]),
+            "sha256": sha256(paths[key]),
+            "source_case": "gm11906_default_run1" if key == "shortread_alignment" else "gm12878_default_run1",
+        }
+        for key, specification in PUBLIC_PROVENANCE_FILES.items()
+    ]
+
+
 def github_repository_slug(repository: str) -> str:
     prefix = "https://github.com/"
     if not repository.startswith(prefix):
@@ -419,6 +742,21 @@ def validate_github_actions_evidence(
             f"GitHub Actions workflow mismatch: {run.get('name')!r} "
             f"!= {EXPECTED_GITHUB_WORKFLOW!r}"
         )
+    if run.get("event") != "push":
+        raise ValueError(
+            "GitHub Actions release acceptance requires a push-event workflow run, "
+            f"not {run.get('event')!r}"
+        )
+    if run.get("head_branch") != EXPECTED_GITHUB_BRANCH:
+        raise ValueError(
+            f"GitHub Actions push branch mismatch: {run.get('head_branch')!r} "
+            f"!= {EXPECTED_GITHUB_BRANCH!r}"
+        )
+    if run.get("path") != EXPECTED_GITHUB_WORKFLOW_PATH:
+        raise ValueError(
+            f"GitHub Actions workflow path mismatch: {run.get('path')!r} "
+            f"!= {EXPECTED_GITHUB_WORKFLOW_PATH!r}"
+        )
     if run.get("head_sha") != expected_commit:
         raise ValueError(
             f"GitHub Actions run commit mismatch: "
@@ -427,22 +765,35 @@ def validate_github_actions_evidence(
     run_repository = run.get("repository")
     if not isinstance(run_repository, dict) or run_repository.get("full_name") != repository_slug:
         raise ValueError("GitHub Actions run repository does not match the release repository")
+    head_repository = run.get("head_repository")
+    if not isinstance(head_repository, dict) or head_repository.get("full_name") != repository_slug:
+        raise ValueError("GitHub Actions head repository does not match the release repository")
     if run.get("status") != "completed" or run.get("conclusion") != "success":
         raise ValueError(
             "GitHub Actions workflow run evidence is nonpassing: "
             f"status={run.get('status')!r}, conclusion={run.get('conclusion')!r}"
         )
     run_url = f"https://github.com/{repository_slug}/actions/runs/{run_id}"
+    run_api_url = f"https://api.github.com/repos/{repository_slug}/actions/runs/{run_id}"
     if run.get("html_url") != run_url:
         raise ValueError(
             f"GitHub Actions run URL mismatch: {run.get('html_url')!r} != {run_url!r}"
         )
+    if run.get("url") != run_api_url:
+        raise ValueError(
+            f"GitHub Actions run API URL mismatch: {run.get('url')!r} != {run_api_url!r}"
+        )
+    if run.get("jobs_url") != f"{run_api_url}/jobs":
+        raise ValueError("GitHub Actions jobs API URL is not bound to the selected run")
 
     jobs = jobs_payload.get("jobs")
     if not isinstance(jobs, list) or not all(isinstance(job, dict) for job in jobs):
         raise ValueError("GitHub Actions jobs evidence must contain a jobs object list")
     if jobs_payload.get("total_count") != len(jobs):
         raise ValueError("GitHub Actions jobs total_count does not match the jobs inventory")
+    job_ids = [positive_json_integer(job.get("id"), "job id") for job in jobs]
+    if len(job_ids) != len(set(job_ids)):
+        raise ValueError("GitHub Actions jobs evidence contains duplicate job IDs")
 
     rows: list[dict[str, str]] = []
     for case_id, expectation in EXPECTED_GITHUB_JOBS.items():
@@ -485,6 +836,15 @@ def validate_github_actions_evidence(
                 f"GitHub Actions {expectation['platform']} job URL mismatch: "
                 f"{job_url!r} != {expected_job_url!r}"
             )
+        expected_job_api_url = f"https://api.github.com/repos/{repository_slug}/actions/jobs/{job_id}"
+        if job.get("url") != expected_job_api_url:
+            raise ValueError(
+                f"GitHub Actions {expectation['platform']} job API URL mismatch"
+            )
+        if job.get("run_url") != run_api_url:
+            raise ValueError(
+                f"GitHub Actions {expectation['platform']} job run URL mismatch"
+            )
         rows.append(
             {
                 "case_id": case_id,
@@ -495,7 +855,8 @@ def validate_github_actions_evidence(
                 "detail": (
                     f"{run_relative}; {jobs_relative}; {command_relative}; {log_relative}; "
                     f"run_id={run_id}; job_id={job_id}; "
-                    f"platform={expectation['platform']}; commit={expected_commit}; url={job_url}"
+                    f"platform={expectation['platform']}; event=push; "
+                    f"commit={expected_commit}; url={job_url}"
                 ),
             }
         )
@@ -672,6 +1033,7 @@ import sys
 import tarfile
 import zipfile
 from collections import Counter
+from datetime import datetime
 from pathlib import Path
 
 root = Path(sys.argv[1])
@@ -679,14 +1041,18 @@ required_top_level = {
     "run.json", "release_identity.json", "cases.tsv", "acceptance",
     "claim_evidence_matrix.tsv",
     "public_data_sources.tsv", "environment.txt", "commands", "logs", "dist",
-    "expected", "observed_normalized", "filter_profile_results.tsv", "inputs.sha256",
+    "expected", "observed_normalized", "public_provenance",
+    "filter_profile_results.tsv", "inputs.sha256",
     "artifacts.sha256", "verify_bundle.sh",
 }
 missing = sorted(name for name in required_top_level if not (root / name).exists())
 if missing:
     raise SystemExit(f"missing required evidence: {missing}")
 
-for relative in ("acceptance", "commands", "commands/public", "logs", "logs/public", "dist"):
+for relative in (
+    "acceptance", "commands", "commands/public", "logs", "logs/public", "dist",
+    "public_provenance",
+):
     evidence_root = root / relative
     if not evidence_root.is_dir() or not any(path.is_file() for path in evidence_root.rglob("*")):
         raise SystemExit(f"required evidence directory is empty: {relative}")
@@ -776,6 +1142,105 @@ if len({
     environment.get("archive_doi"),
 }) != 1:
     raise SystemExit("archive DOI is inconsistent across packet evidence")
+
+zenodo_relative = "acceptance/zenodo_reservation.json"
+zenodo_path = root / zenodo_relative
+try:
+    zenodo = json.loads(zenodo_path.read_text(encoding="utf-8"))
+except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+    raise SystemExit(f"invalid Zenodo reservation evidence: {error}")
+if not isinstance(zenodo, dict):
+    raise SystemExit("Zenodo reservation evidence must be an object")
+
+def reject_secret_material(value, location="root"):
+    sensitive_key = re.compile(
+        r"(?i)(?:^|_)(?:access_?token|refresh_?token|authorization|password|secret)(?:$|_)"
+    )
+    sensitive_value = re.compile(
+        r"(?i)(?:access[_-]?token\s*=|authorization\s*:|bearer\s+|client[_-]?secret)"
+    )
+    if isinstance(value, dict):
+        for key, child in value.items():
+            if sensitive_key.search(str(key)):
+                raise SystemExit(f"Zenodo reservation contains a sensitive key at {location}")
+            reject_secret_material(child, f"{location}.{key}")
+    elif isinstance(value, list):
+        for index, child in enumerate(value):
+            reject_secret_material(child, f"{location}[{index}]")
+    elif isinstance(value, str) and sensitive_value.search(value):
+        raise SystemExit(f"Zenodo reservation contains secret-like material at {location}")
+
+reject_secret_material(zenodo)
+zenodo_fields = {
+    "schema_version", "evidence_type", "source", "captured_utc",
+    "reservation_status", "doi", "record_id", "zenodo_api_url",
+    "deposition_response",
+}
+if set(zenodo) != zenodo_fields:
+    raise SystemExit("Zenodo reservation evidence is not the required sanitized field set")
+if (
+    zenodo.get("schema_version") != "1.0"
+    or zenodo.get("evidence_type") != "zenodo_doi_reservation"
+    or zenodo.get("source") != "authenticated_zenodo_deposition_api"
+    or zenodo.get("reservation_status") != "reserved"
+    or zenodo.get("doi") != archive_doi
+):
+    raise SystemExit("Zenodo reservation evidence identity or status mismatch")
+captured_utc = zenodo.get("captured_utc")
+try:
+    captured = datetime.fromisoformat(str(captured_utc).replace("Z", "+00:00"))
+except ValueError as error:
+    raise SystemExit("invalid Zenodo reservation capture timestamp") from error
+if captured.tzinfo is None or captured.utcoffset() is None:
+    raise SystemExit("Zenodo reservation capture timestamp lacks a timezone")
+record_id = zenodo.get("record_id")
+if isinstance(record_id, bool) or not isinstance(record_id, int) or record_id <= 0:
+    raise SystemExit("invalid Zenodo reservation record ID")
+zenodo_api_url = f"https://zenodo.org/api/deposit/depositions/{record_id}"
+if archive_doi != f"10.5281/zenodo.{record_id}" or zenodo.get("zenodo_api_url") != zenodo_api_url:
+    raise SystemExit("Zenodo reservation DOI, record ID, and API URL are inconsistent")
+deposition = zenodo.get("deposition_response")
+if not isinstance(deposition, dict) or set(deposition) != {
+    "id", "record_id", "links", "metadata", "state", "submitted",
+}:
+    raise SystemExit("Zenodo deposition response is not the required sanitized field set")
+links = deposition.get("links")
+metadata = deposition.get("metadata")
+prereserve = metadata.get("prereserve_doi") if isinstance(metadata, dict) else None
+if (
+    deposition.get("id") != record_id
+    or deposition.get("record_id") != record_id
+    or deposition.get("state") != "unsubmitted"
+    or deposition.get("submitted") is not False
+    or not isinstance(links, dict)
+    or set(links) != {"self"}
+    or links.get("self") != zenodo_api_url
+    or not isinstance(metadata, dict)
+    or set(metadata) != {"prereserve_doi"}
+    or not isinstance(prereserve, dict)
+    or set(prereserve) != {"doi", "recid"}
+    or prereserve.get("doi") != archive_doi
+    or prereserve.get("recid") != record_id
+):
+    raise SystemExit("Zenodo deposition response does not bind the DOI reservation")
+expected_zenodo_identity = {
+    "evidence_path": zenodo_relative,
+    "evidence_sha256": digest(zenodo_path),
+    "doi": archive_doi,
+    "record_id": record_id,
+    "zenodo_api_url": zenodo_api_url,
+    "reservation_status": "reserved",
+    "source": "authenticated_zenodo_deposition_api",
+    "captured_utc": captured_utc,
+}
+if identity.get("zenodo_reservation") != expected_zenodo_identity:
+    raise SystemExit("release identity does not match Zenodo reservation evidence")
+if (
+    run.get("archive_record_id") != record_id
+    or run.get("doi_reservation_status") != "reserved"
+    or run.get("doi_reservation_evidence") != zenodo_relative
+):
+    raise SystemExit("run record does not match Zenodo reservation evidence")
 if identity.get("environment_release_version") != "v0.3.0" or environment.get("release_version") != "v0.3.0":
     raise SystemExit("environment release version mismatch")
 if identity.get("source_worktree_clean") is not True:
@@ -897,22 +1362,39 @@ run_id = positive_integer(actions_run.get("id"), "run id")
 run_attempt = positive_integer(actions_run.get("run_attempt"), "run attempt")
 if actions_run.get("name") != "smoke-tests":
     raise SystemExit("GitHub Actions workflow mismatch")
+if actions_run.get("event") != "push":
+    raise SystemExit("GitHub Actions release run is not a push event")
+if actions_run.get("head_branch") != "main":
+    raise SystemExit("GitHub Actions release run is not a main-branch push")
+if actions_run.get("path") != ".github/workflows/smoke-tests.yml":
+    raise SystemExit("GitHub Actions workflow path mismatch")
 if actions_run.get("head_sha") != commit:
     raise SystemExit("GitHub Actions run commit mismatch")
 run_repository = actions_run.get("repository")
 if not isinstance(run_repository, dict) or run_repository.get("full_name") != repository_slug:
     raise SystemExit("GitHub Actions run repository mismatch")
+head_repository = actions_run.get("head_repository")
+if not isinstance(head_repository, dict) or head_repository.get("full_name") != repository_slug:
+    raise SystemExit("GitHub Actions head repository mismatch")
 if actions_run.get("status") != "completed" or actions_run.get("conclusion") != "success":
     raise SystemExit("GitHub Actions workflow run is not successful")
 run_url = f"https://github.com/{repository_slug}/actions/runs/{run_id}"
+run_api_url = f"https://api.github.com/repos/{repository_slug}/actions/runs/{run_id}"
 if actions_run.get("html_url") != run_url:
     raise SystemExit("GitHub Actions run URL mismatch")
+if actions_run.get("url") != run_api_url:
+    raise SystemExit("GitHub Actions run API URL mismatch")
+if actions_run.get("jobs_url") != f"{run_api_url}/jobs":
+    raise SystemExit("GitHub Actions jobs API URL mismatch")
 
 jobs = jobs_payload.get("jobs")
 if not isinstance(jobs, list) or not all(isinstance(job, dict) for job in jobs):
     raise SystemExit("GitHub Actions jobs inventory is invalid")
 if jobs_payload.get("total_count") != len(jobs):
     raise SystemExit("GitHub Actions jobs inventory count mismatch")
+job_ids = [positive_integer(job.get("id"), "job id") for job in jobs]
+if len(job_ids) != len(set(job_ids)):
+    raise SystemExit("GitHub Actions jobs inventory contains duplicate IDs")
 for case_id, expectation in github_jobs.items():
     matching = [job for job in jobs if job.get("name") == expectation["name"]]
     if len(matching) != 1:
@@ -935,6 +1417,10 @@ for case_id, expectation in github_jobs.items():
     job_url = job.get("html_url")
     if job_url != f"{run_url}/job/{job_id}":
         raise SystemExit(f"GitHub Actions {expectation['platform']} job URL mismatch")
+    if job.get("url") != f"https://api.github.com/repos/{repository_slug}/actions/jobs/{job_id}":
+        raise SystemExit(f"GitHub Actions {expectation['platform']} job API URL mismatch")
+    if job.get("run_url") != run_api_url:
+        raise SystemExit(f"GitHub Actions {expectation['platform']} job run URL mismatch")
     expected_acceptance[case_id] = {
         "case_id": case_id,
         "category": "release_acceptance",
@@ -944,7 +1430,7 @@ for case_id, expectation in github_jobs.items():
         "detail": (
             f"{run_relative}; {jobs_relative}; {github_command}; {github_log}; "
             f"run_id={run_id}; job_id={job_id}; platform={expectation['platform']}; "
-            f"commit={commit}; url={job_url}"
+            f"event=push; commit={commit}; url={job_url}"
         ),
     }
 
@@ -1003,6 +1489,169 @@ observed_counts = Counter(case["verdict"] for case in cases)
 expected_counts = {verdict: observed_counts.get(verdict, 0) for verdict in verdicts}
 if run.get("case_count") != len(cases) or run.get("verdict_counts") != expected_counts:
     raise SystemExit("run.json case counts do not match cases.tsv")
+
+public_provenance_paths = {
+    "shortread_alignment": (
+        "public_provenance/GM11906_MERRF_shortread.alignment.provenance.json"
+    ),
+    "longread_subset": (
+        "public_provenance/GM12878_ONT_longread.fastq_subset.provenance.json"
+    ),
+    "longread_alignment": (
+        "public_provenance/GM12878_ONT_longread.reduced_alignment.provenance.json"
+    ),
+    "selected_query_names": (
+        "public_provenance/GM12878_ONT_longread.selected_qnames.txt"
+    ),
+}
+
+def load_public_json(key):
+    relative = public_provenance_paths[key]
+    try:
+        value = json.loads((root / relative).read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise SystemExit(f"invalid public provenance JSON: {relative}: {error}")
+    if not isinstance(value, dict):
+        raise SystemExit(f"public provenance is not an object: {relative}")
+    return value
+
+def provenance_record(value, label):
+    if not isinstance(value, dict):
+        raise SystemExit(f"public provenance {label} is not an object")
+    if (
+        not isinstance(value.get("name"), str)
+        or not value.get("name")
+        or Path(value["name"]).name != value["name"]
+        or isinstance(value.get("bytes"), bool)
+        or not isinstance(value.get("bytes"), int)
+        or value["bytes"] <= 0
+        or not re.fullmatch(r"[0-9a-f]{64}", str(value.get("sha256", "")))
+    ):
+        raise SystemExit(f"invalid public provenance record: {label}")
+    if value.get("md5") is not None and not re.fullmatch(
+        r"[0-9a-f]{32}", str(value["md5"])
+    ):
+        raise SystemExit(f"invalid public provenance MD5: {label}")
+    return value
+
+def same_record(left, right, label):
+    for field in ("name", "bytes", "sha256", "md5"):
+        if left.get(field) != right.get(field):
+            raise SystemExit(f"public provenance linkage mismatch: {label} {field}")
+
+def matches_file(record, path, label):
+    if record["bytes"] != path.stat().st_size or record["sha256"] != digest(path):
+        raise SystemExit(f"public provenance does not match packaged {label}")
+
+short_provenance = load_public_json("shortread_alignment")
+subset_provenance = load_public_json("longread_subset")
+long_provenance = load_public_json("longread_alignment")
+alignment_expectations = (
+    (
+        short_provenance,
+        "GM11906_MERRF_reduced_shortread",
+        "bwa-mem-samtools-sort-v1",
+        "short-read",
+    ),
+    (
+        long_provenance,
+        "GM12878_SRR18110025_ONT_reduced_qn1000",
+        "minimap2-map-ont-deterministic-fastq-subset-mapped-only-v1",
+        "long-read",
+    ),
+)
+for manifest, dataset_id, derivation_id, label in alignment_expectations:
+    if (
+        manifest.get("schema_version") != "1.0"
+        or manifest.get("provenance_type") != "public_alignment"
+        or manifest.get("dataset_id") != dataset_id
+    ):
+        raise SystemExit(f"invalid public {label} alignment provenance identity")
+    for field in ("alignment", "alignment_index", "reference", "reference_index"):
+        provenance_record(manifest.get(field), f"{label} {field}")
+    derivation = manifest.get("derivation")
+    if not isinstance(derivation, dict) or derivation.get("derivation_id") != derivation_id:
+        raise SystemExit(f"invalid public {label} alignment derivation")
+    inputs = manifest.get("public_inputs")
+    if not isinstance(inputs, list) or not inputs:
+        raise SystemExit(f"missing public {label} alignment inputs")
+    for index, record in enumerate(inputs):
+        validated = provenance_record(record, f"{label} input {index}")
+        if not isinstance(validated.get("label"), str) or not validated["label"]:
+            raise SystemExit(f"invalid public {label} alignment input label")
+
+if (
+    subset_provenance.get("schema_version") != "1.0"
+    or subset_provenance.get("provenance_type")
+    != "deterministic_fastq_query_name_subset"
+    or subset_provenance.get("dataset_id") != "GM12878_SRR18110025_ONT"
+):
+    raise SystemExit("invalid public long-read subset provenance identity")
+source_fastq = provenance_record(subset_provenance.get("source_fastq"), "source FASTQ")
+subset_fastq = provenance_record(subset_provenance.get("subset_fastq"), "subset FASTQ")
+selected_record = provenance_record(
+    subset_provenance.get("selected_query_names"), "selected query names"
+)
+selected_path = root / public_provenance_paths["selected_query_names"]
+matches_file(selected_record, selected_path, "selected query names")
+try:
+    selected_names = selected_path.read_text(encoding="utf-8").splitlines()
+except UnicodeDecodeError as error:
+    raise SystemExit("selected query names are not UTF-8") from error
+if (
+    not selected_names
+    or len(selected_names) != len(set(selected_names))
+    or any(not name or name != name.strip() or any(c.isspace() for c in name) for name in selected_names)
+):
+    raise SystemExit("selected query names are empty, duplicated, or malformed")
+selection = subset_provenance.get("selection")
+selected_count = selection.get("selected_query_names") if isinstance(selection, dict) else None
+if (
+    not isinstance(selection, dict)
+    or selection.get("algorithm") != "smallest_sha256_seeded_query_names_v1"
+    or isinstance(selected_count, bool)
+    or not isinstance(selected_count, int)
+    or selected_count <= 0
+    or selection.get("requested_query_names") != selected_count
+    or selected_count != len(selected_names)
+):
+    raise SystemExit("invalid public long-read subset selection metadata")
+long_inputs = {
+    record.get("label"): record
+    for record in long_provenance["public_inputs"]
+    if isinstance(record, dict) and isinstance(record.get("label"), str)
+}
+if set(long_inputs) != {
+    "SRR18110025_full_fastq", "deterministic_subset_fastq",
+    "deterministic_subset_manifest", "selected_query_names",
+}:
+    raise SystemExit("incomplete public long-read alignment input inventory")
+same_record(source_fastq, long_inputs["SRR18110025_full_fastq"], "source FASTQ")
+same_record(subset_fastq, long_inputs["deterministic_subset_fastq"], "subset FASTQ")
+same_record(selected_record, long_inputs["selected_query_names"], "selected names")
+matches_file(
+    long_inputs["deterministic_subset_manifest"],
+    root / public_provenance_paths["longread_subset"],
+    "subset manifest",
+)
+parameters = long_provenance["derivation"].get("parameters")
+if not isinstance(parameters, dict) or (
+    parameters.get("selected_query_names") != str(selected_count)
+    or parameters.get("selection_seed") != selection.get("seed")
+):
+    raise SystemExit("public alignment is not tied to the selected query-name subset")
+expected_public_inventory = [
+    {
+        "path": relative,
+        "sha256": digest(root / relative),
+        "source_case": (
+            "gm11906_default_run1" if key == "shortread_alignment" else "gm12878_default_run1"
+        ),
+    }
+    for key, relative in public_provenance_paths.items()
+]
+if identity.get("public_provenance") != expected_public_inventory:
+    raise SystemExit("release identity public provenance inventory mismatch")
 
 def normalize_name(value):
     return re.sub(r"[-_.]+", "-", value).lower()
@@ -1089,6 +1738,10 @@ def build_packet(args: argparse.Namespace) -> Path:
         raise SystemExit(f"Packet root must be absent or empty: {args.packet_root}")
 
     public_root = args.validation_root / "public"
+    zenodo_reservation = validate_zenodo_reservation_evidence(
+        getattr(args, "zenodo_reservation_evidence", None),
+        args.doi,
+    )
     release_identity = resolve_release_identity(
         args.repo_root,
         args.validation_root / "environment.txt",
@@ -1107,6 +1760,7 @@ def build_packet(args: argparse.Namespace) -> Path:
         acceptance_rows,
     )
     validate_hash_manifest(public_root / "inputs.sha256", "public/inputs.sha256")
+    public_provenance = validate_public_provenance(public_root)
     dist_artifacts = validate_distributions(
         args.validation_root / "dist",
         str(release_identity["package_name"]),
@@ -1128,6 +1782,10 @@ def build_packet(args: argparse.Namespace) -> Path:
     shutil.copy2(args.validation_root / "cases.tsv", args.packet_root / "cases.tsv")
     shutil.copy2(args.validation_root / "environment.txt", args.packet_root / "environment.txt")
     copy_tree(args.validation_root / "acceptance", args.packet_root / "acceptance")
+    shutil.copy2(
+        args.zenodo_reservation_evidence,
+        args.packet_root / ZENODO_RESERVATION_PACKET_PATH,
+    )
     copy_tree(args.validation_root / "commands", args.packet_root / "commands")
     copy_tree(public_root / "commands", args.packet_root / "commands" / "public")
     copy_tree(args.validation_root / "logs", args.packet_root / "logs")
@@ -1143,9 +1801,15 @@ def build_packet(args: argparse.Namespace) -> Path:
         args.packet_root / "filter_profile_results.tsv",
     )
     shutil.copy2(public_root / "inputs.sha256", args.packet_root / "inputs.sha256")
+    for key, specification in PUBLIC_PROVENANCE_FILES.items():
+        destination = args.packet_root / str(specification["packet"])
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(public_root / str(specification["source"]), destination)
 
     release_identity["dist_artifacts"] = dist_artifacts
     release_identity["acceptance_cases"] = [row["case_id"] for row in acceptance_rows]
+    release_identity["zenodo_reservation"] = zenodo_reservation
+    release_identity["public_provenance"] = public_provenance
     (args.packet_root / "release_identity.json").write_text(
         json.dumps(release_identity, indent=2) + "\n",
         encoding="utf-8",
@@ -1156,6 +1820,9 @@ def build_packet(args: argparse.Namespace) -> Path:
         "git_commit": release_identity["git_commit"],
         "repository": release_identity["repository"],
         "archive_doi": release_identity["archive_doi"],
+        "archive_record_id": zenodo_reservation["record_id"],
+        "doi_reservation_status": zenodo_reservation["reservation_status"],
+        "doi_reservation_evidence": zenodo_reservation["evidence_path"],
         "generated_utc": datetime.now(timezone.utc).isoformat(),
         "case_count": case_count,
         "verdict_counts": verdict_counts,
@@ -1201,7 +1868,10 @@ def build_packet(args: argparse.Namespace) -> Path:
             [
                 "C6",
                 "Public proof-of-principle workflows reproduce normalized TSVs",
-                "gm11906_repeatability; gm12878_repeatability; filter_profile_results.tsv",
+                (
+                    "gm11906_repeatability; gm12878_repeatability; "
+                    "filter_profile_results.tsv; public_provenance/"
+                ),
                 "Not a sensitivity, specificity, deletion-truth, or diagnostic benchmark",
             ],
         ],

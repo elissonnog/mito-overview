@@ -21,10 +21,19 @@ assert SPEC is not None and SPEC.loader is not None
 packet_builder = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(packet_builder)
 
+SAFE_EXTRACT_PATH = Path(__file__).parents[1] / "scripts" / "safe_extract_validation_zip.py"
+SAFE_EXTRACT_SPEC = importlib.util.spec_from_file_location(
+    "safe_extract_validation_zip", SAFE_EXTRACT_PATH
+)
+assert SAFE_EXTRACT_SPEC is not None and SAFE_EXTRACT_SPEC.loader is not None
+safe_extract = importlib.util.module_from_spec(SAFE_EXTRACT_SPEC)
+SAFE_EXTRACT_SPEC.loader.exec_module(safe_extract)
+
 REPOSITORY = "https://github.com/elissonnog/mito-overview"
 GITHUB_REPOSITORY = "elissonnog/mito-overview"
 GITHUB_RUN_ID = 123456
 TEST_DOI = "10.5281/zenodo.12345678"
+TEST_RECORD_ID = 12345678
 
 
 def write_cases(path: Path, rows: list[dict[str, str]]) -> None:
@@ -119,6 +128,137 @@ def write_distribution_artifacts(dist_root: Path, version: str = "0.3.0") -> Non
         archive.addfile(member, io.BytesIO(payload))
 
 
+def write_zenodo_reservation_evidence(path: Path, doi: str = TEST_DOI) -> None:
+    record_id = int(doi.rsplit(".", 1)[1])
+    api_url = f"https://zenodo.org/api/deposit/depositions/{record_id}"
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "evidence_type": "zenodo_doi_reservation",
+                "source": packet_builder.ZENODO_RESERVATION_SOURCE,
+                "captured_utc": "2026-07-20T12:00:00+00:00",
+                "reservation_status": "reserved",
+                "doi": doi,
+                "record_id": record_id,
+                "zenodo_api_url": api_url,
+                "deposition_response": {
+                    "id": record_id,
+                    "record_id": record_id,
+                    "links": {"self": api_url},
+                    "metadata": {
+                        "prereserve_doi": {"doi": doi, "recid": record_id}
+                    },
+                    "state": "unsubmitted",
+                    "submitted": False,
+                },
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
+def provenance_record(name: str, content: bytes | None = None) -> dict[str, object]:
+    payload = content if content is not None else name.encode("utf-8")
+    return {
+        "name": name,
+        "bytes": len(payload),
+        "sha256": hashlib.sha256(payload).hexdigest(),
+    }
+
+
+def file_provenance_record(path: Path, source_name: str) -> dict[str, object]:
+    return provenance_record(source_name, path.read_bytes())
+
+
+def write_public_provenance(public_root: Path) -> None:
+    paths = {
+        key: public_root / str(specification["source"])
+        for key, specification in packet_builder.PUBLIC_PROVENANCE_FILES.items()
+    }
+    for path in paths.values():
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+    short_manifest = {
+        "schema_version": "1.0",
+        "provenance_type": "public_alignment",
+        "dataset_id": "GM11906_MERRF_reduced_shortread",
+        "alignment": provenance_record("GM11906_MERRF_shortread.mt.bam"),
+        "alignment_index": provenance_record("GM11906_MERRF_shortread.mt.bam.bai"),
+        "reference": provenance_record("GM11906_provenance_reference.fa"),
+        "reference_index": provenance_record("GM11906_provenance_reference.fa.fai"),
+        "public_inputs": [
+            {
+                **provenance_record("SRR10804585_1.fastq.gz"),
+                "label": "SRR10804585_R1",
+            }
+        ],
+        "derivation": {"derivation_id": "bwa-mem-samtools-sort-v1"},
+    }
+    paths["shortread_alignment"].write_text(
+        json.dumps(short_manifest, indent=2) + "\n", encoding="utf-8"
+    )
+
+    selected_text = "SRR18110025.100\nSRR18110025.200\n"
+    paths["selected_query_names"].write_text(selected_text, encoding="utf-8")
+    source_fastq = provenance_record("SRR18110025.fastq.gz")
+    subset_fastq = provenance_record("SRR18110025.deterministic-qnames-2.fastq.gz")
+    selected_names = file_provenance_record(
+        paths["selected_query_names"],
+        "SRR18110025.deterministic-qnames-2.fastq.gz.selected_qnames.txt",
+    )
+    subset_manifest = {
+        "schema_version": "1.0",
+        "provenance_type": "deterministic_fastq_query_name_subset",
+        "dataset_id": "GM12878_SRR18110025_ONT",
+        "source_fastq": source_fastq,
+        "subset_fastq": subset_fastq,
+        "selected_query_names": selected_names,
+        "selection": {
+            "algorithm": "smallest_sha256_seeded_query_names_v1",
+            "requested_query_names": 2,
+            "selected_query_names": 2,
+            "seed": "test-selection-seed",
+        },
+    }
+    paths["longread_subset"].write_text(
+        json.dumps(subset_manifest, indent=2) + "\n", encoding="utf-8"
+    )
+    subset_manifest_record = file_provenance_record(
+        paths["longread_subset"],
+        "SRR18110025.deterministic-qnames-2.fastq.gz.provenance.json",
+    )
+    long_manifest = {
+        "schema_version": "1.0",
+        "provenance_type": "public_alignment",
+        "dataset_id": "GM12878_SRR18110025_ONT_reduced_qn1000",
+        "alignment": provenance_record("GM12878_ONT_longread.mt.bam"),
+        "alignment_index": provenance_record("GM12878_ONT_longread.mt.bam.bai"),
+        "reference": provenance_record("NC_012920.1.fa"),
+        "reference_index": provenance_record("NC_012920.1.fa.fai"),
+        "public_inputs": [
+            {**source_fastq, "label": "SRR18110025_full_fastq"},
+            {**subset_fastq, "label": "deterministic_subset_fastq"},
+            {**subset_manifest_record, "label": "deterministic_subset_manifest"},
+            {**selected_names, "label": "selected_query_names"},
+        ],
+        "derivation": {
+            "derivation_id": (
+                "minimap2-map-ont-deterministic-fastq-subset-mapped-only-v1"
+            ),
+            "parameters": {
+                "selected_query_names": "2",
+                "selection_seed": "test-selection-seed",
+            },
+        },
+    }
+    paths["longread_alignment"].write_text(
+        json.dumps(long_manifest, indent=2) + "\n", encoding="utf-8"
+    )
+
+
 def write_acceptance_evidence(root: Path, commit: str) -> None:
     fresh_case = packet_builder.FRESH_CLONE_CASE_ID
     (root / "commands" / f"{fresh_case}.sh").write_text(
@@ -151,6 +291,9 @@ def write_acceptance_evidence(root: Path, commit: str) -> None:
     )
 
     run_url = f"https://github.com/{GITHUB_REPOSITORY}/actions/runs/{GITHUB_RUN_ID}"
+    run_api_url = (
+        f"https://api.github.com/repos/{GITHUB_REPOSITORY}/actions/runs/{GITHUB_RUN_ID}"
+    )
     (root / "commands" / "github_actions_candidate_commit.sh").write_text(
         f"gh api repos/{GITHUB_REPOSITORY}/actions/runs/{GITHUB_RUN_ID}\n",
         encoding="utf-8",
@@ -165,11 +308,17 @@ def write_acceptance_evidence(root: Path, commit: str) -> None:
                 "id": GITHUB_RUN_ID,
                 "run_attempt": 1,
                 "name": packet_builder.EXPECTED_GITHUB_WORKFLOW,
+                "event": "push",
+                "head_branch": packet_builder.EXPECTED_GITHUB_BRANCH,
+                "path": packet_builder.EXPECTED_GITHUB_WORKFLOW_PATH,
                 "head_sha": commit,
                 "status": "completed",
                 "conclusion": "success",
                 "html_url": run_url,
+                "url": run_api_url,
+                "jobs_url": f"{run_api_url}/jobs",
                 "repository": {"full_name": GITHUB_REPOSITORY},
+                "head_repository": {"full_name": GITHUB_REPOSITORY},
             },
             indent=2,
         )
@@ -191,6 +340,8 @@ def write_acceptance_evidence(root: Path, commit: str) -> None:
                 "conclusion": "success",
                 "labels": [expectation["label"]],
                 "html_url": f"{run_url}/job/{job_id}",
+                "url": f"https://api.github.com/repos/{GITHUB_REPOSITORY}/actions/jobs/{job_id}",
+                "run_url": run_api_url,
             }
         )
     (root / "acceptance" / "github_actions_jobs.json").write_text(
@@ -212,6 +363,7 @@ def create_validation_root(
     *,
     environment_commit: str | None = None,
     archive_doi: str = TEST_DOI,
+    reservation_doi: str = TEST_DOI,
     dist_version: str = "0.3.0",
 ) -> tuple[Path, str]:
     root = tmp_path / "validation"
@@ -226,6 +378,9 @@ def create_validation_root(
     ):
         (root / relative).mkdir(parents=True, exist_ok=True)
 
+    write_zenodo_reservation_evidence(
+        root / "zenodo_reservation.source.json", reservation_doi
+    )
     write_acceptance_evidence(root, commit)
     rows = [
         row
@@ -281,6 +436,7 @@ def create_validation_root(
     )
     input_manifest = f"{'a' * 64}  GM11906/downloads/SRR10804585_1.fastq.gz\n"
     (root / "public" / "inputs.sha256").write_text(input_manifest, encoding="utf-8")
+    write_public_provenance(root / "public")
     write_distribution_artifacts(root / "dist", dist_version)
     return root, input_manifest
 
@@ -301,6 +457,9 @@ def packet_args(
         cache_root=None,
         version="v0.3.0",
         repository=REPOSITORY,
+        zenodo_reservation_evidence=(
+            validation_root / "zenodo_reservation.source.json"
+        ),
         doi=TEST_DOI,
     )
 
@@ -382,6 +541,15 @@ def test_packet_copies_runtime_evidence_and_self_verifies(tmp_path: Path) -> Non
     assert (packet / "acceptance" / "fresh_clone.json").is_file()
     assert (packet / "acceptance" / "github_actions_run.json").is_file()
     assert (packet / "acceptance" / "github_actions_jobs.json").is_file()
+    assert (packet / "acceptance" / "zenodo_reservation.json").is_file()
+    assert (
+        packet
+        / "public_provenance"
+        / "GM12878_ONT_longread.fastq_subset.provenance.json"
+    ).is_file()
+    assert (
+        packet / "public_provenance" / "GM12878_ONT_longread.selected_qnames.txt"
+    ).is_file()
     assert len(list((packet / "dist").glob("*.whl"))) == 1
     assert len(list((packet / "dist").glob("*.tar.gz"))) == 1
 
@@ -393,6 +561,12 @@ def test_packet_copies_runtime_evidence_and_self_verifies(tmp_path: Path) -> Non
     assert identity["citation_doi"] == TEST_DOI
     assert identity["environment_archive_doi"] == TEST_DOI
     assert run_record["archive_doi"] == TEST_DOI
+    assert run_record["archive_record_id"] == TEST_RECORD_ID
+    assert run_record["doi_reservation_status"] == "reserved"
+    assert identity["zenodo_reservation"]["record_id"] == TEST_RECORD_ID
+    assert len(identity["public_provenance"]) == len(
+        packet_builder.PUBLIC_PROVENANCE_FILES
+    )
     assert set(identity["acceptance_cases"]) == packet_builder.ACCEPTANCE_CASE_IDS
     assert set(identity["metadata_versions"].values()) == {"0.3.0"}
     assert {entry["kind"] for entry in identity["dist_artifacts"]} == {"wheel", "sdist"}
@@ -408,6 +582,8 @@ def test_packet_copies_runtime_evidence_and_self_verifies(tmp_path: Path) -> Non
     with zipfile.ZipFile(output_root / "mito-overview-v0.3.0-validation.zip") as archive:
         names = set(archive.namelist())
     assert "release_identity.json" in names
+    assert "acceptance/zenodo_reservation.json" in names
+    assert "public_provenance/GM12878_ONT_longread.selected_qnames.txt" in names
     assert "commands/public/gm11906_default_run1.sh" in names
     assert any(name.startswith("dist/") and name.endswith(".whl") for name in names)
 
@@ -533,6 +709,65 @@ def test_packet_rejects_mismatched_github_actions_platform_evidence(tmp_path: Pa
         packet_builder.build_packet(packet_args(validation_root, repo, tmp_path / "output"))
 
 
+@pytest.mark.parametrize(
+    ("target", "expected_error"),
+    [
+        ("event", "requires a push-event workflow run"),
+        ("run_api_url", "run API URL mismatch"),
+        ("jobs_api_url", "jobs API URL is not bound"),
+        ("head_repository", "head repository does not match"),
+        ("job_api_url", "linux job API URL mismatch"),
+        ("job_run_url", "linux job run URL mismatch"),
+        ("duplicate_job_id", "duplicate job IDs"),
+    ],
+)
+def test_packet_rejects_wrong_github_event_and_api_identities(
+    tmp_path: Path,
+    target: str,
+    expected_error: str,
+) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation_root, _ = create_validation_root(tmp_path, commit)
+
+    if target in {"event", "run_api_url", "jobs_api_url", "head_repository"}:
+        field_values: dict[str, object] = {
+            "event": "pull_request",
+            "run_api_url": "https://api.github.com/repos/other/project/actions/runs/123456",
+            "jobs_api_url": "https://api.github.com/repos/other/project/actions/runs/123456/jobs",
+            "head_repository": {"full_name": "other/project"},
+        }
+        fields = {
+            "event": "event",
+            "run_api_url": "url",
+            "jobs_api_url": "jobs_url",
+            "head_repository": "head_repository",
+        }
+        rewrite_json(
+            validation_root / "acceptance" / "github_actions_run.json",
+            lambda value: value.__setitem__(fields[target], field_values[target]),
+        )
+    else:
+
+        def alter_job_identity(value: dict[str, object]) -> None:
+            jobs = value["jobs"]
+            assert isinstance(jobs, list)
+            assert isinstance(jobs[0], dict) and isinstance(jobs[1], dict)
+            if target == "job_api_url":
+                jobs[0]["url"] = "https://api.github.com/repos/other/project/actions/jobs/1"
+            elif target == "job_run_url":
+                jobs[0]["run_url"] = "https://api.github.com/repos/other/project/actions/runs/1"
+            else:
+                jobs[1]["id"] = jobs[0]["id"]
+
+        rewrite_json(
+            validation_root / "acceptance" / "github_actions_jobs.json",
+            alter_job_identity,
+        )
+
+    with pytest.raises(ValueError, match=expected_error):
+        packet_builder.build_packet(packet_args(validation_root, repo, tmp_path / "output"))
+
+
 def test_packet_rejects_handwritten_acceptance_pass_row(tmp_path: Path) -> None:
     repo, commit = create_release_repo(tmp_path)
     validation_root, _ = create_validation_root(tmp_path, commit)
@@ -598,8 +833,65 @@ def test_packet_rejects_unreserved_doi(tmp_path: Path) -> None:
     validation_root, _ = create_validation_root(tmp_path, commit)
     args = packet_args(validation_root, repo, tmp_path / "output")
     args.doi = "UNRESERVED"
-    with pytest.raises(ValueError, match="canonical reserved Zenodo DOI"):
+    with pytest.raises(ValueError, match="canonical Zenodo DOI"):
         packet_builder.build_packet(args)
+
+
+def test_packet_rejects_numeric_doi_without_reservation_evidence(tmp_path: Path) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation_root, _ = create_validation_root(tmp_path, commit)
+    args = packet_args(validation_root, repo, tmp_path / "output")
+    args.zenodo_reservation_evidence = None
+    with pytest.raises(ValueError, match="DOI text alone is insufficient"):
+        packet_builder.build_packet(args)
+
+
+@pytest.mark.parametrize(
+    ("target", "expected_error"),
+    [
+        ("status", "mismatch for reservation_status"),
+        ("record_id", "not tied to record_id"),
+        ("api_url", "API URL mismatch"),
+        ("response_id", "response IDs do not match"),
+        ("prereserve_doi", "prereserve_doi does not match"),
+        ("submitted", "does not describe an unsubmitted reservation"),
+        ("token", "contains a sensitive key"),
+    ],
+)
+def test_packet_rejects_invalid_zenodo_reservation_evidence(
+    tmp_path: Path,
+    target: str,
+    expected_error: str,
+) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation_root, _ = create_validation_root(tmp_path, commit)
+    evidence_path = validation_root / "zenodo_reservation.source.json"
+
+    def alter_evidence(value: dict[str, object]) -> None:
+        response = value["deposition_response"]
+        assert isinstance(response, dict)
+        metadata = response["metadata"]
+        assert isinstance(metadata, dict)
+        prereserve = metadata["prereserve_doi"]
+        assert isinstance(prereserve, dict)
+        if target == "status":
+            value["reservation_status"] = "claimed"
+        elif target == "record_id":
+            value["record_id"] = TEST_RECORD_ID + 1
+        elif target == "api_url":
+            value["zenodo_api_url"] = "https://zenodo.org/api/deposit/depositions/999"
+        elif target == "response_id":
+            response["id"] = TEST_RECORD_ID + 1
+        elif target == "prereserve_doi":
+            prereserve["doi"] = "10.5281/zenodo.999"
+        elif target == "submitted":
+            response["submitted"] = True
+        else:
+            value["access_token"] = "never-store-this"
+
+    rewrite_json(evidence_path, alter_evidence)
+    with pytest.raises(ValueError, match=expected_error):
+        packet_builder.build_packet(packet_args(validation_root, repo, tmp_path / "output"))
 
 
 def test_packet_rejects_arbitrary_commit_assertion(tmp_path: Path) -> None:
@@ -735,3 +1027,43 @@ def test_verifier_rejects_unmanifested_artifact(tmp_path: Path) -> None:
     )
     assert verification.returncode != 0
     assert "artifact manifest inventory mismatch" in verification.stderr
+
+
+@pytest.mark.parametrize(
+    ("first", "second"),
+    [
+        ("verify_bundle.sh", "./verify_bundle.sh"),
+        ("evidence/run.json", "evidence//run.json"),
+        ("evidence/cases.tsv", "evidence/./cases.tsv"),
+    ],
+)
+def test_safe_zip_extraction_rejects_canonical_destination_collisions(
+    tmp_path: Path,
+    first: str,
+    second: str,
+) -> None:
+    archive_path = tmp_path / "collision.zip"
+    with zipfile.ZipFile(archive_path, "w") as archive:
+        archive.writestr(first, "first\n")
+        archive.writestr(second, "second\n")
+
+    destination = tmp_path / "extracted"
+    with pytest.raises(safe_extract.UnsafeZipError, match="canonical destination collision"):
+        safe_extract.safe_extract(archive_path, destination)
+    assert not destination.exists()
+
+
+def test_safe_zip_extraction_accepts_unique_regular_members(tmp_path: Path) -> None:
+    archive_path = tmp_path / "valid.zip"
+    with zipfile.ZipFile(archive_path, "w") as archive:
+        archive.writestr("verify_bundle.sh", "#!/usr/bin/env bash\nexit 0\n")
+        archive.writestr("acceptance/run.json", "{}\n")
+
+    destination = tmp_path / "extracted"
+    safe_extract.safe_extract(archive_path, destination)
+    assert (destination / "verify_bundle.sh").read_text(encoding="utf-8").endswith(
+        "exit 0\n"
+    )
+    assert (destination / "acceptance" / "run.json").read_text(
+        encoding="utf-8"
+    ) == "{}\n"

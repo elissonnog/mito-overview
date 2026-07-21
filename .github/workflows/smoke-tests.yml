@@ -21,6 +21,17 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+
+      - name: Verify event commit checkout
+        env:
+          EXPECTED_COMMIT: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+        run: |
+          checked_out_commit="$(git rev-parse HEAD)"
+          printf 'event=%s\nexpected_commit=%s\nchecked_out_commit=%s\n' \
+            "${GITHUB_EVENT_NAME}" "${EXPECTED_COMMIT}" "${checked_out_commit}"
+          test "${checked_out_commit}" = "${EXPECTED_COMMIT}"
 
       - name: Set up conda environment
         uses: conda-incubator/setup-miniconda@v3
