@@ -45,7 +45,8 @@ assert_tsv_metric "${SUMMARY_DIR}/mito_copy_number_summary.tsv" status not_evalu
 assert_tsv_metric "${SUMMARY_DIR}/mito_copy_number_summary.tsv" reason_code no_valid_nuclear_windows
 assert_tsv_metric "${SUMMARY_DIR}/mito_numt_qc_summary.tsv" numt_interpretation_status not_evaluable
 assert_tsv_metric "${SUMMARY_DIR}/mito_numt_qc_summary.tsv" reason_code reference_scope_mt_only
-assert_tsv_metric "${SUMMARY_DIR}/mito_phymer_haplogroup_summary.tsv" status not_configured
+# An mt-only generic FASTA does not provide enough evidence for species inference.
+assert_tsv_metric "${SUMMARY_DIR}/mito_phymer_haplogroup_summary.tsv" status not_applicable
 assert_tsv_metric "${SUMMARY_DIR}/mito_methylation_exploratory_summary.tsv" status not_configured
 assert_tsv_metric "${SUMMARY_DIR}/mito_identity_qc_summary.tsv" variant_comparison_status not_configured
 assert_allele_table_invariants "${SUMMARY_DIR}/mito_heteroplasmy_all_sites.tsv"
