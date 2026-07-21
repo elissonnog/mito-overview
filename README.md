@@ -2,7 +2,7 @@
 
 `mito-overview` is a Python-based workflow for mode-gated mitochondrial DNA (mtDNA) evidence reporting from aligned BAM or CRAM inputs. The current public implementation provides a long-read-oriented profile and a reduced short-read compatibility profile that preserves the analytical layers applicable without long molecules or ONT methylation tracks. The repository emphasizes synchronized HTML, TSV, and figure generation for mitochondrial QC, alternate-allele screening, structural screening, an experimental within-sample mt:nuclear depth ratio when nuclear context is evaluable, feature annotation, same-read co-occurrence, and warning-oriented QC.
 
-Version `0.3.0` is an unreleased workflow/resource release candidate. Historical clean-commit public validation evidence covers report execution, synchronized artifacts, mode/status gating, filter-profile dependence, and repeatability from provenance-verified fixed BAM inputs. Exact-final-commit public reruns, CI, DOI synchronization, and the audit ZIP remain release gates; no final tag, release date, or version-specific DOI is claimed.
+Version `0.3.0` is an unreleased workflow/resource release candidate. Historical clean-commit public validation evidence covers report execution, synchronized artifacts, mode/status gating, filter-profile dependence, and repeatability from provenance-verified fixed BAM inputs. Exact-final-commit public reruns, push-event CI on that commit, captured DOI-reservation evidence, and the self-verifying audit ZIP remain release gates; no final tag, release date, or version-specific DOI is claimed.
 
 ## Scope
 - aligned BAM or CRAM input
@@ -49,7 +49,7 @@ The modules below are implemented in the public repository and exercised by the 
 
 Human mtDNA currently has the clearest public configuration path. Human-specific external annotation and haplogroup layers remain optional, and non-human use should be limited to the reference-driven core modules unless separately validated.
 
-Automatic `whole_genome` reference scope is conservative: it requires an exact GRCh37, GRCh38, GRCm38, or GRCm39 chromosome-length profile, including the assembly-specific mitochondrial length. Reduced, scaled, hybrid, or modified references resolve to `custom`, while mt-only references resolve to `mt_only`. Categorical NUMT-warning output additionally requires complete usable read-stat fields and primary-alignment evidence; otherwise the report retains computable raw metrics and records `not_evaluable` with an explicit reason rather than zero-filling evidence.
+Automatic `whole_genome` reference scope is conservative: both the FASTA index and alignment sequence dictionary must independently match the same exact GRCh37, GRCh38, GRCm38, or GRCm39 chromosome-length profile, including the assembly-specific mitochondrial length and no additional contigs. Reduced, scaled, augmented, hybrid, discordant, or modified profiles cannot enable categorical interpretation, while mt-only references resolve to `mt_only`. For CRAM, mitochondrial sequence MD5 identity is checked against the supplied FASTA even when no mitochondrial records are present. Categorical NUMT-warning output additionally requires complete usable read-stat fields and primary-alignment evidence; otherwise the report retains computable raw metrics and records `not_evaluable` with an explicit reason rather than zero-filling evidence.
 
 ## Relationship to other mtDNA software
 `mito-overview` is designed to complement, not replace, established mtDNA tools. Variant callers, haplogroup classifiers, annotation services, contamination/NUMT tools, and visualization resources remain the right primary tools for their respective tasks. The narrower contribution here is a local, per-sample, mode-gated report bundle that keeps active analyses, optional enrichments, and unsupported assay layers synchronized.
@@ -183,7 +183,8 @@ In long-read mode without ONT bedmethyl sidecars, page `12` is expected to be a 
 - Phy-Mer: optional human mtDNA haplogroup enrichment
 - mvTool: optional human mtDNA external annotation enrichment
 - these integrations are intentionally non-mandatory and should be treated as secondary annotation layers rather than the core analysis
-- the repository's synthetic smoke-test path uses local fixtures to exercise these layers; real biological use should point to a true Phy-Mer vendor tree and the intended mvTool-compatible endpoint
+- mvTool is disabled by default; fixture or explicitly requested network success requires one unique returned row for every submitted candidate, with no missing, duplicate, or unexpected identifiers
+- the repository's synthetic smoke-test path uses local fixtures to exercise these layers; real biological use should point to a true Phy-Mer vendor tree and an explicitly configured mvTool-compatible endpoint
 - `mito-overview` does not bundle external Phy-Mer code or mvTool data resources; see [`docs/license_notes.md`](docs/license_notes.md)
 
 ## Repository status

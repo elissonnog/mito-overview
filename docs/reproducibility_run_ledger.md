@@ -16,9 +16,9 @@ The historical `v0.2.1` release remains immutable at commit `2ba62b775a7204c0dc6
 | immutable prior release | `v0.2.1` at `2ba62b775a7204c0dc61f5408989603f536c78da` | historical record preserved |
 | `v0.3.0` Git tag | intended tag `v0.3.0` | **pending**; tag not claimed |
 | exact `v0.3.0` tag target | full candidate commit | **pending** until tagging |
-| GitHub Actions CI pass | Linux and macOS jobs on the exact candidate commit | **pending**; CI pass not claimed |
+| GitHub Actions CI pass | Linux and macOS jobs explicitly checking out the exact PR head; final evidence from a successful push event on the exact candidate commit | **pending**; final CI pass not claimed |
 | final validation packet pass | self-verifying v0.3.0 audit ZIP bound to the exact final commit, CI run, and reserved DOI | **pending**; final packet pass not claimed |
-| Zenodo DOI reservation | DOI reserved in an unpublished draft before final metadata synchronization | **pending**; no DOI reserved |
+| Zenodo DOI reservation | DOI reserved in an unpublished draft with sanitized reservation-record evidence captured before final metadata synchronization | **pending**; no DOI reserved |
 | release DOI | reserved DOI resolving to the published tagged archive | **pending**; no published DOI claimed |
 | Zenodo publication | archive of the tagged release | **pending**; no Zenodo publication claimed |
 
@@ -34,11 +34,11 @@ The tracked GM11906 and GM12878 outputs are derived from the historical clean va
 
 | ID | Corrected behavior | Deterministic evidence source | Required final verdict |
 | --- | --- | --- | --- |
-| F1 | shared callable A/C/G/T depth, alternate and strand counts, uncapped default depth, common filters, and auditable exclusions | `tests/test_allele_counting.py`; `tests/test_table_contracts.py` | **pending** final packet pass |
-| F2 | mvTool disabled by default; fixture and explicit network modes; unavailable failures without fabricated annotations | `tests/test_mvtool_modes.py` | **pending** final packet pass |
-| F3 | generic BAM/CRAM inputs, explicit sidecar precedence, legacy compatibility, and index/contig/length/reference preflight | `tests/test_config_and_inputs.py`; `tests/smoke_standalone_minimal.sh` | **pending** final packet pass |
+| F1 | shared callable A/C/G/T depth, alternate and strand counts, uncapped default depth, common filters, auditable exclusions, and explicitly pair-conditioned co-occurrence | `tests/test_allele_counting.py`; `tests/test_table_contracts.py`; `tests/test_cosegregation_semantics.py` | **pending** final packet pass |
+| F2 | mvTool disabled by default; fixture and explicit network modes; unavailable failures and exact one-to-one response integrity without fabricated annotations | `tests/test_mvtool_modes.py` | **pending** final packet pass |
+| F3 | generic BAM/CRAM inputs, explicit sidecar precedence, legacy compatibility, index/contig/length/reference preflight, alignment-header scope, and record-independent CRAM MD5 identity | `tests/test_config_and_inputs.py`; `tests/test_alignment_reference_contract.py`; `tests/smoke_standalone_minimal.sh` | **pending** final packet pass |
 | F4 | `mt_mean_depth / nuclear_mean_depth`, no diploid multiplier, and NA/`not_evaluable` for an invalid denominator | `tests/test_copy_number.py` | **pending** final packet pass |
-| F5 | explicit reference scope, no categorical NUMT result for mt-only/custom references, and exact zero-based half-open BED output | `tests/test_reference_scope_and_bed.py` | **pending** final packet pass |
+| F5 | concordant exact FASTA/alignment scope, no categorical NUMT result for mt-only/custom/reduced or augmented references, and exact zero-based half-open BED output | `tests/test_reference_scope_and_bed.py`; `tests/test_alignment_reference_contract.py` | **pending** final packet pass |
 
 ## Validation Evidence Tiers
 
@@ -56,8 +56,8 @@ The tracked GM11906 and GM12878 outputs are derived from the historical clean va
 
 - Accession and retrieval metadata for each public FASTQ.
 - SHA-256 hashes for source inputs and deterministic subsets.
-- Exact subset algorithm, seed, query-name count, and selected-name hash for GM12878.
-- Reference source, contig dictionary, aligner command, and aligner version.
+- Exact subset algorithm, seed, query-name count, selected-name file, and selected-name hash for GM12878.
+- Reference source, contig dictionary, aligner command/version, subset provenance JSON, and alignment provenance JSON.
 - Canonical allele-filter profile and the tested lenient/default/strict profile values.
 - Commands, environment, runtime, memory when available, and output manifests.
 - Expected-versus-observed checks for the GM11906 marker and bounded GM12878 workflow statuses.
@@ -68,14 +68,14 @@ The tracked GM11906 and GM12878 outputs are derived from the historical clean va
 2. Create an unpublished Zenodo draft and reserve a DOI; do not treat reservation as archive publication.
 3. Synchronize the reserved DOI and all release identity fields across Zenodo and repository/manuscript metadata, then commit those changes to establish the final candidate.
 4. Repeat unit, known-answer, synthetic, standalone, packaging, and public matrix checks on that exact clean final commit.
-5. Push the exact commit and obtain real passing Linux and macOS GitHub Actions evidence for the same full commit.
-6. Set `MITO_OVERVIEW_ARCHIVE_DOI` (or pass the documented DOI argument) and run the release command with explicit validation, cache, packet, and audit-ZIP paths. The runner must reject an empty DOI and `UNRESERVED`, pass `--doi` explicitly, build `mito-overview-v0.3.0-validation.zip`, and verify both the packet root and a fresh ZIP extraction.
+5. Push the exact commit and obtain real passing Linux and macOS GitHub Actions evidence that explicitly checks out the same full commit. Final packet evidence must use a successful push-event run rather than a pull-request merge ref.
+6. Capture sanitized Zenodo reservation-record evidence for the same DOI, set `MITO_OVERVIEW_ARCHIVE_DOI` (or pass the documented DOI argument), and run the release command with explicit validation, cache, packet, and audit-ZIP paths. The runner must reject an empty DOI and `UNRESERVED`, pass `--doi` explicitly, build `mito-overview-v0.3.0-validation.zip`, and verify both the packet root and a fresh ZIP extraction.
 7. Require the ZIP SHA-256, build log, verification log, and PASS receipt, then complete an independent clean-checkout review against that exact commit and packet.
 8. Create `v0.3.0` only after all required evidence passes and record its full target commit.
 9. Publish the GitHub release and then the matching tagged Zenodo archive; confirm DOI resolution and metadata/artifact agreement.
 
 ## Final Packet Contract
 
-The final packet is an external release artifact and is not committed to this repository. It must be named `mito-overview-v0.3.0-validation.zip` and contain release identity, the explicitly supplied reserved DOI, case and claim-evidence tables, public data-source records, environment and command transcripts, expected and normalized observed outputs, distributions, input and artifact SHA-256 manifests, real CI evidence, and a verifier. Raw public data remain outside Git. A packet created with the builder default `UNRESERVED`, without the generated verifier being executed, or without a matching exact-commit PASS receipt is not a final packet.
+The final packet is an external release artifact and is not committed to this repository. It must be named `mito-overview-v0.3.0-validation.zip` and contain release identity, the explicitly supplied reserved DOI, sanitized Zenodo reservation-record evidence, case and claim-evidence tables, public data-source records, selected query names, subset/alignment provenance, environment and command transcripts, expected and normalized observed outputs, distributions, input and artifact SHA-256 manifests, successful exact-commit push-event CI evidence, and a verifier. Raw public data remain outside Git. The verifier must reject normalized archive-path collisions. A packet created with the builder default `UNRESERVED`, without captured reservation evidence, without the generated verifier being executed, or without a matching exact-commit PASS receipt is not a final packet.
 
 At this ledger revision, the exact final commit, CI pass, DOI reservation, final packet pass, independent review, v0.3.0 tag, release DOI publication, and Zenodo publication all remain **pending**. Historical tracked outputs do not satisfy any of those gates.

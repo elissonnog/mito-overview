@@ -14,9 +14,9 @@ This checklist governs the intended `mito-overview` v0.3.0 release dated 2026-07
 | immutable prior release | `v0.2.1` at `2ba62b775a7204c0dc61f5408989603f536c78da` | verified historical record; do not retag or rewrite |
 | `v0.3.0` Git tag | `v0.3.0` on the accepted release commit | **pending**; no tag is claimed by this checklist |
 | exact `v0.3.0` tag target commit | full 40-character commit hash | **pending** until the tag is created |
-| GitHub Actions CI pass | Linux and macOS jobs for the exact candidate commit | **pending**; no CI pass is claimed by this checklist |
+| GitHub Actions CI pass | Linux and macOS jobs checking out the exact PR head; final packet uses a successful push-event run on the exact candidate commit | **pending**; no final CI pass is claimed by this checklist |
 | final validation packet pass | self-verifying audit ZIP bound to the exact final candidate commit, CI run, and reserved DOI | **pending**; no final packet pass is claimed by this checklist |
-| Zenodo DOI reservation | DOI reserved in an unpublished Zenodo draft before the final metadata commit | **pending**; no DOI has been reserved or added to `CITATION.cff` |
+| Zenodo DOI reservation | DOI reserved in an unpublished Zenodo draft, with sanitized reservation-record evidence captured before the final metadata commit | **pending**; no DOI has been reserved or added to `CITATION.cff` |
 | release DOI | reserved DOI resolving to the published tagged archive | **pending**; no published DOI is claimed by this checklist |
 | Zenodo publication | archived `v0.3.0` release | **pending**; no Zenodo publication is claimed by this checklist |
 | independent reproducibility review | clean-checkout review of the accepted commit | **pending** |
@@ -69,18 +69,18 @@ MITO_OVERVIEW_GITHUB_RUN_ID=<completed-run-id> \
 
 The DOI may instead be supplied as the fifth positional argument. The command requires a canonical reserved Zenodo DOI, rejects `UNRESERVED`, requires the same top-level DOI in `CITATION.cff`, and passes it explicitly to the packet builder. It must build `mito-overview-v0.3.0-validation.zip`, execute the generated `verify_bundle.sh` against both the packet root and a fresh extraction of that ZIP, and write build/verification logs, a ZIP SHA-256 sidecar, and a PASS receipt. It emits no final PASS unless all of that evidence exists and both verifier runs succeed.
 
-The final packet must reject missing evidence, metadata-version disagreement, commit mismatch, non-passing required cases, incomplete public provenance, CI results from a different commit, an absent/unreserved DOI, and a DOI that differs from synchronized citation metadata.
+The final packet must reject missing evidence, metadata-version disagreement, commit mismatch, non-passing required cases, incomplete public provenance, CI results from a different commit or non-push event, an absent/unreserved DOI, a DOI without captured Zenodo reservation-record evidence, a DOI that differs from synchronized citation metadata, and archive members whose normalized extraction paths collide.
 
 ## Evidence to Capture
 
 - Exact candidate commit, eventual tag target, and clean-worktree state.
 - Python, package, aligner, and platform versions.
 - Commands and transcripts for unit, synthetic, standalone, and public validation cases.
-- Source accessions, retrieval metadata, input hashes, subset parameters, and alignment provenance for public inputs.
+- Source accessions, retrieval metadata, input hashes, subset parameters, selected query-name records, and alignment/subset provenance for public inputs.
 - Runtime, maximum memory when available, expected/observed normalized outputs, and SHA-256 manifests.
-- Linux and macOS GitHub Actions evidence tied to the exact candidate commit.
+- Linux and macOS GitHub Actions evidence showing exact-head checkout; final packet evidence must come from a successful push-event run tied to the exact candidate commit.
 - Independent reviewer or separate-thread clean-checkout result.
-- Zenodo draft record and DOI-reservation evidence before the final metadata commit; reservation alone is not publication.
+- Sanitized Zenodo draft-record and DOI-reservation evidence, including the matching record identifier and reserved DOI, before the final metadata commit; reservation alone is not publication.
 - Published archive metadata and DOI resolution only after the tagged archive is actually published.
 
 ## Release Sequence
@@ -89,7 +89,7 @@ The final packet must reject missing evidence, metadata-version disagreement, co
 2. Create an unpublished Zenodo draft and reserve its DOI. Keep DOI reservation and Zenodo publication gates **pending** until external evidence exists.
 3. Synchronize the reserved DOI, version, title, authors, date, repository, license, and bounded claims across the Zenodo draft, `CITATION.cff`, release notes, and manuscript-facing metadata.
 4. Commit the synchronized metadata. That new clean commit, not an earlier tested commit, is the final release candidate.
-5. Repeat all local checks on that exact commit, push it, and require passing Linux and macOS GitHub Actions whose `head_sha` is the same full commit.
+5. Repeat all local checks on that exact commit, push it, and require passing Linux and macOS GitHub Actions that explicitly check out that full commit. Use the successful push-event run, not a pull-request synthetic merge checkout, as final packet evidence.
 6. Run `scripts/run_release_validation_v0.3.0.sh` on that exact commit with the real CI run ID and reserved DOI; require the named audit ZIP, both `verify_bundle.sh` runs, ZIP hash, and PASS receipt.
 7. Complete the independent clean-checkout reproducibility review against that same commit and packet.
 8. Create `v0.3.0` on the accepted commit only after every required check passes; record and verify the full tag target.

@@ -5,16 +5,18 @@ This document is the v0.3.0 schema index for the public `mito-overview` workflow
 ## Major Inputs
 | Input | Required | Role | Notes |
 | --- | --- | --- | --- |
-| aligned BAM or CRAM | yes | source alignment for mitochondrial extraction and report generation | must be indexed; CRAM requires matching reference FASTA |
-| reference FASTA | yes | coordinate system and base reference | public examples use `NC_012920.1`, length 16,569 bp |
+| aligned BAM or CRAM | yes | source alignment for mitochondrial extraction and report generation | must be indexed; sequence dictionary is evaluated independently for effective reference scope |
+| reference FASTA | yes | coordinate system and base reference | must be indexed; CRAM requires sequence-MD5-compatible reference identity even when no mtDNA records are present |
 | mitochondrial contig name | yes | selects the mtDNA reference sequence | examples use `NC_012920.1`; HPC human WGS runs may use `MT` depending on reference |
-| mitochondrial contig length | yes | bounds per-base summaries and report labels | human rCRS length is 16,569 bp |
+| mitochondrial contig length | inferred | bounds per-base summaries and report labels | inferred from FASTA index; an explicitly supplied conflicting value fails preflight |
 | mitochondrial gene annotation | yes | feature/gene/consequence summaries | public package includes human mtDNA annotation resources |
 | run configuration env file | yes | sample ID, paths, canonical thresholds, species/build, read mode, assay type | consumed by `scripts/run_mito_pipeline.sh` and package CLI |
 | bedmethyl-derived mtDNA input | optional | exploratory methylation page | absent inputs produce status-only output |
 | phased/no-phased sidecar summaries | optional | identity QC | absent inputs produce status-only output or not-applicable page by mode |
 | ClinVar or annotation VCF | optional | variant consequence overlay | absent inputs leave ClinVar fields as `NA` |
 | Phy-Mer-style or mvTool-style inputs | optional | human-only enrichment interfaces | public repository validates report wiring with fixtures unless live external use is configured |
+
+Whole-genome interpretation is enabled only when the FASTA index and alignment sequence dictionary independently match the same recognized complete human or mouse chromosome-length profile with no additional contigs. A reduced, augmented, discordant, or ambiguous dictionary cannot unlock categorical NUMT interpretation. For CRAM, preflight verifies sequence-dictionary MD5 metadata against the supplied FASTA rather than relying on decoding a record from the mitochondrial contig.
 
 ## Output Folder Contract
 | Folder | Role | Typical contents |
@@ -34,7 +36,7 @@ This document is the v0.3.0 schema index for the public `mito-overview` workflow
 | `03_mito_deletions.html` | `deletions` | `mito_deletion_summary.tsv`, `mito_deletion_events.tsv`, `mito_deletion_clusters.tsv`, `mito_deletion_read_flags.tsv` | `mito_deletion_clusters.png` when clusters exist | not applicable in reduced short-read mode |
 | `04_mito_copy_number.html` | `copy_number` | `mito_copy_number_summary.tsv`, `mito_copy_number_windows.tsv` | `mito_copy_number_proxy.png` | not applicable for targeted-mt modes without nuclear context |
 | `05_mito_feature_annotation.html` | `feature_annotation` | `mito_feature_catalog.tsv`, `mito_feature_overlap_candidates.tsv`, `mito_feature_annotation_summary.tsv` | `mito_feature_annotation.png` | active when candidate/feature data are available |
-| `06_mito_cosegregation.html` | `cosegregation` | `mito_cosegregation_selected_sites.tsv`, `mito_cosegregation_pairwise.tsv`, `mito_cosegregation_summary.tsv` | `mito_cosegregation_heatmap.png` | not applicable in reduced short-read mode |
+| `06_mito_cosegregation.html` | `cosegregation` | `mito_cosegregation_selected_sites.tsv`, `mito_cosegregation_pairwise.tsv`, `mito_cosegregation_summary.tsv` | `mito_cosegregation_heatmap.png` | pair statistics use reads callable at both sites; not applicable in reduced short-read mode |
 | `07_mito_gene_summary.html` | `gene_summary` | `mito_gene_summary.tsv`, `mito_gene_summary_overview.tsv` when generated | `mito_gene_summary_overview.png` | active when upstream summaries exist |
 | `08_mito_numt_qc.html` | `numt_qc` | `mito_numt_qc_summary.tsv` | `mito_numt_qc_mapq_vs_span.png`, `mito_numt_qc_metric_bars.png` | not applicable in reduced short-read mode; targeted-mt long-read interpretation can be `not_evaluable` |
 | `09_mito_identity_qc.html` | `identity_qc` | identity/fingerprint summary tables | concordance plot when sidecars exist | conditional or not applicable |

@@ -8,7 +8,7 @@ This document records public validation evidence for the unreleased MitoOverview
 - Repository: https://github.com/elissonnog/mito-overview
 - Candidate version: `0.3.0`
 - Release status: **unreleased release candidate**
-- Validation status: **bounded release-candidate evidence complete within the scope below**
+- Validation status: **historical bounded evidence recorded; exact-final-commit validation pending**
 
 The final `v0.3.0` tag, release date, and version-specific archival DOI have not been assigned.
 
@@ -50,7 +50,7 @@ Primary tests: `tests/test_allele_counting.py`, `tests/test_table_contracts.py`,
 
 ### 2. mvTool network control
 
-`MVTOOL_MODE` accepts `disabled`, `fixture`, and `network`; the default is `disabled`, with an empty default URL. Disabled mode emits deterministic `not_configured` output for report page 14 without constructing an HTTP session. Fixture mode supports deterministic CI. Explicit network failures emit `unavailable` and a reason code without fabricating annotations or terminating otherwise valid core reporting.
+`MVTOOL_MODE` accepts `disabled`, `fixture`, and `network`; the default is `disabled`, with an empty default URL. Disabled mode emits deterministic `not_configured` output for report page 14 without constructing an HTTP session. Fixture mode supports deterministic CI. Explicit network failures emit `unavailable` and a reason code without fabricating annotations or terminating otherwise valid core reporting. Fixture or network success additionally requires a one-to-one, unique, complete mapping between submitted candidates and returned input identifiers; missing, duplicate, or unexpected identifiers produce `unavailable` rather than a partial `ok` result.
 
 Deterministic tests verify disabled no-network behavior, exact fixture annotations, an explicit mock network response, timeout handling, and malformed-response handling. Primary tests: `tests/test_mvtool_modes.py`.
 
@@ -76,7 +76,7 @@ The `TOY-WGS-001` known-answer test verifies mitochondrial depth 100, nuclear de
 
 `REFERENCE_SCOPE` accepts `auto`, `mt_only`, `whole_genome`, or `custom`. A reference containing only the configured mitochondrial contig resolves to `mt_only`; exact GRCh37, GRCh38, GRCm38, or GRCm39 chromosome-length profiles resolve to `whole_genome`; ambiguous, reduced, scaled, hybrid, or modified references resolve to `custom`. Exact recognized profiles also support species inference for a generic FASTA filename.
 
-For `mt_only` and `custom`, raw alignment span, mapping-quality, clipping, and supplementary-alignment metrics remain available, but categorical NUMT-risk interpretation is suppressed. Under `whole_genome`, categorical warning output additionally requires all documented read-stat fields, a valid binary primary-alignment indicator, at least one primary alignment, and a numeric full-length QC metric. Incomplete or malformed required evidence yields `not_evaluable`, an explicit reason code, and `NA` rather than a fabricated zero or low-risk label. The compatible report filename is retained and the report is titled alignment-ambiguity QC. The mitochondrial BED interval is exactly zero-based, half-open: `MT_CONTIG\t0\tMT_LENGTH`.
+For `mt_only` and `custom`, raw alignment span, mapping-quality, clipping, and supplementary-alignment metrics remain available, but categorical NUMT-risk interpretation is suppressed. Effective `whole_genome` scope requires exact, concordant recognized profiles in the FASTA index and alignment sequence dictionary, including the assembly-specific mitochondrial sequence and no extra contigs. Reduced, augmented, discordant, or ambiguous alignment dictionaries cannot inherit whole-genome status from the FASTA alone. CRAM reference identity is checked from sequence MD5 metadata and the supplied FASTA even when no mitochondrial record can be decoded. Under `whole_genome`, categorical warning output additionally requires all documented read-stat fields, a valid binary primary-alignment indicator, at least one primary alignment, and a numeric full-length QC metric. Incomplete or malformed required evidence yields `not_evaluable`, an explicit reason code, and `NA` rather than a fabricated zero or low-risk label. The compatible report filename is retained and the report is titled alignment-ambiguity QC. The mitochondrial BED interval is exactly zero-based, half-open: `MT_CONTIG\t0\tMT_LENGTH`.
 
 Deterministic tests verify exact-profile scope/species inference, rejection of scaled, hybrid, incomplete, modified, and wrong-mt-length references, rejection of a false whole-genome override, mt-only/custom suppression, incomplete-input suppression, bounded whole-genome warning calculation, and exact BED coordinates. Primary tests: `tests/test_reference_scope_and_bed.py`, `tests/test_config_and_inputs.py`, and `tests/test_numt_qc_inputs.py`.
 
