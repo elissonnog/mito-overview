@@ -16,12 +16,130 @@ import requests
 
 PRODUCTION_API = "https://zenodo.org/api"
 TOKEN_ENV = "ZENODO_ACCESS_TOKEN"
+EXPECTED_TITLE = "mito-overview v0.3.0"
+EXPECTED_VERSION = "0.3.0"
+EXPECTED_UPLOAD_TYPE = "software"
+EXPECTED_LICENSE = "mit"
+EXPECTED_PUBLICATION_DATE = "2026-07-20"
+EXPECTED_REPOSITORY = "https://github.com/elissonnog/mito-overview"
+EXPECTED_CREATORS = (
+    ("Lopes, Elisson", "Medical College of Wisconsin"),
+    ("Gai, Xiaowu", "Medical College of Wisconsin"),
+)
+PRESERVED_METADATA_FIELDS = (
+    "title",
+    "upload_type",
+    "description",
+    "creators",
+    "license",
+    "version",
+    "publication_date",
+    "related_identifiers",
+    "keywords",
+)
 
 
 def require_object(value: object, label: str) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ValueError(f"{label} must be a JSON object")
     return value
+
+
+def _require_nonempty_string(value: object, label: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{label} must be a nonempty string")
+    if re.search(r"(?i)(?:<[^>]+>|\b(?:TBD|TODO|TBA|UNRESERVED|PLACEHOLDER)\b)", value):
+        raise ValueError(f"{label} contains placeholder text")
+    return value.strip()
+
+
+def sanitize_release_metadata(metadata: object) -> dict[str, object]:
+    """Validate the v0.3.0 software identity and retain only public metadata."""
+
+    source = require_object(metadata, "Zenodo metadata")
+    expected_scalars = {
+        "title": EXPECTED_TITLE,
+        "upload_type": EXPECTED_UPLOAD_TYPE,
+        "license": EXPECTED_LICENSE,
+        "version": EXPECTED_VERSION,
+        "publication_date": EXPECTED_PUBLICATION_DATE,
+    }
+    sanitized: dict[str, object] = {}
+    for field, expected in expected_scalars.items():
+        observed = _require_nonempty_string(source.get(field), f"Zenodo metadata {field}")
+        if observed.lower() != expected.lower():
+            raise ValueError(
+                f"Zenodo metadata {field} does not match v0.3.0: {observed!r} != {expected!r}"
+            )
+        sanitized[field] = observed
+
+    sanitized["description"] = _require_nonempty_string(
+        source.get("description"), "Zenodo metadata description"
+    )
+
+    creators = source.get("creators")
+    if not isinstance(creators, list) or len(creators) != len(EXPECTED_CREATORS):
+        raise ValueError("Zenodo metadata creators must contain the two v0.3.0 creators")
+    sanitized_creators: list[dict[str, str]] = []
+    for index, (creator, expected) in enumerate(zip(creators, EXPECTED_CREATORS, strict=True)):
+        creator_object = require_object(creator, f"Zenodo creator {index}")
+        name = _require_nonempty_string(creator_object.get("name"), f"Zenodo creator {index} name")
+        affiliation = _require_nonempty_string(
+            creator_object.get("affiliation"), f"Zenodo creator {index} affiliation"
+        )
+        if (name, affiliation) != expected:
+            raise ValueError(
+                f"Zenodo creator {index} does not match v0.3.0: "
+                f"{(name, affiliation)!r} != {expected!r}"
+            )
+        retained = {"name": name, "affiliation": affiliation}
+        if "orcid" in creator_object:
+            retained["orcid"] = _require_nonempty_string(
+                creator_object["orcid"], f"Zenodo creator {index} ORCID"
+            )
+        sanitized_creators.append(retained)
+    sanitized["creators"] = sanitized_creators
+
+    related = source.get("related_identifiers")
+    if not isinstance(related, list):
+        raise ValueError("Zenodo metadata related_identifiers must be a list")
+    repository_links: list[dict[str, str]] = []
+    for index, item in enumerate(related):
+        related_object = require_object(item, f"Zenodo related identifier {index}")
+        identifier = _require_nonempty_string(
+            related_object.get("identifier"), f"Zenodo related identifier {index} identifier"
+        )
+        relation = _require_nonempty_string(
+            related_object.get("relation"), f"Zenodo related identifier {index} relation"
+        )
+        retained = {"identifier": identifier, "relation": relation}
+        for optional in ("scheme", "resource_type"):
+            if optional in related_object:
+                retained[optional] = _require_nonempty_string(
+                    related_object[optional],
+                    f"Zenodo related identifier {index} {optional}",
+                )
+        repository_links.append(retained)
+    matching_repository = [
+        item
+        for item in repository_links
+        if item["identifier"] == EXPECTED_REPOSITORY
+        and item["relation"] == "isSupplementTo"
+    ]
+    if len(matching_repository) != 1:
+        raise ValueError(
+            "Zenodo metadata must contain one isSupplementTo related identifier for the repository"
+        )
+    sanitized["related_identifiers"] = repository_links
+
+    keywords = source.get("keywords")
+    if not isinstance(keywords, list) or not keywords:
+        raise ValueError("Zenodo metadata keywords must be a nonempty list")
+    sanitized["keywords"] = [
+        _require_nonempty_string(value, f"Zenodo keyword {index}")
+        for index, value in enumerate(keywords)
+    ]
+    return sanitized
 
 
 def sanitize_deposition(
@@ -49,9 +167,10 @@ def sanitize_deposition(
     if links.get("self") != api_url:
         raise ValueError("Zenodo deposition self link is not the canonical production API URL")
 
+    release_metadata = sanitize_release_metadata(metadata)
     timestamp = captured_utc or datetime.now(timezone.utc).isoformat()
     return {
-        "schema_version": "1.0",
+        "schema_version": "1.1",
         "evidence_type": "zenodo_doi_reservation",
         "source": "authenticated_zenodo_deposition_api",
         "captured_utc": timestamp,
@@ -65,6 +184,7 @@ def sanitize_deposition(
             "links": {"self": api_url},
             "metadata": {
                 "prereserve_doi": {"doi": doi, "recid": record_id},
+                **release_metadata,
             },
             "state": "unsubmitted",
             "submitted": False,
@@ -127,6 +247,7 @@ def load_create_metadata(path: Path) -> dict[str, Any]:
     metadata = require_object(payload.get("metadata"), "Metadata file metadata")
     if metadata.get("prereserve_doi") is not True:
         raise ValueError("Create metadata must request prereserve_doi=true")
+    sanitize_release_metadata(metadata)
     return payload
 
 

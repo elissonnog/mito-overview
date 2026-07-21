@@ -13,6 +13,15 @@
         "affiliation": "Medical College of Wisconsin"
       }
     ],
+    "license": "mit",
+    "version": "0.3.0",
+    "publication_date": "2026-07-20",
+    "related_identifiers": [
+      {
+        "identifier": "https://github.com/elissonnog/mito-overview",
+        "relation": "isSupplementTo"
+      }
+    ],
     "keywords": [
       "mitochondrial DNA",
       "mtDNA",

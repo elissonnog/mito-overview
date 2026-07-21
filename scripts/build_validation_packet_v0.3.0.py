@@ -20,11 +20,31 @@ from pathlib import Path
 
 EXPECTED_RELEASE_VERSION = "v0.3.0"
 EXPECTED_PACKAGE_NAME = "mito-overview"
+EXPECTED_RELEASE_TITLE = "mito-overview v0.3.0"
+EXPECTED_RELEASE_DATE = "2026-07-20"
+EXPECTED_LICENSE = "MIT"
+EXPECTED_CREATORS = ("Elisson Lopes", "Xiaowu Gai")
 ZENODO_DOI_PATTERN = r"10\.5281/zenodo\.[1-9][0-9]*"
 ZENODO_RESERVATION_PACKET_PATH = "acceptance/zenodo_reservation.json"
 ZENODO_RESERVATION_SOURCE = "authenticated_zenodo_deposition_api"
 EXPECTED_GITHUB_BRANCH = "main"
 EXPECTED_GITHUB_WORKFLOW_PATH = ".github/workflows/smoke-tests.yml"
+ZENODO_TEMPLATE_PATH = "resources/zenodo/mito_overview_v0.3.0_draft.json"
+MANUSCRIPT_PATH = "paper/preprint_draft.md"
+PLACEHOLDER_PATTERN = re.compile(
+    r"(?i)(?:<[^>]+>|\b(?:TBD|TODO|TBA|UNRESERVED|PLACEHOLDER|EXAMPLE[-_ ]DOI)\b)"
+)
+ZENODO_PUBLIC_METADATA_FIELDS = {
+    "title",
+    "upload_type",
+    "description",
+    "creators",
+    "license",
+    "version",
+    "publication_date",
+    "related_identifiers",
+    "keywords",
+}
 
 PUBLIC_PROVENANCE_FILES = {
     "shortread_alignment": {
@@ -194,6 +214,161 @@ def normalize_project_name(value: str) -> str:
     return re.sub(r"[-_.]+", "-", value).lower()
 
 
+def require_release_text(value: object, label: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{label} must be a nonempty string")
+    normalized = value.strip()
+    if PLACEHOLDER_PATTERN.search(normalized):
+        raise ValueError(f"{label} contains placeholder text: {normalized!r}")
+    return normalized
+
+
+def normalize_license(value: object, label: str) -> str:
+    observed = require_release_text(value, label)
+    if observed.lower() not in {"mit", "mit-license"}:
+        raise ValueError(f"{label} must identify the MIT license: {observed!r}")
+    return EXPECTED_LICENSE
+
+
+def canonical_person_name(value: object, label: str) -> str:
+    observed = require_release_text(value, label)
+    if "," not in observed:
+        return " ".join(observed.split())
+    family, given = observed.split(",", 1)
+    if not family.strip() or not given.strip():
+        raise ValueError(f"{label} is not a valid 'Family, Given' name: {observed!r}")
+    return f"{' '.join(given.split())} {' '.join(family.split())}"
+
+
+def top_level_yaml_scalar(text: str, key: str, label: str) -> str:
+    matches = re.findall(rf"(?m)^{re.escape(key)}:\s*([^\n#]+?)\s*$", text)
+    if len(matches) != 1:
+        raise ValueError(f"{label} must define exactly one top-level {key}")
+    return require_release_text(matches[0].strip("'\""), f"{label} {key}")
+
+
+def citation_authors(text: str) -> list[str]:
+    match = re.search(r"(?ms)^authors:\s*\n(?P<body>.*?)(?=^[^\s]|\Z)", text)
+    if match is None:
+        raise ValueError("CITATION.cff does not define an authors list")
+    authors: list[str] = []
+    for index, item in enumerate(re.split(r"(?m)^  -\s+", match.group("body"))[1:]):
+        family_match = re.search(r"(?m)^family-names:\s*([^\n#]+?)\s*$", item)
+        given_match = re.search(r"(?m)^\s*given-names:\s*([^\n#]+?)\s*$", item)
+        if family_match is None or given_match is None:
+            raise ValueError(f"CITATION.cff author {index} lacks family-names or given-names")
+        family = require_release_text(
+            family_match.group(1).strip("'\""), f"CITATION.cff author {index} family-names"
+        )
+        given = require_release_text(
+            given_match.group(1).strip("'\""), f"CITATION.cff author {index} given-names"
+        )
+        authors.append(f"{given} {family}")
+    return authors
+
+
+def canonicalize_zenodo_metadata(
+    metadata: object,
+    *,
+    expected_doi: str | None,
+    reservation_mode: str,
+) -> dict[str, object]:
+    if not isinstance(metadata, dict):
+        raise ValueError("Zenodo release metadata must be an object")
+    expected_fields = ZENODO_PUBLIC_METADATA_FIELDS | {"prereserve_doi"}
+    if set(metadata) != expected_fields:
+        raise ValueError(
+            "Zenodo release metadata is not the required public field set: "
+            f"missing={sorted(expected_fields - set(metadata))}, "
+            f"unexpected={sorted(set(metadata) - expected_fields)}"
+        )
+
+    title = require_release_text(metadata.get("title"), "Zenodo title")
+    upload_type = require_release_text(metadata.get("upload_type"), "Zenodo upload_type")
+    description = require_release_text(metadata.get("description"), "Zenodo description")
+    version = require_release_text(metadata.get("version"), "Zenodo version")
+    publication_date = require_release_text(
+        metadata.get("publication_date"), "Zenodo publication_date"
+    )
+    try:
+        datetime.strptime(publication_date, "%Y-%m-%d")
+    except ValueError as error:
+        raise ValueError("Zenodo publication_date must use YYYY-MM-DD") from error
+    if upload_type != "software":
+        raise ValueError(f"Zenodo upload_type must be software: {upload_type!r}")
+
+    creators = metadata.get("creators")
+    if not isinstance(creators, list) or not creators:
+        raise ValueError("Zenodo creators must be a nonempty object list")
+    creator_names: list[str] = []
+    for index, creator in enumerate(creators):
+        if not isinstance(creator, dict):
+            raise ValueError(f"Zenodo creator {index} must be an object")
+        unexpected = set(creator) - {"name", "affiliation", "orcid"}
+        if unexpected:
+            raise ValueError(f"Zenodo creator {index} has unexpected fields: {sorted(unexpected)}")
+        creator_names.append(canonical_person_name(creator.get("name"), f"Zenodo creator {index}"))
+        require_release_text(creator.get("affiliation"), f"Zenodo creator {index} affiliation")
+        if "orcid" in creator:
+            require_release_text(creator["orcid"], f"Zenodo creator {index} ORCID")
+
+    related = metadata.get("related_identifiers")
+    if not isinstance(related, list):
+        raise ValueError("Zenodo related_identifiers must be a list")
+    repositories: list[str] = []
+    for index, item in enumerate(related):
+        if not isinstance(item, dict):
+            raise ValueError(f"Zenodo related identifier {index} must be an object")
+        unexpected = set(item) - {"identifier", "relation", "scheme", "resource_type"}
+        if unexpected:
+            raise ValueError(
+                f"Zenodo related identifier {index} has unexpected fields: {sorted(unexpected)}"
+            )
+        identifier = require_release_text(
+            item.get("identifier"), f"Zenodo related identifier {index} identifier"
+        )
+        relation = require_release_text(
+            item.get("relation"), f"Zenodo related identifier {index} relation"
+        )
+        if relation == "isSupplementTo":
+            repositories.append(identifier)
+    if len(repositories) != 1:
+        raise ValueError("Zenodo metadata must identify exactly one repository as isSupplementTo")
+
+    keywords = metadata.get("keywords")
+    if not isinstance(keywords, list) or not keywords:
+        raise ValueError("Zenodo keywords must be a nonempty list")
+    canonical_keywords = [
+        require_release_text(value, f"Zenodo keyword {index}")
+        for index, value in enumerate(keywords)
+    ]
+
+    reservation = metadata.get("prereserve_doi")
+    if reservation_mode == "template":
+        if reservation is not True:
+            raise ValueError("Zenodo template must request prereserve_doi=true")
+    elif reservation_mode == "evidence":
+        if not isinstance(reservation, dict) or set(reservation) != {"doi", "recid"}:
+            raise ValueError("Zenodo evidence prereserve_doi is malformed")
+        if reservation.get("doi") != expected_doi:
+            raise ValueError("Zenodo evidence prereserve_doi does not match the requested DOI")
+    else:
+        raise ValueError(f"Unsupported Zenodo reservation mode: {reservation_mode}")
+
+    return {
+        "title": title,
+        "upload_type": upload_type,
+        "description": description,
+        "creators": creator_names,
+        "license": normalize_license(metadata.get("license"), "Zenodo license"),
+        "version": version,
+        "publication_date": publication_date,
+        "repository": repositories[0],
+        "keywords": canonical_keywords,
+        **({"doi": expected_doi} if expected_doi is not None else {}),
+    }
+
+
 def parse_environment_identity(path: Path) -> dict[str, str]:
     required = {"release_version", "git_commit", "repository", "archive_doi"}
     values: dict[str, str] = {}
@@ -212,11 +387,16 @@ def parse_environment_identity(path: Path) -> dict[str, str]:
 
 def read_release_metadata(
     repo_root: Path,
-) -> tuple[str, dict[str, str], dict[str, str], str]:
+    archive_doi: str,
+    zenodo_evidence_metadata: dict[str, object],
+) -> dict[str, object]:
     metadata_paths = {
         "pyproject.toml": repo_root / "pyproject.toml",
         "mito_overview/__init__.py": repo_root / "mito_overview" / "__init__.py",
         "CITATION.cff": repo_root / "CITATION.cff",
+        "README.md": repo_root / "README.md",
+        MANUSCRIPT_PATH: repo_root / MANUSCRIPT_PATH,
+        ZENODO_TEMPLATE_PATH: repo_root / ZENODO_TEMPLATE_PATH,
     }
     for label, path in metadata_paths.items():
         if not path.is_file():
@@ -226,6 +406,25 @@ def read_release_metadata(
     project_table = project.get("project", {})
     package_name = str(project_table.get("name", "")).strip()
     pyproject_version = str(project_table.get("version", "")).strip()
+    pyproject_license = normalize_license(
+        project_table.get("license"), "pyproject.toml project.license"
+    )
+    project_urls = project_table.get("urls")
+    if not isinstance(project_urls, dict):
+        raise ValueError("pyproject.toml project.urls must be a table")
+    pyproject_repository = require_release_text(
+        project_urls.get("Repository"), "pyproject.toml project.urls.Repository"
+    )
+    project_authors = project_table.get("authors")
+    if not isinstance(project_authors, list) or not project_authors:
+        raise ValueError("pyproject.toml project.authors must be a nonempty list")
+    pyproject_authors: list[str] = []
+    for index, author in enumerate(project_authors):
+        if not isinstance(author, dict):
+            raise ValueError(f"pyproject.toml author {index} must be a table")
+        pyproject_authors.append(
+            canonical_person_name(author.get("name"), f"pyproject.toml author {index}")
+        )
 
     init_text = metadata_paths["mito_overview/__init__.py"].read_text(encoding="utf-8")
     init_match = re.search(
@@ -236,22 +435,214 @@ def read_release_metadata(
         raise ValueError("mito_overview/__init__.py does not define a literal __version__")
 
     citation_text = metadata_paths["CITATION.cff"].read_text(encoding="utf-8")
-    citation_match = re.search(r"(?m)^version:\s*([^\s#]+)", citation_text)
-    if citation_match is None:
-        raise ValueError("CITATION.cff does not define a top-level version")
-    citation_doi_matches = re.findall(r"(?m)^doi:\s*([^\s#]+)", citation_text)
-    if len(citation_doi_matches) != 1:
-        raise ValueError("CITATION.cff must define exactly one top-level DOI")
-    citation_version = citation_match.group(1).strip("'\"")
-    citation_doi = citation_doi_matches[0].strip("'\"")
+    citation_title = top_level_yaml_scalar(citation_text, "title", "CITATION.cff")
+    citation_version = top_level_yaml_scalar(citation_text, "version", "CITATION.cff")
+    citation_doi = top_level_yaml_scalar(citation_text, "doi", "CITATION.cff")
+    citation_repository = top_level_yaml_scalar(
+        citation_text, "repository-code", "CITATION.cff"
+    )
+    citation_license = normalize_license(
+        top_level_yaml_scalar(citation_text, "license", "CITATION.cff"),
+        "CITATION.cff license",
+    )
+    citation_date = top_level_yaml_scalar(citation_text, "date-released", "CITATION.cff")
+    citation_creator_names = citation_authors(citation_text)
+    preliminary_versions = {
+        "pyproject.toml": pyproject_version,
+        "mito_overview/__init__.py": init_match.group(1),
+        "CITATION.cff": citation_version,
+    }
+    stale_versions = [
+        f"{label}={version}"
+        for label, version in preliminary_versions.items()
+        if version != EXPECTED_RELEASE_VERSION.removeprefix("v")
+    ]
+    if stale_versions:
+        raise ValueError(
+            f"Release metadata mismatch for {EXPECTED_RELEASE_VERSION}: "
+            f"{', '.join(stale_versions)}"
+        )
+    if citation_doi != archive_doi:
+        raise ValueError(
+            f"CITATION.cff DOI does not match requested archive DOI: "
+            f"{citation_doi} != {archive_doi}"
+        )
+
+    readme_text = metadata_paths["README.md"].read_text(encoding="utf-8")
+    manuscript_text = metadata_paths[MANUSCRIPT_PATH].read_text(encoding="utf-8")
+    for label, text in (("README.md", readme_text), (MANUSCRIPT_PATH, manuscript_text)):
+        if PLACEHOLDER_PATTERN.search(text):
+            raise ValueError(f"{label} contains release placeholder text")
+        stale_patterns = (
+            r"(?i)\bunreleased\b[^.\n]{0,100}\bv?0\.3\.0\b",
+            r"(?i)\b(?:DOI|release date|v0\.3\.0 tag)\b[^.\n]{0,100}"
+            r"\b(?:pending|not (?:yet )?(?:issued|claimed|created))\b",
+            r"(?i)\b(?:no|not yet|pending)\b[^.\n]{0,100}"
+            r"\b(?:DOI|release date|v0\.3\.0 tag)\b",
+        )
+        if any(re.search(pattern, text) for pattern in stale_patterns):
+            raise ValueError(f"{label} still describes v0.3.0 release metadata as pending")
+
+    readme_heading = re.search(r"\A#\s+([^\n]+)", readme_text)
+    manuscript_heading = re.search(r"\A#\s+([^\n]+)", manuscript_text)
+    if readme_heading is None or normalize_project_name(readme_heading.group(1)) != EXPECTED_PACKAGE_NAME:
+        raise ValueError("README.md must begin with the mito-overview release heading")
+    if manuscript_heading is None or not manuscript_heading.group(1).lower().startswith(
+        EXPECTED_PACKAGE_NAME
+    ):
+        raise ValueError("Manuscript title must begin with mito-overview")
+
+    canonical_requirements = {
+        "version": pyproject_version,
+        "repository": pyproject_repository,
+        "doi": archive_doi,
+        "release_date": citation_date,
+    }
+    for label, text in (("README.md", readme_text), (MANUSCRIPT_PATH, manuscript_text)):
+        required_tokens = {
+            f"version {canonical_requirements['version']}": re.compile(
+                rf"(?i)\bversion\s+`?v?{re.escape(pyproject_version)}`?\b"
+            ),
+            f"repository {pyproject_repository}": re.compile(re.escape(pyproject_repository)),
+            f"DOI {archive_doi}": re.compile(rf"(?<![0-9]){re.escape(archive_doi)}(?![0-9])"),
+            f"release date {citation_date}": re.compile(re.escape(citation_date)),
+            "MIT license": re.compile(r"(?i)\bMIT(?:\s+License|\s+licensed)\b"),
+        }
+        for description, pattern in required_tokens.items():
+            if pattern.search(text) is None:
+                raise ValueError(f"{label} does not state synchronized {description}")
+        for creator in EXPECTED_CREATORS:
+            if creator not in text:
+                raise ValueError(f"{label} does not identify release creator {creator}")
+
+    try:
+        zenodo_template_payload = json.loads(
+            metadata_paths[ZENODO_TEMPLATE_PATH].read_text(encoding="utf-8")
+        )
+    except json.JSONDecodeError as error:
+        raise ValueError("Zenodo draft template is not valid JSON") from error
+    if not isinstance(zenodo_template_payload, dict):
+        raise ValueError("Zenodo draft template must contain a JSON object")
+    zenodo_template = canonicalize_zenodo_metadata(
+        zenodo_template_payload.get("metadata"),
+        expected_doi=None,
+        reservation_mode="template",
+    )
+    template_comparable = dict(zenodo_template)
+    evidence_comparable = dict(zenodo_evidence_metadata)
+    evidence_comparable.pop("doi", None)
+    if template_comparable != evidence_comparable:
+        raise ValueError(
+            "Zenodo reservation evidence metadata does not match the tracked v0.3.0 template"
+        )
 
     versions = {
         "pyproject.toml": pyproject_version,
         "mito_overview/__init__.py": init_match.group(1),
         "CITATION.cff": citation_version,
+        "README.md": pyproject_version,
+        MANUSCRIPT_PATH: pyproject_version,
+        ZENODO_TEMPLATE_PATH: str(zenodo_template["version"]),
     }
     hashes = {label: sha256(path) for label, path in metadata_paths.items()}
-    return package_name, versions, hashes, citation_doi
+    canonical = {
+        "name": EXPECTED_PACKAGE_NAME,
+        "version": pyproject_version,
+        "repository": pyproject_repository,
+        "doi": archive_doi,
+        "license": EXPECTED_LICENSE,
+        "publication_date": citation_date,
+        "creators": list(EXPECTED_CREATORS),
+        "zenodo_title": EXPECTED_RELEASE_TITLE,
+        "zenodo_upload_type": "software",
+    }
+    narrative_metadata = {
+        key: canonical[key]
+        for key in (
+            "name",
+            "version",
+            "repository",
+            "doi",
+            "license",
+            "publication_date",
+            "creators",
+        )
+    }
+    source_values: dict[str, dict[str, object]] = {
+        "pyproject.toml": {
+            "name": package_name,
+            "version": pyproject_version,
+            "repository": pyproject_repository,
+            "license": pyproject_license,
+            "creators": pyproject_authors,
+        },
+        "mito_overview/__init__.py": {"version": init_match.group(1)},
+        "CITATION.cff": {
+            "name": citation_title,
+            "version": citation_version,
+            "repository": citation_repository,
+            "doi": citation_doi,
+            "license": citation_license,
+            "publication_date": citation_date,
+            "creators": citation_creator_names,
+        },
+        "README.md": narrative_metadata.copy(),
+        MANUSCRIPT_PATH: narrative_metadata.copy(),
+        "Zenodo reservation evidence": zenodo_evidence_metadata,
+        ZENODO_TEMPLATE_PATH: zenodo_template,
+    }
+    expected_by_source: dict[str, dict[str, object]] = {
+        "pyproject.toml": {
+            key: canonical[key] for key in ("name", "version", "repository", "license", "creators")
+        },
+        "mito_overview/__init__.py": {"version": canonical["version"]},
+        "CITATION.cff": {
+            key: canonical[key]
+            for key in (
+                "name",
+                "version",
+                "repository",
+                "doi",
+                "license",
+                "publication_date",
+                "creators",
+            )
+        },
+    }
+    expected_by_source["README.md"] = narrative_metadata.copy()
+    expected_by_source[MANUSCRIPT_PATH] = narrative_metadata.copy()
+    expected_by_source["Zenodo reservation evidence"] = {
+        "title": canonical["zenodo_title"],
+        "upload_type": canonical["zenodo_upload_type"],
+        "version": canonical["version"],
+        "repository": canonical["repository"],
+        "doi": canonical["doi"],
+        "license": canonical["license"],
+        "publication_date": canonical["publication_date"],
+        "creators": canonical["creators"],
+        "description": zenodo_evidence_metadata["description"],
+        "keywords": zenodo_evidence_metadata["keywords"],
+    }
+    expected_by_source[ZENODO_TEMPLATE_PATH] = {
+        key: value
+        for key, value in expected_by_source["Zenodo reservation evidence"].items()
+        if key != "doi"
+    }
+    for source, expected in expected_by_source.items():
+        if source_values[source] != expected:
+            raise ValueError(
+                f"Release metadata disagreement in {source}: "
+                f"observed={source_values[source]!r}, expected={expected!r}"
+            )
+
+    return {
+        "package_name": package_name,
+        "versions": versions,
+        "hashes": hashes,
+        "citation_doi": citation_doi,
+        "canonical": canonical,
+        "sources": source_values,
+    }
 
 
 def parse_distribution_metadata(text: str, source: Path) -> tuple[str, str]:
@@ -412,7 +803,7 @@ def validate_zenodo_reservation_evidence(
             f"unexpected={sorted(set(evidence) - required_top_level)}"
         )
     expected_fields = {
-        "schema_version": "1.0",
+        "schema_version": "1.1",
         "evidence_type": "zenodo_doi_reservation",
         "source": ZENODO_RESERVATION_SOURCE,
         "reservation_status": "reserved",
@@ -467,8 +858,12 @@ def validate_zenodo_reservation_evidence(
     if links.get("self") != canonical_api_url:
         raise ValueError("Zenodo deposition self URL does not match the reserved record")
     metadata = response.get("metadata")
-    if not isinstance(metadata, dict) or set(metadata) != {"prereserve_doi"}:
-        raise ValueError("Zenodo deposition metadata must contain only prereserve_doi evidence")
+    release_metadata = canonicalize_zenodo_metadata(
+        metadata,
+        expected_doi=expected_doi,
+        reservation_mode="evidence",
+    )
+    assert isinstance(metadata, dict)
     reservation = metadata.get("prereserve_doi")
     if not isinstance(reservation, dict) or set(reservation) != {"doi", "recid"}:
         raise ValueError("Zenodo prereserve_doi evidence is malformed")
@@ -484,6 +879,7 @@ def validate_zenodo_reservation_evidence(
         "reservation_status": "reserved",
         "source": ZENODO_RESERVATION_SOURCE,
         "captured_utc": captured_utc,
+        "release_metadata": release_metadata,
     }
 
 
@@ -880,6 +1276,7 @@ def resolve_release_identity(
     repository: str,
     asserted_commit: str | None,
     archive_doi: str,
+    zenodo_evidence_metadata: dict[str, object],
 ) -> dict[str, object]:
     repo_root = repo_root.resolve()
     if release_version != EXPECTED_RELEASE_VERSION:
@@ -919,7 +1316,13 @@ def resolve_release_identity(
             f"{environment['archive_doi']} != {archive_doi}"
         )
 
-    package_name, versions, metadata_hashes, citation_doi = read_release_metadata(repo_root)
+    metadata = read_release_metadata(repo_root, archive_doi, zenodo_evidence_metadata)
+    package_name = str(metadata["package_name"])
+    versions = metadata["versions"]
+    metadata_hashes = metadata["hashes"]
+    citation_doi = str(metadata["citation_doi"])
+    if not isinstance(versions, dict) or not isinstance(metadata_hashes, dict):
+        raise ValueError("Release metadata reader returned malformed identity maps")
     if normalize_project_name(package_name) != normalize_project_name(EXPECTED_PACKAGE_NAME):
         raise ValueError(f"Unexpected project name in pyproject.toml: {package_name!r}")
     mismatches = [
@@ -952,6 +1355,8 @@ def resolve_release_identity(
         "citation_doi": citation_doi,
         "metadata_versions": versions,
         "metadata_sha256": metadata_hashes,
+        "canonical_metadata": metadata["canonical"],
+        "metadata_sources": metadata["sources"],
         "source_worktree_clean": True,
     }
 
@@ -1179,7 +1584,7 @@ zenodo_fields = {
 if set(zenodo) != zenodo_fields:
     raise SystemExit("Zenodo reservation evidence is not the required sanitized field set")
 if (
-    zenodo.get("schema_version") != "1.0"
+    zenodo.get("schema_version") != "1.1"
     or zenodo.get("evidence_type") != "zenodo_doi_reservation"
     or zenodo.get("source") != "authenticated_zenodo_deposition_api"
     or zenodo.get("reservation_status") != "reserved"
@@ -1207,6 +1612,10 @@ if not isinstance(deposition, dict) or set(deposition) != {
 links = deposition.get("links")
 metadata = deposition.get("metadata")
 prereserve = metadata.get("prereserve_doi") if isinstance(metadata, dict) else None
+public_metadata_fields = {
+    "title", "upload_type", "description", "creators", "license", "version",
+    "publication_date", "related_identifiers", "keywords", "prereserve_doi",
+}
 if (
     deposition.get("id") != record_id
     or deposition.get("record_id") != record_id
@@ -1216,13 +1625,57 @@ if (
     or set(links) != {"self"}
     or links.get("self") != zenodo_api_url
     or not isinstance(metadata, dict)
-    or set(metadata) != {"prereserve_doi"}
+    or set(metadata) != public_metadata_fields
     or not isinstance(prereserve, dict)
     or set(prereserve) != {"doi", "recid"}
     or prereserve.get("doi") != archive_doi
     or prereserve.get("recid") != record_id
 ):
     raise SystemExit("Zenodo deposition response does not bind the DOI reservation")
+creators = metadata.get("creators")
+creator_names = []
+if isinstance(creators, list):
+    for creator in creators:
+        if not isinstance(creator, dict) or not isinstance(creator.get("name"), str):
+            raise SystemExit("Zenodo creator metadata is malformed")
+        name = creator["name"]
+        if "," not in name:
+            raise SystemExit("Zenodo creator name is not in Family, Given form")
+        family, given = name.split(",", 1)
+        creator_names.append(f"{given.strip()} {family.strip()}")
+related = metadata.get("related_identifiers")
+repositories = []
+if isinstance(related, list):
+    repositories = [
+        item.get("identifier") for item in related
+        if isinstance(item, dict) and item.get("relation") == "isSupplementTo"
+    ]
+expected_release_metadata = {
+    "title": "mito-overview v0.3.0",
+    "upload_type": "software",
+    "description": metadata.get("description"),
+    "creators": ["Elisson Lopes", "Xiaowu Gai"],
+    "license": "MIT",
+    "version": "0.3.0",
+    "publication_date": "2026-07-20",
+    "repository": "https://github.com/elissonnog/mito-overview",
+    "keywords": metadata.get("keywords"),
+    "doi": archive_doi,
+}
+if (
+    metadata.get("title") != expected_release_metadata["title"]
+    or metadata.get("upload_type") != "software"
+    or not isinstance(metadata.get("description"), str)
+    or not metadata.get("description").strip()
+    or creator_names != expected_release_metadata["creators"]
+    or str(metadata.get("license", "")).lower() not in {"mit", "mit-license"}
+    or metadata.get("version") != "0.3.0"
+    or metadata.get("publication_date") != "2026-07-20"
+    or repositories != [expected_release_metadata["repository"]]
+    or not isinstance(metadata.get("keywords"), list)
+    or not metadata.get("keywords")
+):
+    raise SystemExit("Zenodo release metadata is incomplete or inconsistent")
 expected_zenodo_identity = {
     "evidence_path": zenodo_relative,
     "evidence_sha256": digest(zenodo_path),
@@ -1232,6 +1685,7 @@ expected_zenodo_identity = {
     "reservation_status": "reserved",
     "source": "authenticated_zenodo_deposition_api",
     "captured_utc": captured_utc,
+    "release_metadata": expected_release_metadata,
 }
 if identity.get("zenodo_reservation") != expected_zenodo_identity:
     raise SystemExit("release identity does not match Zenodo reservation evidence")
@@ -1246,7 +1700,10 @@ if identity.get("environment_release_version") != "v0.3.0" or environment.get("r
 if identity.get("source_worktree_clean") is not True:
     raise SystemExit("release identity was not built from a clean worktree")
 metadata_versions = identity.get("metadata_versions", {})
-required_metadata = {"pyproject.toml", "mito_overview/__init__.py", "CITATION.cff"}
+required_metadata = {
+    "pyproject.toml", "mito_overview/__init__.py", "CITATION.cff", "README.md",
+    "paper/preprint_draft.md", "resources/zenodo/mito_overview_v0.3.0_draft.json",
+}
 if set(metadata_versions) != required_metadata or set(metadata_versions.values()) != {"0.3.0"}:
     raise SystemExit("release metadata versions are incomplete or inconsistent")
 metadata_hashes = identity.get("metadata_sha256", {})
@@ -1254,6 +1711,34 @@ if set(metadata_hashes) != required_metadata or any(
     not re.fullmatch(r"[0-9a-f]{64}", str(value)) for value in metadata_hashes.values()
 ):
     raise SystemExit("release metadata hashes are incomplete or malformed")
+canonical_metadata = identity.get("canonical_metadata")
+expected_canonical_metadata = {
+    "name": "mito-overview",
+    "version": "0.3.0",
+    "repository": "https://github.com/elissonnog/mito-overview",
+    "doi": archive_doi,
+    "license": "MIT",
+    "publication_date": "2026-07-20",
+    "creators": ["Elisson Lopes", "Xiaowu Gai"],
+    "zenodo_title": "mito-overview v0.3.0",
+    "zenodo_upload_type": "software",
+}
+if canonical_metadata != expected_canonical_metadata:
+    raise SystemExit("canonical release metadata is incomplete or inconsistent")
+metadata_sources = identity.get("metadata_sources")
+required_sources = required_metadata | {"Zenodo reservation evidence"}
+if not isinstance(metadata_sources, dict) or set(metadata_sources) != required_sources:
+    raise SystemExit("release metadata source inventory is incomplete")
+for source, values in metadata_sources.items():
+    if not isinstance(values, dict):
+        raise SystemExit(f"release metadata source is malformed: {source}")
+    for field in ("version",):
+        if field in values and values[field] != "0.3.0":
+            raise SystemExit(f"release metadata source version mismatch: {source}")
+    if "repository" in values and values["repository"] != expected_canonical_metadata["repository"]:
+        raise SystemExit(f"release metadata source repository mismatch: {source}")
+    if "doi" in values and values["doi"] != archive_doi:
+        raise SystemExit(f"release metadata source DOI mismatch: {source}")
 if run.get("diagnostic_validation_claimed") is not False:
     raise SystemExit("packet exceeds its bounded non-diagnostic claim scope")
 
@@ -1749,6 +2234,7 @@ def build_packet(args: argparse.Namespace) -> Path:
         args.repository,
         args.commit,
         args.doi,
+        zenodo_reservation["release_metadata"],
     )
     acceptance_rows = validate_acceptance_evidence(
         args.validation_root,

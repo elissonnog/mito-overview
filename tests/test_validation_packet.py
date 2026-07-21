@@ -36,6 +36,35 @@ TEST_DOI = "10.5281/zenodo.12345678"
 TEST_RECORD_ID = 12345678
 
 
+def zenodo_release_metadata(*, reservation: object) -> dict[str, object]:
+    return {
+        "title": "mito-overview v0.3.0",
+        "upload_type": "software",
+        "description": (
+            "Mode-gated mitochondrial DNA evidence reporting workflow for aligned "
+            "sequencing data."
+        ),
+        "creators": [
+            {
+                "name": "Lopes, Elisson",
+                "affiliation": "Medical College of Wisconsin",
+            },
+            {
+                "name": "Gai, Xiaowu",
+                "affiliation": "Medical College of Wisconsin",
+            },
+        ],
+        "license": "mit",
+        "version": "0.3.0",
+        "publication_date": "2026-07-20",
+        "related_identifiers": [
+            {"identifier": REPOSITORY, "relation": "isSupplementTo"}
+        ],
+        "keywords": ["mitochondrial DNA", "bioinformatics workflow"],
+        "prereserve_doi": reservation,
+    }
+
+
 def write_cases(path: Path, rows: list[dict[str, str]]) -> None:
     with path.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(
@@ -81,12 +110,19 @@ def create_release_repo(
 ) -> tuple[Path, str]:
     repo = tmp_path / "release-repo"
     (repo / "mito_overview").mkdir(parents=True)
+    (repo / "paper").mkdir()
+    (repo / "resources" / "zenodo").mkdir(parents=True)
     (repo / "pyproject.toml").write_text(
         "\n".join(
             [
                 "[project]",
                 'name = "mito-overview"',
                 f'version = "{version}"',
+                'license = "MIT"',
+                'authors = [{name = "Elisson Lopes"}, {name = "Xiaowu Gai"}]',
+                "",
+                "[project.urls]",
+                f'Repository = "{REPOSITORY}"',
                 "",
             ]
         ),
@@ -100,9 +136,43 @@ def create_release_repo(
         (
             "cff-version: 1.2.0\n"
             "title: mito-overview\n"
+            "authors:\n"
+            "  - family-names: Lopes\n"
+            "    given-names: Elisson\n"
+            "  - family-names: Gai\n"
+            "    given-names: Xiaowu\n"
             f"version: {version}\n"
+            "license: MIT\n"
+            f"repository-code: {REPOSITORY}\n"
+            "date-released: 2026-07-20\n"
             f"doi: {doi}\n"
         ),
+        encoding="utf-8",
+    )
+    (repo / "README.md").write_text(
+        (
+            "# mito-overview\n\n"
+            f"Version `{version}` was released on 2026-07-20 by Elisson Lopes and "
+            f"Xiaowu Gai under the MIT License. Repository: {REPOSITORY}. "
+            f"Archive DOI: {doi}.\n"
+        ),
+        encoding="utf-8",
+    )
+    (repo / "paper" / "preprint_draft.md").write_text(
+        (
+            "# mito-overview: a mode-gated workflow\n\n"
+            "Elisson Lopes and Xiaowu Gai\n\n"
+            f"Software version `{version}` was released on 2026-07-20 under the "
+            f"MIT License. Repository: {REPOSITORY}. Archive DOI: {doi}.\n"
+        ),
+        encoding="utf-8",
+    )
+    (repo / "resources" / "zenodo" / "mito_overview_v0.3.0_draft.json").write_text(
+        json.dumps(
+            {"metadata": zenodo_release_metadata(reservation=True)},
+            indent=2,
+        )
+        + "\n",
         encoding="utf-8",
     )
     run(["git", "init", "-q"], repo)
@@ -134,7 +204,7 @@ def write_zenodo_reservation_evidence(path: Path, doi: str = TEST_DOI) -> None:
     path.write_text(
         json.dumps(
             {
-                "schema_version": "1.0",
+                "schema_version": "1.1",
                 "evidence_type": "zenodo_doi_reservation",
                 "source": packet_builder.ZENODO_RESERVATION_SOURCE,
                 "captured_utc": "2026-07-20T12:00:00+00:00",
@@ -146,9 +216,9 @@ def write_zenodo_reservation_evidence(path: Path, doi: str = TEST_DOI) -> None:
                     "id": record_id,
                     "record_id": record_id,
                     "links": {"self": api_url},
-                    "metadata": {
-                        "prereserve_doi": {"doi": doi, "recid": record_id}
-                    },
+                    "metadata": zenodo_release_metadata(
+                        reservation={"doi": doi, "recid": record_id}
+                    ),
                     "state": "unsubmitted",
                     "submitted": False,
                 },
@@ -569,6 +639,26 @@ def test_packet_copies_runtime_evidence_and_self_verifies(tmp_path: Path) -> Non
     )
     assert set(identity["acceptance_cases"]) == packet_builder.ACCEPTANCE_CASE_IDS
     assert set(identity["metadata_versions"].values()) == {"0.3.0"}
+    assert identity["canonical_metadata"] == {
+        "name": "mito-overview",
+        "version": "0.3.0",
+        "repository": REPOSITORY,
+        "doi": TEST_DOI,
+        "license": "MIT",
+        "publication_date": "2026-07-20",
+        "creators": ["Elisson Lopes", "Xiaowu Gai"],
+        "zenodo_title": "mito-overview v0.3.0",
+        "zenodo_upload_type": "software",
+    }
+    assert set(identity["metadata_sources"]) == {
+        "pyproject.toml",
+        "mito_overview/__init__.py",
+        "CITATION.cff",
+        "README.md",
+        "paper/preprint_draft.md",
+        "resources/zenodo/mito_overview_v0.3.0_draft.json",
+        "Zenodo reservation evidence",
+    }
     assert {entry["kind"] for entry in identity["dist_artifacts"]} == {"wheel", "sdist"}
 
     verification = subprocess.run(
@@ -826,6 +916,64 @@ def test_packet_rejects_citation_doi_mismatch(tmp_path: Path) -> None:
     validation_root, _ = create_validation_root(tmp_path, commit)
     with pytest.raises(ValueError, match="CITATION.cff DOI does not match"):
         packet_builder.build_packet(packet_args(validation_root, repo, tmp_path / "output"))
+
+
+@pytest.mark.parametrize(
+    ("target", "expected_error"),
+    [
+        ("readme_placeholder", "README.md contains release placeholder text"),
+        ("manuscript_repository", "does not state synchronized repository"),
+        ("citation_creator", "Release metadata disagreement in CITATION.cff"),
+        ("package_license", "must identify the MIT license"),
+        ("zenodo_template", "does not match the tracked v0.3.0 template"),
+    ],
+)
+def test_release_metadata_reader_rejects_cross_source_drift(
+    tmp_path: Path,
+    target: str,
+    expected_error: str,
+) -> None:
+    repo, _ = create_release_repo(tmp_path)
+    evidence_path = tmp_path / "reservation.json"
+    write_zenodo_reservation_evidence(evidence_path)
+    evidence = packet_builder.validate_zenodo_reservation_evidence(evidence_path, TEST_DOI)
+
+    if target == "readme_placeholder":
+        path = repo / "README.md"
+        path.write_text(
+            path.read_text(encoding="utf-8").replace(TEST_DOI, "10.5281/zenodo.<id>"),
+            encoding="utf-8",
+        )
+    elif target == "manuscript_repository":
+        path = repo / "paper" / "preprint_draft.md"
+        path.write_text(
+            path.read_text(encoding="utf-8").replace(REPOSITORY, "https://example.org/wrong"),
+            encoding="utf-8",
+        )
+    elif target == "citation_creator":
+        path = repo / "CITATION.cff"
+        path.write_text(
+            path.read_text(encoding="utf-8").replace("given-names: Xiaowu", "given-names: Wrong"),
+            encoding="utf-8",
+        )
+    elif target == "package_license":
+        path = repo / "pyproject.toml"
+        path.write_text(
+            path.read_text(encoding="utf-8").replace('license = "MIT"', 'license = "Apache-2.0"'),
+            encoding="utf-8",
+        )
+    else:
+        path = repo / "resources" / "zenodo" / "mito_overview_v0.3.0_draft.json"
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload["metadata"]["description"] = "A different release object."
+        path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match=expected_error):
+        packet_builder.read_release_metadata(
+            repo,
+            TEST_DOI,
+            evidence["release_metadata"],
+        )
 
 
 def test_packet_rejects_unreserved_doi(tmp_path: Path) -> None:

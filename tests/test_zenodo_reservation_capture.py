@@ -30,6 +30,31 @@ DOI = f"10.5281/zenodo.{RECORD_ID}"
 API_URL = f"https://zenodo.org/api/deposit/depositions/{RECORD_ID}"
 
 
+def release_metadata() -> dict[str, object]:
+    return {
+        "title": capture.EXPECTED_TITLE,
+        "upload_type": capture.EXPECTED_UPLOAD_TYPE,
+        "description": (
+            "Mode-gated mitochondrial DNA evidence reporting workflow for aligned "
+            "sequencing data."
+        ),
+        "creators": [
+            {"name": name, "affiliation": affiliation}
+            for name, affiliation in capture.EXPECTED_CREATORS
+        ],
+        "license": capture.EXPECTED_LICENSE,
+        "version": capture.EXPECTED_VERSION,
+        "publication_date": capture.EXPECTED_PUBLICATION_DATE,
+        "related_identifiers": [
+            {
+                "identifier": capture.EXPECTED_REPOSITORY,
+                "relation": "isSupplementTo",
+            }
+        ],
+        "keywords": ["mitochondrial DNA", "bioinformatics workflow"],
+    }
+
+
 def deposition_response() -> dict[str, object]:
     return {
         "id": RECORD_ID,
@@ -37,7 +62,7 @@ def deposition_response() -> dict[str, object]:
         "links": {"self": API_URL, "bucket": "not retained"},
         "metadata": {
             "prereserve_doi": {"doi": DOI, "recid": RECORD_ID},
-            "title": "not retained",
+            **release_metadata(),
         },
         "state": "unsubmitted",
         "submitted": False,
@@ -74,6 +99,7 @@ def test_sanitized_evidence_is_exact_and_secret_free() -> None:
     )
     assert evidence["doi"] == DOI
     assert evidence["record_id"] == RECORD_ID
+    assert evidence["schema_version"] == "1.1"
     assert set(evidence) == {
         "schema_version",
         "evidence_type",
@@ -89,6 +115,14 @@ def test_sanitized_evidence_is_exact_and_secret_free() -> None:
     assert "owner" not in serialized
     assert "token" not in serialized
     assert "not retained" not in serialized
+    metadata = evidence["deposition_response"]["metadata"]
+    assert metadata["title"] == capture.EXPECTED_TITLE
+    assert metadata["creators"] == release_metadata()["creators"]
+    assert metadata["upload_type"] == "software"
+    assert metadata["license"].lower() == "mit"
+    assert metadata["version"] == "0.3.0"
+    assert metadata["publication_date"] == "2026-07-20"
+    assert metadata["related_identifiers"] == release_metadata()["related_identifiers"]
 
 
 @pytest.mark.parametrize(
@@ -124,7 +158,7 @@ def test_request_uses_bearer_header_without_url_token() -> None:
 
 def test_create_requires_metadata_and_expected_status() -> None:
     session = FakeSession(FakeResponse(deposition_response(), 201))
-    payload = {"metadata": {"prereserve_doi": True}}
+    payload = {"metadata": {**release_metadata(), "prereserve_doi": True}}
     capture.request_deposition(
         session, action="create", token="test-secret", metadata=payload
     )
@@ -158,4 +192,32 @@ def test_tracked_metadata_requests_reservation() -> None:
         / "mito_overview_v0.3.0_draft.json"
     )
     payload = capture.load_create_metadata(path)
-    assert payload["metadata"]["prereserve_doi"] is True
+    metadata = payload["metadata"]
+    assert metadata["prereserve_doi"] is True
+    assert metadata["title"] == "mito-overview v0.3.0"
+    assert metadata["version"] == "0.3.0"
+    assert metadata["upload_type"] == "software"
+    assert metadata["license"].lower() == "mit"
+    assert metadata["publication_date"] == "2026-07-20"
+    assert metadata["creators"] == release_metadata()["creators"]
+    assert metadata["related_identifiers"] == release_metadata()["related_identifiers"]
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("version", "TBD", "placeholder"),
+        ("upload_type", "dataset", "does not match"),
+        ("license", "CC-BY-4.0", "does not match"),
+        ("publication_date", "2026-07-21", "does not match"),
+    ],
+)
+def test_release_metadata_rejects_placeholders_or_wrong_identity(
+    field: str,
+    value: object,
+    message: str,
+) -> None:
+    metadata = release_metadata()
+    metadata[field] = value
+    with pytest.raises(ValueError, match=message):
+        capture.sanitize_release_metadata(metadata)

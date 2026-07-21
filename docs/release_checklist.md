@@ -75,6 +75,7 @@ After reserving the Zenodo DOI, synchronizing it into release metadata, committi
 
 ```bash
 export MITO_OVERVIEW_ARCHIVE_DOI=10.5281/zenodo.<reserved-record-id>
+export MITO_OVERVIEW_ZENODO_RESERVATION_EVIDENCE=<absolute-private-path>/zenodo_reservation.json
 MITO_OVERVIEW_GITHUB_RUN_ID=<completed-run-id> \
   ./scripts/run_release_validation_v0.3.0.sh \
   <empty-validation-root> \
@@ -83,7 +84,7 @@ MITO_OVERVIEW_GITHUB_RUN_ID=<completed-run-id> \
   <artifact-directory>/mito-overview-v0.3.0-validation.zip
 ```
 
-The DOI may instead be supplied as the fifth positional argument. The command requires a canonical reserved Zenodo DOI, rejects `UNRESERVED`, requires the same top-level DOI in `CITATION.cff`, and passes it explicitly to the packet builder. It must build `mito-overview-v0.3.0-validation.zip`, execute the generated `verify_bundle.sh` against both the packet root and a fresh extraction of that ZIP, and write build/verification logs, a ZIP SHA-256 sidecar, and a PASS receipt. It emits no final PASS unless all of that evidence exists and both verifier runs succeed.
+The DOI may instead be supplied as the fifth positional argument. `MITO_OVERVIEW_ZENODO_RESERVATION_EVIDENCE` must point to the sanitized JSON produced by the guarded capture helper; a DOI string alone is insufficient. The command requires a canonical reserved Zenodo DOI, rejects `UNRESERVED`, requires the same DOI and release identity across `pyproject.toml`, `mito_overview/__init__.py`, `CITATION.cff`, README, manuscript, and captured Zenodo metadata wherever each field is representable, and passes the DOI and evidence explicitly to the packet builder. It must build `mito-overview-v0.3.0-validation.zip`, execute the generated `verify_bundle.sh` against both the packet root and a fresh extraction of that ZIP, and write build/verification logs, a ZIP SHA-256 sidecar, and a PASS receipt. It emits no final PASS unless all of that evidence exists and both verifier runs succeed.
 
 The final packet must reject missing evidence, metadata-version disagreement, commit mismatch, non-passing required cases, incomplete public provenance, CI results from a different commit or non-push event, an absent/unreserved DOI, a DOI without captured Zenodo reservation-record evidence, a DOI that differs from synchronized citation metadata, and archive members whose normalized extraction paths collide.
 
