@@ -7,16 +7,29 @@ but this figure intentionally contains no workflow schematic.
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import matplotlib.image as mpimg
 import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
 from matplotlib.patches import FancyBboxPatch
 
-
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
+from mito_overview.steps.mito_cosegregation import (
+    CANONICAL_JACCARD_COLUMN,
+    CONDITIONAL_UNIVERSE,
+    LEGACY_JACCARD_COLUMN,
+    _write_heatmap,
+)
+
+
 FIGURE_DIR = ROOT / "paper" / "figures"
 SOURCE_DIR = ROOT / "examples" / "public_validation" / "GM12878_ONT_longread" / "figures"
+SUMMARY_DIR = SOURCE_DIR.parent / "summary"
 OUT_PNG = FIGURE_DIR / "figure0_workflow_architecture.png"
 OUT_SVG = FIGURE_DIR / "figure0_workflow_architecture.svg"
 
@@ -28,9 +41,40 @@ CARD = "#f8fafc"
 PANELS = [
     ("A", "Mitochondrial depth profile", "mito_depth_profile.png"),
     ("B", "Alternate-allele fraction landscape", "mito_heteroplasmy_landscape.png"),
-    ("C", "Selected-site read co-occurrence", "mito_cosegregation_heatmap.png"),
+    ("C", "Conditional alt-read co-occurrence", "mito_cosegregation_heatmap.png"),
     ("D", "Alignment-ambiguity QC: span versus MAPQ", "mito_numt_qc_mapq_vs_span.png"),
 ]
+
+
+def rebuild_conditional_cosegregation_panel() -> None:
+    selected = pd.read_csv(SUMMARY_DIR / "mito_cosegregation_selected_sites.tsv", sep="\t")
+    pairwise = pd.read_csv(SUMMARY_DIR / "mito_cosegregation_pairwise.tsv", sep="\t")
+    required = {
+        "site_i",
+        "site_j",
+        "conditional_universe",
+        CANONICAL_JACCARD_COLUMN,
+        LEGACY_JACCARD_COLUMN,
+    }
+    if selected.empty or pairwise.empty or not required.issubset(pairwise.columns):
+        raise ValueError("Public co-occurrence tables do not satisfy the v0.3.0 figure contract")
+    if set(pairwise["conditional_universe"].astype(str)) != {CONDITIONAL_UNIVERSE}:
+        raise ValueError("Public co-occurrence table has an unexpected conditional universe")
+    if not np.allclose(
+        pairwise[CANONICAL_JACCARD_COLUMN].astype(float),
+        pairwise[LEGACY_JACCARD_COLUMN].astype(float),
+    ):
+        raise ValueError("Public co-occurrence compatibility alias differs from the canonical field")
+
+    labels = selected["site_label"].astype(str).tolist()
+    heatmap = pd.DataFrame(np.nan, index=labels, columns=labels, dtype=float)
+    for label in labels:
+        heatmap.loc[label, label] = 1.0
+    for row in pairwise.itertuples(index=False):
+        value = float(getattr(row, CANONICAL_JACCARD_COLUMN))
+        heatmap.loc[str(row.site_i), str(row.site_j)] = value
+        heatmap.loc[str(row.site_j), str(row.site_i)] = value
+    _write_heatmap(SOURCE_DIR, "GM12878 ONT qn1000", heatmap)
 
 
 def add_panel(fig, rect: tuple[float, float, float, float], panel_id: str, title: str, filename: str) -> None:
@@ -69,6 +113,7 @@ def add_panel(fig, rect: tuple[float, float, float, float], panel_id: str, title
 
 def build_figure() -> None:
     FIGURE_DIR.mkdir(parents=True, exist_ok=True)
+    rebuild_conditional_cosegregation_panel()
     plt.rcParams.update(
         {
             "font.family": "DejaVu Sans",

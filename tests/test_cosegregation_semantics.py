@@ -38,3 +38,28 @@ def test_alt_jaccard_is_conditioned_on_shared_spanning_reads() -> None:
     assert row["alt_jaccard_within_shared_spanning_reads"] != pytest.approx(global_set_jaccard)
     assert row["jaccard_alt"] == row["alt_jaccard_within_shared_spanning_reads"]
     assert heatmap.loc["10:A>C", "20:A>G"] == row["alt_jaccard_within_shared_spanning_reads"]
+
+
+@pytest.mark.parametrize(
+    ("selected_sites", "valid_pairs", "upstream_message", "status", "reason_code"),
+    [
+        (0, 0, "candidate table empty", "not_evaluable", "no_candidate_sites_available"),
+        (1, 0, None, "not_evaluable", "fewer_than_two_selected_sites"),
+        (2, 0, None, "not_evaluable", "no_pairs_meet_shared_read_threshold"),
+        (2, 1, None, "ok", ""),
+    ],
+)
+def test_pairwise_status_requires_an_evaluable_pair(
+    selected_sites: int,
+    valid_pairs: int,
+    upstream_message: str | None,
+    status: str,
+    reason_code: str,
+) -> None:
+    observed_status, _, observed_reason, _ = cosegregation._evaluation_status(
+        selected_site_count=selected_sites,
+        valid_pair_count=valid_pairs,
+        upstream_message=upstream_message,
+    )
+    assert observed_status == status
+    assert observed_reason == reason_code

@@ -48,7 +48,7 @@ def test_defaults_extract_planned_v030_packet_shape(tmp_path: Path) -> None:
         ("cases.tsv", b"case_id\tverdict\nunit_known_answer\tPASS\n"),
         ("claim_evidence_matrix.tsv", b"claim_id\tevidence\nC1\tunit_known_answer\n"),
         ("commands/unit.sh", b"#!/usr/bin/env bash\nexit 0\n"),
-        ("logs/unit.log", b"207 passed\n"),
+        ("logs/unit.log", b"unit suite passed\n"),
         ("expected/TOY-WGS-001.tsv", b"ratio\n10.0\n"),
         ("observed_normalized/TOY-WGS-001.tsv", b"ratio\n10.0\n"),
         ("artifacts.sha256", b"placeholder  run.json\n"),

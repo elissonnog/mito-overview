@@ -118,7 +118,7 @@ MITO_OVERVIEW_PYTHON="$PWD/.conda-release-check/bin/python" \
 
 | Check | Verdict | Observed evidence |
 | --- | --- | --- |
-| Deterministic unit/known-answer suite | PASS | 199 passed in 14.02 s |
+| Deterministic unit/known-answer suite | PASS | 233 passed in 15.69 s |
 | CLI step listing | PASS | command exited 0 |
 | Generic configured dry-run | PASS | command exited 0 |
 | Synthetic long-read workflow | PASS | all applicable steps completed; fixture mvTool and methylation paths exercised |
@@ -234,7 +234,7 @@ These differences describe filter dependence. They are not sensitivity, specific
 
 | Claim permitted for v0.3.0 | Supporting evidence | Boundary |
 | --- | --- | --- |
-| Shared, filtered alternate-allele counting is deterministic on known-answer fixtures | `tests/test_allele_counting.py`; 145-test PASS | No clinical calibration |
+| Shared, filtered alternate-allele counting is deterministic on known-answer fixtures | `tests/test_allele_counting.py`; 233-test PASS | No clinical calibration |
 | Co-segregation reuses the same observation filters | shared engine tests and synthetic long-read smoke | No biological phasing benchmark |
 | Default mvTool execution is offline | `tests/test_mvtool_modes.py`; standalone smoke reports `not_configured` | Network service content not validated |
 | Generic BAM/CRAM inputs are supported | config tests plus minimal standalone smoke | Platform breadth limited to tested environments |
@@ -262,7 +262,7 @@ Version `0.3.0` remains unreleased. The final tag, release date, and version-spe
 
 An external reviewer can:
 
-1. Run the 199-test suite and four synthetic workflows with the commands above.
+1. Run the 233-test suite and four synthetic workflows with the commands above.
 2. Verify the GM11906 and GM12878 tracked provenance JSON and SHA-256 records.
 3. Confirm `m.8344A>G` is `1027/740/0.720545` in the default GM11906 output.
 4. Confirm GM12878 uses exactly the labeled 1,000-query-name deterministic subset.

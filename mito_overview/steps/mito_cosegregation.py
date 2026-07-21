@@ -270,6 +270,41 @@ def _summarise_read_burden(
     return burden_df, reads_with_any_coverage
 
 
+def _evaluation_status(
+    *,
+    selected_site_count: int,
+    valid_pair_count: int,
+    upstream_message: str | None,
+) -> tuple[str, str, str, str | None]:
+    if upstream_message:
+        return (
+            "not_evaluable",
+            "shared-spanning-read conditional co-segregation was not evaluable",
+            "no_candidate_sites_available",
+            upstream_message,
+        )
+    if selected_site_count < 2:
+        return (
+            "not_evaluable",
+            "shared-spanning-read conditional co-segregation requires at least two selected sites",
+            "fewer_than_two_selected_sites",
+            "Fewer than two candidate sites were selected, so no pairwise statistic was defined.",
+        )
+    if valid_pair_count == 0:
+        return (
+            "not_evaluable",
+            "no selected-site pair met the shared-read requirement",
+            "no_pairs_meet_shared_read_threshold",
+            "Pairwise statistics were not reported because no site pair met the configured shared-read floor.",
+        )
+    return (
+        "ok",
+        "shared-spanning-read conditional co-segregation completed",
+        "",
+        None,
+    )
+
+
 def _write_heatmap(
     figure_dir: Path,
     sample_id: str,
@@ -379,7 +414,7 @@ def run_step(
     )
 
     strongest_pair = "NA"
-    strongest_pair_conditional_alt_jaccard = 0.0
+    strongest_pair_conditional_alt_jaccard: float | str = "NA"
     if not pairwise_df.empty:
         strongest_row = pairwise_df.sort_values(
             [CANONICAL_JACCARD_COLUMN, "co_alt_reads", "shared_reads", "site_i", "site_j"],
@@ -388,46 +423,45 @@ def run_step(
         strongest_pair = f"{strongest_row['site_i']} | {strongest_row['site_j']}"
         strongest_pair_conditional_alt_jaccard = round(float(strongest_row[CANONICAL_JACCARD_COLUMN]), 6)
 
-    status = "not_evaluable" if status_message else "ok"
-    status_detail = (
-        "shared-spanning-read conditional co-segregation was not evaluable"
-        if status_message
-        else "shared-spanning-read conditional co-segregation completed"
+    status, status_detail, reason_code, evaluation_message = _evaluation_status(
+        selected_site_count=len(selected_df),
+        valid_pair_count=len(pairwise_df),
+        upstream_message=status_message,
     )
     summary_rows = [
-            {"metric": "status", "value": status},
-            {"metric": "status_detail", "value": status_detail},
-            {"metric": "reason_code", "value": "no_candidate_sites_available" if status_message else ""},
-            {"metric": "method", "value": COSEGREGATION_METHOD},
-            {"metric": "conditional_universe", "value": CONDITIONAL_UNIVERSE},
-            {
-                "metric": "jaccard_alt_compatibility_alias_of",
-                "value": CANONICAL_JACCARD_COLUMN,
-            },
-            {"metric": "selected_sites", "value": len(selected_df)},
-            {
-                "metric": "pairwise_edges_meeting_shared_threshold",
-                "value": len(pairwise_df),
-            },
-            {
-                "metric": "reads_with_any_selected_site_coverage",
-                "value": reads_with_any_coverage,
-            },
-            {
-                "metric": "min_shared_reads_threshold",
-                "value": MIN_SHARED_READS_THRESHOLD,
-            },
-            {"metric": "top_sites_limit", "value": TOP_SITES_LIMIT},
-            {"metric": "strongest_pair", "value": strongest_pair},
-            {
-                "metric": "strongest_pair_alt_jaccard_within_shared_spanning_reads",
-                "value": strongest_pair_conditional_alt_jaccard,
-            },
-            {
-                "metric": "strongest_pair_jaccard_alt",
-                "value": strongest_pair_conditional_alt_jaccard,
-            },
-        ]
+        {"metric": "status", "value": status},
+        {"metric": "status_detail", "value": status_detail},
+        {"metric": "reason_code", "value": reason_code},
+        {"metric": "method", "value": COSEGREGATION_METHOD},
+        {"metric": "conditional_universe", "value": CONDITIONAL_UNIVERSE},
+        {
+            "metric": "jaccard_alt_compatibility_alias_of",
+            "value": CANONICAL_JACCARD_COLUMN,
+        },
+        {"metric": "selected_sites", "value": len(selected_df)},
+        {
+            "metric": "pairwise_edges_meeting_shared_threshold",
+            "value": len(pairwise_df),
+        },
+        {
+            "metric": "reads_with_any_selected_site_coverage",
+            "value": reads_with_any_coverage,
+        },
+        {
+            "metric": "min_shared_reads_threshold",
+            "value": MIN_SHARED_READS_THRESHOLD,
+        },
+        {"metric": "top_sites_limit", "value": TOP_SITES_LIMIT},
+        {"metric": "strongest_pair", "value": strongest_pair},
+        {
+            "metric": "strongest_pair_alt_jaccard_within_shared_spanning_reads",
+            "value": strongest_pair_conditional_alt_jaccard,
+        },
+        {
+            "metric": "strongest_pair_jaccard_alt",
+            "value": strongest_pair_conditional_alt_jaccard,
+        },
+    ]
     summary_rows.extend(policy_rows(policy, filter_stats))
     summary_df = pd.DataFrame(summary_rows)
 
@@ -441,7 +475,7 @@ def run_step(
     read_burden_df.to_csv(read_burden_path, sep="\t", index=False)
     summary_df.to_csv(summary_path, sep="\t", index=False)
 
-    heatmap_path = _write_heatmap(figure_dir, sample_id, heatmap_df)
+    heatmap_path = _write_heatmap(figure_dir, sample_id, heatmap_df) if status == "ok" else None
 
     metrics_html = "".join(
         [
@@ -454,8 +488,11 @@ def run_step(
             ),
         ]
     )
-    if status_message:
-        status_html = f"<p class='small-note'><strong>Method/status:</strong> {status_detail}. {status_message}</p>"
+    if evaluation_message:
+        status_html = (
+            f"<p class='small-note'><strong>Method/status:</strong> {status_detail}. "
+            f"{evaluation_message}</p>"
+        )
     else:
         status_html = (
             "<p class='small-note'><strong>Method/status:</strong> Analysis completed. "

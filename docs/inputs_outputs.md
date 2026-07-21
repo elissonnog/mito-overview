@@ -9,7 +9,7 @@ This document is the v0.3.0 schema index for the public `mito-overview` workflow
 | reference FASTA | yes | coordinate system and base reference | must be indexed; CRAM requires sequence-MD5-compatible reference identity even when no mtDNA records are present |
 | mitochondrial contig name | yes | selects the mtDNA reference sequence | examples use `NC_012920.1`; HPC human WGS runs may use `MT` depending on reference |
 | mitochondrial contig length | inferred | bounds per-base summaries and report labels | inferred from FASTA index; an explicitly supplied conflicting value fails preflight |
-| mitochondrial gene annotation | yes | feature/gene/consequence summaries | public package includes human mtDNA annotation resources |
+| mitochondrial gene annotation | optional | feature/gene/consequence summaries | public package includes a human mtDNA annotation resource; absence produces an explicit `not_configured` feature-annotation page |
 | run configuration env file | yes | sample ID, paths, canonical thresholds, species/build, read mode, assay type | consumed by `scripts/run_mito_pipeline.sh` and package CLI |
 | bedmethyl-derived mtDNA input | optional | exploratory methylation page | absent inputs produce status-only output |
 | phased/no-phased sidecar summaries | optional | identity QC | absent inputs produce status-only output or not-applicable page by mode |

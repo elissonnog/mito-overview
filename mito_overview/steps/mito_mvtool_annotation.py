@@ -362,6 +362,29 @@ def run_step(
                 ],
                 message="mvTool network mode requires an explicit API URL.",
             )
+        parsed_network_url = urlparse(api_url.strip())
+        if (
+            parsed_network_url.scheme.lower() not in {"http", "https"}
+            or not parsed_network_url.netloc
+            or parsed_network_url.username is not None
+            or parsed_network_url.password is not None
+        ):
+            return write_status_page(
+                report_path=report_path,
+                summary_path=summary_path,
+                annot_path=annot_path,
+                batch_log_path=batch_log_path,
+                sample_id=sample_id,
+                status_rows=[
+                    {"metric": "status", "value": "unavailable"},
+                    {"metric": "reason_code", "value": "mvtool_network_url_invalid"},
+                    {"metric": "network_request_attempted", "value": 0},
+                ],
+                message=(
+                    "mvTool network mode requires an HTTP(S) endpoint without embedded credentials. "
+                    "Use fixture mode for local JSON resources."
+                ),
+            )
     else:
         raise ValueError(f"Unsupported mvTool mode: {mode}")
 

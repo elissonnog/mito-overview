@@ -93,6 +93,41 @@ def test_explicit_network_mode_with_mock_response(tmp_path: Path, monkeypatch: p
     assert metric_map(outputs["summary_path"])["network_request_attempted"] == "1"
 
 
+@pytest.mark.parametrize(
+    "api_url",
+    [
+        "file:///tmp/mvtool.json",
+        "ftp://example.org/mvtool",
+        "https://user:password@example.org/mvtool",
+        "example.org/mvtool",
+    ],
+)
+def test_network_mode_rejects_non_http_or_credentialed_urls_without_request(
+    api_url: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    summary, figures, reports = prepare_case(tmp_path)
+    monkeypatch.setattr(
+        mvtool.requests,
+        "Session",
+        lambda: (_ for _ in ()).throw(AssertionError("request session created")),
+    )
+    outputs = mvtool.run_step(
+        summary_dir=summary,
+        figure_dir=figures,
+        report_dir=reports,
+        sample_id="S1",
+        species="human",
+        mode="network",
+        api_url=api_url,
+    )
+    metrics = metric_map(outputs["summary_path"])
+    assert outputs["status"] == "unavailable"
+    assert metrics["reason_code"] == "mvtool_network_url_invalid"
+    assert metrics["network_request_attempted"] == "0"
+
+
 def test_network_submits_every_candidate_once(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     candidate_rows = [
         {"position": 10, "ref_base": "A", "alt_base": "C"},

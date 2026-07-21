@@ -42,10 +42,36 @@ def tracked_paths(repo_root: Path) -> list[str]:
     result = subprocess.run(
         ["git", "ls-files", "-z"],
         cwd=repo_root,
+        capture_output=True,
+    )
+    if result.returncode != 0:
+        source_manifests = sorted(repo_root.glob("*.egg-info/SOURCES.txt"))
+        if len(source_manifests) == 1:
+            return sorted(
+                relative_path
+                for relative_path in source_manifests[0].read_text(encoding="utf-8").splitlines()
+                if relative_path and (repo_root / relative_path).is_file()
+            )
+        return sorted(
+            path.relative_to(repo_root).as_posix()
+            for path in repo_root.rglob("*")
+            if path.is_file()
+            and not path.is_symlink()
+            and "__pycache__" not in path.parts
+            and ".pytest_cache" not in path.parts
+        )
+    deleted = subprocess.run(
+        ["git", "ls-files", "-z", "--deleted"],
+        cwd=repo_root,
         check=True,
         capture_output=True,
     )
-    return [item.decode("utf-8") for item in result.stdout.split(b"\0") if item]
+    deleted_paths = {item for item in deleted.stdout.split(b"\0") if item}
+    return [
+        item.decode("utf-8")
+        for item in result.stdout.split(b"\0")
+        if item and item not in deleted_paths
+    ]
 
 
 def find_violations(repo_root: Path) -> list[str]:

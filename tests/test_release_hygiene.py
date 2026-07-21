@@ -56,3 +56,43 @@ def test_ignored_private_output_is_not_scanned(tmp_path: Path) -> None:
     private.parent.mkdir()
     private.write_text("/group/" + "xgai/work", encoding="utf-8")
     assert hygiene.find_violations(repo) == []
+
+
+def test_deleted_tracked_file_is_not_scanned(tmp_path: Path) -> None:
+    repo = make_repo(tmp_path, "obsolete.txt", b"safe at index time\n")
+    (repo / "obsolete.txt").unlink()
+    assert hygiene.tracked_paths(repo) == []
+    assert hygiene.find_violations(repo) == []
+
+
+def test_extracted_archive_without_git_scans_every_shipped_file(tmp_path: Path) -> None:
+    root = tmp_path / "source-distribution"
+    safe = root / "README.md"
+    unsafe = root / "payload.bin"
+    root.mkdir()
+    safe.write_text("public release\n", encoding="utf-8")
+    unsafe.write_bytes(b"/Users/" + b"elopes/private")
+
+    assert hygiene.tracked_paths(root) == ["README.md", "payload.bin"]
+    assert hygiene.find_violations(root) == ["payload.bin: developer_home_path"]
+
+
+def test_extracted_sdist_uses_sources_manifest_not_runtime_cache(tmp_path: Path) -> None:
+    root = tmp_path / "source-distribution"
+    manifest = root / "mito_overview.egg-info" / "SOURCES.txt"
+    shipped = root / "README.md"
+    runtime_cache = root / "tests" / "__pycache__" / "generated.pyc"
+    manifest.parent.mkdir(parents=True)
+    runtime_cache.parent.mkdir(parents=True)
+    shipped.write_text("public release\n", encoding="utf-8")
+    runtime_cache.write_bytes(b"/Users/" + b"elopes/private")
+    manifest.write_text(
+        "README.md\nmito_overview.egg-info/SOURCES.txt\n",
+        encoding="utf-8",
+    )
+
+    assert hygiene.tracked_paths(root) == [
+        "README.md",
+        "mito_overview.egg-info/SOURCES.txt",
+    ]
+    assert hygiene.find_violations(root) == []
