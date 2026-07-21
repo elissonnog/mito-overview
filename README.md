@@ -2,16 +2,16 @@
 
 `mito-overview` is a Python-based workflow for mode-gated mitochondrial DNA (mtDNA) evidence reporting from aligned BAM or CRAM inputs. The current public implementation provides a long-read-oriented profile and a reduced short-read compatibility profile that preserves the analytical layers applicable without long molecules or ONT methylation tracks. The repository emphasizes synchronized HTML, TSV, and figure generation for mitochondrial QC, alternate-allele screening, structural screening, an experimental within-sample mt:nuclear depth ratio when nuclear context is evaluable, feature annotation, same-read co-occurrence, and warning-oriented QC.
 
-Version `0.3.0` is an unreleased workflow/resource release candidate. Its public validation evidence covers report execution, synchronized artifacts, mode/status gating, filter-profile dependence, and repeatability from provenance-verified fixed BAM inputs; no final tag, release date, or version-specific DOI is claimed.
+Version `0.3.0` is an unreleased workflow/resource release candidate. Historical clean-commit public validation evidence covers report execution, synchronized artifacts, mode/status gating, filter-profile dependence, and repeatability from provenance-verified fixed BAM inputs. Exact-final-commit public reruns, CI, DOI synchronization, and the audit ZIP remain release gates; no final tag, release date, or version-specific DOI is claimed.
 
 ## Scope
 - aligned BAM or CRAM input
 - mitochondrial subset extraction
-- heteroplasmy screening
+- observed alternate-allele-fraction candidate screening
 - CIGAR-deletion structural screening with a separate supplementary-alignment/`SA` summary
 - experimental within-sample mt:nuclear depth ratio when nuclear context is evaluable
 - mitochondrial feature and gene-level summarization
-- NUMT-aware and circularity-aware QC
+- reference-scope-gated alignment-ambiguity and circularity QC
 - optional exploratory methylation summaries
 - HTML, TSV, and figure outputs per analytical section
 
@@ -48,6 +48,8 @@ The modules below are implemented in the public repository and exercised by the 
 - final sync into a persistent report directory
 
 Human mtDNA currently has the clearest public configuration path. Human-specific external annotation and haplogroup layers remain optional, and non-human use should be limited to the reference-driven core modules unless separately validated.
+
+Automatic `whole_genome` reference scope is conservative: it requires an exact GRCh37, GRCh38, GRCm38, or GRCm39 chromosome-length profile, including the assembly-specific mitochondrial length. Reduced, scaled, hybrid, or modified references resolve to `custom`, while mt-only references resolve to `mt_only`. Categorical NUMT-warning output additionally requires complete usable read-stat fields and primary-alignment evidence; otherwise the report retains computable raw metrics and records `not_evaluable` with an explicit reason rather than zero-filling evidence.
 
 ## Relationship to other mtDNA software
 `mito-overview` is designed to complement, not replace, established mtDNA tools. Variant callers, haplogroup classifiers, annotation services, contamination/NUMT tools, and visualization resources remain the right primary tools for their respective tasks. The narrower contribution here is a local, per-sample, mode-gated report bundle that keeps active analyses, optional enrichments, and unsupported assay layers synchronized.
@@ -207,9 +209,9 @@ This example uses the public GM12878 targeted-mt ONT dataset reported by Vandive
 - [NCBI BioProject PRJNA809571](https://www.ncbi.nlm.nih.gov/bioproject/PRJNA809571)
 - [ENA run SRR18110025](https://www.ebi.ac.uk/ena/browser/view/SRR18110025)
 
-The release-candidate input is exactly a seeded deterministic subset of `1,000` query names selected from `193,043` source FASTQ records. The reads were aligned to `NC_012920.1` with minimap2 `2.31-r1302`; the provenance-verified mapped-only BAM has `728` mapped unique query names represented by `728` primary alignments and `543` supplementary records.
+The tracked historical release-candidate input is exactly a seeded deterministic subset of `1,000` query names selected from `193,043` source FASTQ records. The reads were aligned to `NC_012920.1` with minimap2 `2.31-r1302`; the provenance-verified mapped-only BAM has `728` mapped unique query names represented by `728` primary alignments and `543` supplementary records.
 
-At `MIN_CALLABLE_DEPTH=100`, `MIN_ALT_ALLELE_FRACTION=0.10`, and default BaseQ/MAPQ/readQ filters `13/20/10`, the workflow reports `16` candidates, `7,143,152` accepted observations, and `2,047,476` excluded observations. The structural screen emits `13` singleton CIGAR-deletion bins, each supported by one query name; separately, `542` query names have a supplementary alignment or `SA` tag. Statuses are `not_applicable` for the within-sample mt:nuclear depth ratio and Phy-Mer, `not_configured` for mvTool and methylation, and `not_evaluable` for NUMT interpretation with `reference_scope_mt_only`.
+At historical clean validation source commit `dc09114e1a0dcec2baf83d94549dfa41f3e49c8b`, `MIN_CALLABLE_DEPTH=100`, `MIN_ALT_ALLELE_FRACTION=0.10`, and default BaseQ/MAPQ/readQ filters `13/20/10`, the workflow reported `16` candidates, `7,143,152` accepted observations, and `2,047,476` excluded observations. The structural screen emitted `13` singleton CIGAR-deletion bins, each supported by one query name; separately, `542` query names had a supplementary alignment or `SA` tag. Statuses were `not_applicable` for the within-sample mt:nuclear depth ratio and Phy-Mer, `not_configured` for mvTool and methylation, and `not_evaluable` for NUMT interpretation with `reference_scope_mt_only`.
 
 | GM12878 profile | BaseQ/MAPQ/readQ | Candidates | Accepted observations |
 | --- | --- | ---: | ---: |
@@ -228,7 +230,7 @@ This example uses public GM11906 short-read/scATAC-derived mtDNA reads from the 
 - [GEO sample metadata example](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSM4238489)
 - [Coriell GM11906](https://www.coriell.org/0/Sections/Search/Sample_Detail.aspx?Ref=GM11906)
 
-The short-read example runs with `READ_MODE=short` and `ASSAY_TYPE=targeted_mt`. At `MIN_CALLABLE_DEPTH=10`, `MIN_ALT_ALLELE_FRACTION=0.20`, and default BaseQ/MAPQ/readQ filters `13/20/10`, it reports `33` candidates, `44,052,664` accepted observations, and `7,293,106` excluded observations. The `m.8344A>G` row has depth `1,027`, alternate count `740`, `AF=0.720545`, and `MT-TK` / `tRNA_variant` annotation.
+The tracked historical short-read example uses `READ_MODE=short` and `ASSAY_TYPE=targeted_mt`. At clean validation source commit `dc09114e1a0dcec2baf83d94549dfa41f3e49c8b`, `MIN_CALLABLE_DEPTH=10`, `MIN_ALT_ALLELE_FRACTION=0.20`, and default BaseQ/MAPQ/readQ filters `13/20/10`, it reported `33` candidates, `44,052,664` accepted observations, and `7,293,106` excluded observations. The `m.8344A>G` row had depth `1,027`, alternate count `740`, `AF=0.720545`, and `MT-TK` / `tRNA_variant` annotation.
 
 | GM11906 profile | BaseQ/MAPQ/readQ | Candidates | Accepted observations |
 | --- | --- | ---: | ---: |

@@ -1,9 +1,11 @@
-# Public ONT long-read reduced-input release-candidate evidence
+# Historical public ONT long-read reduced-input evidence
 
-The unreleased `mito-overview` v0.3.0 release candidate includes a bounded public GM12878 ONT targeted-mt example for exercising the long-read report workflow and its assay-mode status handling.
+The repository tracks a bounded public GM12878 ONT targeted-mt example for exercising the long-read report workflow and its assay-mode status handling. These outputs are historical derived evidence for the unreleased `mito-overview` v0.3.0 candidate; they are not represented as having been generated at the eventual final release commit.
 
 ## Evidence scope
-- evidence snapshot: `2026-07-20`
+- historical evidence snapshot: `2026-07-20`
+- historical clean validation source commit: `dc09114e1a0dcec2baf83d94549dfa41f3e49c8b`
+- tracked-output status: derived from that historical source commit; not final v0.3.0 release-packet evidence
 - public accessions: BioProject `PRJNA809571`, run `SRR18110025`
 - dataset source: [Vandiver et al., 2022, PMCID PMC9399971](https://pmc.ncbi.nlm.nih.gov/articles/PMC9399971/)
 - public assay description: `Long read mitochondrial genome sequencing using Cas9-guided adaptor ligation`
@@ -25,12 +27,16 @@ The provenance-verified mapped-only BAM contains:
 - `543` supplementary records
 - `1,271` mapped alignment records in total
 
-The validation matrix reuses that fixed BAM. Its repeatability result is conditional on the BAM and does not test regeneration of the query-name subset or alignment.
+The historical validation matrix reused that fixed BAM. Its repeatability result is conditional on the BAM and does not test regeneration of the query-name subset or alignment.
+
+## Final v0.3.0 release binding
+
+Before these observations can support final v0.3.0 release acceptance, the public matrix must be rerun from the exact clean final candidate created after DOI/metadata synchronization. The required audit packet must bind that same full commit to fixed-input provenance and hashes, commands, logs, normalized observed outputs, filter-profile checks, package artifacts, and passing Linux/macOS CI evidence. Until that packet exists and passes, the values below remain historical `dc09114...`-derived observations and all final release, CI, DOI, tag, and archive gates remain pending.
 
 ## Default profile
 The example-specific candidate thresholds are `MIN_CALLABLE_DEPTH=100` and `MIN_ALT_ALLELE_FRACTION=0.10`. The default observation filters are `ALLELE_MIN_BASE_QUALITY=13`, `ALLELE_MIN_MAPPING_QUALITY=20`, and `ALLELE_MIN_READ_MEAN_QUALITY=10`.
 
-The default run reports:
+The historical default run reported:
 
 - `16` candidate sites
 - `7,143,152` accepted observations
@@ -53,7 +59,7 @@ Targeted-mt and optional-layer status values are:
 ## Filter-profile matrix
 Profiles vary only the allele-observation quality filters; candidate thresholds remain fixed.
 
-Candidate counts are lenient=`32`, default=`16`, and strict=`15`; accepted observations are lenient=`8,278,969`, default=`7,143,152`, and strict=`6,046,355`.
+Historical candidate counts were lenient=`32`, default=`16`, and strict=`15`; accepted observations were lenient=`8,278,969`, default=`7,143,152`, and strict=`6,046,355`.
 
 | Profile | BaseQ | MAPQ | ReadQ | Candidate sites | Accepted observations | Excluded observations |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -62,7 +68,7 @@ Candidate counts are lenient=`32`, default=`16`, and strict=`15`; accepted obser
 | strict | 20 | 30 | 15 | 15 | 6,046,355 | 3,144,273 |
 
 ## Repeatability and claim scope
-Two default invocations from the same provenance-verified BAM produced matching normalized TSVs. HTML and PNG artifacts were readable and structurally consistent across the repeats. This evidence supports fixed-input workflow execution, report/resource generation, filter-profile dependence, and status gating only.
+At the historical source commit, two default invocations from the same provenance-verified BAM produced matching normalized TSVs. HTML and PNG artifacts were readable and structurally consistent across the repeats. This evidence supports fixed-input workflow execution, report/resource generation, filter-profile dependence, and status gating only. It is supporting context, not a substitute for exact-final-commit release validation.
 
 Tracked asset pack:
 - `examples/public_validation/GM12878_ONT_longread`

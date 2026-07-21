@@ -74,11 +74,11 @@ The `TOY-WGS-001` known-answer test verifies mitochondrial depth 100, nuclear de
 
 ### 5. Reference scope, alignment ambiguity, and BED coordinates
 
-`REFERENCE_SCOPE` accepts `auto`, `mt_only`, `whole_genome`, or `custom`. A reference containing only the configured mitochondrial contig resolves to `mt_only`; recognized complete human or mouse nuclear references resolve to `whole_genome`; ambiguous reduced references resolve to `custom`.
+`REFERENCE_SCOPE` accepts `auto`, `mt_only`, `whole_genome`, or `custom`. A reference containing only the configured mitochondrial contig resolves to `mt_only`; exact GRCh37, GRCh38, GRCm38, or GRCm39 chromosome-length profiles resolve to `whole_genome`; ambiguous, reduced, scaled, hybrid, or modified references resolve to `custom`. Exact recognized profiles also support species inference for a generic FASTA filename.
 
-For `mt_only` and `custom`, raw alignment span, mapping-quality, clipping, and supplementary-alignment metrics remain available, but categorical NUMT-risk interpretation is suppressed. Output is `numt_interpretation_status=not_evaluable` with a scope-specific reason. The compatible report filename is retained and the report is titled alignment-ambiguity QC. The mitochondrial BED interval is exactly zero-based, half-open: `MT_CONTIG\t0\tMT_LENGTH`.
+For `mt_only` and `custom`, raw alignment span, mapping-quality, clipping, and supplementary-alignment metrics remain available, but categorical NUMT-risk interpretation is suppressed. Under `whole_genome`, categorical warning output additionally requires all documented read-stat fields, a valid binary primary-alignment indicator, at least one primary alignment, and a numeric full-length QC metric. Incomplete or malformed required evidence yields `not_evaluable`, an explicit reason code, and `NA` rather than a fabricated zero or low-risk label. The compatible report filename is retained and the report is titled alignment-ambiguity QC. The mitochondrial BED interval is exactly zero-based, half-open: `MT_CONTIG\t0\tMT_LENGTH`.
 
-Deterministic tests verify scope inference, rejection of a false whole-genome override on an incomplete reference, mt-only/custom suppression, bounded whole-genome warning calculation, and exact BED coordinates. Primary tests: `tests/test_reference_scope_and_bed.py`.
+Deterministic tests verify exact-profile scope/species inference, rejection of scaled, hybrid, incomplete, modified, and wrong-mt-length references, rejection of a false whole-genome override, mt-only/custom suppression, incomplete-input suppression, bounded whole-genome warning calculation, and exact BED coordinates. Primary tests: `tests/test_reference_scope_and_bed.py`, `tests/test_config_and_inputs.py`, and `tests/test_numt_qc_inputs.py`.
 
 ## Local deterministic validation
 
@@ -118,7 +118,7 @@ MITO_OVERVIEW_PYTHON="$PWD/.conda-release-check/bin/python" \
 
 | Check | Verdict | Observed evidence |
 | --- | --- | --- |
-| Deterministic unit/known-answer suite | PASS | 124 passed in 18.99 s |
+| Deterministic unit/known-answer suite | PASS | 145 passed in 10.86 s |
 | CLI step listing | PASS | command exited 0 |
 | Generic configured dry-run | PASS | command exited 0 |
 | Synthetic long-read workflow | PASS | all applicable steps completed; fixture mvTool and methylation paths exercised |
@@ -130,7 +130,7 @@ These results characterize the tested release-candidate state within the stated 
 
 ## Public-data validation design
 
-The public validation matrix was run twice at default filters and once at each descriptive filter profile. Exact normalized TSV comparisons were used for repeatability; HTML and PNG files were checked for inventory, dimensions, CRC/structure, and visual consistency rather than byte identity.
+The public validation matrix was run twice at default filters and once at each descriptive filter profile at historical clean validation source commit `dc09114e1a0dcec2baf83d94549dfa41f3e49c8b`. Exact normalized TSV comparisons were used for repeatability; HTML and PNG files were checked for inventory, dimensions, CRC/structure, and visual consistency rather than byte identity. These tracked outputs are release-candidate supporting evidence, not evidence bound to the eventual final v0.3.0 commit. Exact-final-commit reruns and the self-verifying audit ZIP remain release gates.
 
 Lightweight, tracked evidence copies are:
 
@@ -165,7 +165,7 @@ The GM12878 subset used the 1,000 smallest seeded query-name hashes under `small
 
 ### Matrix verdicts
 
-All 13 prespecified release-candidate matrix cases passed.
+All 13 prespecified matrix cases passed at the historical clean source commit. Their final-release status remains pending until the same matrix passes and is packet-bound at the exact final candidate commit.
 
 | Evidence class | Cases | Verdict |
 | --- | ---: | --- |
@@ -234,7 +234,7 @@ These differences describe filter dependence. They are not sensitivity, specific
 
 | Claim permitted for v0.3.0 | Supporting evidence | Boundary |
 | --- | --- | --- |
-| Shared, filtered alternate-allele counting is deterministic on known-answer fixtures | `tests/test_allele_counting.py`; 124-test PASS | No clinical calibration |
+| Shared, filtered alternate-allele counting is deterministic on known-answer fixtures | `tests/test_allele_counting.py`; 145-test PASS | No clinical calibration |
 | Co-segregation reuses the same observation filters | shared engine tests and synthetic long-read smoke | No biological phasing benchmark |
 | Default mvTool execution is offline | `tests/test_mvtool_modes.py`; standalone smoke reports `not_configured` | Network service content not validated |
 | Generic BAM/CRAM inputs are supported | config tests plus minimal standalone smoke | Platform breadth limited to tested environments |
@@ -262,7 +262,7 @@ Version `0.3.0` remains unreleased. The final tag, release date, and version-spe
 
 An external reviewer can:
 
-1. Run the 124-test suite and four synthetic workflows with the commands above.
+1. Run the 145-test suite and four synthetic workflows with the commands above.
 2. Verify the GM11906 and GM12878 tracked provenance JSON and SHA-256 records.
 3. Confirm `m.8344A>G` is `1027/740/0.720545` in the default GM11906 output.
 4. Confirm GM12878 uses exactly the labeled 1,000-query-name deterministic subset.
