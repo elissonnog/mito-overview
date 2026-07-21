@@ -1,11 +1,5 @@
 #!/usr/bin/env python3
-"""Create and verify the immutable GitHub release for MitoOverview v0.3.0.
-
-The utility has three monotonic phases: create an empty verified draft, upload
-and independently verify prepared assets, then explicitly publish the verified
-draft. Commands are always passed to ``subprocess`` as argument vectors; no
-shell is involved.
-"""
+"""Publish the tag-bound MitoOverview v0.3.0 GitHub release safely."""
 
 from __future__ import annotations
 
@@ -17,7 +11,6 @@ import re
 import subprocess
 import sys
 import tempfile
-import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -26,8 +19,9 @@ from typing import Any, Protocol, Sequence
 
 EXPECTED_TAG = "v0.3.0"
 PUBLICATION_SCHEMA_VERSION = "1.0"
-API_VERSION = "2022-11-28"
+API_VERSION = "2026-03-10"
 ACCEPT_HEADER = "application/vnd.github+json"
+PHASES = ("create-draft", "upload-verify", "publish")
 REPOSITORY_PATTERN = re.compile(
     r"^[A-Za-z0-9](?:[A-Za-z0-9_.-]{0,98}[A-Za-z0-9])?/"
     r"[A-Za-z0-9](?:[A-Za-z0-9_.-]{0,98}[A-Za-z0-9])?$"
@@ -37,17 +31,26 @@ ASSET_NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,254}$")
 CHECKSUM_LINE_PATTERN = re.compile(
     r"^(?P<digest>[0-9a-f]{64})  (?P<name>[A-Za-z0-9][A-Za-z0-9._+-]{0,254})$"
 )
-UNSUPPORTED_GH_PATTERNS = (
-    "unknown command",
-    "unknown flag",
-    "not a gh command",
-    "accepts 0 arg",
+CANONICAL_ASSET_NAMES = frozenset(
+    {
+        "mito_overview-0.3.0-py3-none-any.whl",
+        "mito_overview-0.3.0.tar.gz",
+        "mito-overview-v0.3.0-validation.zip",
+        "MitoOverview_v0.3.0_release_validation_report.md",
+        "MitoOverview_v0.3.0_release_validation_report.docx",
+        "MitoOverview_v0.3.0_release_validation_report.pdf",
+        "MitoOverview_v0.3.0_release_validation_report_assets.tar.gz",
+        "mito-overview-v0.3.0-verification.json",
+        "RELEASE_NOTES_v0.3.0.md",
+        "mito-overview-v0.3.0-environment.txt",
+        "mito-overview-v0.3.0-environment-locks.tar.gz",
+        "SHA256SUMS",
+    }
 )
-PHASES = ("create-draft", "upload-verify", "publish")
 
 
 class PublicationError(RuntimeError):
-    """Raised when a release safety or verification gate fails."""
+    """Raised when a publication safety or verification gate fails."""
 
 
 @dataclass(frozen=True)
@@ -60,12 +63,10 @@ class CommandResult:
 
 class Runner(Protocol):
     def run(self, args: Sequence[str], *, check: bool = True) -> CommandResult:
-        """Run one command without invoking a shell."""
+        """Run one command without a shell."""
 
 
 class SubprocessRunner:
-    """Small, replaceable subprocess boundary used for every gh invocation."""
-
     def run(self, args: Sequence[str], *, check: bool = True) -> CommandResult:
         command = tuple(str(value) for value in args)
         if not command or any("\x00" in value for value in command):
@@ -78,10 +79,10 @@ class SubprocessRunner:
             capture_output=True,
         )
         result = CommandResult(
-            args=command,
-            returncode=completed.returncode,
-            stdout=completed.stdout,
-            stderr=completed.stderr,
+            command,
+            completed.returncode,
+            completed.stdout,
+            completed.stderr,
         )
         if check and result.returncode != 0:
             detail = result.stderr.strip() or result.stdout.strip() or "no command output"
@@ -123,6 +124,7 @@ class PublicationConfig:
     tag: str
     output_directory: Path
     phase: str
+    github_actions_run_id: int
     asset_directory: Path | None = None
 
 
@@ -142,17 +144,29 @@ def _sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _repository_url(config: PublicationConfig) -> str:
+    return f"https://github.com/{config.repository}"
+
+
+def _release_url(config: PublicationConfig) -> str:
+    return f"{_repository_url(config)}/releases/tag/{config.tag}"
+
+
 def _validate_config(config: PublicationConfig) -> PublicationConfig:
     if not REPOSITORY_PATTERN.fullmatch(config.repository):
-        raise PublicationError(
-            "Repository must be an owner/name GitHub slug containing only safe characters"
-        )
+        raise PublicationError("Repository must be a safe owner/name GitHub slug")
     if not SHA_PATTERN.fullmatch(config.final_sha):
         raise PublicationError("FINAL_SHA must be exactly 40 lowercase hexadecimal characters")
     if config.tag != EXPECTED_TAG:
-        raise PublicationError(f"This utility publishes only the immutable tag {EXPECTED_TAG}")
+        raise PublicationError(f"This utility publishes only tag {EXPECTED_TAG}")
     if config.phase not in PHASES:
         raise PublicationError(f"Publication phase must be one of {PHASES!r}")
+    if (
+        isinstance(config.github_actions_run_id, bool)
+        or not isinstance(config.github_actions_run_id, int)
+        or config.github_actions_run_id <= 0
+    ):
+        raise PublicationError("GitHub Actions run ID must be a positive integer")
 
     asset_directory: Path | None = None
     if config.phase == "create-draft":
@@ -160,29 +174,24 @@ def _validate_config(config: PublicationConfig) -> PublicationConfig:
             raise PublicationError("--create-draft does not accept an asset directory")
     else:
         if config.asset_directory is None:
-            raise PublicationError(
-                f"--{config.phase} requires --asset-directory"
-            )
-        asset_directory = config.asset_directory.expanduser()
-        if asset_directory.is_symlink() or not asset_directory.is_dir():
-            raise PublicationError(
-                "Asset directory must be an existing, non-symlink directory"
-            )
-        asset_directory = asset_directory.resolve(strict=True)
+            raise PublicationError(f"--{config.phase} requires --asset-directory")
+        candidate = config.asset_directory.expanduser()
+        if candidate.is_symlink() or not candidate.is_dir():
+            raise PublicationError("Asset directory must be an existing non-symlink directory")
+        asset_directory = candidate.resolve(strict=True)
 
     output_directory = config.output_directory.expanduser()
     if output_directory.exists() and output_directory.is_symlink():
         raise PublicationError("Output directory cannot be a symlink")
     output_directory.mkdir(parents=True, exist_ok=True)
     output_directory = output_directory.resolve(strict=True)
-
     if asset_directory is not None:
         if output_directory == asset_directory:
             raise PublicationError("Asset and output directories must be different")
         if output_directory.is_relative_to(asset_directory):
-            raise PublicationError("Output directory cannot be nested inside the asset directory")
+            raise PublicationError("Output directory cannot be inside the asset directory")
         if asset_directory.is_relative_to(output_directory):
-            raise PublicationError("Asset directory cannot be nested inside the output directory")
+            raise PublicationError("Asset directory cannot be inside the output directory")
 
     return PublicationConfig(
         repository=config.repository,
@@ -190,33 +199,36 @@ def _validate_config(config: PublicationConfig) -> PublicationConfig:
         tag=config.tag,
         output_directory=output_directory,
         phase=config.phase,
+        github_actions_run_id=config.github_actions_run_id,
         asset_directory=asset_directory,
     )
 
 
 def inspect_asset_inventory(directory: Path) -> AssetInventory:
-    """Validate a flat, SHA256SUMS-governed release-asset directory."""
+    """Validate the exact flat v0.3.0 release inventory and its checksums."""
 
     entries = sorted(directory.iterdir(), key=lambda path: path.name)
-    if not entries:
-        raise PublicationError("Asset directory is empty")
-
     paths: dict[str, Path] = {}
     for path in entries:
         if path.is_symlink():
             raise PublicationError(f"Asset inventory contains a symlink: {path.name}")
         if not path.is_file():
             raise PublicationError(
-                f"Asset inventory must be flat and contain regular files only: {path.name}"
+                f"Asset inventory must contain regular files only: {path.name}"
             )
         if not ASSET_NAME_PATTERN.fullmatch(path.name):
-            raise PublicationError(f"Unsafe or dirty asset filename: {path.name!r}")
+            raise PublicationError(f"Unsafe asset filename: {path.name!r}")
         paths[path.name] = path
 
-    manifest_path = paths.get("SHA256SUMS")
-    if manifest_path is None:
-        raise PublicationError("Asset inventory must contain SHA256SUMS")
-    manifest_bytes = manifest_path.read_bytes()
+    observed_names = set(paths)
+    if observed_names != CANONICAL_ASSET_NAMES:
+        raise PublicationError(
+            "Canonical v0.3.0 asset inventory mismatch; "
+            f"missing={sorted(CANONICAL_ASSET_NAMES - observed_names)!r}; "
+            f"unexpected={sorted(observed_names - CANONICAL_ASSET_NAMES)!r}"
+        )
+
+    manifest_bytes = paths["SHA256SUMS"].read_bytes()
     try:
         manifest_text = manifest_bytes.decode("ascii")
     except UnicodeDecodeError as exc:
@@ -238,17 +250,13 @@ def inspect_asset_inventory(directory: Path) -> AssetInventory:
             raise PublicationError(f"Duplicate SHA256SUMS entry: {name}")
         expected[name] = match.group("digest")
 
-    actual_names = set(paths) - {"SHA256SUMS"}
-    expected_names = set(expected)
-    if expected_names != actual_names:
-        missing = sorted(actual_names - expected_names)
-        extra = sorted(expected_names - actual_names)
+    expected_names = CANONICAL_ASSET_NAMES - {"SHA256SUMS"}
+    if set(expected) != expected_names:
         raise PublicationError(
             "SHA256SUMS inventory mismatch; "
-            f"unlisted_files={missing!r}; missing_files={extra!r}"
+            f"missing={sorted(expected_names - set(expected))!r}; "
+            f"unexpected={sorted(set(expected) - expected_names)!r}"
         )
-    if not actual_names:
-        raise PublicationError("At least one release asset in addition to SHA256SUMS is required")
 
     assets: list[Asset] = []
     for name in sorted(paths):
@@ -258,8 +266,7 @@ def inspect_asset_inventory(directory: Path) -> AssetInventory:
             raise PublicationError(
                 f"SHA256 mismatch for {name}: expected {expected[name]}, observed {observed}"
             )
-        assets.append(Asset(name=name, size=path.stat().st_size, sha256=observed))
-
+        assets.append(Asset(name, path.stat().st_size, observed))
     return AssetInventory(
         root=directory,
         assets=tuple(assets),
@@ -280,23 +287,8 @@ def _assert_inventory_unchanged(expected: AssetInventory) -> None:
         raise PublicationError("SHA256SUMS changed during publication")
 
 
-def _is_http_404(result: CommandResult) -> bool:
-    combined = f"{result.stdout}\n{result.stderr}".lower()
-    return result.returncode != 0 and (
-        re.search(r"\b404\b", combined) is not None or "not found" in combined
-    )
-
-
-def _api(
-    runner: Runner,
-    repository: str,
-    endpoint: str,
-    *,
-    method: str = "GET",
-    fields: Sequence[tuple[str, str, str]] = (),
-    allow_not_found: bool = False,
-) -> dict[str, Any] | None:
-    command = [
+def _api_command(repository: str, endpoint: str, method: str) -> list[str]:
+    return [
         "gh",
         "api",
         f"repos/{repository}/{endpoint}",
@@ -307,11 +299,29 @@ def _api(
         "-H",
         f"X-GitHub-Api-Version: {API_VERSION}",
     ]
+
+
+def _is_http_404(result: CommandResult) -> bool:
+    message = f"{result.stdout}\n{result.stderr}".lower()
+    return result.returncode != 0 and (
+        re.search(r"\b404\b", message) is not None or "not found" in message
+    )
+
+
+def _api_json(
+    runner: Runner,
+    repository: str,
+    endpoint: str,
+    *,
+    method: str = "GET",
+    fields: Sequence[tuple[str, str, str]] = (),
+    allow_not_found: bool = False,
+) -> Any:
+    command = _api_command(repository, endpoint, method)
     for flag, key, value in fields:
         if flag not in {"-f", "-F"}:
             raise PublicationError(f"Unsupported gh API field flag: {flag}")
         command.extend((flag, f"{key}={value}"))
-
     result = runner.run(command, check=False)
     if result.returncode != 0:
         if allow_not_found and _is_http_404(result):
@@ -323,536 +333,85 @@ def _api(
     if not result.stdout.strip():
         return {}
     try:
-        payload = json.loads(result.stdout)
+        return json.loads(result.stdout)
     except json.JSONDecodeError as exc:
         raise PublicationError(
             f"GitHub API {method} {endpoint} returned malformed JSON"
         ) from exc
+
+
+def _api_object(
+    runner: Runner,
+    repository: str,
+    endpoint: str,
+    *,
+    method: str = "GET",
+    fields: Sequence[tuple[str, str, str]] = (),
+    allow_not_found: bool = False,
+) -> dict[str, Any] | None:
+    payload = _api_json(
+        runner,
+        repository,
+        endpoint,
+        method=method,
+        fields=fields,
+        allow_not_found=allow_not_found,
+    )
+    if payload is None:
+        return None
     if not isinstance(payload, dict):
         raise PublicationError(f"GitHub API {method} {endpoint} did not return an object")
     return payload
 
 
 def _require_remote_commit(runner: Runner, config: PublicationConfig) -> None:
-    payload = _api(runner, config.repository, f"commits/{config.final_sha}")
-    if payload is None or payload.get("sha") != config.final_sha:
+    commit = _api_object(runner, config.repository, f"commits/{config.final_sha}")
+    if commit is None or commit.get("sha") != config.final_sha:
         raise PublicationError(
-            f"Remote commit drift: expected {config.final_sha}, observed {payload!r}"
+            f"Remote commit drift: expected {config.final_sha}, observed {commit!r}"
         )
-    main = _api(runner, config.repository, "commits/main")
+    main = _api_object(runner, config.repository, "commits/main")
     if main is None or main.get("sha") != config.final_sha:
         raise PublicationError(
             f"Remote main drift: expected {config.final_sha}, observed {main!r}"
         )
 
 
-def _remote_tag(
+def _verify_tag(
     runner: Runner, config: PublicationConfig
-) -> dict[str, Any] | None:
-    return _api(
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    ref_payload = _api_object(
         runner,
         config.repository,
         f"git/ref/tags/{config.tag}",
         allow_not_found=True,
     )
-
-
-def _remote_release(
-    runner: Runner, config: PublicationConfig
-) -> dict[str, Any] | None:
-    return _api(
-        runner,
-        config.repository,
-        f"releases/tags/{config.tag}",
-        allow_not_found=True,
-    )
-
-
-def _verify_tag(
-    runner: Runner, config: PublicationConfig
-) -> tuple[dict[str, Any], dict[str, Any]]:
-    ref_payload = _remote_tag(runner, config)
     if ref_payload is None:
-        raise PublicationError(f"Remote tag {config.tag} is missing")
+        raise PublicationError(
+            f"Existing annotated tag {config.tag} is required before creating a release"
+        )
     ref_object = ref_payload.get("object")
     if not isinstance(ref_object, dict):
         raise PublicationError("Remote tag reference has no object")
     if ref_payload.get("ref") != f"refs/tags/{config.tag}":
         raise PublicationError("Remote tag reference name drifted")
-    if ref_object.get("type") != "tag" or not SHA_PATTERN.fullmatch(
-        str(ref_object.get("sha", ""))
-    ):
-        raise PublicationError("Remote tag is not an annotated tag object")
-
-    tag_payload = _api(
-        runner,
-        config.repository,
-        f"git/tags/{ref_object['sha']}",
-    )
-    tag_target = tag_payload.get("object") if tag_payload else None
-    if not isinstance(tag_target, dict):
+    object_sha = str(ref_object.get("sha", ""))
+    if ref_object.get("type") != "tag" or not SHA_PATTERN.fullmatch(object_sha):
+        raise PublicationError("Remote v0.3.0 tag must be an annotated tag object")
+    tag_payload = _api_object(runner, config.repository, f"git/tags/{object_sha}")
+    target = tag_payload.get("object") if tag_payload else None
+    if not isinstance(target, dict):
         raise PublicationError("Annotated tag object has no target")
+    if tag_payload.get("sha") not in (None, object_sha):
+        raise PublicationError("Annotated tag object SHA drifted")
     if tag_payload.get("tag") != config.tag:
         raise PublicationError("Annotated tag name drifted")
-    if tag_target.get("type") != "commit" or tag_target.get("sha") != config.final_sha:
+    if target.get("type") != "commit" or target.get("sha") != config.final_sha:
         raise PublicationError(
             "Annotated tag peel drift: "
-            f"expected commit {config.final_sha}, observed {tag_target!r}"
+            f"expected commit {config.final_sha}, observed {target!r}"
         )
     return ref_payload, tag_payload
-
-
-def _create_annotated_tag(
-    runner: Runner, config: PublicationConfig
-) -> tuple[dict[str, Any], dict[str, Any]]:
-    tag_payload = _api(
-        runner,
-        config.repository,
-        "git/tags",
-        method="POST",
-        fields=(
-            ("-f", "tag", config.tag),
-            ("-f", "message", f"MitoOverview {config.tag}"),
-            ("-f", "object", config.final_sha),
-            ("-f", "type", "commit"),
-        ),
-    )
-    tag_object_sha = str((tag_payload or {}).get("sha", ""))
-    if not SHA_PATTERN.fullmatch(tag_object_sha):
-        raise PublicationError("GitHub did not return a valid annotated-tag object SHA")
-    _api(
-        runner,
-        config.repository,
-        "git/refs",
-        method="POST",
-        fields=(
-            ("-f", "ref", f"refs/tags/{config.tag}"),
-            ("-f", "sha", tag_object_sha),
-        ),
-    )
-    return _verify_tag(runner, config)
-
-
-def _immutable_state(runner: Runner, config: PublicationConfig) -> dict[str, Any] | None:
-    return _api(
-        runner,
-        config.repository,
-        "immutable-releases",
-        allow_not_found=True,
-    )
-
-
-def _ensure_immutable_releases(
-    runner: Runner, config: PublicationConfig
-) -> dict[str, Any]:
-    state = _immutable_state(runner, config)
-    if state is not None and state.get("enabled") not in (True, False):
-        raise PublicationError("GitHub returned a malformed immutable releases state")
-    if state is None or state.get("enabled") is False:
-        _api(
-            runner,
-            config.repository,
-            "immutable-releases",
-            method="PUT",
-        )
-        state = _immutable_state(runner, config)
-    if state is None or state.get("enabled") is not True:
-        raise PublicationError("GitHub immutable releases could not be enabled and verified")
-    return {"enabled": True, "api_payload": state}
-
-
-def _require_immutable_releases(
-    runner: Runner, config: PublicationConfig
-) -> dict[str, Any]:
-    state = _immutable_state(runner, config)
-    if state is None or state.get("enabled") is not True:
-        raise PublicationError(
-            "GitHub immutable releases are no longer enabled; later phases will not mutate this setting"
-        )
-    return {"enabled": True, "api_payload": state}
-
-
-def _release_record(release: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "id": release.get("id"),
-        "api_url": release.get("url"),
-        "url": release.get("html_url"),
-        "tag_name": release.get("tag_name"),
-        "target_commitish": release.get("target_commitish"),
-        "name": release.get("name"),
-        "draft": release.get("draft"),
-        "prerelease": release.get("prerelease"),
-        "created_at": release.get("created_at"),
-        "published_at": release.get("published_at"),
-    }
-
-
-def _require_release_identity(
-    release: dict[str, Any],
-    config: PublicationConfig,
-    *,
-    require_draft: bool,
-) -> None:
-    if not isinstance(release.get("id"), int):
-        raise PublicationError("GitHub release has no integer release ID")
-    if release.get("tag_name") != config.tag:
-        raise PublicationError("GitHub release tag drifted")
-    if release.get("target_commitish") != config.final_sha:
-        raise PublicationError(
-            "GitHub release target drift: "
-            f"expected {config.final_sha}, observed {release.get('target_commitish')!r}"
-        )
-    if require_draft:
-        if release.get("draft") is not True or release.get("published_at") is not None:
-            raise PublicationError("Expected a verified unpublished draft release")
-    elif release.get("draft") is not False or not release.get("published_at"):
-        raise PublicationError("Published release state was not confirmed by GitHub")
-
-
-def _create_draft_release(runner: Runner, config: PublicationConfig) -> dict[str, Any]:
-    release = _api(
-        runner,
-        config.repository,
-        "releases",
-        method="POST",
-        fields=(
-            ("-f", "tag_name", config.tag),
-            ("-f", "target_commitish", config.final_sha),
-            ("-f", "name", f"MitoOverview {config.tag}"),
-            ("-f", "body", "Verified MitoOverview v0.3.0 release assets."),
-            ("-F", "draft", "true"),
-            ("-F", "prerelease", "false"),
-            ("-F", "generate_release_notes", "false"),
-        ),
-    )
-    if release is None:
-        raise PublicationError("GitHub did not return the created draft release")
-    _require_release_identity(release, config, require_draft=True)
-    return release
-
-
-def _query_release_by_id(
-    runner: Runner, config: PublicationConfig, release_id: int
-) -> dict[str, Any]:
-    release = _api(runner, config.repository, f"releases/{release_id}")
-    if release is None:
-        raise PublicationError(f"GitHub release ID {release_id} disappeared")
-    return release
-
-
-def _remote_assets(
-    release: dict[str, Any], expected: AssetInventory
-) -> list[dict[str, Any]]:
-    raw_assets = release.get("assets")
-    if not isinstance(raw_assets, list):
-        raise PublicationError("GitHub release response has no asset inventory")
-    expected_by_name = expected.by_name
-    observed_by_name: dict[str, dict[str, Any]] = {}
-    for raw in raw_assets:
-        if not isinstance(raw, dict) or not isinstance(raw.get("name"), str):
-            raise PublicationError("GitHub returned a malformed release asset")
-        name = raw["name"]
-        if name in observed_by_name:
-            raise PublicationError(f"GitHub returned duplicate release asset {name}")
-        observed_by_name[name] = raw
-
-    if set(observed_by_name) != set(expected_by_name):
-        raise PublicationError(
-            "Remote asset inventory mismatch; "
-            f"expected={sorted(expected_by_name)!r}; observed={sorted(observed_by_name)!r}"
-        )
-
-    normalized: list[dict[str, Any]] = []
-    for name in sorted(expected_by_name):
-        raw = observed_by_name[name]
-        expected_asset = expected_by_name[name]
-        if raw.get("size") != expected_asset.size:
-            raise PublicationError(
-                f"Remote size mismatch for {name}: "
-                f"expected {expected_asset.size}, observed {raw.get('size')!r}"
-            )
-        api_digest = raw.get("digest")
-        if api_digest not in (None, "", f"sha256:{expected_asset.sha256}"):
-            raise PublicationError(
-                f"Remote API digest mismatch for {name}: {api_digest!r}"
-            )
-        normalized.append(
-            {
-                "name": name,
-                "size": raw.get("size"),
-                "asset_id": raw.get("id"),
-                "api_url": raw.get("url"),
-                "browser_download_url": raw.get("browser_download_url"),
-                "api_digest": api_digest,
-                "verified_sha256": expected_asset.sha256,
-            }
-        )
-    return normalized
-
-
-def _upload_assets(runner: Runner, config: PublicationConfig, inventory: AssetInventory) -> None:
-    for asset in inventory.assets:
-        _assert_inventory_unchanged(inventory)
-        runner.run(
-            (
-                "gh",
-                "release",
-                "upload",
-                config.tag,
-                str(inventory.root / asset.name),
-                "--repo",
-                config.repository,
-            )
-        )
-    _assert_inventory_unchanged(inventory)
-
-
-def _fresh_download(
-    runner: Runner,
-    config: PublicationConfig,
-    expected: AssetInventory,
-    destination_name: str,
-) -> dict[str, Any]:
-    destination = config.output_directory / destination_name
-    if destination.exists() or destination.is_symlink():
-        raise PublicationError(f"Fresh verification directory already exists: {destination}")
-    destination.mkdir(mode=0o700)
-    runner.run(
-        (
-            "gh",
-            "release",
-            "download",
-            config.tag,
-            "--repo",
-            config.repository,
-            "--dir",
-            str(destination),
-        )
-    )
-    downloaded = inspect_asset_inventory(destination)
-    if _inventory_signature(downloaded) != _inventory_signature(expected):
-        raise PublicationError("Redownloaded release assets are not byte-identical")
-    if downloaded.sha256sums_bytes != expected.sha256sums_bytes:
-        raise PublicationError("Redownloaded SHA256SUMS is not byte-identical")
-    return {
-        "path": str(destination),
-        "manifest_byte_identical": True,
-        "inventory_byte_identical": True,
-        "sha256sums_sha256": downloaded.sha256sums_sha256,
-        "assets": downloaded.as_list(),
-    }
-
-
-def _safe_write_json(path: Path, payload: dict[str, Any]) -> None:
-    if path.exists() or path.is_symlink():
-        raise PublicationError(f"Refusing to overwrite publication record: {path}")
-    encoded = (json.dumps(payload, indent=2, sort_keys=True) + "\n").encode("utf-8")
-    descriptor, temporary_name = tempfile.mkstemp(
-        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
-    )
-    temporary = Path(temporary_name)
-    try:
-        with os.fdopen(descriptor, "wb") as handle:
-            handle.write(encoded)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary, path)
-    finally:
-        if temporary.exists():
-            temporary.unlink()
-
-
-def _replace_verified_json(path: Path, payload: dict[str, Any]) -> None:
-    """Atomically replace the already-validated draft receipt."""
-
-    if path.is_symlink() or not path.is_file():
-        raise PublicationError(f"Verified draft receipt disappeared before update: {path}")
-    encoded = (json.dumps(payload, indent=2, sort_keys=True) + "\n").encode("utf-8")
-    descriptor, temporary_name = tempfile.mkstemp(
-        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
-    )
-    temporary = Path(temporary_name)
-    try:
-        with os.fdopen(descriptor, "wb") as handle:
-            handle.write(encoded)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary, path)
-    finally:
-        if temporary.exists():
-            temporary.unlink()
-
-
-def _load_draft_record(
-    config: PublicationConfig,
-    *,
-    require_uploaded_assets: bool,
-    inventory: AssetInventory | None = None,
-) -> dict[str, Any]:
-    path = config.output_directory / "github_publication.draft.json"
-    if path.is_symlink() or not path.is_file():
-        raise PublicationError(
-            f"--{config.phase} requires github_publication.draft.json from --create-draft"
-        )
-    try:
-        record = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise PublicationError("Draft publication record is unreadable or malformed") from exc
-    if not isinstance(record, dict):
-        raise PublicationError("Draft publication record must be a JSON object")
-    required = {
-        "schema_version": PUBLICATION_SCHEMA_VERSION,
-        "mode": "draft",
-        "verified": True,
-        "repository": config.repository,
-        "final_sha": config.final_sha,
-        "tag": config.tag,
-    }
-    for key, expected_value in required.items():
-        if record.get(key) != expected_value:
-            raise PublicationError(
-                f"Draft publication record mismatch for {key}: "
-                f"expected {expected_value!r}, observed {record.get(key)!r}"
-            )
-    immutable = record.get("immutable_releases")
-    if not isinstance(immutable, dict) or immutable.get("enabled") is not True:
-        raise PublicationError("Draft receipt does not attest immutable releases")
-    tag_ref = record.get("tag_ref")
-    tag_object = record.get("tag_object")
-    if not isinstance(tag_ref, dict) or not isinstance(tag_object, dict):
-        raise PublicationError("Draft receipt has no verified annotated-tag identity")
-    if (
-        tag_ref.get("ref") != f"refs/tags/{config.tag}"
-        or tag_ref.get("object_type") != "tag"
-        or not SHA_PATTERN.fullmatch(str(tag_ref.get("object_sha", "")))
-        or tag_object.get("tag") != config.tag
-        or tag_object.get("tag_object_sha") != tag_ref.get("object_sha")
-        or tag_object.get("target_type") != "commit"
-        or tag_object.get("peeled_target_sha") != config.final_sha
-    ):
-        raise PublicationError("Draft receipt annotated-tag identity is invalid")
-    release = record.get("release")
-    if not isinstance(release, dict):
-        raise PublicationError("Draft receipt has no queried release metadata")
-    if (
-        not isinstance(release.get("id"), int)
-        or release.get("tag_name") != config.tag
-        or release.get("target_commitish") != config.final_sha
-        or release.get("draft") is not True
-        or release.get("published_at") is not None
-    ):
-        raise PublicationError("Draft receipt release identity or state is invalid")
-    if require_uploaded_assets:
-        if record.get("verification_state") != "verified_draft_assets":
-            raise PublicationError(
-                "Publication is blocked until --upload-verify completes successfully"
-            )
-        if record.get("asset_upload_verified") is not True:
-            raise PublicationError("Draft receipt does not attest a verified asset upload")
-        if inventory is None:
-            raise PublicationError("Internal error: upload verification requires an inventory")
-        local = record.get("local_asset_manifest")
-        if not isinstance(local, dict):
-            raise PublicationError("Draft record has no local asset manifest")
-        if local.get("sha256sums_sha256") != inventory.sha256sums_sha256:
-            raise PublicationError("Prepared SHA256SUMS differs from the verified draft")
-        if local.get("assets") != inventory.as_list():
-            raise PublicationError("Prepared asset inventory differs from the verified draft")
-    else:
-        if record.get("verification_state") != "verified_empty_draft":
-            raise PublicationError(
-                "--upload-verify requires the unmodified empty-draft receipt"
-            )
-        if record.get("asset_upload_verified") is not False:
-            raise PublicationError("Empty-draft receipt has an invalid upload state")
-        if record.get("remote_assets") != []:
-            raise PublicationError("Empty-draft receipt unexpectedly records remote assets")
-    return record
-
-
-def _attestation_unsupported(result: CommandResult) -> bool:
-    message = f"{result.stdout}\n{result.stderr}".lower()
-    return any(pattern in message for pattern in UNSUPPORTED_GH_PATTERNS)
-
-
-def _parse_optional_json(output: str) -> Any:
-    if not output.strip():
-        return None
-    try:
-        return json.loads(output)
-    except json.JSONDecodeError:
-        return {"text": output.strip()}
-
-
-def _verify_attestation_command(
-    runner: Runner,
-    command: Sequence[str],
-    *,
-    attempts: int = 6,
-    delay_seconds: float = 2.0,
-) -> dict[str, Any]:
-    last: CommandResult | None = None
-    for attempt in range(1, attempts + 1):
-        result = runner.run(command, check=False)
-        last = result
-        if result.returncode == 0:
-            return {
-                "supported": True,
-                "verified": True,
-                "attempts": attempt,
-                "result": _parse_optional_json(result.stdout),
-            }
-        if _attestation_unsupported(result):
-            return {
-                "supported": False,
-                "verified": None,
-                "attempts": attempt,
-                "reason": (result.stderr.strip() or result.stdout.strip()),
-            }
-        if attempt < attempts:
-            time.sleep(delay_seconds)
-    assert last is not None
-    detail = last.stderr.strip() or last.stdout.strip() or "no command output"
-    raise PublicationError(f"GitHub release attestation verification failed: {detail}")
-
-
-def _verify_release_attestations(
-    runner: Runner,
-    config: PublicationConfig,
-    downloaded: dict[str, Any],
-) -> dict[str, Any]:
-    release_result = _verify_attestation_command(
-        runner,
-        (
-            "gh",
-            "release",
-            "verify",
-            config.tag,
-            "--repo",
-            config.repository,
-            "--format",
-            "json",
-        ),
-    )
-    asset_results: list[dict[str, Any]] = []
-    for asset in downloaded["assets"]:
-        path = Path(downloaded["path"]) / asset["name"]
-        result = _verify_attestation_command(
-            runner,
-            (
-                "gh",
-                "release",
-                "verify-asset",
-                config.tag,
-                str(path),
-                "--repo",
-                config.repository,
-                "--format",
-                "json",
-            ),
-        )
-        asset_results.append({"name": asset["name"], "path": str(path), **result})
-    return {"release": release_result, "assets": asset_results}
 
 
 def _tag_record(
@@ -878,234 +437,786 @@ def _tag_record(
     )
 
 
-def _create_draft_mode(runner: Runner, config: PublicationConfig) -> Path:
-    draft_record_path = config.output_directory / "github_publication.draft.json"
-    final_record_path = config.output_directory / "github_publication.json"
-    if draft_record_path.exists() or final_record_path.exists():
-        raise PublicationError("Publication output already contains a release record")
+def _find_release(runner: Runner, config: PublicationConfig) -> dict[str, Any] | None:
+    """Enumerate authenticated releases because tag lookup omits drafts."""
 
-    _require_remote_commit(runner, config)
-    existing_tag = _remote_tag(runner, config)
-    existing_release = _remote_release(runner, config)
-    if existing_tag is not None or existing_release is not None:
+    matches: list[dict[str, Any]] = []
+    page = 1
+    while True:
+        endpoint = f"releases?per_page=100&page={page}"
+        payload = _api_json(runner, config.repository, endpoint)
+        if not isinstance(payload, list) or any(not isinstance(item, dict) for item in payload):
+            raise PublicationError("GitHub release enumeration returned malformed JSON")
+        matches.extend(item for item in payload if item.get("tag_name") == config.tag)
+        if len(payload) < 100:
+            break
+        page += 1
+        if page > 10000:
+            raise PublicationError("GitHub release enumeration exceeded the safety limit")
+    if len(matches) > 1:
+        raise PublicationError(f"GitHub returned duplicate releases for tag {config.tag}")
+    return matches[0] if matches else None
+
+
+def _query_release_by_id(
+    runner: Runner, config: PublicationConfig, release_id: int
+) -> dict[str, Any]:
+    release = _api_object(runner, config.repository, f"releases/{release_id}")
+    if release is None:
+        raise PublicationError(f"GitHub release ID {release_id} disappeared")
+    return release
+
+
+def _release_record(release: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": release.get("id"),
+        "api_url": release.get("url"),
+        "url": release.get("html_url"),
+        "tag_name": release.get("tag_name"),
+        "target_commitish": release.get("target_commitish"),
+        "name": release.get("name"),
+        "draft": release.get("draft"),
+        "prerelease": release.get("prerelease"),
+        "immutable": release.get("immutable"),
+        "created_at": release.get("created_at"),
+        "published_at": release.get("published_at"),
+    }
+
+
+def _require_release_identity(
+    release: dict[str, Any],
+    config: PublicationConfig,
+    *,
+    state: str,
+    require_immutable: bool = True,
+) -> None:
+    if not isinstance(release.get("id"), int):
+        raise PublicationError("GitHub release has no integer release ID")
+    if release.get("tag_name") != config.tag:
+        raise PublicationError("GitHub release tag drifted")
+    if release.get("target_commitish") != config.final_sha:
         raise PublicationError(
-            "Refusing to modify a pre-existing remote tag or release; "
-            f"tag_exists={existing_tag is not None}, release_exists={existing_release is not None}"
+            "GitHub release target drift: "
+            f"expected {config.final_sha}, observed {release.get('target_commitish')!r}"
         )
+    if state == "draft":
+        if release.get("draft") is not True or release.get("published_at") is not None:
+            raise PublicationError("Expected an unpublished draft release")
+        if require_immutable and release.get("immutable") is not False:
+            raise PublicationError("Draft release must explicitly report immutable=false")
+    elif state == "published":
+        if release.get("draft") is not False or not release.get("published_at"):
+            raise PublicationError("Published release state was not confirmed")
+        if require_immutable and release.get("immutable") is not True:
+            raise PublicationError("Published release did not report immutable=true")
+    elif state != "either":
+        raise PublicationError(f"Internal error: unsupported release state {state!r}")
+    else:
+        expected_immutable = release.get("draft") is False
+        if require_immutable and release.get("immutable") is not expected_immutable:
+            raise PublicationError("Release immutable state is inconsistent with draft state")
 
-    immutable = _ensure_immutable_releases(runner, config)
-    ref_payload, tag_payload = _create_annotated_tag(runner, config)
-    _require_remote_commit(runner, config)
-    _verify_tag(runner, config)
-    release = _create_draft_release(runner, config)
-    if release.get("assets") != []:
-        raise PublicationError("New draft release unexpectedly contains assets")
-    release = _query_release_by_id(runner, config, int(release["id"]))
-    _require_release_identity(release, config, require_draft=True)
-    if release.get("assets") != []:
-        raise PublicationError("Queried draft release is not empty")
-    ref_payload, tag_payload = _verify_tag(runner, config)
-    immutable = _require_immutable_releases(runner, config)
-    tag_ref, tag_object = _tag_record(ref_payload, tag_payload)
 
-    payload = {
-        "schema_version": PUBLICATION_SCHEMA_VERSION,
-        "mode": "draft",
-        "phase": "create-draft",
-        "verification_state": "verified_empty_draft",
+def _create_draft_release(runner: Runner, config: PublicationConfig) -> dict[str, Any]:
+    release = _api_object(
+        runner,
+        config.repository,
+        "releases",
+        method="POST",
+        fields=(
+            ("-f", "tag_name", config.tag),
+            ("-f", "target_commitish", config.final_sha),
+            ("-f", "name", f"MitoOverview {config.tag}"),
+            ("-f", "body", "MitoOverview v0.3.0 release assets and validation evidence."),
+            ("-F", "draft", "true"),
+            ("-F", "prerelease", "false"),
+            ("-F", "generate_release_notes", "false"),
+        ),
+    )
+    if release is None:
+        raise PublicationError("GitHub did not return the created draft release")
+    _require_release_identity(release, config, state="draft")
+    return release
+
+
+def _query_hosting_protection_state(
+    runner: Runner, config: PublicationConfig
+) -> dict[str, Any]:
+    command = _api_command(config.repository, "immutable-releases", "GET")
+    result = runner.run(command, check=False)
+    if _is_http_404(result):
+        return {
+            "supported": True,
+            "enabled": False,
+            "reason": "disabled",
+        }
+    if result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip() or "no command output"
+        raise PublicationError(f"Unable to query immutable releases: {detail}")
+    try:
+        payload = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        payload = None
+    if not isinstance(payload, dict) or not isinstance(payload.get("enabled"), bool):
+        return {
+            "supported": True,
+            "enabled": None,
+            "reason": "state_unavailable",
+        }
+    return {
+        "supported": True,
+        "enabled": payload["enabled"],
+        "reason": "queried",
+        "api_payload": payload,
+    }
+
+
+def _require_hosting_protection_state(
+    runner: Runner, config: PublicationConfig
+) -> dict[str, Any]:
+    state = _query_hosting_protection_state(runner, config)
+    if state.get("enabled") is not True:
+        raise PublicationError("Immutable releases must remain enabled for v0.3.0 publication")
+    return state
+
+
+def _ensure_hosting_protection_state(
+    runner: Runner, config: PublicationConfig
+) -> dict[str, Any]:
+    state = _query_hosting_protection_state(runner, config)
+    if state.get("enabled") is True:
+        return {**state, "enabled_by_publisher": False}
+    command = _api_command(config.repository, "immutable-releases", "PUT")
+    result = runner.run(command, check=False)
+    if result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip() or "no command output"
+        raise PublicationError(f"Unable to enable immutable releases: {detail}")
+    enabled = _query_hosting_protection_state(runner, config)
+    if enabled.get("enabled") is not True:
+        raise PublicationError("Immutable releases did not become enabled after PUT")
+    return {**enabled, "enabled_by_publisher": True}
+
+
+def _normalized_remote_assets(
+    release: dict[str, Any], expected: AssetInventory, *, allow_subset: bool
+) -> list[dict[str, Any]]:
+    raw_assets = release.get("assets")
+    if not isinstance(raw_assets, list):
+        raise PublicationError("GitHub release response has no asset inventory")
+    expected_by_name = expected.by_name
+    observed: dict[str, dict[str, Any]] = {}
+    for raw in raw_assets:
+        if not isinstance(raw, dict) or not isinstance(raw.get("name"), str):
+            raise PublicationError("GitHub returned a malformed release asset")
+        name = raw["name"]
+        if name in observed:
+            raise PublicationError(f"GitHub returned duplicate release asset {name}")
+        if name not in expected_by_name:
+            raise PublicationError(f"Remote release contains unexpected asset {name}")
+        expected_asset = expected_by_name[name]
+        if raw.get("size") != expected_asset.size:
+            raise PublicationError(
+                f"Remote size mismatch for {name}: expected {expected_asset.size}, "
+                f"observed {raw.get('size')!r}"
+            )
+        api_digest = raw.get("digest")
+        if api_digest not in (None, "", f"sha256:{expected_asset.sha256}"):
+            raise PublicationError(f"Remote API digest mismatch for {name}: {api_digest!r}")
+        observed[name] = raw
+    if not allow_subset and set(observed) != set(expected_by_name):
+        raise PublicationError(
+            "Remote asset inventory mismatch; "
+            f"missing={sorted(set(expected_by_name) - set(observed))!r}"
+        )
+    return [
+        {
+            "name": name,
+            "size": observed[name].get("size"),
+            "asset_id": observed[name].get("id"),
+            "api_url": observed[name].get("url"),
+            "browser_download_url": observed[name].get("browser_download_url"),
+            "api_digest": observed[name].get("digest"),
+            "verified_sha256": expected_by_name[name].sha256,
+        }
+        for name in sorted(observed)
+    ]
+
+
+def _download_assets(
+    runner: Runner,
+    config: PublicationConfig,
+    expected: AssetInventory,
+    names: Sequence[str],
+) -> dict[str, Any]:
+    with tempfile.TemporaryDirectory(
+        prefix="github-release-download-", dir=config.output_directory
+    ) as temporary_name:
+        destination = Path(temporary_name)
+        for name in sorted(names):
+            runner.run(
+                (
+                    "gh",
+                    "release",
+                    "download",
+                    config.tag,
+                    "--repo",
+                    config.repository,
+                    "--pattern",
+                    name,
+                    "--dir",
+                    str(destination),
+                )
+            )
+        observed_names = {
+            path.name for path in destination.iterdir() if path.is_file() and not path.is_symlink()
+        }
+        if observed_names != set(names):
+            raise PublicationError(
+                "Downloaded asset inventory mismatch; "
+                f"expected={sorted(names)!r}; observed={sorted(observed_names)!r}"
+            )
+        verified: list[dict[str, Any]] = []
+        for name in sorted(names):
+            path = destination / name
+            asset = expected.by_name[name]
+            observed_hash = _sha256_file(path)
+            if path.stat().st_size != asset.size or observed_hash != asset.sha256:
+                raise PublicationError(f"Downloaded release asset differs from prepared {name}")
+            verified.append(asset.as_dict())
+    return {
+        "method": "authenticated_redownload_sha256",
         "verified": True,
-        "asset_upload_verified": False,
-        "generated_at": _utc_now(),
-        "repository": config.repository,
+        "manifest_byte_identical": "SHA256SUMS" not in names
+        or expected.by_name["SHA256SUMS"].sha256
+        == next(item["sha256"] for item in verified if item["name"] == "SHA256SUMS"),
+        "assets": verified,
+    }
+
+
+def _local_manifest_record(inventory: AssetInventory) -> dict[str, Any]:
+    return {
+        "manifest_name": "SHA256SUMS",
+        "sha256sums_sha256": inventory.sha256sums_sha256,
+        "assets": inventory.as_list(),
+    }
+
+
+def _base_receipt(
+    config: PublicationConfig,
+    *,
+    phase: str,
+    publication_state: str,
+    verification_state: str,
+    verified: bool,
+    release: dict[str, Any],
+    tag_ref: dict[str, Any],
+    tag_object: dict[str, Any],
+    hosting_state: dict[str, Any],
+) -> dict[str, Any]:
+    repository_url = _repository_url(config)
+    payload: dict[str, Any] = {
+        "schema_version": PUBLICATION_SCHEMA_VERSION,
+        "release_version": config.tag,
+        "git_commit": config.final_sha,
+        "repository": repository_url,
+        "repository_url": repository_url,
+        "release_tag": config.tag,
+        "github_release_url": _release_url(config),
+        "github_actions_run_id": config.github_actions_run_id,
+        "publication_state": publication_state,
+        "repository_slug": config.repository,
         "final_sha": config.final_sha,
         "tag": config.tag,
-        "immutable_releases": immutable,
+        "mode": publication_state,
+        "phase": phase,
+        "verification_state": verification_state,
+        "verified": verified,
+        "generated_at": _utc_now(),
+        "hosting_protection": hosting_state,
+        "immutable_releases": hosting_state,
         "tag_ref": tag_ref,
         "tag_object": tag_object,
         "release": _release_record(release),
-        "remote_assets": [],
     }
-    _safe_write_json(draft_record_path, payload)
-    return draft_record_path
+    if publication_state == "published":
+        payload["published_at"] = release.get("published_at")
+        payload["published_utc"] = release.get("published_at")
+    return payload
+
+
+def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
+    if path.exists() and path.is_symlink():
+        raise PublicationError(f"Publication receipt cannot be a symlink: {path.name}")
+    encoded = (json.dumps(payload, indent=2, sort_keys=True) + "\n").encode("utf-8")
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
+    )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(encoded)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
+
+
+def _load_json(path: Path, label: str) -> dict[str, Any]:
+    if path.is_symlink() or not path.is_file():
+        raise PublicationError(f"{label} is missing")
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise PublicationError(f"{label} is unreadable or malformed") from exc
+    if not isinstance(payload, dict):
+        raise PublicationError(f"{label} must contain a JSON object")
+    return payload
+
+
+def _validate_receipt_identity(record: dict[str, Any], config: PublicationConfig) -> None:
+    required = {
+        "schema_version": PUBLICATION_SCHEMA_VERSION,
+        "release_version": config.tag,
+        "git_commit": config.final_sha,
+        "repository": _repository_url(config),
+        "repository_url": _repository_url(config),
+        "release_tag": config.tag,
+        "github_release_url": _release_url(config),
+        "github_actions_run_id": config.github_actions_run_id,
+        "repository_slug": config.repository,
+        "final_sha": config.final_sha,
+        "tag": config.tag,
+    }
+    for key, expected in required.items():
+        if record.get(key) != expected:
+            raise PublicationError(
+                f"Publication receipt mismatch for {key}: expected {expected!r}, "
+                f"observed {record.get(key)!r}"
+            )
+    tag_ref = record.get("tag_ref")
+    tag_object = record.get("tag_object")
+    if not isinstance(tag_ref, dict) or not isinstance(tag_object, dict):
+        raise PublicationError("Publication receipt has no annotated-tag identity")
+    if (
+        tag_ref.get("ref") != f"refs/tags/{config.tag}"
+        or tag_ref.get("object_type") != "tag"
+        or not SHA_PATTERN.fullmatch(str(tag_ref.get("object_sha", "")))
+        or tag_object.get("tag") != config.tag
+        or tag_object.get("tag_object_sha") != tag_ref.get("object_sha")
+        or tag_object.get("target_type") != "commit"
+        or tag_object.get("peeled_target_sha") != config.final_sha
+    ):
+        raise PublicationError("Publication receipt annotated-tag identity is invalid")
+
+
+def _load_draft_record(
+    config: PublicationConfig,
+    *,
+    require_uploaded_assets: bool,
+    inventory: AssetInventory | None = None,
+) -> dict[str, Any]:
+    path = config.output_directory / "github_publication.draft.json"
+    record = _load_json(path, "github_publication.draft.json")
+    _validate_receipt_identity(record, config)
+    if record.get("publication_state") != "draft":
+        raise PublicationError("Draft receipt has an invalid publication state")
+    if require_uploaded_assets:
+        if record.get("verification_state") != "verified_draft_assets":
+            raise PublicationError("Publication is blocked until --upload-verify succeeds")
+        if record.get("asset_upload_verified") is not True or inventory is None:
+            raise PublicationError("Draft receipt has no verified asset inventory")
+        if record.get("local_asset_manifest") != _local_manifest_record(inventory):
+            raise PublicationError("Prepared assets differ from the verified draft receipt")
+    return record
+
+
+def _assert_tag_matches_receipt(
+    receipt: dict[str, Any], ref_payload: dict[str, Any], tag_payload: dict[str, Any]
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    tag_ref, tag_object = _tag_record(ref_payload, tag_payload)
+    if tag_ref != receipt.get("tag_ref") or tag_object != receipt.get("tag_object"):
+        raise PublicationError("Remote annotated tag object drifted from the receipt")
+    return tag_ref, tag_object
+
+
+def _assert_release_matches_receipt(
+    receipt: dict[str, Any], release: dict[str, Any]
+) -> None:
+    recorded = receipt.get("release")
+    if not isinstance(recorded, dict) or release.get("id") != recorded.get("id"):
+        raise PublicationError("Remote release ID differs from the receipt")
+
+
+def _write_draft_receipt(
+    config: PublicationConfig,
+    release: dict[str, Any],
+    tag_ref: dict[str, Any],
+    tag_object: dict[str, Any],
+    hosting_state: dict[str, Any],
+    *,
+    phase: str,
+    verification_state: str,
+    verified: bool,
+    remote_assets: list[dict[str, Any]],
+    inventory: AssetInventory | None = None,
+    download_verification: dict[str, Any] | None = None,
+    uploaded_asset_names: Sequence[str] | None = None,
+) -> Path:
+    payload = _base_receipt(
+        config,
+        phase=phase,
+        publication_state="draft",
+        verification_state=verification_state,
+        verified=verified,
+        release=release,
+        tag_ref=tag_ref,
+        tag_object=tag_object,
+        hosting_state=hosting_state,
+    )
+    payload["asset_upload_verified"] = verification_state == "verified_draft_assets"
+    payload["remote_assets"] = remote_assets
+    if uploaded_asset_names is not None:
+        payload["uploaded_asset_names"] = sorted(uploaded_asset_names)
+    if inventory is not None:
+        payload["local_asset_manifest"] = _local_manifest_record(inventory)
+    if download_verification is not None:
+        payload["redownload_verification"] = download_verification
+    path = config.output_directory / "github_publication.draft.json"
+    _atomic_write_json(path, payload)
+    return path
+
+
+def _create_draft_mode(runner: Runner, config: PublicationConfig) -> Path:
+    final_path = config.output_directory / "github_publication.json"
+    if final_path.exists() or final_path.is_symlink():
+        record = _load_json(final_path, "github_publication.json")
+        _validate_receipt_identity(record, config)
+        if record.get("publication_state") == "published":
+            return final_path
+        raise PublicationError("Existing final publication receipt is invalid")
+
+    _require_remote_commit(runner, config)
+    ref_payload, tag_payload = _verify_tag(runner, config)
+    tag_ref, tag_object = _tag_record(ref_payload, tag_payload)
+    hosting_state = _ensure_hosting_protection_state(runner, config)
+    release = _find_release(runner, config)
+    existing_draft_path = config.output_directory / "github_publication.draft.json"
+    if release is not None:
+        _require_release_identity(release, config, state="either")
+        if release.get("draft") is not True:
+            raise PublicationError("The v0.3.0 release is already published")
+        if existing_draft_path.exists():
+            prior = _load_draft_record(config, require_uploaded_assets=False)
+            _assert_release_matches_receipt(prior, release)
+            _assert_tag_matches_receipt(prior, ref_payload, tag_payload)
+            if prior.get("verification_state") == "verified_draft_assets":
+                return existing_draft_path
+        if release.get("assets"):
+            raise PublicationError(
+                "An existing draft has assets but no verified local upload receipt"
+            )
+    else:
+        release = _create_draft_release(runner, config)
+        # Persist the transition before any follow-up query can fail.
+        _write_draft_receipt(
+            config,
+            release,
+            tag_ref,
+            tag_object,
+            hosting_state,
+            phase="create-draft",
+            verification_state="draft_transition_recorded",
+            verified=False,
+            remote_assets=[],
+        )
+
+    _require_release_identity(release, config, state="draft")
+    if release.get("assets") != []:
+        raise PublicationError("Draft release must be empty before upload verification")
+    release = _query_release_by_id(runner, config, int(release["id"]))
+    _require_release_identity(release, config, state="draft")
+    if release.get("assets") != []:
+        raise PublicationError("Queried draft release is not empty")
+    ref_payload, tag_payload = _verify_tag(runner, config)
+    queried_ref, queried_object = _tag_record(ref_payload, tag_payload)
+    if queried_ref != tag_ref or queried_object != tag_object:
+        raise PublicationError("Annotated tag changed while creating the draft")
+    confirmed_hosting_state = _require_hosting_protection_state(runner, config)
+    confirmed_hosting_state["enabled_by_publisher"] = bool(
+        hosting_state.get("enabled_by_publisher")
+    )
+    return _write_draft_receipt(
+        config,
+        release,
+        tag_ref,
+        tag_object,
+        confirmed_hosting_state,
+        phase="create-draft",
+        verification_state="verified_empty_draft",
+        verified=True,
+        remote_assets=[],
+    )
 
 
 def _upload_verify_mode(
     runner: Runner, config: PublicationConfig, inventory: AssetInventory
 ) -> Path:
-    draft_record_path = config.output_directory / "github_publication.draft.json"
-    if (config.output_directory / "github_publication.json").exists():
-        raise PublicationError("A published-release receipt already exists")
-    draft_record = _load_draft_record(
-        config, require_uploaded_assets=False
-    )
-
+    final_path = config.output_directory / "github_publication.json"
+    if final_path.exists() or final_path.is_symlink():
+        record = _load_json(final_path, "github_publication.json")
+        _validate_receipt_identity(record, config)
+        if record.get("local_asset_manifest") != _local_manifest_record(inventory):
+            raise PublicationError("Prepared assets differ from the published receipt")
+        return final_path
+    draft = _load_draft_record(config, require_uploaded_assets=False)
     _require_remote_commit(runner, config)
     ref_payload, tag_payload = _verify_tag(runner, config)
-    queried_tag_ref, queried_tag_object = _tag_record(ref_payload, tag_payload)
-    if queried_tag_ref != draft_record.get("tag_ref") or queried_tag_object != draft_record.get(
-        "tag_object"
-    ):
-        raise PublicationError("Remote annotated tag drifted from the empty-draft receipt")
-    immutable = _require_immutable_releases(runner, config)
-    release = _remote_release(runner, config)
+    tag_ref, tag_object = _assert_tag_matches_receipt(draft, ref_payload, tag_payload)
+    release = _find_release(runner, config)
     if release is None:
-        raise PublicationError("The verified empty draft release no longer exists")
-    _require_release_identity(release, config, require_draft=True)
-    if release.get("id") != draft_record.get("release", {}).get("id"):
-        raise PublicationError("Remote draft release ID differs from the local receipt")
-    if _release_record(release) != draft_record.get("release"):
-        raise PublicationError("Remote draft metadata drifted from the local receipt")
-    if release.get("assets") != []:
-        raise PublicationError(
-            "Remote draft is no longer empty; refusing to overwrite or append assets"
-        )
+        raise PublicationError("The recorded draft release no longer exists")
+    _require_release_identity(release, config, state="draft")
+    _assert_release_matches_receipt(draft, release)
 
-    _assert_inventory_unchanged(inventory)
-    _upload_assets(runner, config, inventory)
-    release = _query_release_by_id(runner, config, int(release["id"]))
-    _require_release_identity(release, config, require_draft=True)
-    remote_assets = _remote_assets(release, inventory)
-    downloaded = _fresh_download(
-        runner,
-        config,
-        inventory,
-        "github_release_draft_redownload",
+    remote_assets = _normalized_remote_assets(release, inventory, allow_subset=True)
+    existing_names = [item["name"] for item in remote_assets]
+    if existing_names:
+        _download_assets(runner, config, inventory, existing_names)
+    missing_names = sorted(set(inventory.by_name) - set(existing_names))
+    hosting_state = _require_hosting_protection_state(runner, config)
+    uploaded_names = list(existing_names)
+    for name in missing_names:
+        _assert_inventory_unchanged(inventory)
+        runner.run(
+            (
+                "gh",
+                "release",
+                "upload",
+                config.tag,
+                str(inventory.root / name),
+                "--repo",
+                config.repository,
+            )
+        )
+        uploaded_names.append(name)
+        _write_draft_receipt(
+            config,
+            release,
+            tag_ref,
+            tag_object,
+            hosting_state,
+            phase="upload-verify",
+            verification_state="upload_in_progress",
+            verified=False,
+            remote_assets=remote_assets,
+            inventory=inventory,
+            uploaded_asset_names=uploaded_names,
+        )
+        release = _query_release_by_id(runner, config, int(release["id"]))
+        _require_release_identity(release, config, state="draft")
+        remote_assets = _normalized_remote_assets(release, inventory, allow_subset=True)
+        if set(uploaded_names) != {item["name"] for item in remote_assets}:
+            raise PublicationError("Uploaded asset was not reflected in the draft inventory")
+
+    remote_assets = _normalized_remote_assets(release, inventory, allow_subset=False)
+    redownload = _download_assets(
+        runner, config, inventory, sorted(inventory.by_name)
     )
     _assert_inventory_unchanged(inventory)
     _require_remote_commit(runner, config)
     ref_payload, tag_payload = _verify_tag(runner, config)
-    queried_tag_ref, queried_tag_object = _tag_record(ref_payload, tag_payload)
-    if queried_tag_ref != draft_record.get("tag_ref") or queried_tag_object != draft_record.get(
-        "tag_object"
-    ):
-        raise PublicationError("Remote annotated tag drifted from the upload receipt")
-    immutable = _require_immutable_releases(runner, config)
-    tag_ref, tag_object = _tag_record(ref_payload, tag_payload)
+    tag_ref, tag_object = _assert_tag_matches_receipt(draft, ref_payload, tag_payload)
+    return _write_draft_receipt(
+        config,
+        release,
+        tag_ref,
+        tag_object,
+        _require_hosting_protection_state(runner, config),
+        phase="upload-verify",
+        verification_state="verified_draft_assets",
+        verified=True,
+        remote_assets=remote_assets,
+        inventory=inventory,
+        download_verification=redownload,
+        uploaded_asset_names=sorted(inventory.by_name),
+    )
 
-    payload = {
-        "schema_version": PUBLICATION_SCHEMA_VERSION,
-        "mode": "draft",
-        "phase": "upload-verify",
-        "verification_state": "verified_draft_assets",
-        "verified": True,
-        "asset_upload_verified": True,
-        "generated_at": _utc_now(),
-        "empty_draft_verified_at": draft_record.get("generated_at"),
-        "repository": config.repository,
-        "final_sha": config.final_sha,
-        "tag": config.tag,
-        "immutable_releases": immutable,
-        "tag_ref": tag_ref,
-        "tag_object": tag_object,
-        "release": _release_record(release),
-        "remote_assets": remote_assets,
-        "local_asset_manifest": {
-            "path": str(inventory.root / "SHA256SUMS"),
-            "sha256sums_sha256": inventory.sha256sums_sha256,
-            "assets": inventory.as_list(),
-        },
-        "redownload_verification": downloaded,
-    }
-    _replace_verified_json(draft_record_path, payload)
-    return draft_record_path
+
+def _published_transition_receipt(
+    config: PublicationConfig,
+    release: dict[str, Any],
+    tag_ref: dict[str, Any],
+    tag_object: dict[str, Any],
+    hosting_state: dict[str, Any],
+    inventory: AssetInventory,
+    remote_assets: list[dict[str, Any]],
+    prepublish_download: dict[str, Any],
+) -> dict[str, Any]:
+    payload = _base_receipt(
+        config,
+        phase="publish",
+        publication_state="published",
+        verification_state="published_transition_recorded",
+        verified=False,
+        release=release,
+        tag_ref=tag_ref,
+        tag_object=tag_object,
+        hosting_state=hosting_state,
+    )
+    payload.update(
+        {
+            "asset_upload_verified": True,
+            "remote_assets": remote_assets,
+            "local_asset_manifest": _local_manifest_record(inventory),
+            "prepublish_redownload_verification": prepublish_download,
+            "post_publish_verification": {
+                "complete": False,
+                "reason": "pending_remote_queries",
+            },
+        }
+    )
+    return payload
 
 
 def _publish_mode(
     runner: Runner, config: PublicationConfig, inventory: AssetInventory
 ) -> Path:
-    final_record_path = config.output_directory / "github_publication.json"
-    if final_record_path.exists() or final_record_path.is_symlink():
-        raise PublicationError("Refusing to overwrite github_publication.json")
-    draft_record = _load_draft_record(
+    final_path = config.output_directory / "github_publication.json"
+    draft = _load_draft_record(
         config, require_uploaded_assets=True, inventory=inventory
     )
+    existing_final: dict[str, Any] | None = None
+    if final_path.exists() or final_path.is_symlink():
+        existing_final = _load_json(final_path, "github_publication.json")
+        _validate_receipt_identity(existing_final, config)
+        if existing_final.get("publication_state") != "published":
+            raise PublicationError("Final receipt does not record a published release")
 
-    _require_remote_commit(runner, config)
-    ref_payload, tag_payload = _verify_tag(runner, config)
-    immutable = _require_immutable_releases(runner, config)
-    release = _remote_release(runner, config)
-    if release is None:
-        raise PublicationError("The locally attested draft release no longer exists")
-    _require_release_identity(release, config, require_draft=True)
-    if release.get("id") != draft_record.get("release", {}).get("id"):
-        raise PublicationError("Remote draft release ID differs from the local attestation")
-    if _release_record(release) != draft_record.get("release"):
-        raise PublicationError("Remote draft metadata drifted from the local attestation")
-    remote_assets_before = _remote_assets(release, inventory)
-    if remote_assets_before != draft_record.get("remote_assets"):
-        raise PublicationError("Remote draft assets drifted from the local attestation")
-    prepublish_download = _fresh_download(
-        runner,
-        config,
-        inventory,
-        "github_release_publish_precheck",
-    )
+    # Complete every fallible local and remote check before the irreversible PATCH.
     _assert_inventory_unchanged(inventory)
     _require_remote_commit(runner, config)
     ref_payload, tag_payload = _verify_tag(runner, config)
-
-    release_id = int(release["id"])
-    updated = _api(
-        runner,
-        config.repository,
-        f"releases/{release_id}",
-        method="PATCH",
-        fields=(("-F", "draft", "false"),),
+    tag_ref, tag_object = _assert_tag_matches_receipt(draft, ref_payload, tag_payload)
+    release = _find_release(runner, config)
+    if release is None:
+        raise PublicationError("The recorded release no longer exists")
+    _require_release_identity(release, config, state="either")
+    _assert_release_matches_receipt(draft, release)
+    remote_assets = _normalized_remote_assets(release, inventory, allow_subset=False)
+    if remote_assets != draft.get("remote_assets"):
+        raise PublicationError("Remote release assets drifted from the draft receipt")
+    prepublish_download = _download_assets(
+        runner, config, inventory, sorted(inventory.by_name)
     )
-    if updated is None:
-        raise PublicationError("GitHub did not return the published release")
-    release = _query_release_by_id(runner, config, release_id)
-    _require_release_identity(release, config, require_draft=False)
-    immutable = _require_immutable_releases(runner, config)
+    hosting_before = _require_hosting_protection_state(runner, config)
+    _assert_inventory_unchanged(inventory)
+    _require_remote_commit(runner, config)
     ref_payload, tag_payload = _verify_tag(runner, config)
-    remote_assets = _remote_assets(release, inventory)
-    published_download = _fresh_download(
-        runner,
-        config,
-        inventory,
-        "github_release_published_redownload",
-    )
-    attestations = _verify_release_attestations(
-        runner, config, published_download
-    )
-    tag_ref, tag_object = _tag_record(ref_payload, tag_payload)
+    _assert_tag_matches_receipt(draft, ref_payload, tag_payload)
 
-    payload = {
-        "schema_version": PUBLICATION_SCHEMA_VERSION,
-        "mode": "published",
-        "phase": "publish",
-        "verification_state": "verified_published",
-        "verified": True,
-        "generated_at": _utc_now(),
-        "repository": config.repository,
-        "final_sha": config.final_sha,
-        "tag": config.tag,
-        "published_at": release.get("published_at"),
-        "immutable_releases": immutable,
-        "tag_ref": tag_ref,
-        "tag_object": tag_object,
-        "release": _release_record(release),
-        "remote_assets": remote_assets,
-        "local_asset_manifest": {
-            "path": str(inventory.root / "SHA256SUMS"),
-            "sha256sums_sha256": inventory.sha256sums_sha256,
-            "assets": inventory.as_list(),
-        },
-        "draft_attestation_path": str(
-            config.output_directory / "github_publication.draft.json"
-        ),
-        "prepublish_redownload_verification": prepublish_download,
-        "published_redownload_verification": published_download,
-        "release_attestations": attestations,
-    }
-    _safe_write_json(final_record_path, payload)
-    return final_record_path
+    if release.get("draft") is True:
+        release_id = int(release["id"])
+        updated = _api_object(
+            runner,
+            config.repository,
+            f"releases/{release_id}",
+            method="PATCH",
+            fields=(("-F", "draft", "false"),),
+        )
+        if updated is None:
+            raise PublicationError("GitHub did not return the published release transition")
+        _require_release_identity(
+            updated,
+            config,
+            state="published",
+            require_immutable=False,
+        )
+        _assert_release_matches_receipt(draft, updated)
+        release = updated
+        # This receipt survives any failure in the optional post-publish queries.
+        _atomic_write_json(
+            final_path,
+            _published_transition_receipt(
+                config,
+                release,
+                tag_ref,
+                tag_object,
+                hosting_before,
+                inventory,
+                remote_assets,
+                prepublish_download,
+            ),
+        )
+        _require_release_identity(release, config, state="published")
+    else:
+        _require_release_identity(release, config, state="published")
+        if existing_final is None:
+            _atomic_write_json(
+                final_path,
+                _published_transition_receipt(
+                    config,
+                    release,
+                    tag_ref,
+                    tag_object,
+                    hosting_before,
+                    inventory,
+                    remote_assets,
+                    prepublish_download,
+                ),
+            )
+
+    release = _query_release_by_id(runner, config, int(release["id"]))
+    _require_release_identity(release, config, state="published")
+    enumerated = _find_release(runner, config)
+    if enumerated is None or enumerated.get("id") != release.get("id"):
+        raise PublicationError("Published release enumeration did not return the same release")
+    _require_release_identity(enumerated, config, state="published")
+    _require_remote_commit(runner, config)
+    ref_payload, tag_payload = _verify_tag(runner, config)
+    tag_ref, tag_object = _assert_tag_matches_receipt(draft, ref_payload, tag_payload)
+    remote_assets = _normalized_remote_assets(release, inventory, allow_subset=False)
+    published_download = _download_assets(
+        runner, config, inventory, sorted(inventory.by_name)
+    )
+    hosting_after = _require_hosting_protection_state(runner, config)
+
+    payload = _base_receipt(
+        config,
+        phase="publish",
+        publication_state="published",
+        verification_state="verified_published",
+        verified=True,
+        release=release,
+        tag_ref=tag_ref,
+        tag_object=tag_object,
+        hosting_state=hosting_after,
+    )
+    payload.update(
+        {
+            "asset_upload_verified": True,
+            "remote_assets": remote_assets,
+            "local_asset_manifest": _local_manifest_record(inventory),
+            "prepublish_redownload_verification": prepublish_download,
+            "published_redownload_verification": published_download,
+            "post_publish_verification": {
+                "complete": True,
+                "release_requeried": True,
+                "release_enumerated": True,
+                "annotated_tag_requeried": True,
+                "assets_redownloaded": True,
+            },
+        }
+    )
+    _atomic_write_json(final_path, payload)
+    return final_path
 
 
 def publish_github_release(
     config: PublicationConfig, runner: Runner | None = None
 ) -> Path:
-    """Execute one publication phase and return its verified JSON receipt."""
+    """Execute one resumable publication phase and return its JSON receipt."""
 
     validated = _validate_config(config)
     command_runner = runner or SubprocessRunner()
@@ -1121,40 +1232,46 @@ def publish_github_release(
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Create an empty verified GitHub draft, verify prepared uploads, or "
-            "explicitly publish the same attested v0.3.0 release."
+            "Create or resume a tag-bound GitHub draft, verify canonical assets, "
+            "or publish the same verified v0.3.0 release."
         )
     )
     parser.add_argument("repository", help="GitHub repository slug, for example owner/repo")
     parser.add_argument("final_sha", help="Exact 40-character FINAL_SHA")
-    parser.add_argument("tag", help=f"Release tag; must be {EXPECTED_TAG}")
-    parser.add_argument("output_directory", type=Path, help="Publication attestation output directory")
+    parser.add_argument("tag", help=f"Existing annotated release tag; must be {EXPECTED_TAG}")
+    parser.add_argument("output_directory", type=Path, help="Publication receipt directory")
+    parser.add_argument(
+        "--github-actions-run-id",
+        type=int,
+        required=True,
+        help="Exact successful FINAL_SHA GitHub Actions run ID",
+    )
     phases = parser.add_mutually_exclusive_group(required=True)
     phases.add_argument(
         "--create-draft",
         dest="phase",
         action="store_const",
         const="create-draft",
-        help="Create and attest a new empty immutable draft release",
+        help="Create or resume an empty draft for the existing annotated tag",
     )
     phases.add_argument(
         "--upload-verify",
         dest="phase",
         action="store_const",
         const="upload-verify",
-        help="Upload and redownload-verify assets for the attested empty draft",
+        help="Resume missing uploads and redownload-verify canonical assets",
     )
     phases.add_argument(
         "--publish",
         dest="phase",
         action="store_const",
         const="publish",
-        help="Publish only a draft with a verified upload receipt",
+        help="Publish or resume verification of the verified draft",
     )
     parser.add_argument(
         "--asset-directory",
         type=Path,
-        help="Flat prepared asset directory; required after --create-draft",
+        help="Flat canonical release asset directory; required after --create-draft",
     )
     return parser
 
@@ -1167,6 +1284,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         tag=args.tag,
         output_directory=args.output_directory,
         phase=args.phase,
+        github_actions_run_id=args.github_actions_run_id,
         asset_directory=args.asset_directory,
     )
     try:

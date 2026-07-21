@@ -67,9 +67,12 @@ release date.
 
 - [ ] PR 3 contains current `main`, is no longer draft, and has green Ubuntu
   and macOS checks at its exact final head.
-- [ ] Independent release, scientific, and reproducibility reviews have no
-  unresolved blockers and their structured read-only audit records are bound
-  to the reviewed PR-head tree.
+- [ ] Three role-separated read-only agent executions (release engineering,
+  bioinformatics, and reproducibility) have no unresolved blockers. Each
+  record has a unique audit-instance ID and is bound to the reviewed PR-head
+  tree. The repository owner may post all three structured GitHub records;
+  this is execution separation, not external peer review or three distinct
+  GitHub reviewers.
 - [ ] The merged `main` commit is frozen as `FINAL_SHA`.
 - [ ] Push-event Ubuntu and macOS CI both report `head_sha=FINAL_SHA`.
 - [ ] Independent macOS and Ubuntu clean-room public runs start from public
@@ -80,6 +83,8 @@ release date.
 ## Release asset gate
 
 - [ ] The draft GitHub release targets the existing `v0.3.0` tag.
+- [ ] Repository immutable releases are enabled before draft creation, and the
+  queried published release reports `immutable=true`.
 - [ ] Canonical assets include wheel, sdist, validation ZIP, Markdown/DOCX/PDF
   report, the Markdown report's sibling figure directory as a tar archive,
   machine-readable verification record, release notes, environment records,

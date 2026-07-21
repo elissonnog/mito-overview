@@ -77,11 +77,18 @@ The runner must reject legacy DOI/Zenodo arguments, require an absent raw-cache 
 
 1. Stabilize and review the GitHub-only branch without modifying `paper/**`.
 2. Run complete local tests, all four synthetic workflows, both example builders, package-isolation checks, and hygiene scans.
-3. Obtain independent release-engineering, bioinformatics, and reproducibility reviews; resolve every blocker and rerun affected gates.
+3. Run three role-separated read-only agent audits for release engineering,
+   bioinformatics, and reproducibility. Bind unique audit-instance IDs to the
+   reviewed PR-head tree, resolve every blocker, and rerun affected gates;
+   owner-posted GitHub records are not represented as external peer review.
 4. Push PR #3 and require green Ubuntu/macOS CI at the exact head.
 5. Merge to `main`; record `FINAL_SHA`; require successful push-event CI at that exact SHA.
 6. Run a fresh macOS public clean-room reproduction from an empty cache and the Ubuntu public workflow at `FINAL_SHA`; compare normalized outputs and module states.
 7. Build and verify the audit ZIP, then tag exactly `FINAL_SHA` as annotated `v0.3.0` and rerun tag-clone package/unit/synthetic checks.
-8. Enable immutable releases, create the draft GitHub release, query its actual metadata, build and visually inspect the human-readable MD/DOCX/PDF report with report-native figures, upload and redownload all prepared assets, verify their hashes, publish, and record the queried publication receipt.
+8. Enable immutable releases through GitHub's repository setting, create the
+   draft GitHub release, query its actual metadata,
+   build and visually inspect the human-readable MD/DOCX/PDF report with
+   report-native figures, upload and redownload all prepared assets, verify
+   their hashes, publish, and record the queried publication receipt.
 
 Any commit after `FINAL_SHA` invalidates the release evidence. Any defect after publication is corrected forward as `v0.3.1`; the `v0.3.0` tag is never moved.

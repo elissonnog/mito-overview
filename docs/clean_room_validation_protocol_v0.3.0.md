@@ -125,7 +125,10 @@ complete rerun from a new final commit.
 
 ## Required release sequence
 
-1. Complete and independently review PR 3 without modifying `paper/**`.
+1. Complete PR 3 and run three role-separated read-only agent audits without
+   modifying `paper/**`. Each audit uses a unique execution ID and is bound to
+   the PR-head tree; owner-posted GitHub records do not imply distinct external
+   reviewers.
 2. Require Ubuntu and macOS PR CI at the exact final PR head.
 3. Merge PR 3 and define the resulting `main` commit as `FINAL_SHA`.
 4. Require push-event Ubuntu and macOS CI at `FINAL_SHA`.
@@ -135,7 +138,8 @@ complete rerun from a new final commit.
    directory and a fresh extraction.
 7. Create annotated tag `v0.3.0` at `FINAL_SHA`, validate the public tag, and
    never move it.
-8. Enable immutable releases, create a draft release, build the report from
+8. Enable immutable releases through GitHub's repository setting, create a
+   draft release, build the report from
    queried draft metadata, upload and redownload the complete asset inventory,
    verify `SHA256SUMS` against every other asset, publish, and capture the
    queried release/tag/asset receipt.
