@@ -38,9 +38,59 @@ def test_current_tracked_tree_passes_release_hygiene() -> None:
         (
             "binary.bam",
             b"prefix\x00/Users/" + b"elopes/private\x00",
-            "developer_home_path",
+            "absolute_user_home_path",
         ),
         ("paper/draft.md", b"Edited with Chat" + b"GPT", "manuscript_process_wording"),
+        (
+            "logs/linux.txt",
+            b"output=/ho" + b"me/realresearcher/run/output.tsv",
+            "absolute_user_home_path",
+        ),
+        (
+            "logs/windows.txt",
+            b"output=C:\\Us" + b"ers\\realresearcher\\run\\output.tsv",
+            "absolute_user_home_path",
+        ),
+        (
+            "logs/root.txt",
+            b"output=/ro" + b"ot/private/output.tsv",
+            "absolute_user_home_path",
+        ),
+        (
+            "credentials/key.pem",
+            b"----" + b"-BEGIN OPENSSH PRIVATE KEY-" + b"----\n",
+            "private_key_header",
+        ),
+        (
+            "credentials/github.txt",
+            b"value=gh" + b"p_0123456789abcdefghijklmnopqrstuvwxyz",
+            "github_token",
+        ),
+        (
+            "credentials/github-fine.txt",
+            b"value=github" + b"_pat_11_0123456789abcdefghijklmnopqrstuvwxyzABCD",
+            "github_token",
+        ),
+        (
+            "credentials/aws.txt",
+            b"value=AK" + b"IA0123456789ABCDEF",
+            "aws_access_key",
+        ),
+        (
+            "config/remote.txt",
+            b"url=https://release-bot:V3ryL0ngCred3ntial@" + b"example.org/archive",
+            "credential_bearing_url",
+        ),
+        (
+            "config/runtime.env",
+            b"API_" + b"TOKEN=live-looking-secret-value",
+            "secret_literal_assignment",
+        ),
+        (
+            "config/runtime.yaml",
+            b"client_" + b"secret: CorrectHorseBatteryStaple",
+            "secret_literal_assignment",
+        ),
     ],
 )
 def test_release_hygiene_rejects_tracked_private_material(
@@ -74,7 +124,7 @@ def test_extracted_archive_without_git_scans_every_shipped_file(tmp_path: Path) 
     unsafe.write_bytes(b"/Users/" + b"elopes/private")
 
     assert hygiene.tracked_paths(root) == ["README.md", "payload.bin"]
-    assert hygiene.find_violations(root) == ["payload.bin: developer_home_path"]
+    assert hygiene.find_violations(root) == ["payload.bin: absolute_user_home_path"]
 
 
 def test_extracted_sdist_uses_sources_manifest_not_runtime_cache(tmp_path: Path) -> None:
@@ -96,3 +146,41 @@ def test_extracted_sdist_uses_sources_manifest_not_runtime_cache(tmp_path: Path)
         "mito_overview.egg-info/SOURCES.txt",
     ]
     assert hygiene.find_violations(root) == []
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        b"macOS example: /Users/" + b"alice/project/output.tsv",
+        b"Linux example: /home/" + b"<username>/project/output.tsv",
+        b"Windows example: C:" + b"\\Users\\username\\project\\output.tsv",
+        b"url=https://user:" + b"REDACTED@example.org/archive",
+        b"API_" + b"TOKEN=${API_TOKEN}",
+        b"password=" + b"changeme",
+        b"client_" + b"secret=<secret>",
+        b"TOKEN_" + b"ENV=ZENODO_TOKEN",
+        b"CONTROL_" + b'TOKEN="mito-overview-v0.3.0-parent-control"',
+    ],
+)
+def test_documented_placeholders_and_control_values_are_safe(
+    tmp_path: Path, payload: bytes
+) -> None:
+    repo = make_repo(tmp_path, "safe-example.txt", payload)
+    assert hygiene.find_violations(repo) == []
+
+
+def test_cli_does_not_echo_secret_payload(tmp_path: Path) -> None:
+    payload = b"API_" + b"TOKEN=do-not-print-this-credential"
+    repo = make_repo(tmp_path, "config.env", payload)
+
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), str(repo)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 1
+    assert "config.env: secret_literal_assignment" in result.stdout
+    assert "do-not-print" not in result.stdout
+    assert "do-not-print" not in result.stderr
