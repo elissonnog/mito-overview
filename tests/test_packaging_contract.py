@@ -227,3 +227,12 @@ def test_ci_uses_fixed_runners_and_public_artifacts_exclude_raw_inputs() -> None
     assert "actions/cache" not in public
     assert "public-validation-derived-evidence" in public
     assert "Raw genomic input or alignment entered artifact staging" in public
+    assert 'MITO_OVERVIEW_REQUIRE_INSTALLED: "1"' in public
+    assert "MITO_OVERVIEW_EXPECTED_PLATFORM=linux-64" in public
+    assert "runtime_versions.json" not in public  # staged through the results/environment tree.
+    assert "oracle_assertions.tsv" in public
+    assert "raw_inputs.tsv" in public
+    assert "CACHE_SEAL.sha256" in public
+    assert "shasum -a 256 -c SHA256SUMS" in public
+    assert 'f"platform-{os.environ[' in smoke
+    assert '"EXPECTED_PLATFORM"' in smoke

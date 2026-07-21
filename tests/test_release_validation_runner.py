@@ -68,3 +68,27 @@ def test_runner_declares_public_clone_and_isolated_installed_probe() -> None:
     assert "executed_outside_checkout" in text
     assert "--zenodo-reservation-evidence" not in text
     assert "--doi" not in text
+
+
+def test_public_matrix_is_bound_to_public_clone_and_force_installed_wheel() -> None:
+    text = RUNNER.read_text(encoding="utf-8")
+    assert 'PREPARE_SCRIPT="${FRESH_CLONE_ROOT}/scripts/' in text
+    assert 'PUBLIC_MATRIX="${FRESH_CLONE_ROOT}/scripts/' in text
+    assert 'ORACLE="${FRESH_CLONE_ROOT}/examples/' in text
+    assert 'MITO_OVERVIEW_PYTHON="${FRESH_PYTHON}"' in text
+    assert "MITO_OVERVIEW_REQUIRE_INSTALLED=1" in text
+    assert "PYTHONPATH=" in text
+    assert "pip install --force-reinstall" in text
+    assert '"mito-overview":"0.3.0"' in text
+
+
+def test_runner_requires_three_platform_ci_artifacts_and_cross_platform_result() -> None:
+    text = RUNNER.read_text(encoding="utf-8")
+    for platform in ("linux-64", "osx-64", "osx-arm64"):
+        assert f"resolved-environment-${{platform}}" in text or platform in text
+        assert f"platform-${{platform}}.json" in text
+    assert "public-validation.yml/runs" in text
+    assert "cross_platform_comparison.tsv" in text
+    assert "normalized_scientific_table" in text
+    assert "visual_structure" in text
+    assert "The release-side public matrix must be reproduced on macOS" in text

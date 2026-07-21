@@ -24,6 +24,7 @@ jobs:
       run:
         shell: bash -el -o pipefail {0}
     env:
+      MITO_OVERVIEW_REQUIRE_INSTALLED: "1"
       PYTHONNOUSERSITE: "1"
       TARGET_SHA: ${{ inputs.commit_sha }}
 
@@ -44,6 +45,7 @@ jobs:
 
       - name: Verify clean detached source identity
         run: |
+          test "$GITHUB_SHA" = "$TARGET_SHA"
           test "$(git rev-parse HEAD)" = "$TARGET_SHA"
           test "$(git cat-file -t "$TARGET_SHA")" = commit
           test -z "$(git status --porcelain --untracked-files=all)"
@@ -98,12 +100,16 @@ jobs:
             ./scripts/prepare_public_validation_cache_v0.3.0.sh \
               --cache "$RAW_CACHE"
 
-      - name: Run public matrix offline against frozen oracle
+      - name: Run sealed-cache public matrix against frozen oracle
         run: |
           RAW_CACHE="$RUNNER_TEMP/mito-overview-public-inputs-v0.3.0"
           VALIDATION_ROOT="$RUNNER_TEMP/mito-overview-public-validation-v0.3.0"
           /usr/bin/time -v -o "$RUNNER_TEMP/public-matrix-resource-usage.txt" \
-            ./scripts/run_public_validation_matrix_v0.3.0.sh \
+            env \
+              MITO_OVERVIEW_PYTHON="$(command -v python)" \
+              MITO_OVERVIEW_REQUIRE_INSTALLED=1 \
+              MITO_OVERVIEW_EXPECTED_PLATFORM=linux-64 \
+              ./scripts/run_public_validation_matrix_v0.3.0.sh \
               --mode offline \
               --cache "$RAW_CACHE" \
               --work "$VALIDATION_ROOT/work" \
@@ -124,11 +130,13 @@ jobs:
             [[ -f "$metrics" ]] && cp "$metrics" "$ARTIFACT_ROOT/environment/"
           done
           if [[ -d "$RESULTS_ROOT" ]]; then
-            for relative in cases.tsv filter_profile_results.tsv inputs.sha256; do
+            for relative in \
+              cases.tsv filter_profile_results.tsv inputs.sha256 \
+              oracle_assertions.tsv raw_inputs.tsv CACHE_SEAL.sha256; do
               [[ -f "$RESULTS_ROOT/$relative" ]] \
                 && cp "$RESULTS_ROOT/$relative" "$ARTIFACT_ROOT/results/"
             done
-            for directory in commands logs observed_normalized; do
+            for directory in commands logs observed_normalized environment; do
               [[ -d "$RESULTS_ROOT/$directory" ]] \
                 && cp -R "$RESULTS_ROOT/$directory" "$ARTIFACT_ROOT/results/"
             done
@@ -151,10 +159,14 @@ jobs:
             echo "Raw genomic input or alignment entered artifact staging" >&2
             exit 1
           fi
-          find "$ARTIFACT_ROOT" -type f ! -name SHA256SUMS -print0 \
-            | sort -z \
-            | xargs -0 shasum -a 256 \
-            > "$ARTIFACT_ROOT/SHA256SUMS"
+          (
+            cd "$ARTIFACT_ROOT"
+            find . -type f ! -name SHA256SUMS -print0 \
+              | sort -z \
+              | xargs -0 shasum -a 256 \
+              > SHA256SUMS
+            shasum -a 256 -c SHA256SUMS
+          )
 
       - name: Upload derived validation evidence
         if: ${{ always() }}

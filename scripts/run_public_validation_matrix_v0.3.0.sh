@@ -7,8 +7,10 @@ Usage: run_public_validation_matrix_v0.3.0.sh \
   --mode offline --cache SEALED_RAW_CACHE --work WORK_ROOT \
   --output OUTPUT_ROOT --oracle ORACLE_TSV
 
-Only offline execution is accepted. Prepare the seven-FASTQ raw cache first
-with scripts/prepare_public_validation_cache_v0.3.0.sh.
+Only sealed-cache execution is accepted. Prepare the seven-FASTQ raw cache
+first with scripts/prepare_public_validation_cache_v0.3.0.sh. The "offline"
+mode guards known project network entrypoints; it is not an operating-system
+network sandbox.
 EOF
 }
 
@@ -59,12 +61,27 @@ PYTHON_REQUEST="${MITO_OVERVIEW_PYTHON:-python3}"
 PYTHON_BIN="$(command -v "${PYTHON_REQUEST}")"
 BASE_PATH="${PATH}"
 
+case "$(uname -s)/$(uname -m)" in
+  Linux/x86_64) DETECTED_PLATFORM="linux-64" ;;
+  Darwin/x86_64) DETECTED_PLATFORM="osx-64" ;;
+  Darwin/arm64) DETECTED_PLATFORM="osx-arm64" ;;
+  *)
+    echo "Unsupported validation platform: $(uname -s)/$(uname -m)" >&2
+    exit 1
+    ;;
+esac
+EXPECTED_PLATFORM="${MITO_OVERVIEW_EXPECTED_PLATFORM:-${DETECTED_PLATFORM}}"
+if [[ "${EXPECTED_PLATFORM}" != "${DETECTED_PLATFORM}" ]]; then
+  echo "Validation platform mismatch: expected ${EXPECTED_PLATFORM}, detected ${DETECTED_PLATFORM}" >&2
+  exit 1
+fi
+
 # Hidden MITO_OVERVIEW_* settings make a public replay non-auditable. The
 # interpreter is the only allowed launcher override; every scientific setting
 # below is explicit and recorded in each replay command.
 while IFS='=' read -r name _; do
   case "${name}" in
-    MITO_OVERVIEW_PYTHON) ;;
+    MITO_OVERVIEW_PYTHON|MITO_OVERVIEW_REQUIRE_INSTALLED|MITO_OVERVIEW_EXPECTED_PLATFORM) ;;
     MITO_OVERVIEW_*)
       echo "Unexpected ambient validation setting: ${name}" >&2
       exit 1
@@ -96,23 +113,26 @@ ORACLE_TSV="$(cd "$(dirname "${ORACLE_TSV}")" && pwd)/$(basename "${ORACLE_TSV}"
 ISOLATED_HOME="${WORK_ROOT}/home"
 ISOLATED_TMP="${WORK_ROOT}/tmp"
 ISOLATED_CACHE="${WORK_ROOT}/xdg-cache"
+MPL_CONFIG="${WORK_ROOT}/matplotlib"
 CANARY_BIN="${WORK_ROOT}/network-canary/bin"
-CANARY_LOG="${WORK_ROOT}/network-canary/curl-attempts.log"
+CANARY_LOG="${WORK_ROOT}/network-canary/project-entrypoint-attempts.log"
 DERIVED_ROOT="${WORK_ROOT}/derivatives"
 mkdir -p \
-  "${ISOLATED_HOME}" "${ISOLATED_TMP}" "${ISOLATED_CACHE}" "${CANARY_BIN}" \
+  "${ISOLATED_HOME}" "${ISOLATED_TMP}" "${ISOLATED_CACHE}" "${MPL_CONFIG}" "${CANARY_BIN}" \
   "${DERIVED_ROOT}/GM11906" "${DERIVED_ROOT}/GM12878" \
   "${OUTPUT_ROOT}/commands" "${OUTPUT_ROOT}/logs" "${OUTPUT_ROOT}/outputs" \
-  "${OUTPUT_ROOT}/observed_normalized"
+  "${OUTPUT_ROOT}/observed_normalized" "${OUTPUT_ROOT}/environment"
 
-cat > "${CANARY_BIN}/curl" <<'EOF'
+for guarded_command in curl wget; do
+cat > "${CANARY_BIN}/${guarded_command}" <<'EOF'
 #!/usr/bin/env bash
-printf 'blocked curl invocation:' >> "${MITO_OVERVIEW_NETWORK_CANARY_LOG:?}"
+printf 'blocked project network entrypoint %s:' "$(basename "$0")" >> "${MITO_OVERVIEW_NETWORK_CANARY_LOG:?}"
 printf ' %q' "$@" >> "${MITO_OVERVIEW_NETWORK_CANARY_LOG}"
 printf '\n' >> "${MITO_OVERVIEW_NETWORK_CANARY_LOG}"
 exit 97
 EOF
-chmod +x "${CANARY_BIN}/curl"
+chmod +x "${CANARY_BIN}/${guarded_command}"
+done
 CLEAN_PATH="${CANARY_BIN}:$(dirname "${PYTHON_BIN}"):${BASE_PATH}"
 
 common_environment=(
@@ -120,16 +140,133 @@ common_environment=(
   "HOME=${ISOLATED_HOME}"
   "TMPDIR=${ISOLATED_TMP}"
   "XDG_CACHE_HOME=${ISOLATED_CACHE}"
+  "MPLCONFIGDIR=${MPL_CONFIG}"
   "PYTHONNOUSERSITE=1"
+  "PYTHONPATH="
+  "PIP_DISABLE_PIP_VERSION_CHECK=1"
   "LC_ALL=C"
   "LANG=C"
   "TZ=UTC"
   "MPLBACKEND=Agg"
   "MITO_OVERVIEW_PYTHON=${PYTHON_BIN}"
+  "MITO_OVERVIEW_REQUIRE_INSTALLED=1"
+  "MITO_OVERVIEW_EXPECTED_PLATFORM=${EXPECTED_PLATFORM}"
   "MITO_OVERVIEW_PUBLIC_INPUT_MODE=offline"
   "MITO_OVERVIEW_PUBLIC_OUTPUT_MODE=evidence"
   "MITO_OVERVIEW_NETWORK_CANARY_LOG=${CANARY_LOG}"
+  "HTTP_PROXY=http://127.0.0.1:9"
+  "HTTPS_PROXY=http://127.0.0.1:9"
+  "ALL_PROXY=http://127.0.0.1:9"
+  "NO_PROXY="
 )
+
+env -i "${common_environment[@]}" "${PYTHON_BIN}" -I - \
+  "${REPO_ROOT}" "${OUTPUT_ROOT}/environment/runtime_versions.json" \
+  "${EXPECTED_PLATFORM}" <<'PY'
+import json
+import platform
+import subprocess
+import sys
+from importlib.metadata import version
+from pathlib import Path
+
+repo_root = Path(sys.argv[1]).resolve()
+output = Path(sys.argv[2])
+expected_platform = sys.argv[3]
+
+if tuple(sys.version_info[:3]) != (3, 12, 13):
+    raise SystemExit(f"Python version mismatch: {platform.python_version()} != 3.12.13")
+
+expected_packages = {
+    "mito-overview": "0.3.0",
+    "pysam": "0.24.0",
+    "pandas": "3.0.3",
+    "numpy": "2.5.1",
+    "matplotlib": "3.11.0",
+    "requests": "2.34.2",
+    "pytest": "9.1.1",
+    "build": "1.5.0",
+    "setuptools": "82.0.1",
+    "wheel": "0.47.0",
+    "python-docx": "1.2.0",
+}
+observed_packages = {name: version(name) for name in expected_packages}
+for name, expected in expected_packages.items():
+    if observed_packages[name] != expected:
+        raise SystemExit(
+            f"{name} version mismatch: {observed_packages[name]} != {expected}"
+        )
+
+import mito_overview
+
+module_path = Path(mito_overview.__file__).resolve()
+if module_path == repo_root or repo_root in module_path.parents:
+    raise SystemExit(f"Checkout code shadowed the installed package: {module_path}")
+
+samtools_lines = subprocess.run(
+    ["samtools", "--version"], check=True, text=True, capture_output=True
+).stdout.splitlines()
+if not samtools_lines or samtools_lines[0] != "samtools 1.23.1":
+    raise SystemExit(f"samtools version mismatch: {samtools_lines[:1]}")
+if len(samtools_lines) < 2 or samtools_lines[1] != "Using htslib 1.23.1":
+    raise SystemExit(f"htslib version mismatch: {samtools_lines[:2]}")
+minimap2 = subprocess.run(
+    ["minimap2", "--version"], check=True, text=True, capture_output=True
+).stdout.strip()
+if minimap2 != "2.31-r1302":
+    raise SystemExit(f"minimap2 version mismatch: {minimap2}")
+bwa_stderr = subprocess.run(
+    ["bwa"], check=False, text=True, capture_output=True
+).stderr
+if "Version: 0.7.19-r1273" not in bwa_stderr:
+    raise SystemExit("bwa version mismatch; expected 0.7.19-r1273")
+
+platform_map = {
+    ("Linux", "x86_64"): "linux-64",
+    ("Darwin", "x86_64"): "osx-64",
+    ("Darwin", "arm64"): "osx-arm64",
+}
+observed_platform = platform_map.get((platform.system(), platform.machine()))
+if observed_platform != expected_platform:
+    raise SystemExit(
+        f"Platform identity mismatch: {observed_platform} != {expected_platform}"
+    )
+
+record = {
+    "schema_version": "1.0",
+    "platform_id": observed_platform,
+    "system": platform.system(),
+    "machine": platform.machine(),
+    "python": platform.python_version(),
+    "python_executable": sys.executable,
+    "mito_overview_module": str(module_path),
+    "packages": observed_packages,
+    "samtools": samtools_lines[0],
+    "htslib": samtools_lines[1],
+    "minimap2": minimap2,
+    "bwa": "0.7.19-r1273",
+    "threads": 4,
+    "installed_distribution_required": True,
+}
+output.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+PY
+
+env -i "${common_environment[@]}" "${PYTHON_BIN}" -m pip freeze --all \
+  > "${OUTPUT_ROOT}/environment/pip-freeze.txt"
+if command -v conda >/dev/null 2>&1; then
+  env -i "${common_environment[@]}" conda list --explicit \
+    > "${OUTPUT_ROOT}/environment/conda-explicit.txt"
+else
+  printf 'conda unavailable; exact runtime versions are recorded in runtime_versions.json\n' \
+    > "${OUTPUT_ROOT}/environment/conda-explicit.txt"
+fi
+cat > "${OUTPUT_ROOT}/environment/network_entrypoint_contract.tsv" <<'EOF'
+entrypoint	control	scope
+curl	PATH canary	release public-data runners
+wget	PATH canary	defensive command guard
+mvTool requests	MVTOOL_MODE=disabled	pipeline external annotation module
+socket/network namespace	not controlled	not an operating-system network sandbox
+EOF
 
 env -i "${common_environment[@]}" \
   "${SCRIPT_DIR}/prepare_public_validation_cache_v0.3.0.sh" \
@@ -325,12 +462,12 @@ env -i "${common_environment[@]}" \
   --verify --cache "${CACHE_ROOT}" \
   > "${OUTPUT_ROOT}/logs/cache_postflight.log" 2>&1
 if [[ -s "${CANARY_LOG}" ]]; then
-  record_case offline_network offline_isolation 1 1 FAIL "curl network canary was invoked"
+  record_case project_network_entrypoints cache_only_execution 1 1 FAIL "a guarded project network entrypoint was invoked"
   cat "${CANARY_LOG}" >&2
   exit 1
 fi
 
-awk -F '\t' 'NR > 1 {print $10 "  " $7}' \
+awk -F '\t' 'NR > 1 {print $14 "  " $11}' \
   "${CACHE_ROOT}/raw_inputs.tsv" > "${OUTPUT_ROOT}/inputs.sha256"
 cp "${CACHE_ROOT}/raw_inputs.tsv" "${OUTPUT_ROOT}/raw_inputs.tsv"
 cp "${CACHE_ROOT}/CACHE_SEAL.sha256" "${OUTPUT_ROOT}/CACHE_SEAL.sha256"
@@ -366,6 +503,7 @@ record_case gm12878_visual_integrity visual_integrity 1 1 PASS "${visual_details
 record_case filter_profiles filter_dependence 1 1 PASS "all six frozen filter-profile oracles passed"
 record_case public_oracle exact_oracle 1 1 PASS "all expected values, inventories, and statuses matched"
 record_case raw_cache_seal input_integrity 1 1 PASS "seven-FASTQ sealed cache passed preflight and postflight"
-record_case offline_network offline_isolation 1 1 PASS "curl canary was not invoked"
+record_case project_network_entrypoints cache_only_execution 1 1 PASS \
+  "curl/wget canaries were not invoked and mvTool was disabled; this is not an OS network sandbox"
 
 echo "[validation-matrix] PASS output=${OUTPUT_ROOT} work=${WORK_ROOT}"

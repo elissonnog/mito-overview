@@ -146,6 +146,11 @@ fi
 mkdir -p   "${VALIDATION_ROOT}/acceptance"   "${VALIDATION_ROOT}/commands"   "${VALIDATION_ROOT}/logs"   "${VALIDATION_ROOT}/resources"   "${VALIDATION_ROOT}/expected"   "${VALIDATION_ROOT}/work"   "${VALIDATION_ROOT}/dist"   "${CACHE_ROOT}"
 mkdir -p "$(dirname "${AUDIT_ZIP}")"
 
+FRESH_CLONE_ROOT="${VALIDATION_ROOT}/work/fresh_clone"
+FRESH_ENV_ROOT="${VALIDATION_ROOT}/work/fresh_environment"
+FRESH_VENV_ROOT="${FRESH_ENV_ROOT}/venv"
+FRESH_PYTHON="${FRESH_VENV_ROOT}/bin/python"
+
 CASES_TSV="${VALIDATION_ROOT}/cases.tsv"
 printf 'case_id\tcategory\tinput_available\texpected_available\tverdict\tdetail\n' > "${CASES_TSV}"
 
@@ -224,18 +229,74 @@ fetch_github_actions_evidence() {
   local log_file="${VALIDATION_ROOT}/logs/github_actions_candidate_commit.log"
   local run_tmp="${VALIDATION_ROOT}/acceptance/github_actions_run.json.tmp"
   local jobs_tmp="${VALIDATION_ROOT}/acceptance/github_actions_jobs.json.tmp"
+  local artifacts_tmp="${VALIDATION_ROOT}/acceptance/github_actions_artifacts.json.tmp"
+  local artifacts_root="${VALIDATION_ROOT}/acceptance/resolved_ci_environments"
   {
     printf 'gh api %q > %q\n'       "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"       "acceptance/github_actions_run.json"
     printf 'gh api %q > %q\n'       "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/jobs?filter=latest&per_page=100"       "acceptance/github_actions_jobs.json"
+    printf 'gh api %q > %q\n'       "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/artifacts?per_page=100"       "acceptance/github_actions_artifacts.json"
+    printf 'gh run download %q --repo %q --dir %q\n'       "${GITHUB_RUN_ID}" "${GITHUB_REPOSITORY}"       "acceptance/resolved_ci_environments"
   } > "${command_file}"
   if {
     echo "candidate_commit=${CANDIDATE_COMMIT}"
     echo "github_actions_run_id=${GITHUB_RUN_ID}"
     gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" > "${run_tmp}"
     gh api       "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/jobs?filter=latest&per_page=100"       > "${jobs_tmp}"
+    gh api       "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/artifacts?per_page=100"       > "${artifacts_tmp}"
     mv "${run_tmp}" "${VALIDATION_ROOT}/acceptance/github_actions_run.json"
     mv "${jobs_tmp}" "${VALIDATION_ROOT}/acceptance/github_actions_jobs.json"
+    mv "${artifacts_tmp}" "${VALIDATION_ROOT}/acceptance/github_actions_artifacts.json"
+    "${PYTHON_BIN}" -       "${VALIDATION_ROOT}/acceptance/github_actions_artifacts.json"       "${GITHUB_RUN_ID}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+run_id = sys.argv[2]
+expected = {
+    f"resolved-environment-linux-64-{run_id}",
+    f"resolved-environment-osx-64-{run_id}",
+    f"resolved-environment-osx-arm64-{run_id}",
+}
+observed = {
+    item["name"]
+    for item in payload.get("artifacts", [])
+    if not item.get("expired", False)
+}
+missing = sorted(expected - observed)
+if missing:
+    raise SystemExit(f"Missing resolved CI environment artifacts: {missing}")
+PY
+    mkdir -p "${artifacts_root}"
+    for platform in linux-64 osx-64 osx-arm64; do
+      artifact="resolved-environment-${platform}-${GITHUB_RUN_ID}"
+      destination="${artifacts_root}/${platform}"
+      mkdir -p "${destination}"
+      gh run download "${GITHUB_RUN_ID}" --repo "${GITHUB_REPOSITORY}" \
+        --name "${artifact}" --dir "${destination}"
+      test -s "${destination}/conda-${platform}.explicit.txt"
+      test -s "${destination}/pip-${platform}.txt"
+      test -s "${destination}/environment-${platform}.yml"
+      test -s "${destination}/platform-${platform}.json"
+      "${PYTHON_BIN}" - "${destination}/platform-${platform}.json" \
+        "${platform}" "${CANDIDATE_COMMIT}" "${GITHUB_RUN_ID}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+record = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+if record.get("platform_id") != sys.argv[2]:
+    raise SystemExit("Resolved CI artifact platform identity mismatch")
+if record.get("git_commit") != sys.argv[3]:
+    raise SystemExit("Resolved CI artifact commit identity mismatch")
+if record.get("github_run_id") != int(sys.argv[4]):
+    raise SystemExit("Resolved CI artifact run identity mismatch")
+if record.get("resolved_environment") is not True:
+    raise SystemExit("Resolved CI artifact did not attest environment resolution")
+PY
+    done
     echo "github_actions_metadata_ingestion=PASS"
+    echo "github_actions_platform_artifacts=linux-64,osx-64,osx-arm64"
   } > "${log_file}" 2>&1; then
     return 0
   fi
@@ -244,17 +305,18 @@ fetch_github_actions_evidence() {
 }
 
 run_fresh_clone_validation() {
-  local clone_root="${VALIDATION_ROOT}/work/fresh_clone"
-  local env_root="${VALIDATION_ROOT}/work/fresh_environment"
-  local home_root="${env_root}/home"
-  local tmp_root="${env_root}/tmp"
-  local cache_root="${env_root}/cache"
-  local venv_root="${env_root}/venv"
+  local clone_root="${FRESH_CLONE_ROOT}"
+  local env_root="${FRESH_ENV_ROOT}"
+  local home_root="${FRESH_ENV_ROOT}/home"
+  local tmp_root="${FRESH_ENV_ROOT}/tmp"
+  local cache_root="${FRESH_ENV_ROOT}/cache"
+  local venv_root="${FRESH_VENV_ROOT}"
   local probe_root="${VALIDATION_ROOT}/work/installed_probe"
   local command_file="${VALIDATION_ROOT}/commands/${FRESH_CLONE_CASE_ID}.sh"
   local log_file="${VALIDATION_ROOT}/logs/${FRESH_CLONE_CASE_ID}.log"
 
-  mkdir -p "${home_root}" "${tmp_root}" "${cache_root}" "${probe_root}"
+  mkdir -p "${home_root}" "${tmp_root}" "${cache_root}" "${probe_root}" \
+    "${VALIDATION_ROOT}/acceptance/fresh_clone_environment"
   cat > "${command_file}" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
@@ -265,9 +327,11 @@ run_clean() {
     TMPDIR=$(printf '%q' "${tmp_root}") \
     XDG_CACHE_HOME=$(printf '%q' "${cache_root}") \
     PATH="\${PATH}" \
-    PYTHONNOUSERSITE=1 PYTHONPATH= LC_ALL=C TZ=UTC THREADS=4 \
+    PYTHONNOUSERSITE=1 PYTHONPATH= PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    LC_ALL=C LANG=C TZ=UTC THREADS=4 \
     "\$@"
 }
+
 run_clean git clone --no-checkout $(printf '%q' "${PUBLIC_REMOTE}") $(printf '%q' "${clone_root}")
 run_clean git -C $(printf '%q' "${clone_root}") cat-file -e $(printf '%q' "${CANDIDATE_COMMIT}^{commit}")
 run_clean git -C $(printf '%q' "${clone_root}") checkout --detach $(printf '%q' "${CANDIDATE_COMMIT}")
@@ -277,25 +341,35 @@ run_clean git -C $(printf '%q' "${clone_root}") fsck --full
 test -z "\$(run_clean git -C $(printf '%q' "${clone_root}") status --porcelain --untracked-files=all)"
 run_clean $(printf '%q' "${PYTHON_BIN}") -m venv $(printf '%q' "${venv_root}")
 FRESH_PYTHON=$(printf '%q' "${venv_root}/bin/python")
-run_clean "\${FRESH_PYTHON}" -m pip install --disable-pip-version-check \
-  build==1.5.0 setuptools==82.0.1 wheel==0.47.0 \
+run_clean "\${FRESH_PYTHON}" -m pip install --force-reinstall \
+  pip==26.1.2 build==1.5.0 setuptools==82.0.1 wheel==0.47.0 \
   pytest==9.1.1 python-docx==1.2.0
 run_clean "\${FRESH_PYTHON}" -m build --no-isolation \
   --outdir $(printf '%q' "${VALIDATION_ROOT}/dist") $(printf '%q' "${clone_root}")
 WHEEL="\$(find $(printf '%q' "${VALIDATION_ROOT}/dist") -maxdepth 1 -type f -name '*.whl' -print -quit)"
 SDIST="\$(find $(printf '%q' "${VALIDATION_ROOT}/dist") -maxdepth 1 -type f -name '*.tar.gz' -print -quit)"
 test -n "\${WHEEL}" && test -n "\${SDIST}"
-run_clean "\${FRESH_PYTHON}" -m pip install --disable-pip-version-check "\${WHEEL}"
+run_clean "\${FRESH_PYTHON}" -m pip install --force-reinstall "\${WHEEL}"
+run_clean "\${FRESH_PYTHON}" -I -c \
+  'import platform,sys; assert tuple(sys.version_info[:3]) == (3,12,13), platform.python_version()'
+run_clean "\${FRESH_PYTHON}" -I -c \
+  'from importlib.metadata import version; expected={"mito-overview":"0.3.0","pysam":"0.24.0","pandas":"3.0.3","numpy":"2.5.1","matplotlib":"3.11.0","requests":"2.34.2","pytest":"9.1.1","build":"1.5.0","setuptools":"82.0.1","wheel":"0.47.0","python-docx":"1.2.0"}; observed={k:version(k) for k in expected}; assert observed == expected, (observed, expected)'
+test "\$(run_clean samtools --version | sed -n '1p')" = 'samtools 1.23.1'
+test "\$(run_clean samtools --version | sed -n '2p')" = 'Using htslib 1.23.1'
+test "\$(run_clean minimap2 --version)" = '2.31-r1302'
+BWA_VERSION="\$(run_clean bwa 2>&1 || true)"
+grep -F 'Version: 0.7.19-r1273' <<< "\${BWA_VERSION}" >/dev/null
+run_clean "\${FRESH_PYTHON}" -m pip freeze --all > $(printf '%q' "${VALIDATION_ROOT}/acceptance/fresh_clone_environment/pip-freeze.txt")
 cd $(printf '%q' "${probe_root}")
 run_clean "\${FRESH_PYTHON}" -I -c \
   'from pathlib import Path; import mito_overview; p=Path(mito_overview.__file__).resolve(); assert "site-packages" in p.parts; print(p)'
 run_clean "\${FRESH_PYTHON}" -I -m mito_overview.cli --list-steps
 cd $(printf '%q' "${clone_root}")
 run_clean "\${FRESH_PYTHON}" -m pytest -q
-run_clean env MITO_OVERVIEW_PYTHON="\${FRESH_PYTHON}" ./tests/smoke_public_pipeline.sh
-run_clean env MITO_OVERVIEW_PYTHON="\${FRESH_PYTHON}" ./tests/smoke_public_pipeline_shortread.sh
-run_clean env MITO_OVERVIEW_PYTHON="\${FRESH_PYTHON}" ./tests/smoke_public_pipeline_longread_nomethyl.sh
-run_clean env MITO_OVERVIEW_PYTHON="\${FRESH_PYTHON}" ./tests/smoke_standalone_minimal.sh
+run_clean env MITO_OVERVIEW_PYTHON="\${FRESH_PYTHON}" MITO_OVERVIEW_REQUIRE_INSTALLED=1 ./tests/smoke_public_pipeline.sh
+run_clean env MITO_OVERVIEW_PYTHON="\${FRESH_PYTHON}" MITO_OVERVIEW_REQUIRE_INSTALLED=1 ./tests/smoke_public_pipeline_shortread.sh
+run_clean env MITO_OVERVIEW_PYTHON="\${FRESH_PYTHON}" MITO_OVERVIEW_REQUIRE_INSTALLED=1 ./tests/smoke_public_pipeline_longread_nomethyl.sh
+run_clean env MITO_OVERVIEW_PYTHON="\${FRESH_PYTHON}" MITO_OVERVIEW_REQUIRE_INSTALLED=1 ./tests/smoke_standalone_minimal.sh
 test -z "\$(run_clean git -C $(printf '%q' "${clone_root}") status --porcelain --untracked-files=all)"
 echo fresh_clone_validation=PASS
 EOF
@@ -335,6 +409,255 @@ PY
     return 0
   fi
   record_case "${FRESH_CLONE_CASE_ID}" release_acceptance 1 1 FAIL     "fresh public clone failed; see logs/${FRESH_CLONE_CASE_ID}.log"
+  tail -100 "${log_file}" >&2
+  return 1
+}
+
+fetch_and_compare_ubuntu_public_evidence() {
+  local command_file="${VALIDATION_ROOT}/commands/cross_platform_public_reproduction.sh"
+  local log_file="${VALIDATION_ROOT}/logs/cross_platform_public_reproduction.log"
+  local acceptance_root="${VALIDATION_ROOT}/acceptance/ubuntu_public_validation"
+  local runs_json="${acceptance_root}/workflow_runs.json"
+  local run_id_file="${acceptance_root}/run_id.txt"
+  local artifacts_json="${acceptance_root}/artifacts.json"
+  local artifact_root="${acceptance_root}/artifact"
+  local comparison_tsv="${VALIDATION_ROOT}/acceptance/cross_platform_comparison.tsv"
+  local comparison_json="${VALIDATION_ROOT}/acceptance/cross_platform_public_reproduction.json"
+
+  mkdir -p "${acceptance_root}" "${artifact_root}"
+  cat > "${command_file}" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+gh api repos/${GITHUB_REPOSITORY}/actions/workflows/public-validation.yml/runs?event=workflow_dispatch\&status=success\&per_page=100
+# Select the successful Ubuntu public-validation run whose head_sha is
+# ${CANDIDATE_COMMIT}, download its derived-only artifact, and compare it with
+# the local macOS normalized matrix using the embedded deterministic comparator.
+EOF
+  chmod +x "${command_file}"
+
+  if {
+    gh api \
+      "repos/${GITHUB_REPOSITORY}/actions/workflows/public-validation.yml/runs?event=workflow_dispatch&status=success&per_page=100" \
+      > "${runs_json}"
+    "${PYTHON_BIN}" - "${runs_json}" "${CANDIDATE_COMMIT}" "${run_id_file}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+commit = sys.argv[2]
+matches = [
+    run for run in payload.get("workflow_runs", [])
+    if run.get("head_sha") == commit
+    and run.get("event") == "workflow_dispatch"
+    and run.get("status") == "completed"
+    and run.get("conclusion") == "success"
+    and run.get("path") == ".github/workflows/public-validation.yml"
+]
+if not matches:
+    raise SystemExit(f"No successful public-validation workflow found at {commit}")
+matches.sort(key=lambda run: (run.get("run_attempt", 0), run.get("id", 0)), reverse=True)
+Path(sys.argv[3]).write_text(str(matches[0]["id"]) + "\n", encoding="utf-8")
+PY
+    local public_run_id
+    public_run_id="$(cat "${run_id_file}")"
+    gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${public_run_id}/artifacts?per_page=100" \
+      > "${artifacts_json}"
+    local artifact_name="public-validation-derived-${CANDIDATE_COMMIT}-${public_run_id}"
+    "${PYTHON_BIN}" - "${artifacts_json}" "${artifact_name}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+expected = sys.argv[2]
+matches = [
+    artifact for artifact in payload.get("artifacts", [])
+    if artifact.get("name") == expected and not artifact.get("expired", False)
+]
+if len(matches) != 1:
+    raise SystemExit(f"Expected one unexpired public-validation artifact {expected!r}")
+PY
+    gh run download "${public_run_id}" --repo "${GITHUB_REPOSITORY}" \
+      --name "${artifact_name}" --dir "${artifact_root}"
+    test -s "${artifact_root}/SHA256SUMS"
+    (cd "${artifact_root}" && shasum -a 256 -c SHA256SUMS)
+    test -s "${artifact_root}/environment/identity.txt"
+    grep -Fx "git_commit=${CANDIDATE_COMMIT}" \
+      "${artifact_root}/environment/identity.txt" >/dev/null
+    grep -Fx 'runner_os=Linux' "${artifact_root}/environment/identity.txt" >/dev/null
+    grep -Fx 'runner_arch=X64' "${artifact_root}/environment/identity.txt" >/dev/null
+    test -s "${artifact_root}/results/oracle_assertions.tsv"
+    test -s "${artifact_root}/results/environment/runtime_versions.json"
+
+    "${PYTHON_BIN}" - \
+      "${PUBLIC_ROOT}" "${artifact_root}/results" \
+      "${comparison_tsv}" "${comparison_json}" \
+      "${CANDIDATE_COMMIT}" "${public_run_id}" <<'PY'
+import csv
+import hashlib
+import json
+import sys
+from pathlib import Path
+
+local_root = Path(sys.argv[1])
+ubuntu_root = Path(sys.argv[2])
+report_path = Path(sys.argv[3])
+json_path = Path(sys.argv[4])
+commit = sys.argv[5]
+public_run_id = int(sys.argv[6])
+
+def digest(path: Path) -> str:
+    value = hashlib.sha256()
+    value.update(path.read_bytes())
+    return value.hexdigest()
+
+def scientific_paths(root: Path) -> set[Path]:
+    paths = {
+        path.relative_to(root)
+        for path in (root / "observed_normalized").rglob("*.tsv")
+        if path.name != "visual_artifact_inventory.tsv"
+    }
+    for name in (
+        "cases.tsv",
+        "filter_profile_results.tsv",
+        "inputs.sha256",
+        "oracle_assertions.tsv",
+        "raw_inputs.tsv",
+        "CACHE_SEAL.sha256",
+    ):
+        if (root / name).is_file():
+            paths.add(Path(name))
+    return paths
+
+local_paths = scientific_paths(local_root)
+ubuntu_paths = scientific_paths(ubuntu_root)
+if local_paths != ubuntu_paths:
+    raise SystemExit(
+        "Cross-platform scientific path inventories differ: "
+        f"local_only={sorted(map(str, local_paths - ubuntu_paths))}; "
+        f"ubuntu_only={sorted(map(str, ubuntu_paths - local_paths))}"
+    )
+
+rows = []
+for relative in sorted(local_paths, key=lambda path: path.as_posix()):
+    local = local_root / relative
+    ubuntu = ubuntu_root / relative
+    local_hash = digest(local)
+    ubuntu_hash = digest(ubuntu)
+    status = "PASS" if local_hash == ubuntu_hash else "FAIL"
+    rows.append(
+        {
+            "evidence_type": "normalized_scientific_table",
+            "relative_path": relative.as_posix(),
+            "macos_sha256": local_hash,
+            "ubuntu_sha256": ubuntu_hash,
+            "verdict": status,
+            "comparison": "byte-identical normalized content",
+        }
+    )
+    if status != "PASS":
+        raise SystemExit(f"Cross-platform normalized result differs: {relative}")
+
+visual_fields = (
+    "relative_path",
+    "artifact_type",
+    "width_px",
+    "height_px",
+    "integrity_status",
+)
+local_visuals = sorted(
+    (local_root / "observed_normalized").rglob("visual_artifact_inventory.tsv")
+)
+ubuntu_visuals = sorted(
+    (ubuntu_root / "observed_normalized").rglob("visual_artifact_inventory.tsv")
+)
+local_visual_rel = [path.relative_to(local_root) for path in local_visuals]
+ubuntu_visual_rel = [path.relative_to(ubuntu_root) for path in ubuntu_visuals]
+if local_visual_rel != ubuntu_visual_rel:
+    raise SystemExit("Cross-platform visual-inventory paths differ")
+for relative in local_visual_rel:
+    def selected(root: Path) -> list[tuple[str, ...]]:
+        with (root / relative).open(encoding="utf-8", newline="") as handle:
+            parsed = csv.DictReader(handle, delimiter="\t")
+            return sorted(tuple(row.get(field, "") for field in visual_fields) for row in parsed)
+    local_structure = selected(local_root)
+    ubuntu_structure = selected(ubuntu_root)
+    status = "PASS" if local_structure == ubuntu_structure else "FAIL"
+    rows.append(
+        {
+            "evidence_type": "visual_structure",
+            "relative_path": relative.as_posix(),
+            "macos_sha256": "not_compared",
+            "ubuntu_sha256": "not_compared",
+            "verdict": status,
+            "comparison": "path/type/dimensions/integrity; pixel hashes are not cross-platform gates",
+        }
+    )
+    if status != "PASS":
+        raise SystemExit(f"Cross-platform visual structure differs: {relative}")
+
+with report_path.open("w", encoding="utf-8", newline="") as handle:
+    writer = csv.DictWriter(
+        handle,
+        fieldnames=(
+            "evidence_type",
+            "relative_path",
+            "macos_sha256",
+            "ubuntu_sha256",
+            "verdict",
+            "comparison",
+        ),
+        delimiter="\t",
+        lineterminator="\n",
+    )
+    writer.writeheader()
+    writer.writerows(rows)
+
+local_environment = json.loads(
+    (local_root / "environment/runtime_versions.json").read_text(encoding="utf-8")
+)
+ubuntu_environment = json.loads(
+    (ubuntu_root / "environment/runtime_versions.json").read_text(encoding="utf-8")
+)
+if not local_environment["platform_id"].startswith("osx-"):
+    raise SystemExit("The release-side public matrix must be reproduced on macOS")
+if ubuntu_environment["platform_id"] != "linux-64":
+    raise SystemExit("The hosted public matrix must be reproduced on linux-64")
+json_path.write_text(
+    json.dumps(
+        {
+            "schema_version": "2.0",
+            "validation_profile": "github_release_validation_v1",
+            "evidence_type": "cross_platform_public_reproduction",
+            "verdict": "PASS",
+            "git_commit": commit,
+            "ubuntu_public_validation_run_id": public_run_id,
+            "macos_platform": local_environment["platform_id"],
+            "ubuntu_platform": ubuntu_environment["platform_id"],
+            "normalized_scientific_tables_compared": sum(
+                row["evidence_type"] == "normalized_scientific_table" for row in rows
+            ),
+            "visual_inventories_compared": sum(
+                row["evidence_type"] == "visual_structure" for row in rows
+            ),
+            "comparison_table": "cross_platform_comparison.tsv",
+        },
+        indent=2,
+        sort_keys=True,
+    )
+    + "\n",
+    encoding="utf-8",
+)
+PY
+    echo "cross_platform_public_reproduction=PASS"
+  } > "${log_file}" 2>&1; then
+    record_case cross_platform_public_reproduction cross_platform 1 1 PASS \
+      "Ubuntu and macOS normalized scientific outputs and visual structures matched"
+    return 0
+  fi
+  record_case cross_platform_public_reproduction cross_platform 1 1 FAIL \
+    "see logs/cross_platform_public_reproduction.log"
   tail -100 "${log_file}" >&2
   return 1
 }
@@ -429,23 +752,51 @@ record_case package_build package 1 1 PASS   "wheel and sdist built from exact p
 cp "${REPO_ROOT}/examples/synthetic_data/TOY-WGS-001/expected_copy_proxy.tsv"   "${VALIDATION_ROOT}/expected/TOY-WGS-001.expected_copy_proxy.tsv"
 cp "${REPO_ROOT}/examples/synthetic_data/TOY-SR-001/expected_alleles.tsv"   "${VALIDATION_ROOT}/expected/TOY-SR-001.expected_alleles.tsv"
 
-PREPARE_SCRIPT="${REPO_ROOT}/scripts/prepare_public_validation_cache_v0.3.0.sh"
-PUBLIC_MATRIX="${REPO_ROOT}/scripts/run_public_validation_matrix_v0.3.0.sh"
-ORACLE="${REPO_ROOT}/examples/public_validation/public_validation_oracle_v0.3.0.tsv"
+PREPARE_SCRIPT="${FRESH_CLONE_ROOT}/scripts/prepare_public_validation_cache_v0.3.0.sh"
+PUBLIC_MATRIX="${FRESH_CLONE_ROOT}/scripts/run_public_validation_matrix_v0.3.0.sh"
+ORACLE="${FRESH_CLONE_ROOT}/examples/public_validation/public_validation_oracle_v0.3.0.tsv"
 for required in "${PREPARE_SCRIPT}" "${PUBLIC_MATRIX}" "${ORACLE}"; do
   if [[ ! -e "${required}" ]]; then
     echo "Required clean-room validation component is missing: ${required}" >&2
     exit 1
   fi
 done
-run_logged public_cache_prepare public_input   "${PREPARE_SCRIPT}" --cache "${CACHE_ROOT}"
+run_logged public_cache_prepare public_input \
+  "${PREPARE_SCRIPT}" --cache "${CACHE_ROOT}"
+
+case "$(uname -s)/$(uname -m)" in
+  Darwin/x86_64) LOCAL_PUBLIC_PLATFORM="osx-64" ;;
+  Darwin/arm64) LOCAL_PUBLIC_PLATFORM="osx-arm64" ;;
+  *)
+    echo "Release-side public reproduction must run on macOS, observed $(uname -s)/$(uname -m)." >&2
+    exit 1
+    ;;
+esac
 
 PUBLIC_ROOT="${VALIDATION_ROOT}/public"
 mkdir -p "${VALIDATION_ROOT}/work/public_home" \
   "${VALIDATION_ROOT}/work/public_tmp" \
   "${VALIDATION_ROOT}/work/public_xdg_cache"
-run_logged public_validation_matrix public   env -i     HOME="${VALIDATION_ROOT}/work/public_home"     TMPDIR="${VALIDATION_ROOT}/work/public_tmp"     XDG_CACHE_HOME="${VALIDATION_ROOT}/work/public_xdg_cache"     PATH="${PATH}" PYTHONNOUSERSITE=1 PYTHONPATH= LC_ALL=C TZ=UTC THREADS=4     MITO_OVERVIEW_PYTHON="${PYTHON_BIN}"     "${PUBLIC_MATRIX}"     --mode offline     --cache "${CACHE_ROOT}"     --work "${VALIDATION_ROOT}/work/public_matrix"     --output "${PUBLIC_ROOT}"     --oracle "${ORACLE}"
+run_logged public_validation_matrix public \
+  env -i \
+    HOME="${VALIDATION_ROOT}/work/public_home" \
+    TMPDIR="${VALIDATION_ROOT}/work/public_tmp" \
+    XDG_CACHE_HOME="${VALIDATION_ROOT}/work/public_xdg_cache" \
+    PATH="${PATH}" PYTHONNOUSERSITE=1 PYTHONPATH= \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 LC_ALL=C LANG=C TZ=UTC THREADS=4 \
+    MITO_OVERVIEW_PYTHON="${FRESH_PYTHON}" \
+    MITO_OVERVIEW_REQUIRE_INSTALLED=1 \
+    MITO_OVERVIEW_EXPECTED_PLATFORM="${LOCAL_PUBLIC_PLATFORM}" \
+    "${PUBLIC_MATRIX}" \
+      --mode offline \
+      --cache "${CACHE_ROOT}" \
+      --work "${VALIDATION_ROOT}/work/public_matrix" \
+      --output "${PUBLIC_ROOT}" \
+      --oracle "${ORACLE}"
 tail -n +2 "${PUBLIC_ROOT}/cases.tsv" >> "${CASES_TSV}"
+cp -R "${PUBLIC_ROOT}/environment" \
+  "${VALIDATION_ROOT}/acceptance/macos_public_environment"
+fetch_and_compare_ubuntu_public_evidence
 
 "${PYTHON_BIN}" - "${VALIDATION_ROOT}" "${PUBLIC_ROOT}" <<'PY'
 import csv

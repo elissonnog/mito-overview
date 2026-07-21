@@ -68,9 +68,11 @@ jobs:
           cp "$LOCK_FILE" "$RUNNER_TEMP/environment/"
           python - <<'PY'
           from importlib.metadata import version
+          import json
           import os
           import platform
           import subprocess
+          from pathlib import Path
 
           expected_python = (3, 12, 13)
           if tuple(__import__("sys").version_info[:3]) != expected_python:
@@ -116,6 +118,32 @@ jobs:
               raise SystemExit(
                   f"runner architecture mismatch: {platform.machine()} != {expected_machine}"
               )
+          identity = {
+              "schema_version": "1.0",
+              "git_commit": subprocess.run(
+                  ["git", "rev-parse", "HEAD"],
+                  check=True,
+                  text=True,
+                  capture_output=True,
+              ).stdout.strip(),
+              "github_run_id": int(os.environ["GITHUB_RUN_ID"]),
+              "job": "Unit and synthetic tests",
+              "platform_id": os.environ["EXPECTED_PLATFORM"],
+              "runner_os": os.environ["RUNNER_OS"],
+              "runner_arch": os.environ["RUNNER_ARCH"],
+              "machine": platform.machine(),
+              "python": platform.python_version(),
+              "resolved_environment": True,
+          }
+          destination = (
+              Path(os.environ["RUNNER_TEMP"])
+              / "environment"
+              / f"platform-{os.environ['EXPECTED_PLATFORM']}.json"
+          )
+          destination.write_text(
+              json.dumps(identity, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
           PY
 
       - name: Check CLI wiring

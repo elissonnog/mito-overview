@@ -157,6 +157,27 @@ def write_case_output(root: Path, case_id: str, oracle: dict[str, str]) -> None:
             ),
             encoding="utf-8",
         )
+    else:
+        runs = ("SRR10804585", "SRR10804590", "SRR10804657")
+        (provenance / "GM11906_MERRF_shortread.source_libraries.tsv").write_text(
+            "run_accession\tgeo_accession\n"
+            + "".join(f"{run}\tGSM{index}\n" for index, run in enumerate(runs, 1)),
+            encoding="utf-8",
+        )
+        (provenance / "GM11906_MERRF_shortread.alignment.provenance.json").write_text(
+            json.dumps(
+                {
+                    "dataset_id": "GM11906_pooled_scATAC",
+                    "derivation": {"derivation_id": "bwa-mem-samtools-sort-v1"},
+                    "public_inputs": [
+                        {"label": f"{run}_{mate}"}
+                        for run in runs
+                        for mate in ("R1", "R2")
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
 
     existing = len(list(summary.glob("*.tsv")))
     for index in range(int(oracle["summary_tsv_count"]) - existing):
@@ -326,6 +347,78 @@ def test_matrix_rejects_legacy_positional_interface() -> None:
     )
     assert result.returncode == 2
     assert "Unknown or legacy argument" in result.stderr
+
+
+def test_matrix_rejects_a_platform_identity_mismatch_before_execution(
+    tmp_path: Path,
+) -> None:
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    result = subprocess.run(
+        [
+            str(MATRIX),
+            "--mode",
+            "offline",
+            "--cache",
+            str(cache),
+            "--work",
+            str(tmp_path / "work"),
+            "--output",
+            str(tmp_path / "output"),
+            "--oracle",
+            str(ORACLE),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "MITO_OVERVIEW_EXPECTED_PLATFORM": "unsupported-platform",
+        },
+    )
+    assert result.returncode != 0
+    assert "Validation platform mismatch" in result.stderr
+
+
+def test_matrix_binds_input_hashes_to_manifest_sha256_and_filename_columns() -> None:
+    contract = MATRIX.read_text(encoding="utf-8")
+    assert "NR > 1 {print $14 \"  \" $11}" in contract
+    assert "NR > 1 {print $10 \"  \" $7}" not in contract
+
+
+def test_matrix_requires_installed_distribution_and_exact_runtime_contract() -> None:
+    contract = MATRIX.read_text(encoding="utf-8")
+    assert '"MITO_OVERVIEW_REQUIRE_INSTALLED=1"' in contract
+    assert '"PYTHONPATH="' in contract
+    assert '"threads": 4' in contract
+    for expected in (
+        '"mito-overview": "0.3.0"',
+        '"pysam": "0.24.0"',
+        '"samtools 1.23.1"',
+        '"Using htslib 1.23.1"',
+        '"2.31-r1302"',
+        '"0.7.19-r1273"',
+    ):
+        assert expected in contract
+
+
+def test_cache_only_mode_guards_project_network_entrypoints_without_overclaim() -> None:
+    matrix = MATRIX.read_text(encoding="utf-8")
+    short = SHORT_RUNNER.read_text(encoding="utf-8")
+    long = LONG_RUNNER.read_text(encoding="utf-8")
+    mvtool = (
+        REPO_ROOT / "mito_overview" / "steps" / "mito_mvtool_annotation.py"
+    ).read_text(encoding="utf-8")
+
+    assert "for guarded_command in curl wget" in matrix
+    assert "not an operating-system network sandbox" in matrix
+    assert "MITO_OVERVIEW_SHORTREAD_MVTOOL_MODE=disabled" in matrix
+    assert "MITO_OVERVIEW_LONGREAD_MVTOOL_MODE=disabled" in matrix
+    assert "curl" in short and "wget" not in short
+    assert "curl" in long and "wget" not in long
+    assert "requests.Session" in mvtool
+    assert "project_network_entrypoints" in matrix
+    assert "offline_isolation" not in matrix
 
 
 def test_oracle_has_exactly_six_unique_profiles() -> None:
