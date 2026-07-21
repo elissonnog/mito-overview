@@ -402,6 +402,54 @@ def make_packet(tmp_path: Path) -> tuple[Path, Path, list[Path]]:
         "TZ=UTC\n",
         encoding="utf-8",
     )
+    public_environment = packet / report_builder.PUBLIC_ENVIRONMENT_ROOT
+    public_environment.mkdir(parents=True, exist_ok=True)
+    (public_environment / "runtime_versions.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "platform_id": "osx-arm64",
+                "system": "Darwin",
+                "machine": "arm64",
+                "python": "3.12.13",
+                "python_executable": "/opt/mito-validation/bin/python",
+                "mito_overview_module": (
+                    "/opt/mito-validation/lib/python3.12/site-packages/"
+                    "mito_overview/__init__.py"
+                ),
+                "packages": report_builder.EXPECTED_RUNTIME_PACKAGES,
+                "samtools": "samtools 1.23.1",
+                "htslib": "Using htslib 1.23.1",
+                "minimap2": "2.31-r1302",
+                "bwa": "0.7.19-r1273",
+                "threads": 4,
+                "installed_distribution_required": True,
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    write_tsv(
+        public_environment / "network_isolation.tsv",
+        ("field", "value"),
+        [
+            ["schema_version", "1.0"],
+            ["platform", "Darwin/arm64"],
+            ["isolation_method", "macos_sandbox_exec_deny_network"],
+            ["isolation_scope", "process_tree"],
+            ["parent_loopback_control", "reachable"],
+            ["isolated_loopback_probe", "blocked"],
+            ["probe_target", "parent_loopback_listener"],
+            ["probe_error", "PermissionError:1"],
+            ["invoking_uid", "501"],
+            ["invoking_gid", "20"],
+            ["child_uid", "501"],
+            ["child_gid", "20"],
+            ["network_isolation_verdict", "PASS"],
+        ],
+    )
     (packet / "verify_bundle.sh").write_text(
         "#!/usr/bin/env bash\nset -euo pipefail\necho PASS\n",
         encoding="utf-8",
@@ -440,9 +488,15 @@ def test_builds_markdown_docx_and_embeds_verified_packet_figures(tmp_path: Path)
     assert generated["docx"].is_file()
     assert generated["assets"].is_dir()
     markdown = generated["markdown"].read_text(encoding="utf-8")
-    assert "Five preprint-hardening corrections" in markdown
+    assert "Five v0.3.0 scientific corrections" in markdown
     assert "AF_alt = N_alt / (N_A + N_C + N_G + N_T)" in markdown
     assert "R_mt:nuclear = mean(D_mt) / mean(D_nuclear windows)" in markdown
+    assert "metadata_recorded_utc" in markdown
+    assert "macos_sandbox_exec_deny_network" in markdown
+    assert "isolated_loopback_probe" in markdown
+    assert "blocked" in markdown
+    assert "Pinned Python packages" in markdown
+    assert "publication state" not in markdown.lower()
     assert COMMIT in markdown
     assert "No simplified replacement chart is generated" in markdown
     assert markdown.count("![Figure") == 2
@@ -458,7 +512,8 @@ def test_builds_markdown_docx_and_embeds_verified_packet_figures(tmp_path: Path)
         document_xml = archive.read("word/document.xml").decode("utf-8")
         settings_xml = archive.read("word/settings.xml").decode("utf-8")
     assert {digest(path) for path in source_figures} <= embedded_hashes
-    assert "Five preprint-hardening corrections" in document_xml
+    assert "Five v0.3.0 scientific corrections" in document_xml
+    assert "macos_sandbox_exec_deny_network" in document_xml
     assert document_xml.count("w:cantSplit") >= 1
     assert "w:evenAndOddHeaders" in settings_xml
     assert 'w:headerReference w:type="even"' in document_xml
@@ -537,6 +592,87 @@ def test_fails_closed_on_report_figure_hash_drift(tmp_path: Path) -> None:
 
     with pytest.raises(report_builder.ReportValidationError, match="Figure hash mismatch"):
         report_builder.generate_report(packet, publication, tmp_path / "report")
+
+
+def test_fails_closed_without_public_runtime_evidence(tmp_path: Path) -> None:
+    packet, publication, _ = make_packet(tmp_path)
+    (packet / report_builder.RUNTIME_VERSIONS_PACKET_PATH).unlink()
+    rewrite_artifact_manifest(packet)
+
+    with pytest.raises(
+        report_builder.ReportValidationError, match="runtime_versions.json"
+    ):
+        report_builder.generate_report(packet, publication, tmp_path / "report")
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("python", "3.12.12", "Python mismatch"),
+        ("threads", 8, "exactly four threads"),
+        ("installed_distribution_required", False, "installed mito-overview"),
+    ],
+)
+def test_fails_closed_on_invalid_public_runtime(
+    tmp_path: Path, field: str, value: object, message: str
+) -> None:
+    packet, publication, _ = make_packet(tmp_path)
+    path = packet / report_builder.RUNTIME_VERSIONS_PACKET_PATH
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload[field] = value
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    rewrite_artifact_manifest(packet)
+
+    with pytest.raises(report_builder.ReportValidationError, match=message):
+        report_builder.generate_report(packet, publication, tmp_path / "report")
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("platform", "Linux/x86_64", "platform mismatch"),
+        ("isolation_method", "curl_canary_only", "isolation_method mismatch"),
+        ("isolated_loopback_probe", "reachable", "isolated_loopback_probe mismatch"),
+        ("network_isolation_verdict", "FAIL", "network_isolation_verdict mismatch"),
+    ],
+)
+def test_fails_closed_on_invalid_os_level_network_isolation(
+    tmp_path: Path, field: str, value: str, message: str
+) -> None:
+    packet, publication, _ = make_packet(tmp_path)
+    path = packet / report_builder.NETWORK_ISOLATION_PACKET_PATH
+    rows = list(csv.DictReader(path.open(encoding="utf-8"), delimiter="\t"))
+    for row in rows:
+        if row["field"] == field:
+            row["value"] = value
+            break
+    else:
+        raise AssertionError(f"fixture lacks isolation field {field}")
+    write_tsv(path, ("field", "value"), [[row["field"], row["value"]] for row in rows])
+    rewrite_artifact_manifest(packet)
+
+    with pytest.raises(report_builder.ReportValidationError, match=message):
+        report_builder.generate_report(packet, publication, tmp_path / "report")
+
+
+def test_report_scientific_content_is_independent_of_publication_state(
+    tmp_path: Path,
+) -> None:
+    packet, publication, _ = make_packet(tmp_path)
+    published = report_builder.generate_report(
+        packet, publication, tmp_path / "published-report"
+    )["markdown"].read_text(encoding="utf-8")
+
+    payload = json.loads(publication.read_text(encoding="utf-8"))
+    payload["publication_state"] = "draft"
+    payload.pop("published_utc")
+    publication.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    draft = report_builder.generate_report(
+        packet, publication, tmp_path / "draft-report"
+    )["markdown"].read_text(encoding="utf-8")
+
+    assert draft == published
+    assert "publication state" not in draft.lower()
 
 
 def test_cli_exposes_optional_pdf_handoff(tmp_path: Path) -> None:

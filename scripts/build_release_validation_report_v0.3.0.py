@@ -40,6 +40,23 @@ OUTPUT_STEM = "MitoOverview_v0.3.0_release_validation_report"
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 SAFE_ID_RE = re.compile(r"[^A-Za-z0-9_.-]+")
+PUBLIC_ENVIRONMENT_ROOT = "public_environment"
+NETWORK_ISOLATION_PACKET_PATH = f"{PUBLIC_ENVIRONMENT_ROOT}/network_isolation.tsv"
+RUNTIME_VERSIONS_PACKET_PATH = f"{PUBLIC_ENVIRONMENT_ROOT}/runtime_versions.json"
+
+EXPECTED_RUNTIME_PACKAGES = {
+    "mito-overview": "0.3.0",
+    "pysam": "0.24.0",
+    "pandas": "3.0.3",
+    "numpy": "2.5.1",
+    "matplotlib": "3.11.0",
+    "requests": "2.34.2",
+    "pytest": "9.1.1",
+    "build": "1.5.0",
+    "setuptools": "82.0.1",
+    "wheel": "0.47.0",
+    "python-docx": "1.2.0",
+}
 
 REQUIRED_PACKET_FILES = (
     "run.json",
@@ -62,6 +79,8 @@ REQUIRED_PACKET_FILES = (
     "oracle_assertions.tsv",
     "cross_platform_comparison.tsv",
     "acceptance/cross_platform_public_reproduction.json",
+    NETWORK_ISOLATION_PACKET_PATH,
+    RUNTIME_VERSIONS_PACKET_PATH,
     "artifacts.sha256",
     "verify_bundle.sh",
 )
@@ -164,7 +183,7 @@ EVIDENCE_COLUMNS = {
         "fastq_md5",
         "fastq_sha256",
         "fastq_bytes",
-        "metadata_checked_utc",
+        "metadata_recorded_utc",
         "role",
         "redistribution",
     ),
@@ -308,6 +327,8 @@ class ReportEvidence:
     tables: dict[str, list[dict[str, str]]]
     raw_inputs: list[dict[str, str]]
     environment_text: str
+    runtime_versions: dict[str, object]
+    network_isolation: dict[str, str]
     cross_platform: dict[str, object]
     figures: list[dict[str, object]]
 
@@ -409,6 +430,29 @@ def read_tsv(
     return rows
 
 
+def read_key_value_tsv(path: Path, label: str) -> dict[str, str]:
+    require_plain_file(path, label)
+    with path.open(encoding="utf-8", newline="") as handle:
+        reader = csv.DictReader(handle, delimiter="\t")
+        if tuple(reader.fieldnames or ()) != ("field", "value"):
+            raise ReportValidationError(
+                f"{label} must contain exactly field and value columns: {path}"
+            )
+        rows = list(reader)
+    if not rows:
+        raise ReportValidationError(f"{label} contains no evidence rows: {path}")
+    values: dict[str, str] = {}
+    for row in rows:
+        field = row.get("field", "")
+        value = row.get("value", "")
+        if not field or not value:
+            raise ReportValidationError(f"{label} contains an empty field or value")
+        if field in values:
+            raise ReportValidationError(f"{label} contains duplicate field {field!r}")
+        values[field] = value
+    return values
+
+
 def parse_sha256_manifest(path: Path) -> dict[str, str]:
     require_plain_file(path, "SHA-256 manifest")
     records: dict[str, str] = {}
@@ -428,6 +472,142 @@ def parse_sha256_manifest(path: Path) -> dict[str, str]:
     if not records:
         raise ReportValidationError(f"SHA-256 manifest contains no records: {path}")
     return records
+
+
+def validate_runtime_versions(path: Path) -> dict[str, object]:
+    runtime = read_json_object(path, "public runtime-version evidence")
+    required = {
+        "schema_version",
+        "platform_id",
+        "system",
+        "machine",
+        "python",
+        "python_executable",
+        "mito_overview_module",
+        "packages",
+        "samtools",
+        "htslib",
+        "minimap2",
+        "bwa",
+        "threads",
+        "installed_distribution_required",
+    }
+    missing = sorted(required - set(runtime))
+    if missing:
+        raise ReportValidationError(
+            "Public runtime-version evidence is missing: " + ", ".join(missing)
+        )
+    if runtime["schema_version"] != "1.0":
+        raise ReportValidationError("Public runtime-version schema must be 1.0")
+
+    platform_contract = {
+        "linux-64": ("Linux", "x86_64", "linux_unshare_network_namespace"),
+        "osx-64": ("Darwin", "x86_64", "macos_sandbox_exec_deny_network"),
+        "osx-arm64": ("Darwin", "arm64", "macos_sandbox_exec_deny_network"),
+    }
+    platform_id = runtime["platform_id"]
+    if platform_id not in platform_contract:
+        raise ReportValidationError(
+            f"Public report runtime platform is unsupported: {platform_id!r}"
+        )
+    if (runtime["system"], runtime["machine"]) != platform_contract[platform_id][:2]:
+        raise ReportValidationError(
+            "Public runtime platform_id does not match system and machine"
+        )
+    if runtime["python"] != "3.12.13":
+        raise ReportValidationError(
+            f"Public runtime Python mismatch: {runtime['python']!r} != '3.12.13'"
+        )
+    if runtime["packages"] != EXPECTED_RUNTIME_PACKAGES:
+        raise ReportValidationError("Public runtime package versions do not match the v0.3.0 lock")
+    expected_tools = {
+        "samtools": "samtools 1.23.1",
+        "htslib": "Using htslib 1.23.1",
+        "minimap2": "2.31-r1302",
+        "bwa": "0.7.19-r1273",
+    }
+    for field, expected in expected_tools.items():
+        if runtime[field] != expected:
+            raise ReportValidationError(
+                f"Public runtime {field} mismatch: {runtime[field]!r} != {expected!r}"
+            )
+    if runtime["threads"] != 4:
+        raise ReportValidationError("Public runtime must record exactly four threads")
+    if runtime["installed_distribution_required"] is not True:
+        raise ReportValidationError(
+            "Public runtime must require the installed mito-overview distribution"
+        )
+    for field in ("python_executable", "mito_overview_module"):
+        if not isinstance(runtime[field], str) or not runtime[field]:
+            raise ReportValidationError(f"Public runtime {field} is empty or invalid")
+    module_path = str(runtime["mito_overview_module"]).replace("\\", "/")
+    if "site-packages/mito_overview/__init__.py" not in module_path:
+        raise ReportValidationError(
+            "Public runtime did not resolve mito-overview from an installed distribution"
+        )
+    return runtime
+
+
+def validate_network_isolation(
+    path: Path, runtime: dict[str, object]
+) -> dict[str, str]:
+    evidence = read_key_value_tsv(path, "public OS-level network-isolation evidence")
+    required = {
+        "schema_version",
+        "platform",
+        "isolation_method",
+        "isolation_scope",
+        "parent_loopback_control",
+        "isolated_loopback_probe",
+        "probe_target",
+        "probe_error",
+        "invoking_uid",
+        "invoking_gid",
+        "child_uid",
+        "child_gid",
+        "network_isolation_verdict",
+    }
+    if set(evidence) != required:
+        missing = sorted(required - set(evidence))
+        extra = sorted(set(evidence) - required)
+        raise ReportValidationError(
+            "Public network-isolation evidence fields differ from the v0.3.0 contract: "
+            f"missing={missing}, extra={extra}"
+        )
+    expected_platform = f"{runtime['system']}/{runtime['machine']}"
+    platform_contract = {
+        "linux-64": "linux_unshare_network_namespace",
+        "osx-64": "macos_sandbox_exec_deny_network",
+        "osx-arm64": "macos_sandbox_exec_deny_network",
+    }
+    expected = {
+        "schema_version": "1.0",
+        "platform": expected_platform,
+        "isolation_method": platform_contract[str(runtime["platform_id"])],
+        "isolation_scope": "process_tree",
+        "parent_loopback_control": "reachable",
+        "isolated_loopback_probe": "blocked",
+        "probe_target": "parent_loopback_listener",
+        "network_isolation_verdict": "PASS",
+    }
+    for field, value in expected.items():
+        if evidence[field] != value:
+            raise ReportValidationError(
+                f"Public network-isolation {field} mismatch: "
+                f"{evidence[field]!r} != {value!r}"
+            )
+    if evidence["probe_error"] == "connection_succeeded":
+        raise ReportValidationError(
+            "Public network-isolation probe reports a successful connection"
+        )
+    for role in ("uid", "gid"):
+        invoking = evidence[f"invoking_{role}"]
+        child = evidence[f"child_{role}"]
+        if not invoking.isdigit() or child != invoking:
+            raise ReportValidationError(
+                f"Public network-isolation child {role} does not match the invoking identity"
+            )
+    return evidence
 
 
 def validate_artifact_manifest(root: Path) -> None:
@@ -844,6 +1024,14 @@ def load_and_validate_packet(
     tables: dict[str, list[dict[str, str]]] = {}
     for name, columns in EVIDENCE_COLUMNS.items():
         tables[name] = read_tsv(packet_root / name, columns)
+    for row in tables["public_data_sources.tsv"]:
+        recorded = row["metadata_recorded_utc"]
+        try:
+            datetime.fromisoformat(recorded.replace("Z", "+00:00"))
+        except ValueError as error:
+            raise ReportValidationError(
+                f"Public source metadata timestamp is not ISO-8601: {recorded!r}"
+            ) from error
     raw_inputs = read_tsv(packet_root / "raw_inputs.tsv", RAW_INPUT_COLUMNS)
 
     validate_cases(run, tables["cases.tsv"])
@@ -851,9 +1039,24 @@ def load_and_validate_packet(
     validate_module_states(tables["module_status_matrix.tsv"])
     validate_oracles(tables["oracle_assertions.tsv"])
     validate_resource_usage(tables["resource_usage.tsv"])
+    runtime_versions = validate_runtime_versions(
+        packet_root / RUNTIME_VERSIONS_PACKET_PATH
+    )
+    network_isolation = validate_network_isolation(
+        packet_root / NETWORK_ISOLATION_PACKET_PATH, runtime_versions
+    )
     cross = validate_cross_platform(
         packet_root, run, tables["cross_platform_comparison.tsv"]
     )
+    comparison_platform = (
+        cross["macos_platform"]
+        if str(runtime_versions["platform_id"]).startswith("osx-")
+        else cross["ubuntu_platform"]
+    )
+    if comparison_platform != runtime_versions["platform_id"]:
+        raise ReportValidationError(
+            "Cross-platform acceptance platform does not match runtime evidence"
+        )
     validate_provenance_tables(packet_root, tables)
     figures = validate_figures(packet_root, tables["figure_provenance.tsv"])
 
@@ -868,6 +1071,8 @@ def load_and_validate_packet(
         tables=tables,
         raw_inputs=raw_inputs,
         environment_text=environment_text,
+        runtime_versions=runtime_versions,
+        network_isolation=network_isolation,
         cross_platform=cross,
         figures=figures,
     )
@@ -1003,15 +1208,52 @@ def build_report_blocks(
     platform = evidence.cross_platform
     module_counts = Counter(row["status"] for row in tables["module_status_matrix.tsv"])
     assertion_counts = Counter(row["verdict"] for row in tables["oracle_assertions.tsv"])
+    runtime = evidence.runtime_versions
+    isolation = evidence.network_isolation
+    runtime_rows = (
+        {"field": "Platform", "value": str(runtime["platform_id"])},
+        {
+            "field": "Operating system / architecture",
+            "value": f"{runtime['system']} / {runtime['machine']}",
+        },
+        {"field": "Python", "value": str(runtime["python"])},
+        {"field": "samtools", "value": str(runtime["samtools"])},
+        {"field": "htslib", "value": str(runtime["htslib"])},
+        {"field": "minimap2", "value": str(runtime["minimap2"])},
+        {"field": "BWA", "value": str(runtime["bwa"])},
+        {"field": "Threads", "value": str(runtime["threads"])},
+        {
+            "field": "Installed distribution required",
+            "value": str(runtime["installed_distribution_required"]).lower(),
+        },
+        {
+            "field": "Pinned Python packages",
+            "value": "; ".join(
+                f"{name}={version}"
+                for name, version in sorted(runtime["packages"].items())
+            ),
+        },
+    )
+    isolation_rows = tuple(
+        {"field": field, "value": isolation[field]}
+        for field in (
+            "platform",
+            "isolation_method",
+            "isolation_scope",
+            "parent_loopback_control",
+            "isolated_loopback_probe",
+            "probe_target",
+            "probe_error",
+            "network_isolation_verdict",
+        )
+    )
 
     blocks: list[Block] = [
         Heading(1, "Release decision"),
         Paragraph(
             f"PASS. All {evidence.run['case_count']} recorded validation cases passed, "
             f"all {sum(assertion_counts.values())} public oracle assertions passed, and "
-            "the packet contains no SKIP, XFAIL, BLOCKED, or FAIL release case. "
-            f"The GitHub publication state supplied to this report is "
-            f"{evidence.publication['publication_state']}."
+            "the packet contains no SKIP, XFAIL, BLOCKED, or FAIL release case."
         ),
         TableBlock(
             "Release identity",
@@ -1055,7 +1297,7 @@ def build_report_blocks(
             ),
             tuple(tables["claim_evidence_matrix.tsv"]),
         ),
-        Heading(1, "Five preprint-hardening corrections"),
+        Heading(1, "Five v0.3.0 scientific corrections"),
         Heading(2, "1. Filtered alternate-allele observation counting"),
         Paragraph(
             "The release uses one observation engine for candidate selection and "
@@ -1150,6 +1392,7 @@ def build_report_blocks(
                 ("sample_accession", "Sample"),
                 ("platform", "Platform"),
                 ("library_strategy", "Library"),
+                ("metadata_recorded_utc", "metadata_recorded_utc"),
                 ("role", "Validation role"),
             ),
             tuple(tables["public_data_sources.tsv"]),
@@ -1159,6 +1402,21 @@ def build_report_blocks(
             "The packet records the release identity, platform, software versions, and "
             "execution controls. The verbatim environment record follows so that values are "
             "not paraphrased or reconstructed."
+        ),
+        TableBlock(
+            "Validated installed runtime",
+            (("field", "Field"), ("value", "Recorded value")),
+            runtime_rows,
+        ),
+        Paragraph(
+            "The public-data matrix ran in one operating-system-isolated process tree. "
+            "A parent loopback listener was reachable before isolation, while the probe "
+            "from the isolated child was blocked before the matrix began."
+        ),
+        TableBlock(
+            "OS-level network-isolation evidence",
+            (("field", "Field"), ("value", "Recorded value")),
+            isolation_rows,
         ),
         CodeBlock(evidence.environment_text.rstrip()),
         Heading(1, "Validation cases"),
