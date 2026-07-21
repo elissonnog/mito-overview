@@ -15,6 +15,7 @@ import tarfile
 import tomllib
 import zipfile
 from datetime import datetime, timezone
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -88,6 +89,194 @@ PUBLIC_PROVENANCE_FILES = {
     },
 }
 
+PUBLIC_INPUT_MANIFEST_HEADER = (
+    "schema_version",
+    "dataset_id",
+    "run_accession",
+    "sample_accession",
+    "sample_alias",
+    "sample_title",
+    "source_sample_id",
+    "library_strategy",
+    "library_unit",
+    "source_record_url",
+    "filename",
+    "bytes",
+    "md5",
+    "sha256",
+    "fastq_records",
+    "url",
+)
+FROZEN_PUBLIC_INPUTS = (
+    {
+        "schema_version": "1.0",
+        "dataset_id": "GM11906_pooled_scATAC",
+        "run_accession": "SRR10804585",
+        "sample_accession": "SAMN13699362",
+        "sample_alias": "GSM4238454",
+        "sample_title": "MERFF-29-S42",
+        "source_sample_id": "GM11906",
+        "library_strategy": "ATAC-seq",
+        "library_unit": "single_cell_library",
+        "source_record_url": "https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSM4238454",
+        "filename": "SRR10804585_1.fastq.gz",
+        "bytes": "8795676",
+        "md5": "3f5ea26a5791894071462d4970bc9e5a",
+        "sha256": "b69746cb61d8bf3bc25887d6ece3c60db3acc7baaefd84a9a8b5d6ffce33288d",
+        "fastq_records": "377587",
+        "url": "https://ftp.sra.ebi.ac.uk/vol1/fastq/SRR108/085/SRR10804585/SRR10804585_1.fastq.gz",
+    },
+    {
+        "schema_version": "1.0",
+        "dataset_id": "GM11906_pooled_scATAC",
+        "run_accession": "SRR10804585",
+        "sample_accession": "SAMN13699362",
+        "sample_alias": "GSM4238454",
+        "sample_title": "MERFF-29-S42",
+        "source_sample_id": "GM11906",
+        "library_strategy": "ATAC-seq",
+        "library_unit": "single_cell_library",
+        "source_record_url": "https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSM4238454",
+        "filename": "SRR10804585_2.fastq.gz",
+        "bytes": "8817420",
+        "md5": "c5b408425612f63b33cefd2d49c157d1",
+        "sha256": "1fca2c35a955a4ed232465d8392bc04683828229178aee7915929e67b2aac961",
+        "fastq_records": "377587",
+        "url": "https://ftp.sra.ebi.ac.uk/vol1/fastq/SRR108/085/SRR10804585/SRR10804585_2.fastq.gz",
+    },
+    {
+        "schema_version": "1.0",
+        "dataset_id": "GM11906_pooled_scATAC",
+        "run_accession": "SRR10804590",
+        "sample_accession": "SAMN13699398",
+        "sample_alias": "GSM4238459",
+        "sample_title": "MERFF-33-S46",
+        "source_sample_id": "GM11906",
+        "library_strategy": "ATAC-seq",
+        "library_unit": "single_cell_library",
+        "source_record_url": "https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSM4238459",
+        "filename": "SRR10804590_1.fastq.gz",
+        "bytes": "1006749",
+        "md5": "e8b5132a8be8c179bfc6dbc0f3e1bee9",
+        "sha256": "e47ceceb03d44483b4948fe9c631ebff307f5ec68a1deec978f1122695fa58fc",
+        "fastq_records": "70920",
+        "url": "https://ftp.sra.ebi.ac.uk/vol1/fastq/SRR108/090/SRR10804590/SRR10804590_1.fastq.gz",
+    },
+    {
+        "schema_version": "1.0",
+        "dataset_id": "GM11906_pooled_scATAC",
+        "run_accession": "SRR10804590",
+        "sample_accession": "SAMN13699398",
+        "sample_alias": "GSM4238459",
+        "sample_title": "MERFF-33-S46",
+        "source_sample_id": "GM11906",
+        "library_strategy": "ATAC-seq",
+        "library_unit": "single_cell_library",
+        "source_record_url": "https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSM4238459",
+        "filename": "SRR10804590_2.fastq.gz",
+        "bytes": "795885",
+        "md5": "4d6977526136739de2d90baa8d45b484",
+        "sha256": "05b2375b30b02c02e9206981eb2fe2d08babbc2a5809f8354ef56d0ac1550776",
+        "fastq_records": "70920",
+        "url": "https://ftp.sra.ebi.ac.uk/vol1/fastq/SRR108/090/SRR10804590/SRR10804590_2.fastq.gz",
+    },
+    {
+        "schema_version": "1.0",
+        "dataset_id": "GM11906_pooled_scATAC",
+        "run_accession": "SRR10804657",
+        "sample_accession": "SAMN13699338",
+        "sample_alias": "GSM4238526",
+        "sample_title": "MERFF-94-S107",
+        "source_sample_id": "GM11906",
+        "library_strategy": "ATAC-seq",
+        "library_unit": "single_cell_library",
+        "source_record_url": "https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSM4238526",
+        "filename": "SRR10804657_1.fastq.gz",
+        "bytes": "21510555",
+        "md5": "8f082f73cb64bf56ea8a053fe80eeb06",
+        "sha256": "1afaf310ce9ffa77e1c3d61a0714e839d21000941d414cc7bf6fb590c3b665f2",
+        "fastq_records": "915286",
+        "url": "https://ftp.sra.ebi.ac.uk/vol1/fastq/SRR108/057/SRR10804657/SRR10804657_1.fastq.gz",
+    },
+    {
+        "schema_version": "1.0",
+        "dataset_id": "GM11906_pooled_scATAC",
+        "run_accession": "SRR10804657",
+        "sample_accession": "SAMN13699338",
+        "sample_alias": "GSM4238526",
+        "sample_title": "MERFF-94-S107",
+        "source_sample_id": "GM11906",
+        "library_strategy": "ATAC-seq",
+        "library_unit": "single_cell_library",
+        "source_record_url": "https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSM4238526",
+        "filename": "SRR10804657_2.fastq.gz",
+        "bytes": "21573731",
+        "md5": "62b7d1b2294a580c021f5fa1f52609be",
+        "sha256": "bfc555c7e722695b02110027757bba4d7fc88f487798423cd6809e8a771a5184",
+        "fastq_records": "915286",
+        "url": "https://ftp.sra.ebi.ac.uk/vol1/fastq/SRR108/057/SRR10804657/SRR10804657_2.fastq.gz",
+    },
+    {
+        "schema_version": "1.0",
+        "dataset_id": "GM12878_ONT",
+        "run_accession": "SRR18110025",
+        "sample_accession": "SAMN26195906",
+        "sample_alias": "GM12878_mtDNA",
+        "sample_title": "Human GM12878 Cell Line",
+        "source_sample_id": "GM12878",
+        "library_strategy": "OTHER",
+        "library_unit": "targeted_mt_library",
+        "source_record_url": "https://www.ebi.ac.uk/ena/browser/view/SRR18110025",
+        "filename": "SRR18110025.fastq.gz",
+        "bytes": "2033558460",
+        "md5": "d5bfb9aeba04cae5f3dd79462a42e5b0",
+        "sha256": "c0872ee9ceb772ee5a4b76735c0d670e2159764b23dd800b6eb1f4933da11320",
+        "fastq_records": "193043",
+        "url": "https://ftp.sra.ebi.ac.uk/vol1/fastq/SRR181/025/SRR18110025/SRR18110025_1.fastq.gz",
+    },
+)
+FROZEN_PUBLIC_SOURCE_METADATA = {
+    "SRR10804585": {
+        "dataset": "GM11906 pooled single-cell ATAC-seq pseudo-bulk",
+        "study_accession": "PRJNA598179",
+        "instrument_model": "NextSeq 550",
+    },
+    "SRR10804590": {
+        "dataset": "GM11906 pooled single-cell ATAC-seq pseudo-bulk",
+        "study_accession": "PRJNA598179",
+        "instrument_model": "NextSeq 550",
+    },
+    "SRR10804657": {
+        "dataset": "GM11906 pooled single-cell ATAC-seq pseudo-bulk",
+        "study_accession": "PRJNA598179",
+        "instrument_model": "NextSeq 550",
+    },
+    "SRR18110025": {
+        "dataset": "GM12878 ONT targeted-mt proof-of-principle",
+        "study_accession": "PRJNA809571",
+        "instrument_model": "GridION",
+    },
+}
+FROZEN_ORACLE_REPOSITORY_PATH = Path(
+    "examples/public_validation/public_validation_oracle_v0.3.0.tsv"
+)
+FROZEN_ORACLE_PACKET_PATH = "public_validation_oracle_v0.3.0.tsv"
+FROZEN_ORACLE_SHA256 = "dac769dcbac622f8a2df1363c08a926b0130082208d16b77a57d581cb7ccf76e"
+FROZEN_RAW_INPUT_MANIFEST_SHA256 = (
+    "188d9e493c7cc43dc63c6bfe972914af5ae42cadb6cb2f59092cb13452adf756"
+)
+ORACLE_ASSERTIONS_PACKET_PATH = "oracle_assertions.tsv"
+RAW_INPUTS_PACKET_PATH = "raw_inputs.tsv"
+CACHE_SEAL_PACKET_PATH = "CACHE_SEAL.sha256"
+PUBLIC_ORACLE_CASES = {
+    ("GM11906", "lenient"): ("gm11906_lenient",),
+    ("GM11906", "default"): ("gm11906_default_run1", "gm11906_default_run2"),
+    ("GM11906", "strict"): ("gm11906_strict",),
+    ("GM12878", "lenient"): ("gm12878_lenient",),
+    ("GM12878", "default"): ("gm12878_default_run1", "gm12878_default_run2"),
+    ("GM12878", "strict"): ("gm12878_strict",),
+}
+
 REQUIRED_TOP_LEVEL = (
     "run.json",
     "release_identity.json",
@@ -111,6 +300,10 @@ REQUIRED_TOP_LEVEL = (
     "figures",
     "filter_profile_results.tsv",
     "inputs.sha256",
+    RAW_INPUTS_PACKET_PATH,
+    CACHE_SEAL_PACKET_PATH,
+    FROZEN_ORACLE_PACKET_PATH,
+    ORACLE_ASSERTIONS_PACKET_PATH,
     "artifacts.sha256",
     "verify_bundle.sh",
 )
@@ -200,22 +393,29 @@ EVIDENCE_TABLES = {
 FRESH_CLONE_CASE_ID = "fresh_clone_candidate_commit"
 GITHUB_ACTIONS_LINUX_CASE_ID = "github_actions_linux_candidate_commit"
 GITHUB_ACTIONS_MACOS_CASE_ID = "github_actions_macos_candidate_commit"
+GITHUB_ACTIONS_MACOS_ARM64_CASE_ID = "github_actions_macos_arm64_candidate_commit"
 ACCEPTANCE_CASE_IDS = {
     FRESH_CLONE_CASE_ID,
     GITHUB_ACTIONS_LINUX_CASE_ID,
     GITHUB_ACTIONS_MACOS_CASE_ID,
+    GITHUB_ACTIONS_MACOS_ARM64_CASE_ID,
 }
 EXPECTED_GITHUB_WORKFLOW = "smoke-tests"
 EXPECTED_GITHUB_JOBS = {
     GITHUB_ACTIONS_LINUX_CASE_ID: {
-        "platform": "linux",
-        "label": "ubuntu-latest",
-        "name": "Unit and synthetic tests (ubuntu-latest)",
+        "platform": "linux-64",
+        "label": "ubuntu-24.04",
+        "name": "Unit and synthetic tests (ubuntu-24.04)",
     },
     GITHUB_ACTIONS_MACOS_CASE_ID: {
-        "platform": "macos",
-        "label": "macos-latest",
-        "name": "Unit and synthetic tests (macos-latest)",
+        "platform": "osx-64",
+        "label": "macos-15-intel",
+        "name": "Unit and synthetic tests (macos-15-intel)",
+    },
+    GITHUB_ACTIONS_MACOS_ARM64_CASE_ID: {
+        "platform": "osx-arm64",
+        "label": "macos-15",
+        "name": "Unit and synthetic tests (macos-15)",
     },
 }
 
@@ -711,6 +911,586 @@ def validate_hash_manifest(path: Path, label: str) -> None:
         entries.add(evidence_path)
 
 
+def read_tsv_rows(
+    path: Path,
+    expected_header: tuple[str, ...],
+    label: str,
+) -> list[dict[str, str]]:
+    if not path.is_file():
+        raise FileNotFoundError(f"Required {label} not found: {path}")
+    with path.open(encoding="utf-8", newline="") as handle:
+        reader = csv.DictReader(handle, delimiter="\t")
+        if tuple(reader.fieldnames or ()) != expected_header:
+            raise ValueError(f"{label} header mismatch")
+        rows = list(reader)
+    if not rows:
+        raise ValueError(f"{label} contains no data rows")
+    return rows
+
+
+def semantically_equal(left: object, right: object) -> bool:
+    left_text = "" if left is None else str(left)
+    right_text = "" if right is None else str(right)
+    if left_text == right_text:
+        return True
+    try:
+        return Decimal(left_text) == Decimal(right_text)
+    except InvalidOperation:
+        return False
+
+
+def canonical_public_input_hashes(rows: list[dict[str, str]]) -> str:
+    return "".join(f"{row['sha256']}  {row['filename']}\n" for row in rows)
+
+
+def validate_public_input_evidence(
+    public_root: Path,
+    public_sources_path: Path,
+) -> dict[str, object]:
+    """Bind the packet to the seven immutable FASTQs without redistributing reads."""
+
+    manifest_path = public_root / RAW_INPUTS_PACKET_PATH
+    rows = read_tsv_rows(
+        manifest_path,
+        PUBLIC_INPUT_MANIFEST_HEADER,
+        "sealed public-input manifest",
+    )
+    expected_rows = [dict(row) for row in FROZEN_PUBLIC_INPUTS]
+    if rows != expected_rows:
+        expected_by_name = {row["filename"]: row for row in expected_rows}
+        observed_by_name = {row.get("filename", ""): row for row in rows}
+        if set(observed_by_name) != set(expected_by_name):
+            raise ValueError("Public-input manifest does not contain the seven frozen FASTQs")
+        for filename, expected in expected_by_name.items():
+            observed = observed_by_name[filename]
+            mismatches = {
+                field: (expected[field], observed.get(field, ""))
+                for field in PUBLIC_INPUT_MANIFEST_HEADER
+                if observed.get(field, "") != expected[field]
+            }
+            if mismatches:
+                raise ValueError(
+                    f"Public-input manifest mismatch for {filename}: {mismatches!r}"
+                )
+        raise ValueError("Public-input manifest ordering differs from the frozen contract")
+
+    manifest_sha256 = sha256(manifest_path)
+    if manifest_sha256 != FROZEN_RAW_INPUT_MANIFEST_SHA256:
+        raise ValueError("Public-input manifest byte identity differs from the frozen v0.3.0 seal")
+    seal_path = public_root / CACHE_SEAL_PACKET_PATH
+    if not seal_path.is_file():
+        raise FileNotFoundError(f"Required public-cache seal not found: {seal_path}")
+    seal_text = seal_path.read_text(encoding="utf-8")
+    seal_match = re.fullmatch(r"([0-9a-f]{64})  raw_inputs\.tsv\n?", seal_text)
+    if seal_match is None or seal_match.group(1) != manifest_sha256:
+        raise ValueError("Public-cache seal does not match raw_inputs.tsv")
+
+    source_rows = read_tsv_rows(
+        public_sources_path,
+        EVIDENCE_TABLES["public_data_sources.tsv"],
+        "public_data_sources.tsv",
+    )
+    source_by_run = {row["run_accession"]: row for row in source_rows}
+    if len(source_by_run) != len(source_rows) or set(source_by_run) != set(
+        FROZEN_PUBLIC_SOURCE_METADATA
+    ):
+        raise ValueError("public_data_sources.tsv run inventory is not the frozen four-run set")
+
+    inputs_by_run: dict[str, list[dict[str, str]]] = {}
+    for row in rows:
+        inputs_by_run.setdefault(row["run_accession"], []).append(row)
+    for run_accession, metadata in FROZEN_PUBLIC_SOURCE_METADATA.items():
+        inputs = inputs_by_run[run_accession]
+        source = source_by_run[run_accession]
+        first = inputs[0]
+        expected = {
+            "dataset": metadata["dataset"],
+            "run_accession": run_accession,
+            "study_accession": metadata["study_accession"],
+            "sample_accession": first["sample_accession"],
+            "cell_line": first["source_sample_id"],
+            "platform": "ILLUMINA" if first["source_sample_id"] == "GM11906" else "OXFORD_NANOPORE",
+            "instrument_model": metadata["instrument_model"],
+            "library_strategy": first["library_strategy"],
+            "fastq_url": ";".join(item["url"] for item in inputs),
+            "fastq_md5": ";".join(item["md5"] for item in inputs),
+            "fastq_sha256": ";".join(item["sha256"] for item in inputs),
+            "fastq_bytes": ";".join(item["bytes"] for item in inputs),
+            "role": "fixed-input reproducibility and descriptive filter profile",
+            "redistribution": "raw reads excluded from Git and validation ZIP",
+        }
+        mismatches = {
+            field: (value, source.get(field, ""))
+            for field, value in expected.items()
+            if source.get(field, "") != value
+        }
+        if mismatches:
+            raise ValueError(
+                f"public_data_sources.tsv mismatch for {run_accession}: {mismatches!r}"
+            )
+        try:
+            checked = datetime.fromisoformat(
+                source["metadata_checked_utc"].replace("Z", "+00:00")
+            )
+        except ValueError as error:
+            raise ValueError(
+                f"public_data_sources.tsv has an invalid metadata timestamp for {run_accession}"
+            ) from error
+        if checked.tzinfo is None or checked.utcoffset() is None:
+            raise ValueError(
+                f"public_data_sources.tsv metadata timestamp lacks a timezone for {run_accession}"
+            )
+
+    return {
+        "rows": rows,
+        "manifest_sha256": manifest_sha256,
+        "seal_sha256": sha256(seal_path),
+        "canonical_inputs_sha256": canonical_public_input_hashes(rows),
+    }
+
+
+def read_frozen_oracle(path: Path) -> list[dict[str, str]]:
+    if sha256(path) != FROZEN_ORACLE_SHA256:
+        raise ValueError("Tracked public-validation oracle does not match the frozen v0.3.0 oracle")
+    with path.open(encoding="utf-8", newline="") as handle:
+        rows = [
+            {key: "" if value in (None, ".") else value for key, value in row.items()}
+            for row in csv.DictReader(handle, delimiter="\t")
+        ]
+    keys = [(row.get("dataset", ""), row.get("profile", "")) for row in rows]
+    if keys != list(PUBLIC_ORACLE_CASES):
+        raise ValueError("Tracked public-validation oracle profile inventory is invalid")
+    return rows
+
+
+def expected_oracle_assertions(
+    oracle_rows: list[dict[str, str]],
+) -> dict[str, str]:
+    oracle = {(row["dataset"], row["profile"]): row for row in oracle_rows}
+    output_names = sorted(name for names in PUBLIC_ORACLE_CASES.values() for name in names)
+    expected: dict[str, str] = {
+        "oracle.profile_keys": repr(sorted(PUBLIC_ORACLE_CASES)),
+        "matrix.output_directories": repr(output_names),
+        "matrix.filter_profile_keys": repr(sorted(PUBLIC_ORACLE_CASES)),
+    }
+    filter_fields = (
+        "min_base_quality",
+        "min_mapping_quality",
+        "min_read_mean_quality",
+        "candidate_sites",
+        "accepted_observations",
+        "excluded_observations",
+        "m8344_present",
+        "m8344_alt_fraction",
+    )
+    case_fields = (
+        "min_base_quality",
+        "min_mapping_quality",
+        "min_read_mean_quality",
+        "candidate_sites",
+        "accepted_observations",
+        "excluded_observations",
+    )
+    inventory_fields = ("summary_tsv_count", "html_count", "png_count")
+    status_fields = (
+        "copy_number_status",
+        "phymer_status",
+        "methylation_status",
+        "mvtool_status",
+        "numt_module_status",
+        "numt_interpretation_status",
+        "numt_reason_code",
+    )
+    longread_fields = (
+        "mapped_reads",
+        "primary_reads",
+        "supplementary_reads",
+        "mean_depth",
+        "median_depth",
+        "selected_cosegregation_sites",
+        "deletion_clusters",
+        "deletion_query_names",
+        "supplementary_sa_query_names",
+        "source_records",
+        "selected_names",
+    )
+    for key, case_ids in PUBLIC_ORACLE_CASES.items():
+        row = oracle[key]
+        for field in filter_fields:
+            if row[field]:
+                expected[f"filter.{key[0]}.{key[1]}.{field}"] = row[field]
+        for case_id in case_ids:
+            for field in case_fields:
+                expected[f"{case_id}.{field}"] = row[field]
+            expected[f"{case_id}.m8344.present"] = row["m8344_present"]
+            for field in inventory_fields:
+                expected[f"{case_id}.inventory.{field}"] = row[field]
+            for field in status_fields:
+                if row[field]:
+                    expected[f"{case_id}.status.{field}"] = row[field]
+            if row["m8344_alt_count"]:
+                for field in (
+                    "m8344_callable_depth",
+                    "m8344_alt_count",
+                    "m8344_alt_forward",
+                    "m8344_alt_reverse",
+                    "m8344_alt_fraction",
+                    "m8344_feature_label",
+                    "m8344_feature_class",
+                    "m8344_consequence_class",
+                ):
+                    expected[f"{case_id}.{field}"] = row[field]
+                expected[f"{case_id}.m8344_strand_sum"] = row["m8344_alt_count"]
+                expected[f"{case_id}.m8344.consequence_rows"] = "1"
+            if key[0] == "GM12878":
+                for field in longread_fields:
+                    expected[f"{case_id}.{field}"] = row[field]
+                expected[f"{case_id}.selection_seed"] = (
+                    "mito-overview-v0.3.0-GM12878-SRR18110025"
+                )
+            else:
+                expected[f"{case_id}.shortread.dataset_id"] = "GM11906_pooled_scATAC"
+                expected[f"{case_id}.shortread.derivation_id"] = (
+                    "bwa-mem-samtools-sort-v1"
+                )
+                expected[f"{case_id}.shortread.source_runs"] = repr(
+                    ["SRR10804585", "SRR10804590", "SRR10804657"]
+                )
+                expected[f"{case_id}.shortread.raw_input_labels"] = repr(
+                    [
+                        "SRR10804585_R1",
+                        "SRR10804585_R2",
+                        "SRR10804590_R1",
+                        "SRR10804590_R2",
+                        "SRR10804657_R1",
+                        "SRR10804657_R2",
+                    ]
+                )
+    return expected
+
+
+def validate_oracle_assertions(
+    path: Path,
+    oracle_rows: list[dict[str, str]],
+) -> dict[str, int]:
+    rows = read_tsv_rows(
+        path,
+        ("assertion_id", "verdict", "expected", "observed", "detail"),
+        "oracle_assertions.tsv",
+    )
+    by_id: dict[str, dict[str, str]] = {}
+    for row in rows:
+        assertion_id = row["assertion_id"]
+        if not assertion_id or assertion_id in by_id:
+            raise ValueError(f"Duplicate or empty public-oracle assertion: {assertion_id!r}")
+        if row["verdict"] != "PASS":
+            raise ValueError(f"Public-oracle assertion is nonpassing: {assertion_id}")
+        if not semantically_equal(row["expected"], row["observed"]):
+            raise ValueError(f"Public-oracle PASS row disagrees semantically: {assertion_id}")
+        by_id[assertion_id] = row
+    required = expected_oracle_assertions(oracle_rows)
+    missing = sorted(set(required) - set(by_id))
+    if missing:
+        raise ValueError(f"Public-oracle assertion report is incomplete: {missing}")
+    for assertion_id, expected in required.items():
+        row = by_id[assertion_id]
+        if not semantically_equal(row["expected"], expected):
+            raise ValueError(
+                f"Public-oracle assertion expected value drifted for {assertion_id}: "
+                f"{row['expected']!r} != {expected!r}"
+            )
+    return {"assertion_count": len(rows), "required_assertion_count": len(required)}
+
+
+def validate_filter_profiles(
+    path: Path,
+    oracle_rows: list[dict[str, str]],
+) -> None:
+    expected_header = (
+        "case_id",
+        "dataset",
+        "profile",
+        "min_base_quality",
+        "min_mapping_quality",
+        "min_read_mean_quality",
+        "candidate_sites",
+        "accepted_observations",
+        "excluded_observations",
+        "m8344_A_G_present",
+        "m8344_A_G_alt_allele_fraction",
+    )
+    rows = read_tsv_rows(path, expected_header, "filter_profile_results.tsv")
+    observed = {(row["dataset"], row["profile"]): row for row in rows}
+    oracle = {(row["dataset"], row["profile"]): row for row in oracle_rows}
+    if len(observed) != len(rows) or set(observed) != set(oracle):
+        raise ValueError("Filter-profile result inventory does not match the frozen oracle")
+    mappings = {
+        "min_base_quality": "min_base_quality",
+        "min_mapping_quality": "min_mapping_quality",
+        "min_read_mean_quality": "min_read_mean_quality",
+        "candidate_sites": "candidate_sites",
+        "accepted_observations": "accepted_observations",
+        "excluded_observations": "excluded_observations",
+        "m8344_A_G_present": "m8344_present",
+        "m8344_A_G_alt_allele_fraction": "m8344_alt_fraction",
+    }
+    for key, expected_row in oracle.items():
+        row = observed[key]
+        expected_case = f"{key[0].lower()}_{key[1]}"
+        if row["case_id"] != expected_case:
+            raise ValueError(f"Filter-profile case identity mismatch for {key}")
+        for observed_field, oracle_field in mappings.items():
+            expected_value = expected_row[oracle_field]
+            if expected_value and not semantically_equal(row[observed_field], expected_value):
+                raise ValueError(
+                    f"Filter-profile oracle mismatch for {key} {observed_field}: "
+                    f"{row[observed_field]!r} != {expected_value!r}"
+                )
+
+
+def metric_values(path: Path) -> dict[str, str]:
+    rows = read_tsv_rows(path, ("metric", "value"), path.name)
+    values = {row["metric"]: row["value"] for row in rows}
+    if len(values) != len(rows):
+        raise ValueError(f"Duplicate metric in {path}")
+    return values
+
+
+def validate_normalized_repeatability(
+    normalized_root: Path,
+    oracle_rows: list[dict[str, str]],
+) -> None:
+    oracle = {(row["dataset"], row["profile"]): row for row in oracle_rows}
+    for dataset_key, dataset_name in (("gm11906", "GM11906"), ("gm12878", "GM12878")):
+        run1 = normalized_root / f"{dataset_key}_default_run1"
+        run2 = normalized_root / f"{dataset_key}_default_run2"
+        if not run1.is_dir() or not run2.is_dir():
+            raise ValueError(f"Normalized repeat evidence is missing for {dataset_name}")
+        ignored = {"normalized_manifest.tsv", "visual_artifact_inventory.tsv"}
+        files1 = {
+            path.relative_to(run1).as_posix(): path
+            for path in run1.rglob("*.tsv")
+            if path.name not in ignored
+        }
+        files2 = {
+            path.relative_to(run2).as_posix(): path
+            for path in run2.rglob("*.tsv")
+            if path.name not in ignored
+        }
+        if set(files1) != set(files2) or len(files1) != 44:
+            raise ValueError(
+                f"Normalized {dataset_name} summary inventory must contain 44 matched TSVs"
+            )
+        for relative, first in files1.items():
+            if first.read_bytes() != files2[relative].read_bytes():
+                raise ValueError(
+                    f"Normalized scientific TSVs differ across {dataset_name} repeats: {relative}"
+                )
+        for repeat_root, files in ((run1, files1), (run2, files2)):
+            manifest_rows = read_tsv_rows(
+                repeat_root / "normalized_manifest.tsv",
+                ("path", "sha256"),
+                f"{repeat_root.name} normalized manifest",
+            )
+            manifest = {row["path"]: row["sha256"] for row in manifest_rows}
+            expected_manifest = {
+                relative: sha256(path) for relative, path in files.items()
+            }
+            if manifest != expected_manifest:
+                raise ValueError(f"Normalized manifest mismatch for {repeat_root.name}")
+
+        visual_rows = []
+        for repeat_root in (run1, run2):
+            rows = read_tsv_rows(
+                repeat_root / "visual_artifact_inventory.tsv",
+                (
+                    "relative_path",
+                    "artifact_type",
+                    "bytes",
+                    "sha256",
+                    "width_px",
+                    "height_px",
+                    "integrity_status",
+                ),
+                f"{repeat_root.name} visual inventory",
+            )
+            if any(row["integrity_status"] != "ok" for row in rows):
+                raise ValueError(f"Visual integrity failure for {repeat_root.name}")
+            visual_rows.append(rows)
+        structures = [
+            [
+                (
+                    row["relative_path"],
+                    row["artifact_type"],
+                    row["width_px"],
+                    row["height_px"],
+                    row["integrity_status"],
+                )
+                for row in rows
+            ]
+            for rows in visual_rows
+        ]
+        if structures[0] != structures[1]:
+            raise ValueError(f"Visual structures differ across {dataset_name} repeats")
+        default_oracle = oracle[(dataset_name, "default")]
+        observed_html = sum(row["artifact_type"] == "html" for row in visual_rows[0])
+        observed_png = sum(row["artifact_type"] == "png" for row in visual_rows[0])
+        if observed_html != int(default_oracle["html_count"]) or observed_png != int(
+            default_oracle["png_count"]
+        ):
+            raise ValueError(f"Visual artifact inventory mismatch for {dataset_name}")
+
+        summary = metric_values(run1 / "mito_heteroplasmy_summary.tsv")
+        for oracle_field, metric in (
+            ("min_base_quality", "allele_min_base_quality"),
+            ("min_mapping_quality", "allele_min_mapping_quality"),
+            ("min_read_mean_quality", "allele_min_read_mean_quality"),
+            ("accepted_observations", "accepted_observations"),
+            ("excluded_observations", "excluded_observations"),
+        ):
+            if not semantically_equal(summary.get(metric), default_oracle[oracle_field]):
+                raise ValueError(f"Normalized oracle mismatch for {dataset_name} {metric}")
+
+        candidate_path = run1 / "mito_heteroplasmy_candidates.tsv"
+        with candidate_path.open(encoding="utf-8", newline="") as handle:
+            reader = csv.DictReader(handle, delimiter="\t")
+            if not reader.fieldnames:
+                raise ValueError(
+                    f"{dataset_name} heteroplasmy candidates header is missing"
+                )
+            candidates = list(reader)
+        if not candidates:
+            raise ValueError(f"{dataset_name} heteroplasmy candidates are empty")
+        if len(candidates) != int(default_oracle["candidate_sites"]):
+            raise ValueError(f"Normalized candidate count mismatch for {dataset_name}")
+        marker = [
+            row
+            for row in candidates
+            if row.get("position") == "8344"
+            and row.get("ref_base", "").upper() == "A"
+            and row.get("alt_base", "").upper() == "G"
+        ]
+        if len(marker) != int(default_oracle["m8344_present"]):
+            raise ValueError(f"Normalized m.8344A>G presence mismatch for {dataset_name}")
+        if marker:
+            row = marker[0]
+            for oracle_field, table_field in (
+                ("m8344_callable_depth", "callable_depth"),
+                ("m8344_alt_count", "alt_count"),
+                ("m8344_alt_forward", "alt_forward"),
+                ("m8344_alt_reverse", "alt_reverse"),
+                ("m8344_alt_fraction", "alt_allele_fraction"),
+            ):
+                if not semantically_equal(row.get(table_field), default_oracle[oracle_field]):
+                    raise ValueError(f"Normalized m.8344A>G mismatch for {oracle_field}")
+
+        status_specs = (
+            ("copy_number_status", "mito_copy_number_summary.tsv", "status"),
+            ("phymer_status", "mito_phymer_haplogroup_summary.tsv", "status"),
+            ("methylation_status", "mito_methylation_exploratory_summary.tsv", "status"),
+            ("mvtool_status", "mito_mvtool_annotation_summary.tsv", "status"),
+            ("numt_module_status", "mito_numt_qc_summary.tsv", "status"),
+            (
+                "numt_interpretation_status",
+                "mito_numt_qc_summary.tsv",
+                "numt_interpretation_status",
+            ),
+            ("numt_reason_code", "mito_numt_qc_summary.tsv", "reason_code"),
+        )
+        loaded: dict[str, dict[str, str]] = {}
+        for oracle_field, filename, metric in status_specs:
+            expected_value = default_oracle[oracle_field]
+            if not expected_value:
+                continue
+            loaded.setdefault(filename, metric_values(run1 / filename))
+            if loaded[filename].get(metric) != expected_value:
+                raise ValueError(f"Normalized module-state mismatch for {dataset_name} {oracle_field}")
+
+        if dataset_name == "GM12878":
+            table_specs = {
+                "mito_qc_summary.tsv": {
+                    "mapped_reads": "mapped_reads",
+                    "primary_reads": "primary_reads",
+                    "supplementary_reads": "supplementary_reads",
+                    "mean_depth": "mean_depth",
+                    "median_depth": "median_depth",
+                },
+                "mito_cosegregation_summary.tsv": {
+                    "selected_cosegregation_sites": "selected_sites",
+                },
+                "mito_deletion_summary.tsv": {
+                    "deletion_clusters": "candidate_deletion_clusters",
+                    "deletion_query_names": "reads_with_large_deletion",
+                    "supplementary_sa_query_names": "reads_with_supplementary_or_SA",
+                },
+            }
+            for filename, fields in table_specs.items():
+                values = metric_values(run1 / filename)
+                for oracle_field, metric in fields.items():
+                    if not semantically_equal(values.get(metric), default_oracle[oracle_field]):
+                        raise ValueError(
+                            f"Normalized long-read metric mismatch for {oracle_field}"
+                        )
+
+
+def validate_module_status_evidence(
+    path: Path,
+    normalized_root: Path,
+) -> None:
+    rows = read_tsv_rows(
+        path,
+        EVIDENCE_TABLES["module_status_matrix.tsv"],
+        "module_status_matrix.tsv",
+    )
+    observed: dict[tuple[str, str], tuple[str, str, str]] = {}
+    for row in rows:
+        key = (row["case_id"], row["module"])
+        if key in observed:
+            raise ValueError(f"Duplicate module-status evidence: {key}")
+        observed[key] = (row["status"], row["reason_code"], row["source_table"])
+
+    expected: dict[tuple[str, str], tuple[str, str, str]] = {}
+    for case_id in ("gm11906_default_run1", "gm12878_default_run1"):
+        case_root = normalized_root / case_id
+        for table in sorted(case_root.glob("*.tsv")):
+            try:
+                values = metric_values(table)
+            except ValueError:
+                continue
+            if "status" not in values:
+                continue
+            expected[(case_id, table.stem)] = (
+                values["status"],
+                values.get("reason_code", ""),
+                f"observed_normalized/{case_id}/{table.name}",
+            )
+    if observed != expected:
+        raise ValueError("module_status_matrix.tsv does not exactly inventory default module states")
+
+
+def validate_scientific_evidence(
+    repo_root: Path,
+    validation_root: Path,
+    public_root: Path,
+) -> dict[str, object]:
+    oracle_path = repo_root / FROZEN_ORACLE_REPOSITORY_PATH
+    oracle_rows = read_frozen_oracle(oracle_path)
+    assertion_summary = validate_oracle_assertions(
+        public_root / ORACLE_ASSERTIONS_PACKET_PATH,
+        oracle_rows,
+    )
+    validate_filter_profiles(public_root / "filter_profile_results.tsv", oracle_rows)
+    validate_normalized_repeatability(public_root / "observed_normalized", oracle_rows)
+    validate_module_status_evidence(
+        validation_root / "module_status_matrix.tsv",
+        public_root / "observed_normalized",
+    )
+    return {
+        "oracle_sha256": FROZEN_ORACLE_SHA256,
+        **assertion_summary,
+    }
+
+
 def load_json_object(path: Path, label: str) -> dict[str, object]:
     if not path.is_file():
         raise FileNotFoundError(f"Required {label} not found: {path}")
@@ -888,7 +1668,10 @@ def _records_match(
             raise ValueError(f"Public provenance linkage mismatch for {label} field {field}")
 
 
-def validate_public_provenance(public_root: Path) -> list[dict[str, str]]:
+def validate_public_provenance(
+    public_root: Path,
+    public_input_rows: list[dict[str, str]],
+) -> list[dict[str, str]]:
     paths = {
         key: public_root / str(specification["source"])
         for key, specification in PUBLIC_PROVENANCE_FILES.items()
@@ -994,6 +1777,53 @@ def validate_public_provenance(public_root: Path) -> list[dict[str, str]]:
             if not isinstance(validated.get("label"), str) or not validated["label"]:
                 raise ValueError(f"Public {label} alignment input label is invalid")
 
+    input_by_filename = {row["filename"]: row for row in public_input_rows}
+    short_inputs = {
+        record.get("label"): record
+        for record in short["public_inputs"]
+        if isinstance(record, dict) and isinstance(record.get("label"), str)
+    }
+    expected_short_labels = {
+        "SRR10804585_R1": "SRR10804585_1.fastq.gz",
+        "SRR10804585_R2": "SRR10804585_2.fastq.gz",
+        "SRR10804590_R1": "SRR10804590_1.fastq.gz",
+        "SRR10804590_R2": "SRR10804590_2.fastq.gz",
+        "SRR10804657_R1": "SRR10804657_1.fastq.gz",
+        "SRR10804657_R2": "SRR10804657_2.fastq.gz",
+    }
+    if set(short_inputs) != {*expected_short_labels, "combined_R1", "combined_R2"}:
+        raise ValueError(
+            "Public short-read alignment must contain all six frozen mates and two combined inputs"
+        )
+    for label, filename in expected_short_labels.items():
+        record = short_inputs[label]
+        expected = input_by_filename[filename]
+        for field in ("name", "bytes", "md5", "sha256"):
+            expected_value: object = filename if field == "name" else expected[field]
+            if field == "bytes":
+                expected_value = int(str(expected_value))
+            if record.get(field) != expected_value:
+                raise ValueError(
+                    f"Public short-read alignment input {label} is not bound to {filename} {field}"
+                )
+    for label, suffix, raw_labels in (
+        (
+            "combined_R1",
+            "GM11906_MERRF_R1.fastq.gz",
+            ("SRR10804585_R1", "SRR10804590_R1", "SRR10804657_R1"),
+        ),
+        (
+            "combined_R2",
+            "GM11906_MERRF_R2.fastq.gz",
+            ("SRR10804585_R2", "SRR10804590_R2", "SRR10804657_R2"),
+        ),
+    ):
+        combined = short_inputs[label]
+        if combined.get("name") != suffix or combined.get("bytes") != sum(
+            int(short_inputs[raw_label]["bytes"]) for raw_label in raw_labels
+        ):
+            raise ValueError(f"Public short-read combined input is invalid: {label}")
+
     if (
         subset.get("schema_version") != "1.0"
         or subset.get("provenance_type") != "deterministic_fastq_query_name_subset"
@@ -1024,9 +1854,12 @@ def validate_public_provenance(public_root: Path) -> list[dict[str, str]]:
         selection.get("algorithm") != "smallest_sha256_seeded_query_names_v1"
         or isinstance(selected_count, bool)
         or not isinstance(selected_count, int)
-        or selected_count <= 0
+        or selected_count != 1000
         or selection.get("requested_query_names") != selected_count
         or selected_count != len(query_names)
+        or selection.get("source_records_seen") != 193043
+        or selection.get("seed")
+        != "mito-overview-v0.3.0-GM12878-SRR18110025"
     ):
         raise ValueError("Public long-read subset selection count or algorithm is invalid")
 
@@ -1044,6 +1877,17 @@ def validate_public_provenance(public_root: Path) -> list[dict[str, str]]:
     if set(long_inputs) != required_labels:
         raise ValueError("Public long-read alignment input inventory is incomplete")
     _records_match(source_fastq, long_inputs["SRR18110025_full_fastq"], "source FASTQ")
+    expected_longread = input_by_filename["SRR18110025.fastq.gz"]
+    for field in ("name", "bytes", "md5", "sha256"):
+        expected_value = (
+            "SRR18110025.fastq.gz" if field == "name" else expected_longread[field]
+        )
+        if field == "bytes":
+            expected_value = int(str(expected_value))
+        if source_fastq.get(field) != expected_value:
+            raise ValueError(
+                f"Public long-read source FASTQ is not bound to the frozen input {field}"
+            )
     _records_match(subset_fastq, long_inputs["deterministic_subset_fastq"], "subset FASTQ")
     _records_match(selected_names, long_inputs["selected_query_names"], "selected names")
     _require_record_content(
@@ -1353,18 +2197,27 @@ def github_actions_identity(
     jobs = jobs_payload.get("jobs")
     if not isinstance(jobs, list):
         raise ValueError("GitHub Actions jobs evidence does not contain a jobs list")
-    expected_names = {value["name"] for value in EXPECTED_GITHUB_JOBS.values()}
-    selected = [
-        {
-            "job_id": job["id"],
-            "name": job["name"],
-            "labels": job["labels"],
-            "head_sha": job["head_sha"],
-            "url": job["html_url"],
-        }
-        for job in jobs
-        if isinstance(job, dict) and job.get("name") in expected_names
-    ]
+    selected = []
+    for expectation in EXPECTED_GITHUB_JOBS.values():
+        matching = [
+            job
+            for job in jobs
+            if isinstance(job, dict) and job.get("name") == expectation["name"]
+        ]
+        if len(matching) != 1:
+            raise ValueError(
+                f"Validated GitHub Actions job disappeared: {expectation['name']}"
+            )
+        job = matching[0]
+        selected.append(
+            {
+                "job_id": job["id"],
+                "name": job["name"],
+                "labels": job["labels"],
+                "head_sha": job["head_sha"],
+                "url": job["html_url"],
+            }
+        )
     return {
         "provider": "github_actions",
         "run_id": run["id"],
@@ -1695,6 +2548,7 @@ import sys
 import tarfile
 import zipfile
 from collections import Counter
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 root = Path(sys.argv[1])
@@ -1707,8 +2561,9 @@ required_top_level = {
     "public_data_sources.tsv", "manuscript_handoff.tsv", "limitations.tsv",
     "environment.txt", "commands", "logs", "dist", "expected",
     "observed_normalized", "public_provenance", "figures",
-    "filter_profile_results.tsv", "inputs.sha256", "artifacts.sha256",
-    "verify_bundle.sh",
+    "filter_profile_results.tsv", "inputs.sha256", "raw_inputs.tsv",
+    "CACHE_SEAL.sha256", "public_validation_oracle_v0.3.0.tsv",
+    "oracle_assertions.tsv", "artifacts.sha256", "verify_bundle.sh",
 }
 missing = sorted(name for name in required_top_level if not (root / name).exists())
 if missing:
@@ -1764,7 +2619,208 @@ if set(artifact_hashes) != actual_artifacts:
 for relative, expected in artifact_hashes.items():
     if digest(root / relative) != expected:
         raise SystemExit(f"artifact hash mismatch: {relative}")
-parse_manifest(root / "inputs.sha256", packet_paths=False)
+
+frozen_input_hashes = {
+    "SRR10804585_1.fastq.gz": "b69746cb61d8bf3bc25887d6ece3c60db3acc7baaefd84a9a8b5d6ffce33288d",
+    "SRR10804585_2.fastq.gz": "1fca2c35a955a4ed232465d8392bc04683828229178aee7915929e67b2aac961",
+    "SRR10804590_1.fastq.gz": "e47ceceb03d44483b4948fe9c631ebff307f5ec68a1deec978f1122695fa58fc",
+    "SRR10804590_2.fastq.gz": "05b2375b30b02c02e9206981eb2fe2d08babbc2a5809f8354ef56d0ac1550776",
+    "SRR10804657_1.fastq.gz": "1afaf310ce9ffa77e1c3d61a0714e839d21000941d414cc7bf6fb590c3b665f2",
+    "SRR10804657_2.fastq.gz": "bfc555c7e722695b02110027757bba4d7fc88f487798423cd6809e8a771a5184",
+    "SRR18110025.fastq.gz": "c0872ee9ceb772ee5a4b76735c0d670e2159764b23dd800b6eb1f4933da11320",
+}
+input_hashes = parse_manifest(root / "inputs.sha256", packet_paths=False)
+if input_hashes != frozen_input_hashes:
+    raise SystemExit("inputs.sha256 does not contain the seven frozen public FASTQs")
+
+frozen_raw_manifest_sha256 = "188d9e493c7cc43dc63c6bfe972914af5ae42cadb6cb2f59092cb13452adf756"
+if digest(root / "raw_inputs.tsv") != frozen_raw_manifest_sha256:
+    raise SystemExit("raw_inputs.tsv does not match the frozen v0.3.0 manifest")
+seal_match = re.fullmatch(
+    r"([0-9a-f]{64})  raw_inputs\.tsv\n?",
+    (root / "CACHE_SEAL.sha256").read_text(encoding="utf-8"),
+)
+if seal_match is None or seal_match.group(1) != frozen_raw_manifest_sha256:
+    raise SystemExit("CACHE_SEAL.sha256 does not bind raw_inputs.tsv")
+
+raw_header = (
+    "schema_version", "dataset_id", "run_accession", "sample_accession",
+    "sample_alias", "sample_title", "source_sample_id", "library_strategy",
+    "library_unit", "source_record_url", "filename", "bytes", "md5",
+    "sha256", "fastq_records", "url",
+)
+with (root / "raw_inputs.tsv").open(encoding="utf-8", newline="") as handle:
+    reader = csv.DictReader(handle, delimiter="\t")
+    if tuple(reader.fieldnames or ()) != raw_header:
+        raise SystemExit("raw_inputs.tsv schema mismatch")
+    raw_inputs = list(reader)
+if len(raw_inputs) != 7 or {row["filename"] for row in raw_inputs} != set(frozen_input_hashes):
+    raise SystemExit("raw_inputs.tsv inventory mismatch")
+if any(
+    row["schema_version"] != "1.0"
+    or row["sha256"] != frozen_input_hashes[row["filename"]]
+    or not row["fastq_records"].isdigit()
+    or int(row["fastq_records"]) <= 0
+    for row in raw_inputs
+):
+    raise SystemExit("raw_inputs.tsv identity or FASTQ-record evidence mismatch")
+
+frozen_oracle_sha256 = "dac769dcbac622f8a2df1363c08a926b0130082208d16b77a57d581cb7ccf76e"
+oracle_path = root / "public_validation_oracle_v0.3.0.tsv"
+if digest(oracle_path) != frozen_oracle_sha256:
+    raise SystemExit("public-validation oracle is not the frozen v0.3.0 table")
+with oracle_path.open(encoding="utf-8", newline="") as handle:
+    oracle_rows = [
+        {key: "" if value in (None, ".") else value for key, value in row.items()}
+        for row in csv.DictReader(handle, delimiter="\t")
+    ]
+oracle = {(row["dataset"], row["profile"]): row for row in oracle_rows}
+oracle_cases = {
+    ("GM11906", "lenient"): ("gm11906_lenient",),
+    ("GM11906", "default"): ("gm11906_default_run1", "gm11906_default_run2"),
+    ("GM11906", "strict"): ("gm11906_strict",),
+    ("GM12878", "lenient"): ("gm12878_lenient",),
+    ("GM12878", "default"): ("gm12878_default_run1", "gm12878_default_run2"),
+    ("GM12878", "strict"): ("gm12878_strict",),
+}
+if list(oracle) != list(oracle_cases):
+    raise SystemExit("public-validation oracle profile inventory mismatch")
+
+def semantic_equal(left, right):
+    left = "" if left is None else str(left)
+    right = "" if right is None else str(right)
+    if left == right:
+        return True
+    try:
+        return Decimal(left) == Decimal(right)
+    except InvalidOperation:
+        return False
+
+def expected_assertions():
+    output_names = sorted(name for names in oracle_cases.values() for name in names)
+    required = {
+        "oracle.profile_keys": repr(sorted(oracle_cases)),
+        "matrix.output_directories": repr(output_names),
+        "matrix.filter_profile_keys": repr(sorted(oracle_cases)),
+    }
+    filter_fields = (
+        "min_base_quality", "min_mapping_quality", "min_read_mean_quality",
+        "candidate_sites", "accepted_observations", "excluded_observations",
+        "m8344_present", "m8344_alt_fraction",
+    )
+    case_fields = (
+        "min_base_quality", "min_mapping_quality", "min_read_mean_quality",
+        "candidate_sites", "accepted_observations", "excluded_observations",
+    )
+    statuses = (
+        "copy_number_status", "phymer_status", "methylation_status",
+        "mvtool_status", "numt_module_status", "numt_interpretation_status",
+        "numt_reason_code",
+    )
+    long_fields = (
+        "mapped_reads", "primary_reads", "supplementary_reads", "mean_depth",
+        "median_depth", "selected_cosegregation_sites", "deletion_clusters",
+        "deletion_query_names", "supplementary_sa_query_names", "source_records",
+        "selected_names",
+    )
+    for key, case_ids in oracle_cases.items():
+        row = oracle[key]
+        for field in filter_fields:
+            if row[field]:
+                required[f"filter.{key[0]}.{key[1]}.{field}"] = row[field]
+        for case_id in case_ids:
+            for field in case_fields:
+                required[f"{case_id}.{field}"] = row[field]
+            required[f"{case_id}.m8344.present"] = row["m8344_present"]
+            for field in ("summary_tsv_count", "html_count", "png_count"):
+                required[f"{case_id}.inventory.{field}"] = row[field]
+            for field in statuses:
+                if row[field]:
+                    required[f"{case_id}.status.{field}"] = row[field]
+            if row["m8344_alt_count"]:
+                for field in (
+                    "m8344_callable_depth", "m8344_alt_count", "m8344_alt_forward",
+                    "m8344_alt_reverse", "m8344_alt_fraction", "m8344_feature_label",
+                    "m8344_feature_class", "m8344_consequence_class",
+                ):
+                    required[f"{case_id}.{field}"] = row[field]
+                required[f"{case_id}.m8344_strand_sum"] = row["m8344_alt_count"]
+                required[f"{case_id}.m8344.consequence_rows"] = "1"
+            if key[0] == "GM12878":
+                for field in long_fields:
+                    required[f"{case_id}.{field}"] = row[field]
+                required[f"{case_id}.selection_seed"] = (
+                    "mito-overview-v0.3.0-GM12878-SRR18110025"
+                )
+            else:
+                required[f"{case_id}.shortread.dataset_id"] = "GM11906_pooled_scATAC"
+                required[f"{case_id}.shortread.derivation_id"] = "bwa-mem-samtools-sort-v1"
+                required[f"{case_id}.shortread.source_runs"] = repr(
+                    ["SRR10804585", "SRR10804590", "SRR10804657"]
+                )
+                required[f"{case_id}.shortread.raw_input_labels"] = repr(
+                    [
+                        "SRR10804585_R1", "SRR10804585_R2", "SRR10804590_R1",
+                        "SRR10804590_R2", "SRR10804657_R1", "SRR10804657_R2",
+                    ]
+                )
+    return required
+
+with (root / "oracle_assertions.tsv").open(encoding="utf-8", newline="") as handle:
+    assertion_reader = csv.DictReader(handle, delimiter="\t")
+    if tuple(assertion_reader.fieldnames or ()) != (
+        "assertion_id", "verdict", "expected", "observed", "detail",
+    ):
+        raise SystemExit("oracle_assertions.tsv schema mismatch")
+    assertion_rows = list(assertion_reader)
+assertions = {}
+for row in assertion_rows:
+    assertion_id = row["assertion_id"]
+    if not assertion_id or assertion_id in assertions:
+        raise SystemExit("oracle assertion identity is empty or duplicated")
+    if row["verdict"] != "PASS" or not semantic_equal(row["expected"], row["observed"]):
+        raise SystemExit(f"nonpassing or inconsistent oracle assertion: {assertion_id}")
+    assertions[assertion_id] = row
+required_assertions = expected_assertions()
+missing_assertions = sorted(set(required_assertions) - set(assertions))
+if missing_assertions:
+    raise SystemExit(f"oracle assertion report is incomplete: {missing_assertions}")
+for assertion_id, expected in required_assertions.items():
+    if not semantic_equal(assertions[assertion_id]["expected"], expected):
+        raise SystemExit(f"oracle assertion value drift: {assertion_id}")
+
+profile_header = (
+    "case_id", "dataset", "profile", "min_base_quality", "min_mapping_quality",
+    "min_read_mean_quality", "candidate_sites", "accepted_observations",
+    "excluded_observations", "m8344_A_G_present",
+    "m8344_A_G_alt_allele_fraction",
+)
+with (root / "filter_profile_results.tsv").open(encoding="utf-8", newline="") as handle:
+    reader = csv.DictReader(handle, delimiter="\t")
+    if tuple(reader.fieldnames or ()) != profile_header:
+        raise SystemExit("filter_profile_results.tsv schema mismatch")
+    profile_rows = list(reader)
+profiles = {(row["dataset"], row["profile"]): row for row in profile_rows}
+if len(profiles) != len(profile_rows) or set(profiles) != set(oracle):
+    raise SystemExit("filter-profile inventory mismatch")
+profile_mapping = {
+    "min_base_quality": "min_base_quality",
+    "min_mapping_quality": "min_mapping_quality",
+    "min_read_mean_quality": "min_read_mean_quality",
+    "candidate_sites": "candidate_sites",
+    "accepted_observations": "accepted_observations",
+    "excluded_observations": "excluded_observations",
+    "m8344_A_G_present": "m8344_present",
+    "m8344_A_G_alt_allele_fraction": "m8344_alt_fraction",
+}
+for key, oracle_row in oracle.items():
+    row = profiles[key]
+    if row["case_id"] != f"{key[0].lower()}_{key[1]}":
+        raise SystemExit(f"filter-profile case identity mismatch: {key}")
+    for observed_field, oracle_field in profile_mapping.items():
+        expected = oracle_row[oracle_field]
+        if expected and not semantic_equal(row[observed_field], expected):
+            raise SystemExit(f"filter-profile scientific mismatch: {key} {observed_field}")
 
 forbidden_json_keys = {
     "access_token", "refresh_token", "api_key", "authorization",
@@ -1870,6 +2926,304 @@ invalid_states = sorted(
 if invalid_states:
     raise SystemExit(f"invalid module states: {invalid_states}")
 
+source_rows = evidence_rows["public_data_sources.tsv"]
+source_by_run = {row["run_accession"]: row for row in source_rows}
+raw_by_run = {}
+for row in raw_inputs:
+    raw_by_run.setdefault(row["run_accession"], []).append(row)
+if len(source_by_run) != len(source_rows) or set(source_by_run) != set(raw_by_run):
+    raise SystemExit("public_data_sources.tsv run inventory does not bind the raw manifest")
+expected_source_metadata = {
+    "SRR10804585": (
+        "GM11906 pooled single-cell ATAC-seq pseudo-bulk", "PRJNA598179",
+        "GM11906", "ILLUMINA", "NextSeq 550", "ATAC-seq",
+    ),
+    "SRR10804590": (
+        "GM11906 pooled single-cell ATAC-seq pseudo-bulk", "PRJNA598179",
+        "GM11906", "ILLUMINA", "NextSeq 550", "ATAC-seq",
+    ),
+    "SRR10804657": (
+        "GM11906 pooled single-cell ATAC-seq pseudo-bulk", "PRJNA598179",
+        "GM11906", "ILLUMINA", "NextSeq 550", "ATAC-seq",
+    ),
+    "SRR18110025": (
+        "GM12878 ONT targeted-mt proof-of-principle", "PRJNA809571",
+        "GM12878", "OXFORD_NANOPORE", "GridION", "OTHER",
+    ),
+}
+for run_accession, inputs in raw_by_run.items():
+    row = source_by_run[run_accession]
+    first = inputs[0]
+    expected_identity = expected_source_metadata[run_accession]
+    observed_identity = (
+        row["dataset"], row["study_accession"], row["cell_line"], row["platform"],
+        row["instrument_model"], row["library_strategy"],
+    )
+    if observed_identity != expected_identity or row["sample_accession"] != first["sample_accession"]:
+        raise SystemExit(f"public source metadata mismatch: {run_accession}")
+    for field, raw_field in (
+        ("fastq_url", "url"), ("fastq_md5", "md5"),
+        ("fastq_sha256", "sha256"), ("fastq_bytes", "bytes"),
+    ):
+        if row[field] != ";".join(item[raw_field] for item in inputs):
+            raise SystemExit(f"public source input mismatch: {run_accession} {field}")
+    if (
+        row["role"] != "fixed-input reproducibility and descriptive filter profile"
+        or row["redistribution"] != "raw reads excluded from Git and validation ZIP"
+    ):
+        raise SystemExit(f"public source claim boundary mismatch: {run_accession}")
+
+def read_rows(path):
+    with path.open(encoding="utf-8", newline="") as handle:
+        reader = csv.DictReader(handle, delimiter="\t")
+        fields = tuple(reader.fieldnames or ())
+        rows = list(reader)
+    return fields, rows
+
+def metric_map(path):
+    fields, rows = read_rows(path)
+    if fields != ("metric", "value") or not rows:
+        raise SystemExit(f"metric/value table is malformed: {path}")
+    values = {row["metric"]: row["value"] for row in rows}
+    if len(values) != len(rows):
+        raise SystemExit(f"duplicate metric: {path}")
+    return values
+
+for dataset_key, dataset_name in (("gm11906", "GM11906"), ("gm12878", "GM12878")):
+    run1 = root / "observed_normalized" / f"{dataset_key}_default_run1"
+    run2 = root / "observed_normalized" / f"{dataset_key}_default_run2"
+    if not run1.is_dir() or not run2.is_dir():
+        raise SystemExit(f"normalized repeat evidence is missing: {dataset_name}")
+    ignored = {"normalized_manifest.tsv", "visual_artifact_inventory.tsv"}
+    files1 = {
+        path.relative_to(run1).as_posix(): path
+        for path in run1.rglob("*.tsv") if path.name not in ignored
+    }
+    files2 = {
+        path.relative_to(run2).as_posix(): path
+        for path in run2.rglob("*.tsv") if path.name not in ignored
+    }
+    if set(files1) != set(files2) or len(files1) != 44:
+        raise SystemExit(f"normalized summary inventory mismatch: {dataset_name}")
+    for relative, first in files1.items():
+        if first.read_bytes() != files2[relative].read_bytes():
+            raise SystemExit(f"normalized repeat mismatch: {dataset_name} {relative}")
+    for repeat_root, files in ((run1, files1), (run2, files2)):
+        fields, rows = read_rows(repeat_root / "normalized_manifest.tsv")
+        if fields != ("path", "sha256"):
+            raise SystemExit(f"normalized manifest schema mismatch: {repeat_root.name}")
+        manifest = {row["path"]: row["sha256"] for row in rows}
+        expected_manifest = {relative: digest(path) for relative, path in files.items()}
+        if manifest != expected_manifest:
+            raise SystemExit(f"normalized manifest content mismatch: {repeat_root.name}")
+    visual_structures = []
+    visual_rows = []
+    for repeat_root in (run1, run2):
+        fields, rows = read_rows(repeat_root / "visual_artifact_inventory.tsv")
+        if fields != (
+            "relative_path", "artifact_type", "bytes", "sha256", "width_px",
+            "height_px", "integrity_status",
+        ) or not rows:
+            raise SystemExit(f"visual inventory schema mismatch: {repeat_root.name}")
+        if any(row["integrity_status"] != "ok" for row in rows):
+            raise SystemExit(f"visual inventory contains a failure: {repeat_root.name}")
+        visual_rows.append(rows)
+        visual_structures.append([
+            (
+                row["relative_path"], row["artifact_type"], row["width_px"],
+                row["height_px"], row["integrity_status"],
+            )
+            for row in rows
+        ])
+    if visual_structures[0] != visual_structures[1]:
+        raise SystemExit(f"visual structures differ across repeats: {dataset_name}")
+    default_oracle = oracle[(dataset_name, "default")]
+    if (
+        sum(row["artifact_type"] == "html" for row in visual_rows[0])
+        != int(default_oracle["html_count"])
+        or sum(row["artifact_type"] == "png" for row in visual_rows[0])
+        != int(default_oracle["png_count"])
+    ):
+        raise SystemExit(f"visual inventory count mismatch: {dataset_name}")
+
+    heteroplasmy = metric_map(run1 / "mito_heteroplasmy_summary.tsv")
+    for oracle_field, metric in (
+        ("min_base_quality", "allele_min_base_quality"),
+        ("min_mapping_quality", "allele_min_mapping_quality"),
+        ("min_read_mean_quality", "allele_min_read_mean_quality"),
+        ("accepted_observations", "accepted_observations"),
+        ("excluded_observations", "excluded_observations"),
+    ):
+        if not semantic_equal(heteroplasmy.get(metric), default_oracle[oracle_field]):
+            raise SystemExit(f"normalized heteroplasmy oracle mismatch: {dataset_name} {metric}")
+    _, candidates = read_rows(run1 / "mito_heteroplasmy_candidates.tsv")
+    if len(candidates) != int(default_oracle["candidate_sites"]):
+        raise SystemExit(f"normalized candidate count mismatch: {dataset_name}")
+    marker = [
+        row for row in candidates
+        if row.get("position") == "8344"
+        and row.get("ref_base", "").upper() == "A"
+        and row.get("alt_base", "").upper() == "G"
+    ]
+    if len(marker) != int(default_oracle["m8344_present"]):
+        raise SystemExit(f"normalized m.8344A>G presence mismatch: {dataset_name}")
+    if marker:
+        for oracle_field, table_field in (
+            ("m8344_callable_depth", "callable_depth"),
+            ("m8344_alt_count", "alt_count"),
+            ("m8344_alt_forward", "alt_forward"),
+            ("m8344_alt_reverse", "alt_reverse"),
+            ("m8344_alt_fraction", "alt_allele_fraction"),
+        ):
+            if not semantic_equal(marker[0].get(table_field), default_oracle[oracle_field]):
+                raise SystemExit(f"normalized marker oracle mismatch: {oracle_field}")
+    status_specs = (
+        ("copy_number_status", "mito_copy_number_summary.tsv", "status"),
+        ("phymer_status", "mito_phymer_haplogroup_summary.tsv", "status"),
+        ("methylation_status", "mito_methylation_exploratory_summary.tsv", "status"),
+        ("mvtool_status", "mito_mvtool_annotation_summary.tsv", "status"),
+        ("numt_module_status", "mito_numt_qc_summary.tsv", "status"),
+        ("numt_interpretation_status", "mito_numt_qc_summary.tsv", "numt_interpretation_status"),
+        ("numt_reason_code", "mito_numt_qc_summary.tsv", "reason_code"),
+    )
+    loaded = {}
+    for oracle_field, filename, metric in status_specs:
+        expected = default_oracle[oracle_field]
+        if expected:
+            loaded.setdefault(filename, metric_map(run1 / filename))
+            if loaded[filename].get(metric) != expected:
+                raise SystemExit(f"normalized module status mismatch: {dataset_name} {oracle_field}")
+    if dataset_name == "GM12878":
+        long_tables = {
+            "mito_qc_summary.tsv": {
+                "mapped_reads": "mapped_reads", "primary_reads": "primary_reads",
+                "supplementary_reads": "supplementary_reads", "mean_depth": "mean_depth",
+                "median_depth": "median_depth",
+            },
+            "mito_cosegregation_summary.tsv": {
+                "selected_cosegregation_sites": "selected_sites",
+            },
+            "mito_deletion_summary.tsv": {
+                "deletion_clusters": "candidate_deletion_clusters",
+                "deletion_query_names": "reads_with_large_deletion",
+                "supplementary_sa_query_names": "reads_with_supplementary_or_SA",
+            },
+        }
+        for filename, mappings in long_tables.items():
+            values = metric_map(run1 / filename)
+            for oracle_field, metric in mappings.items():
+                if not semantic_equal(values.get(metric), default_oracle[oracle_field]):
+                    raise SystemExit(f"normalized long-read oracle mismatch: {oracle_field}")
+
+short_manifest_path = (
+    root / "public_provenance/GM11906_MERRF_shortread.alignment.provenance.json"
+)
+short_manifest = json.loads(short_manifest_path.read_text(encoding="utf-8"))
+if (
+    short_manifest.get("dataset_id") != "GM11906_pooled_scATAC"
+    or short_manifest.get("derivation", {}).get("derivation_id")
+    != "bwa-mem-samtools-sort-v1"
+):
+    raise SystemExit("short-read alignment derivation identity mismatch")
+short_inputs = {
+    record.get("label"): record
+    for record in short_manifest.get("public_inputs", [])
+    if isinstance(record, dict)
+}
+short_labels = {
+    "SRR10804585_R1": "SRR10804585_1.fastq.gz",
+    "SRR10804585_R2": "SRR10804585_2.fastq.gz",
+    "SRR10804590_R1": "SRR10804590_1.fastq.gz",
+    "SRR10804590_R2": "SRR10804590_2.fastq.gz",
+    "SRR10804657_R1": "SRR10804657_1.fastq.gz",
+    "SRR10804657_R2": "SRR10804657_2.fastq.gz",
+}
+if set(short_inputs) != {*short_labels, "combined_R1", "combined_R2"}:
+    raise SystemExit("short-read alignment input inventory is incomplete")
+raw_by_name = {row["filename"]: row for row in raw_inputs}
+for label, filename in short_labels.items():
+    record = short_inputs[label]
+    expected = raw_by_name[filename]
+    if (
+        record.get("name") != filename
+        or record.get("bytes") != int(expected["bytes"])
+        or record.get("md5") != expected["md5"]
+        or record.get("sha256") != expected["sha256"]
+    ):
+        raise SystemExit(f"short-read alignment is not bound to frozen input: {label}")
+for label, expected_name, component_labels in (
+    (
+        "combined_R1", "GM11906_MERRF_R1.fastq.gz",
+        ("SRR10804585_R1", "SRR10804590_R1", "SRR10804657_R1"),
+    ),
+    (
+        "combined_R2", "GM11906_MERRF_R2.fastq.gz",
+        ("SRR10804585_R2", "SRR10804590_R2", "SRR10804657_R2"),
+    ),
+):
+    combined = short_inputs[label]
+    if (
+        combined.get("name") != expected_name
+        or combined.get("bytes")
+        != sum(short_inputs[component]["bytes"] for component in component_labels)
+    ):
+        raise SystemExit(f"short-read combined derivation mismatch: {label}")
+source_fields, source_libraries = read_rows(
+    root / "public_provenance/GM11906_MERRF_shortread.source_libraries.tsv"
+)
+expected_source_libraries = [
+    (
+        "SRR10804585", "GSM4238454", "GM11906", "ATAC-seq",
+        "single_cell_library", "pooled_pseudobulk",
+        "https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSM4238454",
+    ),
+    (
+        "SRR10804590", "GSM4238459", "GM11906", "ATAC-seq",
+        "single_cell_library", "pooled_pseudobulk",
+        "https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSM4238459",
+    ),
+    (
+        "SRR10804657", "GSM4238526", "GM11906", "ATAC-seq",
+        "single_cell_library", "pooled_pseudobulk",
+        "https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSM4238526",
+    ),
+]
+observed_source_libraries = [
+    tuple(row[field] for field in source_fields) for row in source_libraries
+]
+if source_fields != (
+    "run_accession", "geo_accession", "source_sample_id", "library_strategy",
+    "library_unit", "combination_role", "source_record_url",
+) or observed_source_libraries != expected_source_libraries:
+    raise SystemExit("GM11906 three-cell source-library derivation mismatch")
+
+long_subset = json.loads(
+    (root / "public_provenance/GM12878_ONT_longread.fastq_subset.provenance.json")
+    .read_text(encoding="utf-8")
+)
+long_source = long_subset.get("source_fastq", {})
+expected_long = raw_by_name["SRR18110025.fastq.gz"]
+if (
+    long_source.get("name") != "SRR18110025.fastq.gz"
+    or long_source.get("bytes") != int(expected_long["bytes"])
+    or long_source.get("md5") != expected_long["md5"]
+    or long_source.get("sha256") != expected_long["sha256"]
+):
+    raise SystemExit("long-read subset is not bound to the frozen SRR18110025 FASTQ")
+selection = long_subset.get("selection", {})
+selected_names_path = root / "public_provenance/GM12878_ONT_longread.selected_qnames.txt"
+selected_names = selected_names_path.read_text(encoding="utf-8").splitlines()
+if (
+    selection.get("algorithm") != "smallest_sha256_seeded_query_names_v1"
+    or selection.get("requested_query_names") != 1000
+    or selection.get("selected_query_names") != 1000
+    or selection.get("source_records_seen") != 193043
+    or selection.get("seed") != "mito-overview-v0.3.0-GM12878-SRR18110025"
+    or len(selected_names) != 1000
+    or len(set(selected_names)) != 1000
+):
+    raise SystemExit("long-read deterministic subset derivation mismatch")
+
 for row in evidence_rows["resource_usage.tsv"]:
     status = row["measurement_status"]
     if status not in {"measured", "unavailable"}:
@@ -1894,6 +3248,54 @@ for name in ("figure_provenance.tsv", "table_provenance.tsv"):
         artifact = root / relative
         if not artifact.is_file() or digest(artifact) != row["sha256"]:
             raise SystemExit(f"provenance artifact mismatch in {name}: {relative}")
+
+actual_normalized_paths = {
+    path.relative_to(root).as_posix()
+    for path in (root / "observed_normalized").rglob("*.tsv")
+}
+declared_normalized_paths = {
+    row["packet_path"] for row in evidence_rows["table_provenance.tsv"]
+}
+if declared_normalized_paths != actual_normalized_paths:
+    raise SystemExit("table provenance does not inventory every normalized TSV exactly once")
+actual_figure_paths = {
+    path.relative_to(root).as_posix()
+    for path in (root / "figures").rglob("*.png")
+}
+declared_figure_paths = {
+    row["packet_path"] for row in evidence_rows["figure_provenance.tsv"]
+}
+if declared_figure_paths != actual_figure_paths:
+    raise SystemExit("figure provenance does not inventory every packaged PNG exactly once")
+for row in evidence_rows["module_status_matrix.tsv"]:
+    source = root / row["source_table"]
+    if not source.is_file():
+        raise SystemExit(f"module status source table is missing: {row['source_table']}")
+    values = metric_map(source)
+    if values.get("status") != row["status"] or values.get("reason_code", "") != row["reason_code"]:
+        raise SystemExit(f"module status matrix disagrees with {row['source_table']}")
+observed_module_rows = {}
+for row in evidence_rows["module_status_matrix.tsv"]:
+    key = (row["case_id"], row["module"])
+    if key in observed_module_rows:
+        raise SystemExit(f"duplicate module status row: {key}")
+    observed_module_rows[key] = (
+        row["status"], row["reason_code"], row["source_table"],
+    )
+expected_module_rows = {}
+for case_id in ("gm11906_default_run1", "gm12878_default_run1"):
+    for table in sorted((root / "observed_normalized" / case_id).glob("*.tsv")):
+        fields, rows = read_rows(table)
+        if fields != ("metric", "value") or not rows:
+            continue
+        values = {row["metric"]: row["value"] for row in rows}
+        if "status" in values:
+            expected_module_rows[(case_id, table.stem)] = (
+                values["status"], values.get("reason_code", ""),
+                f"observed_normalized/{case_id}/{table.name}",
+            )
+if observed_module_rows != expected_module_rows:
+    raise SystemExit("module status matrix is not the exact default-module inventory")
 
 def parse_environment(path):
     wanted = {
@@ -1958,6 +3360,23 @@ if run.get("diagnostic_validation_claimed") is not False:
     raise SystemExit("packet exceeds its bounded non-diagnostic claim scope")
 if run.get("evidence_tables") != sorted(table_headers):
     raise SystemExit("run record evidence-table inventory mismatch")
+if identity.get("public_input_evidence") != {
+    "manifest_path": "raw_inputs.tsv",
+    "manifest_sha256": frozen_raw_manifest_sha256,
+    "seal_path": "CACHE_SEAL.sha256",
+    "seal_sha256": digest(root / "CACHE_SEAL.sha256"),
+    "input_count": 7,
+}:
+    raise SystemExit("release identity public-input evidence mismatch")
+scientific_oracle = identity.get("scientific_oracle")
+if not isinstance(scientific_oracle, dict) or scientific_oracle != {
+    "oracle_path": "public_validation_oracle_v0.3.0.tsv",
+    "oracle_sha256": frozen_oracle_sha256,
+    "assertions_path": "oracle_assertions.tsv",
+    "assertion_count": len(assertion_rows),
+    "required_assertion_count": len(required_assertions),
+}:
+    raise SystemExit("release identity scientific-oracle evidence mismatch")
 
 fresh = json.loads((root / "acceptance/fresh_clone.json").read_text(encoding="utf-8"))
 fresh_truths = (
@@ -2007,10 +3426,13 @@ if (
 jobs = actions_jobs.get("jobs")
 job_expectations = {
     "github_actions_linux_candidate_commit": (
-        "Unit and synthetic tests (ubuntu-latest)", "ubuntu-latest",
+        "Unit and synthetic tests (ubuntu-24.04)", "ubuntu-24.04",
     ),
     "github_actions_macos_candidate_commit": (
-        "Unit and synthetic tests (macos-latest)", "macos-latest",
+        "Unit and synthetic tests (macos-15-intel)", "macos-15-intel",
+    ),
+    "github_actions_macos_arm64_candidate_commit": (
+        "Unit and synthetic tests (macos-15)", "macos-15",
     ),
 }
 if not isinstance(jobs, list):
@@ -2061,6 +3483,7 @@ required_pass = {
     "gm11906_visual_integrity", "gm12878_visual_integrity", "filter_profiles",
     "fresh_clone_candidate_commit", "github_actions_linux_candidate_commit",
     "github_actions_macos_candidate_commit",
+    "github_actions_macos_arm64_candidate_commit",
 }
 with (root / "cases.tsv").open(encoding="utf-8", newline="") as handle:
     cases = list(csv.DictReader(handle, delimiter="\t"))
@@ -2236,8 +3659,19 @@ def build_packet(args: argparse.Namespace) -> Path:
         acceptance_rows,
     )
     validate_evidence_tables(args.validation_root)
-    validate_hash_manifest(public_root / "inputs.sha256", "public/inputs.sha256")
-    public_provenance = validate_public_provenance(public_root)
+    public_inputs = validate_public_input_evidence(
+        public_root,
+        args.validation_root / "public_data_sources.tsv",
+    )
+    public_provenance = validate_public_provenance(
+        public_root,
+        list(public_inputs["rows"]),
+    )
+    scientific_evidence = validate_scientific_evidence(
+        args.repo_root,
+        args.validation_root,
+        public_root,
+    )
     dist_artifacts = validate_distributions(
         args.validation_root / "dist",
         str(release_identity["package_name"]),
@@ -2275,7 +3709,26 @@ def build_packet(args: argparse.Namespace) -> Path:
         public_root / "filter_profile_results.tsv",
         args.packet_root / "filter_profile_results.tsv",
     )
-    shutil.copy2(public_root / "inputs.sha256", args.packet_root / "inputs.sha256")
+    (args.packet_root / "inputs.sha256").write_text(
+        str(public_inputs["canonical_inputs_sha256"]),
+        encoding="utf-8",
+    )
+    shutil.copy2(
+        public_root / RAW_INPUTS_PACKET_PATH,
+        args.packet_root / RAW_INPUTS_PACKET_PATH,
+    )
+    shutil.copy2(
+        public_root / CACHE_SEAL_PACKET_PATH,
+        args.packet_root / CACHE_SEAL_PACKET_PATH,
+    )
+    shutil.copy2(
+        public_root / ORACLE_ASSERTIONS_PACKET_PATH,
+        args.packet_root / ORACLE_ASSERTIONS_PACKET_PATH,
+    )
+    shutil.copy2(
+        args.repo_root / FROZEN_ORACLE_REPOSITORY_PATH,
+        args.packet_root / FROZEN_ORACLE_PACKET_PATH,
+    )
     for key, specification in PUBLIC_PROVENANCE_FILES.items():
         destination = args.packet_root / str(specification["packet"])
         destination.parent.mkdir(parents=True, exist_ok=True)
@@ -2285,6 +3738,20 @@ def build_packet(args: argparse.Namespace) -> Path:
     release_identity["acceptance_cases"] = [row["case_id"] for row in acceptance_rows]
     release_identity["github_actions"] = ci_identity
     release_identity["public_provenance"] = public_provenance
+    release_identity["public_input_evidence"] = {
+        "manifest_path": RAW_INPUTS_PACKET_PATH,
+        "manifest_sha256": public_inputs["manifest_sha256"],
+        "seal_path": CACHE_SEAL_PACKET_PATH,
+        "seal_sha256": public_inputs["seal_sha256"],
+        "input_count": len(public_inputs["rows"]),
+    }
+    release_identity["scientific_oracle"] = {
+        "oracle_path": FROZEN_ORACLE_PACKET_PATH,
+        "oracle_sha256": scientific_evidence["oracle_sha256"],
+        "assertions_path": ORACLE_ASSERTIONS_PACKET_PATH,
+        "assertion_count": scientific_evidence["assertion_count"],
+        "required_assertion_count": scientific_evidence["required_assertion_count"],
+    }
     (args.packet_root / "release_identity.json").write_text(
         json.dumps(release_identity, indent=2) + "\n",
         encoding="utf-8",
@@ -2332,6 +3799,28 @@ def build_packet(args: argparse.Namespace) -> Path:
                 raise ValueError(
                     f"Provenance table hash mismatch for packet artifact: {row['packet_path']}"
                 )
+    with (args.packet_root / "table_provenance.tsv").open(
+        encoding="utf-8", newline=""
+    ) as handle:
+        table_rows = list(csv.DictReader(handle, delimiter="\t"))
+    actual_tables = {
+        path.relative_to(args.packet_root).as_posix()
+        for path in (args.packet_root / "observed_normalized").rglob("*.tsv")
+    }
+    declared_tables = {row["packet_path"] for row in table_rows}
+    if declared_tables != actual_tables or len(declared_tables) != len(table_rows):
+        raise ValueError("table_provenance.tsv does not exactly inventory normalized TSVs")
+    with (args.packet_root / "figure_provenance.tsv").open(
+        encoding="utf-8", newline=""
+    ) as handle:
+        figure_rows = list(csv.DictReader(handle, delimiter="\t"))
+    actual_figures = {
+        path.relative_to(args.packet_root).as_posix()
+        for path in (args.packet_root / "figures").rglob("*.png")
+    }
+    declared_figures = {row["packet_path"] for row in figure_rows}
+    if declared_figures != actual_figures or len(declared_figures) != len(figure_rows):
+        raise ValueError("figure_provenance.tsv does not exactly inventory packaged PNGs")
 
     write_verifier(args.packet_root / "verify_bundle.sh")
     validate_packet_hygiene(args.packet_root)

@@ -20,6 +20,15 @@ EXPECTED_CASES = {
     ("GM12878", "default"): ("gm12878_default_run1", "gm12878_default_run2"),
     ("GM12878", "strict"): ("gm12878_strict",),
 }
+EXPECTED_GM11906_SOURCE_RUNS = ["SRR10804585", "SRR10804590", "SRR10804657"]
+EXPECTED_GM11906_RAW_INPUT_LABELS = [
+    "SRR10804585_R1",
+    "SRR10804585_R2",
+    "SRR10804590_R1",
+    "SRR10804590_R2",
+    "SRR10804657_R1",
+    "SRR10804657_R2",
+]
 
 
 @dataclass
@@ -280,6 +289,43 @@ def assert_longread_metrics(
     )
 
 
+def assert_shortread_provenance(audit: Auditor, case_id: str, output: Path) -> None:
+    provenance = output / "provenance"
+    manifest_path = provenance / "GM11906_MERRF_shortread.alignment.provenance.json"
+    libraries_path = provenance / "GM11906_MERRF_shortread.source_libraries.tsv"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    libraries = read_tsv(libraries_path)
+    source_runs = [row.get("run_accession", "") for row in libraries]
+    inputs = manifest.get("public_inputs", [])
+    labels = sorted(
+        str(record.get("label"))
+        for record in inputs
+        if isinstance(record, dict)
+        and str(record.get("label", "")).startswith("SRR")
+    )
+    derivation = manifest.get("derivation", {})
+    audit.assert_value(
+        f"{case_id}.shortread.dataset_id",
+        "GM11906_pooled_scATAC",
+        manifest.get("dataset_id"),
+    )
+    audit.assert_value(
+        f"{case_id}.shortread.derivation_id",
+        "bwa-mem-samtools-sort-v1",
+        derivation.get("derivation_id") if isinstance(derivation, dict) else None,
+    )
+    audit.assert_value(
+        f"{case_id}.shortread.source_runs",
+        repr(EXPECTED_GM11906_SOURCE_RUNS),
+        repr(source_runs),
+    )
+    audit.assert_value(
+        f"{case_id}.shortread.raw_input_labels",
+        repr(EXPECTED_GM11906_RAW_INPUT_LABELS),
+        repr(labels),
+    )
+
+
 def assert_output(
     audit: Auditor,
     case_id: str,
@@ -309,6 +355,8 @@ def assert_output(
         assert_inventory(audit, case_id, output, oracle)
         if dataset == "GM12878":
             assert_longread_metrics(audit, case_id, output, oracle)
+        else:
+            assert_shortread_provenance(audit, case_id, output)
     except (FileNotFoundError, KeyError, ValueError, json.JSONDecodeError) as exc:
         audit.fail(f"{case_id}.required_evidence", str(exc))
 
