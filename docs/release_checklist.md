@@ -1,133 +1,94 @@
-# v0.3.0 Release Checklist
+# MitoOverview v0.3.0 Release Checklist
 
-This checklist governs the intended `mito-overview` v0.3.0 release dated 2026-07-20. Metadata describing the intended release is not evidence that a tag, external archive, or final validation result exists. The prior `v0.2.1` release remains immutable at commit `2ba62b775a7204c0dc61f5408989603f536c78da`.
+This checklist governs the GitHub-primary v0.3.0 software release. The
+validation protocol is defined in
+[`clean_room_validation_protocol_v0.3.0.md`](clean_room_validation_protocol_v0.3.0.md).
+The prior `v0.2.1` tag remains immutable at
+`2ba62b775a7204c0dc61f5408989603f536c78da`.
 
-## Release Identity and Gates
+Zenodo, a DOI, bioRxiv submission, manuscript revision, Notion, and MCW/HPC
+deployment are outside this release gate. `CITATION.cff` may omit a DOI. The
+GitHub release timestamp is authoritative; tracked files do not prerecord a
+release date.
 
-| Item | Required value | Status |
-| --- | --- | --- |
-| package and citation version | `0.3.0` | recorded in release metadata |
-| intended release date | `2026-07-20` | recorded in release metadata |
-| repository | `https://github.com/elissonnog/mito-overview` | recorded in release metadata |
-| authors | Elisson Lopes; Xiaowu Gai | recorded in release metadata |
-| affiliation | Medical College of Wisconsin | recorded in citation and release-control metadata |
-| immutable prior release | `v0.2.1` at `2ba62b775a7204c0dc61f5408989603f536c78da` | verified historical record; do not retag or rewrite |
-| `v0.3.0` Git tag | `v0.3.0` on the accepted release commit | **pending**; no tag is claimed by this checklist |
-| exact `v0.3.0` tag target commit | full 40-character commit hash | **pending** until the tag is created |
-| GitHub Actions CI pass | Linux and macOS jobs checking out the exact PR head; final packet uses a successful push-event run on the exact candidate commit | **pending**; no final CI pass is claimed by this checklist |
-| final validation packet pass | self-verifying audit ZIP bound to the exact final candidate commit, CI run, and reserved DOI | **pending**; no final packet pass is claimed by this checklist |
-| Zenodo DOI reservation | DOI reserved in an unpublished Zenodo draft, with sanitized reservation-record evidence captured before the final metadata commit | **pending**; no DOI has been reserved or added to `CITATION.cff` |
-| release DOI | reserved DOI resolving to the published tagged archive | **pending**; no published DOI is claimed by this checklist |
-| Zenodo publication | archived `v0.3.0` release | **pending**; no Zenodo publication is claimed by this checklist |
-| independent reproducibility review | clean-checkout review of the accepted commit | **pending** |
+## Scope gate
 
-## Scientific Release Goals
+- [ ] Work only in the public Mac repository.
+- [ ] Preserve the frozen `paper/` tree
+  `bfb5664db9c8b43ed5de33ecbddef88071fc6378` after main reconciliation.
+- [ ] Confirm no internal paths, private sample identifiers, credentials, or
+  secret-like values are tracked.
+- [ ] Keep claims limited to workflow execution, output contracts,
+  fixed-input repeatability, public marker representation, and descriptive
+  filter dependence.
 
-- Preserve the biological logic of the mitochondrial reporting workflow while keeping the public package portable outside the MCW HPC layout.
-- Apply one auditable allele-observation policy across candidate, strand, and co-segregation outputs.
-- Keep optional network services disabled unless explicitly requested and represent missing integrations without fabricated annotations.
-- Support explicit standalone BAM/CRAM inputs with deterministic preflight validation.
-- Report the copy-number layer only as an mt-to-nuclear depth ratio and gate NUMT interpretation by reference scope.
-- Keep every public claim at a bounded workflow/resource level unless separate analytical or clinical validation is added.
+## Package and environment gate
 
-## Candidate Contents
+- [ ] `pyproject.toml`, `mito_overview.__version__`, `CITATION.cff`, README,
+  and CHANGELOG agree on version `0.3.0`.
+- [ ] Python support is `>=3.12,<3.13` and platform locks exist for Linux
+  x86-64, macOS x86-64, and macOS arm64.
+- [ ] Wheel and sdist build successfully and are installed into separate clean
+  environments outside the repository.
+- [ ] The installed module and schema resolve inside the environment rather
+  than through checkout `PYTHONPATH` shadowing.
+- [ ] CLI listing, strict dry-run, unit tests, four smoke workflows, and both
+  example builders pass.
 
-| Area | Repository evidence | Final release status |
-| --- | --- | --- |
-| five correction implementations | allele counting, mvTool modes, standalone inputs, copy-number ratio, and reference-scope/NUMT/BED handling | implementation present; **pending** final packet pass |
-| deterministic known-answer tests | focused tests under `tests/` for corrections F1-F5 | present; **pending** exact-commit and CI pass |
-| synthetic workflow checks | long-read, reduced short-read, no-methylation, and standalone smoke scripts | present; **pending** exact-commit and CI pass |
-| public GM11906 proof of principle | tracked outputs derived from historical validated source commit `dc09114e1a0dcec2baf83d94549dfa41f3e49c8b`; provenance-bound reduced short-read workflow and marker-level checks | historical evidence present; **pending** rerun and binding in the exact-final-commit packet |
-| public GM12878 proof of principle | tracked outputs derived from historical validated source commit `dc09114e1a0dcec2baf83d94549dfa41f3e49c8b`; provenance-bound deterministic reduced-input ONT workflow | historical evidence present; **pending** rerun and binding in the exact-final-commit packet |
-| portable validation bundle | `scripts/run_release_validation_v0.3.0.sh` and `scripts/build_validation_packet_v0.3.0.py` | tooling present; final packet **pending** |
+## Public-data gate
 
-## Must-Pass Commands Before Tagging
+- [ ] The raw cache starts empty and contains only the seven locked FASTQs plus
+  its manifest and seal.
+- [ ] Every FASTQ passes byte-count, MD5, SHA-256, gzip, and structural checks.
+- [ ] GM11906 pairing and accession/sample identities pass.
+- [ ] GM12878 selection is rebuilt from the full source FASTQ with the locked
+  1,000-name seed and exact selected-name/subset identities.
+- [ ] BWA and minimap2 alignments are regenerated with the locked tools and
+  four threads under the validation workspace.
+- [ ] The six public filter profiles, two default repeats per dataset, exact
+  scientific oracle, module statuses, and output inventories pass.
+- [ ] Offline execution records zero network-canary events.
 
-Run local checks first from the exact candidate commit in a clean checkout:
+## Evidence gate
 
-```bash
-python scripts/check_release_hygiene.py
-python -m pytest -q
-python -m mito_overview.cli --list-steps
-python -m mito_overview.cli --config examples/configs/human_example.env --dry-run
-./tests/smoke_public_pipeline.sh
-./tests/smoke_public_pipeline_shortread.sh
-./tests/smoke_public_pipeline_longread_nomethyl.sh
-./tests/smoke_standalone_minimal.sh
-```
+- [ ] `run.json`, `cases.tsv`, commands, logs, environment records, resource
+  usage, input/output hashes, expected-versus-observed results, normalized
+  outputs, module statuses, figure/table provenance, claim evidence,
+  limitations, public sources, and manuscript handoff values are complete.
+- [ ] Every required case is `PASS`; no required case is missing, `SKIP`,
+  `BLOCKED`, or `XFAIL`.
+- [ ] `verify_bundle.sh` passes in the packet root and after safe extraction of
+  `mito-overview-v0.3.0-validation.zip`.
+- [ ] The ZIP SHA-256 and verification JSON are recorded outside the ZIP.
+- [ ] The human-readable Markdown, DOCX, and PDF reports use exact-final-
+  commit report-native figures and pass visual review.
 
-The hygiene command scans the exact Git-tracked tree, including binary payloads, and fails on internal sample identifiers, MCW/developer paths, or process-only wording in the manuscript. Ignored local analysis outputs are outside the release tree.
+## GitHub identity gate
 
-The repository provides a guarded production helper. Create a minimum-scope Zenodo personal token with `deposit:write`, set it only in the local environment, and never write it to a command, file, log, or task message. Creating the draft is an external write and requires the explicit guard flag:
+- [ ] PR 3 contains current `main`, is no longer draft, and has green Ubuntu
+  and macOS checks at its exact final head.
+- [ ] Independent release, scientific, and reproducibility reviews have no
+  unresolved blockers.
+- [ ] The merged `main` commit is frozen as `FINAL_SHA`.
+- [ ] Push-event Ubuntu and macOS CI both report `head_sha=FINAL_SHA`.
+- [ ] Independent macOS and Ubuntu clean-room public runs start from public
+  HTTPS clones at `FINAL_SHA` and pass.
+- [ ] Annotated tag `v0.3.0` peels to `FINAL_SHA` and is never rewritten.
+- [ ] A fresh public-tag clone passes package, unit, and synthetic checks.
 
-```bash
-export ZENODO_ACCESS_TOKEN='<set locally; do not commit>'
-python scripts/capture_zenodo_reservation.py create \
-  --metadata resources/zenodo/mito_overview_v0.3.0_draft.json \
-  --output <private-path>/zenodo_reservation.json \
-  --confirm-create-production-draft
-unset ZENODO_ACCESS_TOKEN
-```
+## Release asset gate
 
-For an existing unpublished draft, use `retrieve --record-id <id> --output <private-path>/zenodo_reservation.json`. Both modes use the bearer token only in the HTTPS authorization header and retain only the sanitized DOI-reservation fields required by the audit packet. Neither mode publishes the deposition.
+- [ ] The draft GitHub release targets the existing `v0.3.0` tag.
+- [ ] Canonical assets include wheel, sdist, validation ZIP, Markdown/DOCX/PDF
+  report, machine-readable verification record, release notes, environment
+  records, and `SHA256SUMS`.
+- [ ] Every uploaded asset matches `SHA256SUMS` before publication.
+- [ ] The published release, tag target, asset inventory, hashes, and hosting
+  immutability/protection state are captured in `github_publication.json`.
 
-After reserving the Zenodo DOI, synchronizing it into release metadata, committing those changes, and obtaining passing Linux and macOS GitHub Actions for that exact final commit, build and verify the final evidence packet. Use absolute, non-overlapping paths outside the repository; the validation and packet roots must be absent or empty, the cache may be reused, and the ZIP and its sidecars must not exist:
+## Stop rules
 
-```bash
-export MITO_OVERVIEW_ARCHIVE_DOI=10.5281/zenodo.<reserved-record-id>
-export MITO_OVERVIEW_ZENODO_RESERVATION_EVIDENCE=<absolute-private-path>/zenodo_reservation.json
-MITO_OVERVIEW_GITHUB_RUN_ID=<completed-run-id> \
-  ./scripts/run_release_validation_v0.3.0.sh \
-  <empty-validation-root> \
-  <cache-root> \
-  <empty-packet-root> \
-  <artifact-directory>/mito-overview-v0.3.0-validation.zip
-```
-
-The DOI may instead be supplied as the fifth positional argument. `MITO_OVERVIEW_ZENODO_RESERVATION_EVIDENCE` must point to the sanitized JSON produced by the guarded capture helper; a DOI string alone is insufficient. The command requires a canonical reserved Zenodo DOI, rejects `UNRESERVED`, requires the same DOI and release identity across `pyproject.toml`, `mito_overview/__init__.py`, `CITATION.cff`, README, manuscript, and captured Zenodo metadata wherever each field is representable, and passes the DOI and evidence explicitly to the packet builder. It must build `mito-overview-v0.3.0-validation.zip`, execute the generated `verify_bundle.sh` against both the packet root and a fresh extraction of that ZIP, and write build/verification logs, a ZIP SHA-256 sidecar, and a PASS receipt. It emits no final PASS unless all of that evidence exists and both verifier runs succeed.
-
-The final packet must reject missing evidence, metadata-version disagreement, commit mismatch, non-passing required cases, incomplete public provenance, CI results from a different commit or non-push event, an absent/unreserved DOI, a DOI without captured Zenodo reservation-record evidence, a DOI that differs from synchronized citation metadata, and archive members whose normalized extraction paths collide.
-
-## Evidence to Capture
-
-- Exact candidate commit, eventual tag target, and clean-worktree state.
-- Python, package, aligner, and platform versions.
-- Commands and transcripts for unit, synthetic, standalone, and public validation cases.
-- Source accessions, retrieval metadata, input hashes, subset parameters, selected query-name records, and alignment/subset provenance for public inputs.
-- Runtime, maximum memory when available, expected/observed normalized outputs, and SHA-256 manifests.
-- Linux and macOS GitHub Actions evidence showing exact-head checkout; final packet evidence must come from a successful push-event run tied to the exact candidate commit.
-- Independent reviewer or separate-thread clean-checkout result.
-- Sanitized Zenodo draft-record and DOI-reservation evidence, including the matching record identifier and reserved DOI, before the final metadata commit; reservation alone is not publication.
-- Published archive metadata and DOI resolution only after the tagged archive is actually published.
-
-## Release Sequence
-
-1. Stabilize the intended code, documentation, and historical-evidence labels; provisional checks at this stage are not final release evidence.
-2. Create an unpublished Zenodo draft and reserve its DOI. Keep DOI reservation and Zenodo publication gates **pending** until external evidence exists.
-3. Synchronize the reserved DOI, version, title, authors, date, repository, license, and bounded claims across the Zenodo draft, `CITATION.cff`, release notes, and manuscript-facing metadata.
-4. Commit the synchronized metadata. That new clean commit, not an earlier tested commit, is the final release candidate.
-5. Repeat all local checks on that exact commit, push it, and require passing Linux and macOS GitHub Actions that explicitly check out that full commit. Use the successful push-event run, not a pull-request synthetic merge checkout, as final packet evidence.
-6. Run `scripts/run_release_validation_v0.3.0.sh` on that exact commit with the real CI run ID and reserved DOI; require the named audit ZIP, both `verify_bundle.sh` runs, ZIP hash, and PASS receipt.
-7. Complete the independent clean-checkout reproducibility review against that same commit and packet.
-8. Create `v0.3.0` on the accepted commit only after every required check passes; record and verify the full tag target.
-9. Publish the GitHub release from that tag, then publish the matching tagged archive in Zenodo and confirm the DOI resolves to synchronized metadata and artifacts.
-10. Record publication evidence without rewriting the tag or relabeling pre-final results as exact-release-commit results.
-
-## Claims Allowed for v0.3.0
-
-- The package exposes a mode-gated mtDNA evidence-reporting workflow with explicit status states.
-- Deterministic synthetic cases can test the public output contract and the five corrected behaviors.
-- Explicitly sourced public data can exercise bounded long-read and reduced short-read proof-of-principle paths under recorded thresholds and provenance.
-- Unsupported assay layers and unevaluable interpretations are emitted explicitly rather than silently converted into results.
-
-## Claims Not Allowed Without Additional Validation
-
-- Clinical diagnosis, pathogenicity classification, or clinical decision support.
-- Calibrated low-VAF heteroplasmy sensitivity or specificity.
-- Deletion-truth benchmarking or deletion-burden accuracy.
-- Absolute mtDNA copy number or copies per diploid cell.
-- Formal mtDNA-versus-NUMT classifier performance.
-- Biological mtDNA methylation conclusions.
-- Full-dataset performance or analytical sensitivity inferred from the reduced GM12878 validation subset.
-- Live external-service interoperability unless a documented live run is added.
-- Equivalence between long-read and short-read assays.
+Do not tag or publish while any required gate is nonpassing. A scientific
+oracle mismatch requires investigation and a new reviewed commit; it is never
+accepted by silently changing expected values. A defect discovered after
+publication is corrected forward as `v0.3.1`, never by moving `v0.3.0`.

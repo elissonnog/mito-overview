@@ -40,3 +40,10 @@ This log records release-hardening actions that affect the public repository. It
 - Re-review showed that suffix agreement alone did not reject a CRAM payload renamed with a `.bam` suffix. Alignment loading now verifies the encoded CRAM signature or decompressed BAM signature against the resolved mode before execution, with adversarial tests for renamed CRAM, renamed BAM, and a nonstandard-suffix mismatch.
 - After encoded-container validation was added, the complete deterministic suite passed `238` tests in `15.82 s`; generic dry-run and release hygiene passed.
 - The final malformed-container negative case increased the complete deterministic suite to `239` passing tests in `17.07 s`.
+
+## 2026-07-21
+
+- Verified PR 3 was clean at `782b22c45d1f6013a88c54a4f89f5b561cc835d9`, fetched public `main`, and merged `6cf41013d60199bad14ab4278c3d991898e957da` without conflict. The reconciled baseline is `6dc5f079745bf7732710a483e926ab27e6b94926`.
+- Froze the post-merge `paper/` tree at `bfb5664db9c8b43ed5de33ecbddef88071fc6378`; release hardening, validation, reporting, and GitHub publication must not modify manuscript files.
+- Replaced the release design with a GitHub-primary protocol. Zenodo, a DOI, bioRxiv submission, manuscript revision, Notion, and MCW/HPC deployment are outside the v0.3.0 software gate.
+- Added the preregistered clean-room protocol containing locked public inputs, environment versions, scientific oracles, module/output contracts, verdict definitions, and the required release sequence.
