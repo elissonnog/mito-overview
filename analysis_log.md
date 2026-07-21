@@ -4,7 +4,7 @@ This log records release-hardening actions that affect the public repository. It
 
 ## 2026-07-20
 
-- Confirmed branch `codex/preprint-hardening-v0.3.0` was clean at `5812799` and immutable tag `v0.2.1` remained at `2ba62b775a7204c0dc61f5408989603f536c78da`.
+- Confirmed the v0.3.0 release-candidate branch was clean at `5812799` and immutable tag `v0.2.1` remained at `2ba62b775a7204c0dc61f5408989603f536c78da`.
 - Confirmed the ENA GM12878 FASTQ and full mapped BAM remained in the local validation cache after the interrupted full-depth probe; no MCW/HPC path was accessed or modified.
 - Added portable public-alignment provenance and deterministic query-name subset implementation with focused known-answer and tamper-rejection tests.
 - Closed reviewer-identified edge cases for absent mtDNA depth evidence, zero-support alternate alleles, auditable configured depth caps, and incomplete-reference NUMT scope assertions.
@@ -27,3 +27,4 @@ This log records release-hardening actions that affect the public repository. It
 - Added `docs/preprint_release_validation_v0.3.0.md` with methods, commands, public-input provenance, observed results, claim boundaries, pending external release gates, and an independent-auditor checklist. GitHub-hosted CI, final exact-candidate fresh-clone validation, audit ZIP, DOI, tag, and release remain pending and are not recorded as passing evidence.
 - A second independent adversarial review found five scientific edge cases and five release-evidence gaps that remain release blockers: alignment-header scope must independently constrain whole-genome interpretation; CRAM reference identity must not depend on observed mtDNA records; exact reference profiles must reject extra contigs; co-segregation must document its shared-callable-read conditioning; mvTool must reject incomplete or non-bijective response mappings; final CI must be a push-event run on the exact candidate commit; DOI reservation needs captured record evidence; public subset/alignment provenance must enter the audit ZIP; and ZIP verification must reject normalized-path collisions.
 - Confirmed the cached GM11906 alignment provenance independently matches the current BAM, index, public FASTQs, and reconstructed mitochondrial reference. The cache-local `GM11906/inputs.sha256` is stale for the BAM/index and includes an invalid self-hash, so it is not accepted as evidence; the release matrix generates a fresh manifest outside the cache.
+- Removed local workspace and temporary-directory command paths from the tracked synthetic BAM headers, regenerated both BAM indexes, and added a regression test requiring path-free synthetic headers with indexed mtDNA records. No biological alignment record was changed.

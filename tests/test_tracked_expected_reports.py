@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pandas as pd
+import pysam
 import pytest
 
 from ._helpers import metric_map
@@ -20,6 +21,20 @@ PUBLIC_ROOT = REPO_ROOT / "examples" / "public_validation"
 def test_tracked_mito_bed_is_zero_based_half_open(bundle: str, sample_id: str) -> None:
     bed = EXPECTED_ROOT / bundle / "subset" / f"{sample_id}.MT.bed"
     assert bed.read_bytes() == b"MT\t0\t60\n"
+
+
+@pytest.mark.parametrize(
+    ("bundle", "sample_id"),
+    [("TOY-001_output", "TOY-001"), ("TOY-SR-001_output", "TOY-SR-001")],
+)
+def test_tracked_synthetic_bam_headers_are_path_free(
+    bundle: str,
+    sample_id: str,
+) -> None:
+    bam = EXPECTED_ROOT / bundle / "subset" / f"{sample_id}.MT.bam"
+    with pysam.AlignmentFile(bam, "rb") as alignment:
+        assert alignment.header.to_dict().get("PG", []) == []
+        assert list(alignment.fetch("MT", 0, 60))
 
 
 def test_tracked_long_read_bundle_uses_v030_status_and_allele_contracts() -> None:

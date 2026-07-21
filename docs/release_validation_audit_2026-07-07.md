@@ -6,7 +6,7 @@ Date: 2026-07-07
 
 Repository: `https://github.com/elissonnog/mito-overview`
 
-Release candidate branch: `codex/github-release-readiness`
+Release candidate branch: historical GitHub release-readiness branch
 
 Release target: `v0.2.1`
 
