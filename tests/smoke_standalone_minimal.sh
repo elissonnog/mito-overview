@@ -50,4 +50,28 @@ assert_tsv_metric "${SUMMARY_DIR}/mito_methylation_exploratory_summary.tsv" stat
 assert_tsv_metric "${SUMMARY_DIR}/mito_identity_qc_summary.tsv" variant_comparison_status not_configured
 assert_allele_table_invariants "${SUMMARY_DIR}/mito_heteroplasmy_all_sites.tsv"
 
-echo "[smoke-standalone] minimal standalone workflow completed successfully"
+SOURCE_CRAM="${WORKDIR}/TOY-001.input.cram"
+samtools view -C -T "${WORKDIR}/tiny_GRCh38.fa" -o "${SOURCE_CRAM}" "${SOURCE_BAM}"
+samtools index "${SOURCE_CRAM}"
+cat > "${WORKDIR}/standalone_cram.env" <<EOF
+WORK_ROOT=${RUN_ROOT}
+RUN_NAME=standalone_TOY-001-cram
+SAMPLE_ID=TOY-001
+REF_FASTA=${WORKDIR}/tiny_GRCh38.fa
+SOURCE_ALIGN_FILE=${SOURCE_CRAM}
+MT_CONTIG=MT
+EOF
+
+"${MITO_OVERVIEW_PYTHON:-python3}" -m mito_overview.cli \
+  --config "${WORKDIR}/standalone_cram.env" --dry-run --strict-files >/dev/null
+./scripts/run_mito_pipeline.sh --config "${WORKDIR}/standalone_cram.env" --strict-files
+
+CRAM_FINAL_DIR="${RUN_ROOT}/standalone_TOY-001-cram_final"
+CRAM_SUMMARY_DIR="${CRAM_FINAL_DIR}/output/summary"
+test "$(cat "${CRAM_FINAL_DIR}/output/subset/TOY-001.MT.bed")" = $'MT\t0\t60'
+assert_tsv_metric "${CRAM_SUMMARY_DIR}/mito_mvtool_annotation_summary.tsv" status not_configured
+assert_tsv_metric "${CRAM_SUMMARY_DIR}/mito_copy_number_summary.tsv" status not_evaluable
+assert_tsv_metric "${CRAM_SUMMARY_DIR}/mito_numt_qc_summary.tsv" numt_interpretation_status not_evaluable
+assert_allele_table_invariants "${CRAM_SUMMARY_DIR}/mito_heteroplasmy_all_sites.tsv"
+
+echo "[smoke-standalone] minimal standalone BAM and CRAM workflows completed successfully"

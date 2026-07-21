@@ -193,9 +193,88 @@ def _infer_alignment_mode(path: Path, requested: str) -> str:
     raise ValueError("SOURCE_ALIGN_MODE is required when SOURCE_ALIGN_FILE is not .bam or .cram")
 
 
-def _canonical_nuclear_contigs(species: str) -> tuple[set[str], set[str]]:
-    end = 19 if species == "mouse" else 22
-    return ({str(i) for i in range(1, end + 1)}, {f"chr{i}" for i in range(1, end + 1)})
+_REFERENCE_AUTOSOME_LENGTHS: dict[str, tuple[int, ...]] = {
+    # GRCh38 and GRCm39 primary autosomes; GRCh37 and GRCm38 remain within 5%.
+    "human": (
+        248_956_422,
+        242_193_529,
+        198_295_559,
+        190_214_555,
+        181_538_259,
+        170_805_979,
+        159_345_973,
+        145_138_636,
+        138_394_717,
+        133_797_422,
+        135_086_622,
+        133_275_309,
+        114_364_328,
+        107_043_718,
+        101_991_189,
+        90_338_345,
+        83_257_441,
+        80_373_285,
+        58_617_616,
+        64_444_167,
+        46_709_983,
+        50_818_468,
+    ),
+    "mouse": (
+        195_154_279,
+        181_755_017,
+        159_745_316,
+        156_860_686,
+        151_758_149,
+        149_588_044,
+        144_995_196,
+        130_127_694,
+        124_359_700,
+        130_530_862,
+        121_973_369,
+        120_092_757,
+        120_883_175,
+        125_139_656,
+        104_073_951,
+        98_008_968,
+        95_294_699,
+        90_720_763,
+        61_420_004,
+    ),
+}
+_REFERENCE_SEX_CHROMOSOME_LENGTHS: dict[str, tuple[int, int]] = {
+    "human": (156_040_895, 57_227_415),
+    "mouse": (169_476_592, 91_455_967),
+}
+_MAX_CHROMOSOME_LENGTH_DEVIATION_PERCENT = 5
+
+
+def _has_recognized_nuclear_chromosome_profile(
+    contig_lengths: dict[str, int], species: str
+) -> bool:
+    normalized_species = (species or "").strip().lower()
+    expected_autosome_lengths = _REFERENCE_AUTOSOME_LENGTHS.get(normalized_species)
+    if expected_autosome_lengths is None:
+        return False
+    expected_lengths = tuple(
+        (str(index), length) for index, length in enumerate(expected_autosome_lengths, 1)
+    ) + tuple(
+        zip(
+            ("X", "Y"),
+            _REFERENCE_SEX_CHROMOSOME_LENGTHS[normalized_species],
+            strict=True,
+        )
+    )
+
+    for prefix in ("", "chr"):
+        if not all(f"{prefix}{name}" in contig_lengths for name, _ in expected_lengths):
+            continue
+        if all(
+            abs(contig_lengths[f"{prefix}{name}"] - expected) * 100
+            <= expected * _MAX_CHROMOSOME_LENGTH_DEVIATION_PERCENT
+            for name, expected in expected_lengths
+        ):
+            return True
+    return False
 
 
 def detect_reference_scope(
@@ -215,10 +294,10 @@ def detect_reference_scope(
     physically_inferred = "custom"
     if contigs == {mt_contig}:
         physically_inferred = "mt_only"
-    elif contigs:
-        bare, chr_prefixed = _canonical_nuclear_contigs(species)
-        if (bare <= contigs or chr_prefixed <= contigs) and mt_contig in contigs:
-            physically_inferred = "whole_genome"
+    elif mt_contig in contigs and _has_recognized_nuclear_chromosome_profile(
+        contig_lengths, species
+    ):
+        physically_inferred = "whole_genome"
     if requested == "auto":
         return physically_inferred
     if requested == "whole_genome" and physically_inferred != "whole_genome":

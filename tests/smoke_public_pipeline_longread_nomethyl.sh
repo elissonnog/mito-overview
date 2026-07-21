@@ -83,6 +83,13 @@ test "$(cat "${FINAL_DIR}/output/subset/TOY-001.MT.bed")" = $'MT\t0\t60'
 assert_allele_table_invariants "${FINAL_DIR}/output/summary/mito_heteroplasmy_all_sites.tsv"
 assert_tsv_metric "${FINAL_DIR}/output/summary/mito_methylation_exploratory_summary.tsv" status not_configured
 assert_tsv_metric "${FINAL_DIR}/output/summary/mito_methylation_exploratory_summary.tsv" reason_code no_bedmethyl_sidecars_configured
+for metric in \
+  np_track_input_present \
+  hp1_track_input_present \
+  hp2_track_input_present \
+  ungrouped_track_input_present; do
+  assert_tsv_metric "${FINAL_DIR}/output/summary/mito_methylation_exploratory_summary.tsv" "${metric}" 0
+done
 assert_tsv_metric "${FINAL_DIR}/output/summary/mito_copy_number_summary.tsv" status not_evaluable
 assert_tsv_metric "${FINAL_DIR}/output/summary/mito_numt_qc_summary.tsv" numt_interpretation_status not_evaluable
 assert_tsv_metric "${FINAL_DIR}/output/summary/mito_mvtool_annotation_summary.tsv" status ok

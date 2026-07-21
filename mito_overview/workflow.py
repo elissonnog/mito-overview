@@ -15,6 +15,7 @@ import pysam
 from .config import PipelineConfig
 from .paths import RunPaths
 from .report_common import render_status_page
+from .table_contracts import validate_module_state
 
 DEFAULT_STEP_ORDER = [
     "validate",
@@ -224,6 +225,12 @@ class StepResult:
     status: str
     message: str
 
+    def __post_init__(self) -> None:
+        """Reject undeclared execution states at the workflow boundary."""
+
+        if self.status != "planned":
+            validate_module_state(self.status)
+
 
 def list_steps() -> list[str]:
     """Return the canonical workflow step order."""
@@ -269,7 +276,8 @@ def _step_not_applicable_message(config: PipelineConfig, step_name: str) -> str 
     if config.is_targeted_mt:
         targeted_messages = {
             "copy_number": (
-                "Copy-number proxy is only interpreted for whole-genome data and is skipped for targeted mtDNA assays."
+                "The experimental within-sample mt:nuclear depth ratio requires whole-genome data and is skipped "
+                "for targeted mtDNA assays."
             ),
             "phymer_haplogroup": (
                 "Phy-Mer haplogroup inference assumes full-mitochondrion sequence context and is skipped for targeted "
@@ -791,6 +799,16 @@ def _run_methylation_exploratory(config: PipelineConfig, paths: RunPaths, strict
     del strict_files
     from .steps.mito_methylation_exploratory import run_step
 
+    track_inputs_configured = {
+        "NP_real_all_reads": paths.np_bedmethyl_source_gz is not None
+        and paths.np_bedmethyl_source_gz.exists(),
+        "HP1": paths.hp1_bedmethyl_source_gz is not None
+        and paths.hp1_bedmethyl_source_gz.exists(),
+        "HP2": paths.hp2_bedmethyl_source_gz is not None
+        and paths.hp2_bedmethyl_source_gz.exists(),
+        "Ungrouped": paths.ungrouped_bedmethyl_source_gz is not None
+        and paths.ungrouped_bedmethyl_source_gz.exists(),
+    }
     outputs = run_step(
         summary_dir=paths.summary_dir,
         figure_dir=paths.figure_dir,
@@ -801,15 +819,8 @@ def _run_methylation_exploratory(config: PipelineConfig, paths: RunPaths, strict
         mito_mods_hp1=paths.mito_mods_hp1,
         mito_mods_hp2=paths.mito_mods_hp2,
         mito_mods_ungrouped=paths.mito_mods_ungrouped,
-        inputs_configured=any(
-            source is not None and source.exists()
-            for source in (
-                paths.np_bedmethyl_source_gz,
-                paths.hp1_bedmethyl_source_gz,
-                paths.hp2_bedmethyl_source_gz,
-                paths.ungrouped_bedmethyl_source_gz,
-            )
-        ),
+        inputs_configured=any(track_inputs_configured.values()),
+        track_inputs_configured=track_inputs_configured,
     )
     status = str(outputs.get("status", "ok"))
     (paths.log_dir / f"methylation_exploratory.{status}").write_text(status + "\n", encoding="utf-8")

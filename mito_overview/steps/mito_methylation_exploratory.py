@@ -43,6 +43,12 @@ def empty_rows_df() -> pd.DataFrame:
     return pd.DataFrame(columns=ROW_COLUMNS)
 
 
+def track_input_present(path: str | Path | None) -> int:
+    """Return whether a configured track path points to an existing file."""
+
+    return int(path is not None and Path(path).is_file())
+
+
 def load_bedmethyl_table(path: str | Path | None, track_label: str) -> pd.DataFrame:
     """Load a mitochondrial bedmethyl subset into a normalized table."""
 
@@ -132,6 +138,7 @@ def render_no_data_report(
     sample_id: str,
     mt_contig: str,
     track_paths: dict[str, str | Path | None],
+    track_inputs_configured: dict[str, bool],
     inputs_configured: bool,
 ) -> dict[str, Path | str]:
     """Write a status-only report when no mitochondrial bedmethyl rows are present."""
@@ -146,10 +153,10 @@ def render_no_data_report(
                 "metric": "message",
                 "value": "No mitochondrial bedmethyl rows were available after mitochondrial subsetting.",
             },
-            {"metric": "np_track_input_present", "value": int(bool(track_paths.get("NP_real_all_reads")))},
-            {"metric": "hp1_track_input_present", "value": int(bool(track_paths.get("HP1")))},
-            {"metric": "hp2_track_input_present", "value": int(bool(track_paths.get("HP2")))},
-            {"metric": "ungrouped_track_input_present", "value": int(bool(track_paths.get("Ungrouped")))},
+            {"metric": "np_track_input_present", "value": int(track_inputs_configured["NP_real_all_reads"])},
+            {"metric": "hp1_track_input_present", "value": int(track_inputs_configured["HP1"])},
+            {"metric": "hp2_track_input_present", "value": int(track_inputs_configured["HP2"])},
+            {"metric": "ungrouped_track_input_present", "value": int(track_inputs_configured["Ungrouped"])},
         ]
     )
     summary_df.to_csv(summary_path, sep="\t", index=False)
@@ -196,6 +203,7 @@ def run_step(
     mito_mods_hp2: str | Path,
     mito_mods_ungrouped: str | Path,
     inputs_configured: bool = True,
+    track_inputs_configured: dict[str, bool] | None = None,
 ) -> dict[str, Path | str]:
     """Run the public exploratory mitochondrial methylation step."""
 
@@ -213,6 +221,12 @@ def run_step(
         "HP2": mito_mods_hp2,
         "Ungrouped": mito_mods_ungrouped,
     }
+    if track_inputs_configured is None:
+        track_inputs_configured = {
+            label: bool(track_input_present(path)) for label, path in track_paths.items()
+        }
+    elif set(track_inputs_configured) != set(track_paths):
+        raise ValueError("track_inputs_configured must define exactly the four methylation tracks")
     frames: list[pd.DataFrame] = []
     for track_label, path in track_paths.items():
         frame = load_bedmethyl_table(path, track_label)
@@ -244,6 +258,7 @@ def run_step(
             sample_id=sample_id,
             mt_contig=mt_contig,
             track_paths=track_paths,
+            track_inputs_configured=track_inputs_configured,
             inputs_configured=inputs_configured,
         )
 

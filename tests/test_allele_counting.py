@@ -228,3 +228,31 @@ def test_all_reference_positions_have_no_fabricated_alternate_candidate(tmp_path
     assert set(all_sites["alt_base"]) == {"."}
     assert set(all_sites["alt_count"]) == {"0"}
     assert candidates.empty
+
+
+def test_equal_candidate_metrics_are_ordered_by_position(tmp_path: Path) -> None:
+    ref = write_fasta(tmp_path / "tie.fa", {"MT": "AAAA"})
+    bam = write_alignment(
+        tmp_path / "tie.bam",
+        {"MT": 4},
+        [
+            ReadSpec("alt-1", "MT", 0, "CAAC"),
+            ReadSpec("alt-2", "MT", 0, "CAAC"),
+            ReadSpec("ref-1", "MT", 0, "AAAA"),
+            ReadSpec("ref-2", "MT", 0, "AAAA"),
+        ],
+    )
+    outputs = run_step(
+        bam=bam,
+        ref_fasta=ref,
+        summary_dir=tmp_path / "summary",
+        figure_dir=tmp_path / "figures",
+        report_dir=tmp_path / "report",
+        sample_id="TIED",
+        mt_contig="MT",
+        mt_length=4,
+        min_depth=1,
+        min_vaf=0.25,
+    )
+    candidates = pd.read_csv(outputs["candidate_path"], sep="\t")
+    assert candidates["position"].tolist() == [1, 4]

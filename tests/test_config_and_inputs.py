@@ -111,6 +111,86 @@ def test_explicit_sidecar_overrides_legacy_and_missing_is_nonfatal(
     assert any("SOURCE_VARIANT_VCF" in issue for issue in validate_config(config, strict_files=True))
 
 
+@pytest.mark.parametrize(
+    ("config_key", "path_attribute", "resolution_key", "legacy_dir_key", "legacy_suffix"),
+    [
+        ("SOURCE_VARIANT_VCF", "phased_snp_vcf", "source_variant_vcf", "SOURCE_HV_DIR", "wf_snp.vcf.gz"),
+        (
+            "SOURCE_CLINVAR_VCF",
+            "phased_clinvar_vcf",
+            "source_clinvar_vcf",
+            "SOURCE_HV_DIR",
+            "wf_snp_clinvar.vcf.gz",
+        ),
+        (
+            "SOURCE_VARIANT_VCF_UNPHASED",
+            "np_snp_vcf",
+            "source_variant_vcf_unphased",
+            "SOURCE_HV_NP_DIR",
+            "wf_snp.vcf.gz",
+        ),
+        (
+            "SOURCE_CLINVAR_VCF_UNPHASED",
+            "np_clinvar_vcf",
+            "source_clinvar_vcf_unphased",
+            "SOURCE_HV_NP_DIR",
+            "wf_snp_clinvar.vcf.gz",
+        ),
+        (
+            "SOURCE_BEDMETHYL",
+            "np_bedmethyl_source_gz",
+            "source_bedmethyl",
+            "SOURCE_HV_NP_DIR",
+            "wf_mods.bedmethyl.gz",
+        ),
+        (
+            "SOURCE_BEDMETHYL_HP1",
+            "hp1_bedmethyl_source_gz",
+            "source_bedmethyl_hp1",
+            "SOURCE_HV_DIR",
+            "wf_mods.1.bedmethyl.gz",
+        ),
+        (
+            "SOURCE_BEDMETHYL_HP2",
+            "hp2_bedmethyl_source_gz",
+            "source_bedmethyl_hp2",
+            "SOURCE_HV_DIR",
+            "wf_mods.2.bedmethyl.gz",
+        ),
+        (
+            "SOURCE_BEDMETHYL_UNGROUPED",
+            "ungrouped_bedmethyl_source_gz",
+            "source_bedmethyl_ungrouped",
+            "SOURCE_HV_DIR",
+            "wf_mods.ungrouped.bedmethyl.gz",
+        ),
+    ],
+)
+def test_explicit_precedence_for_every_generic_sidecar(
+    config_key: str,
+    path_attribute: str,
+    resolution_key: str,
+    legacy_dir_key: str,
+    legacy_suffix: str,
+    minimal_inputs: tuple[Path, Path],
+    tmp_path: Path,
+) -> None:
+    ref, bam = minimal_inputs
+    legacy_dir = tmp_path / f"legacy-{config_key.lower()}"
+    legacy_dir.mkdir()
+    legacy = legacy_dir / f"S1.{legacy_suffix}"
+    legacy.write_bytes(b"legacy")
+    explicit = tmp_path / f"explicit-{config_key.lower()}.dat"
+    explicit.write_bytes(b"explicit")
+    mapping = minimal_mapping(tmp_path, ref, bam)
+    mapping.update({legacy_dir_key: str(legacy_dir), config_key: str(explicit)})
+
+    paths = RunPaths.from_config(PipelineConfig.from_mapping(mapping))
+
+    assert getattr(paths, path_attribute) == explicit
+    assert paths.sidecar_resolution[resolution_key] == "explicit"
+
+
 def test_legacy_sidecar_discovery_requires_an_existing_file(
     minimal_inputs: tuple[Path, Path], tmp_path: Path
 ) -> None:

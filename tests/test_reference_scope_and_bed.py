@@ -12,35 +12,265 @@ from mito_overview.steps.mito_numt_qc import run_step
 from ._helpers import metric_map
 
 
-def test_reference_scope_auto_resolution() -> None:
+GRCH37_AUTOSOME_LENGTHS = (
+    249_250_621,
+    243_199_373,
+    198_022_430,
+    191_154_276,
+    180_915_260,
+    171_115_067,
+    159_138_663,
+    146_364_022,
+    141_213_431,
+    135_534_747,
+    135_006_516,
+    133_851_895,
+    115_169_878,
+    107_349_540,
+    102_531_392,
+    90_354_753,
+    81_195_210,
+    78_077_248,
+    59_128_983,
+    63_025_520,
+    48_129_895,
+    51_304_566,
+)
+GRCH38_AUTOSOME_LENGTHS = (
+    248_956_422,
+    242_193_529,
+    198_295_559,
+    190_214_555,
+    181_538_259,
+    170_805_979,
+    159_345_973,
+    145_138_636,
+    138_394_717,
+    133_797_422,
+    135_086_622,
+    133_275_309,
+    114_364_328,
+    107_043_718,
+    101_991_189,
+    90_338_345,
+    83_257_441,
+    80_373_285,
+    58_617_616,
+    64_444_167,
+    46_709_983,
+    50_818_468,
+)
+GRCM38_AUTOSOME_LENGTHS = (
+    195_471_971,
+    182_113_224,
+    160_039_680,
+    156_508_116,
+    151_834_684,
+    149_736_546,
+    145_441_459,
+    129_401_213,
+    124_595_110,
+    130_694_993,
+    122_082_543,
+    120_129_022,
+    120_421_639,
+    124_902_244,
+    104_043_685,
+    98_207_768,
+    94_987_271,
+    90_702_639,
+    61_431_566,
+)
+GRCM39_AUTOSOME_LENGTHS = (
+    195_154_279,
+    181_755_017,
+    159_745_316,
+    156_860_686,
+    151_758_149,
+    149_588_044,
+    144_995_196,
+    130_127_694,
+    124_359_700,
+    130_530_862,
+    121_973_369,
+    120_092_757,
+    120_883_175,
+    125_139_656,
+    104_073_951,
+    98_008_968,
+    95_294_699,
+    90_720_763,
+    61_420_004,
+)
+GRCH37_SEX_CHROMOSOME_LENGTHS = (155_270_560, 59_373_566)
+GRCH38_SEX_CHROMOSOME_LENGTHS = (156_040_895, 57_227_415)
+GRCM38_SEX_CHROMOSOME_LENGTHS = (171_031_299, 91_744_698)
+GRCM39_SEX_CHROMOSOME_LENGTHS = (169_476_592, 91_455_967)
+
+
+def reference_contigs(
+    autosome_lengths: tuple[int, ...],
+    *,
+    prefix: str = "chr",
+    mt_contig: str = "MT",
+    mt_length: int = 16_569,
+    sex_chromosome_lengths: tuple[int, int] = GRCH38_SEX_CHROMOSOME_LENGTHS,
+) -> dict[str, int]:
+    return {
+        mt_contig: mt_length,
+        **{f"{prefix}{index}": length for index, length in enumerate(autosome_lengths, 1)},
+        f"{prefix}X": sex_chromosome_lengths[0],
+        f"{prefix}Y": sex_chromosome_lengths[1],
+    }
+
+
+def test_reference_scope_auto_resolves_mt_only() -> None:
     assert detect_reference_scope(
         requested="auto", contig_lengths={"MT": 16569}, mt_contig="MT", species="human"
     ) == "mt_only"
-    complete_human = {"MT": 16569, **{f"chr{i}": 1000 for i in range(1, 23)}}
+
+
+@pytest.mark.parametrize(
+    (
+        "species",
+        "autosome_lengths",
+        "sex_chromosome_lengths",
+        "prefix",
+        "mt_contig",
+        "mt_length",
+    ),
+    [
+        pytest.param(
+            "human",
+            GRCH37_AUTOSOME_LENGTHS,
+            GRCH37_SEX_CHROMOSOME_LENGTHS,
+            "",
+            "MT",
+            16_569,
+            id="grch37",
+        ),
+        pytest.param(
+            "human",
+            GRCH38_AUTOSOME_LENGTHS,
+            GRCH38_SEX_CHROMOSOME_LENGTHS,
+            "chr",
+            "chrM",
+            16_569,
+            id="grch38",
+        ),
+        pytest.param(
+            "mouse",
+            GRCM38_AUTOSOME_LENGTHS,
+            GRCM38_SEX_CHROMOSOME_LENGTHS,
+            "chr",
+            "chrM",
+            16_299,
+            id="grcm38",
+        ),
+        pytest.param(
+            "mouse",
+            GRCM39_AUTOSOME_LENGTHS,
+            GRCM39_SEX_CHROMOSOME_LENGTHS,
+            "",
+            "MT",
+            16_299,
+            id="grcm39",
+        ),
+    ],
+)
+def test_reference_scope_auto_recognizes_complete_assemblies(
+    species: str,
+    autosome_lengths: tuple[int, ...],
+    sex_chromosome_lengths: tuple[int, int],
+    prefix: str,
+    mt_contig: str,
+    mt_length: int,
+) -> None:
+    contigs = reference_contigs(
+        autosome_lengths,
+        prefix=prefix,
+        mt_contig=mt_contig,
+        mt_length=mt_length,
+        sex_chromosome_lengths=sex_chromosome_lengths,
+    )
     assert detect_reference_scope(
-        requested="auto", contig_lengths=complete_human, mt_contig="MT", species="human"
+        requested="auto", contig_lengths=contigs, mt_contig=mt_contig, species=species
     ) == "whole_genome"
+
+
+@pytest.mark.parametrize(
+    ("contigs", "species"),
+    [
+        pytest.param(
+            {"MT": 16_569, **{f"chr{index}": 1_000 for index in range(1, 23)}},
+            "human",
+            id="toy-autosome-lengths",
+        ),
+        pytest.param(
+            {
+                "MT": 16_569,
+                **{
+                    f"chr{index}": length
+                    for index, length in enumerate(GRCH38_AUTOSOME_LENGTHS, 1)
+                },
+            },
+            "human",
+            id="autosomes-only",
+        ),
+        pytest.param(
+            {**reference_contigs(GRCH38_AUTOSOME_LENGTHS), "chr12": 1_000_000},
+            "human",
+            id="truncated-autosome",
+        ),
+        pytest.param(
+            {
+                name: length
+                for name, length in reference_contigs(GRCH38_AUTOSOME_LENGTHS).items()
+                if name != "chr22"
+            },
+            "human",
+            id="missing-autosome",
+        ),
+        pytest.param(
+            reference_contigs(GRCH38_AUTOSOME_LENGTHS),
+            "rat",
+            id="unsupported-species",
+        ),
+    ],
+)
+def test_reference_scope_auto_rejects_unrecognized_assemblies(
+    contigs: dict[str, int], species: str
+) -> None:
     assert detect_reference_scope(
-        requested="auto", contig_lengths={"MT": 16569, "chr1": 1000}, mt_contig="MT", species="human"
+        requested="auto", contig_lengths=contigs, mt_contig="MT", species=species
     ) == "custom"
 
 
 @pytest.mark.parametrize(
-    "contigs",
+    ("contigs", "species"),
     [
-        {"MT": 16569},
-        {"MT": 16569, "chr1": 1000},
+        pytest.param({"MT": 16_569}, "human", id="mt-only"),
+        pytest.param(
+            {"MT": 16_569, **{f"chr{index}": 1_000 for index in range(1, 23)}},
+            "human",
+            id="toy-autosome-lengths",
+        ),
+        pytest.param(
+            reference_contigs(GRCH38_AUTOSOME_LENGTHS),
+            "unknown",
+            id="unsupported-species",
+        ),
     ],
 )
 def test_whole_genome_scope_cannot_override_incomplete_reference(
-    contigs: dict[str, int],
+    contigs: dict[str, int], species: str
 ) -> None:
     with pytest.raises(ValueError, match="requires a recognized complete nuclear reference"):
         detect_reference_scope(
             requested="whole_genome",
             contig_lengths=contigs,
             mt_contig="MT",
-            species="human",
+            species=species,
         )
 
 

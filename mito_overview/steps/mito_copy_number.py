@@ -1,4 +1,4 @@
-"""Mitochondrial copy-number proxy for mito-overview."""
+"""Experimental within-sample mitochondrial-to-nuclear depth ratio."""
 
 from __future__ import annotations
 
@@ -203,9 +203,9 @@ def run_step(
     else:
         windows_note = ""
     intro_html = (
-        '<p class="muted">Coverage-based mitochondrial copy-number proxy using whole-mitochondrion depth compared '
-        "with fixed nuclear windows from canonical autosomes. This is intended as a within-project proxy, not an "
-        "absolute mtDNA copy-number measurement.</p>"
+        '<p class="muted">Experimental within-sample mt:nuclear depth ratio using whole-mitochondrion depth '
+        "compared with fixed nuclear windows from canonical autosomes. This ratio is not a calibrated or absolute "
+        "mtDNA copy-number measurement.</p>"
         f"<div class='metrics-grid'>{metrics_html}</div>{windows_note}"
     )
     body_html = (

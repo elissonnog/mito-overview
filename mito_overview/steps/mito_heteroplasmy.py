@@ -182,8 +182,8 @@ def run_step(
     all_df = pd.DataFrame(all_rows, columns=OUTPUT_COLUMNS)
     if candidate_rows:
         cand_df = pd.DataFrame(candidate_rows, columns=OUTPUT_COLUMNS).sort_values(
-            ["alt_allele_fraction", "callable_depth"],
-            ascending=[False, False],
+            ["alt_allele_fraction", "callable_depth", "position"],
+            ascending=[False, False, True],
         )
     else:
         cand_df = pd.DataFrame(columns=OUTPUT_COLUMNS)
