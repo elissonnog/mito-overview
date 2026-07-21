@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import gzip
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, TypeVar
@@ -189,6 +190,25 @@ def _read_fai_lengths(reference_fasta: Path) -> dict[str, int]:
     return lengths
 
 
+def _detect_alignment_container(path: Path) -> str | None:
+    """Return the encoded HTS container for an existing local alignment."""
+
+    if not path.is_file():
+        return None
+    try:
+        with path.open("rb") as handle:
+            prefix = handle.read(4)
+        if prefix == b"CRAM":
+            return "cram"
+        if prefix[:2] == b"\x1f\x8b":
+            with gzip.open(path, "rb") as handle:
+                if handle.read(4) == b"BAM\x01":
+                    return "bam"
+    except (EOFError, OSError):
+        pass
+    return "unknown"
+
+
 def _infer_alignment_mode(path: Path, requested: str) -> str:
     requested = requested.strip().lower()
     suffix = path.suffix.lower()
@@ -201,10 +221,23 @@ def _infer_alignment_mode(path: Path, requested: str) -> str:
                 f"SOURCE_ALIGN_MODE={requested} conflicts with "
                 f"SOURCE_ALIGN_FILE extension {suffix}"
             )
-        return requested
-    if inferred is not None:
-        return inferred
-    raise ValueError("SOURCE_ALIGN_MODE is required when SOURCE_ALIGN_FILE is not .bam or .cram")
+        resolved = requested
+    elif inferred is not None:
+        resolved = inferred
+    else:
+        raise ValueError(
+            "SOURCE_ALIGN_MODE is required when SOURCE_ALIGN_FILE is not .bam or .cram"
+        )
+
+    encoded = _detect_alignment_container(path)
+    if encoded == "unknown":
+        raise ValueError(f"SOURCE_ALIGN_FILE is not a recognizable BAM or CRAM container: {path}")
+    if encoded is not None and encoded != resolved:
+        raise ValueError(
+            f"SOURCE_ALIGN_FILE content is {encoded.upper()} but resolved "
+            f"SOURCE_ALIGN_MODE={resolved}"
+        )
+    return resolved
 
 
 @dataclass(frozen=True)

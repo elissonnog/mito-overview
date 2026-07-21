@@ -56,9 +56,9 @@ Deterministic tests verify disabled no-network behavior, exact fixture annotatio
 
 ### 3. Standalone input contract
 
-The minimal required configuration is `WORK_ROOT`, `RUN_NAME`, `SAMPLE_ID`, `REF_FASTA`, `SOURCE_ALIGN_FILE`, and `MT_CONTIG`. Alignment mode is inferred from `.bam` or `.cram`; if the optional compatibility key `SOURCE_ALIGN_MODE` is supplied, a conflict with either recognized suffix is rejected. Mitochondrial length is inferred from the FASTA index when omitted. Explicit generic VCF and bedMethyl sidecars take precedence over legacy `wf-human-variation` discovery, and missing optional sidecars produce `not_configured` rather than a core-workflow failure.
+The minimal required configuration is `WORK_ROOT`, `RUN_NAME`, `SAMPLE_ID`, `REF_FASTA`, `SOURCE_ALIGN_FILE`, and `MT_CONTIG`. Alignment mode is inferred from `.bam` or `.cram`; the recognized suffix, optional compatibility key `SOURCE_ALIGN_MODE`, and detected BAM/CRAM container must agree. Mitochondrial length is inferred from the FASTA index when omitted. Explicit generic VCF and bedMethyl sidecars take precedence over legacy `wf-human-variation` discovery, and missing optional sidecars produce `not_configured` rather than a core-workflow failure.
 
-Normal execution checks the FASTA index, BAM/CRAM index, mitochondrial contig, configured or inferred length, and CRAM reference accessibility. Deterministic tests cover minimal BAM and CRAM configurations, rejection of explicit mode/suffix conflicts in both directions, sidecar precedence, legacy discovery, absent optional inputs, missing indexes, missing contigs, length mismatch, missing CRAM reference, and attempts to omit the validation step. Primary tests: `tests/test_config_and_inputs.py` and `tests/smoke_standalone_minimal.sh`.
+Normal execution checks the encoded alignment container, FASTA index, format-appropriate BAM/CRAM index, mitochondrial contig, configured or inferred length, and CRAM reference accessibility. Deterministic tests cover minimal BAM and CRAM configurations; explicit mode/suffix conflicts; renamed CRAM, renamed BAM, nonstandard-suffix mismatches, and unrecognized containers; sidecar precedence; legacy discovery; absent optional inputs; missing indexes; missing contigs; length mismatch; missing CRAM reference; and attempts to omit the validation step. Primary tests: `tests/test_config_and_inputs.py` and `tests/smoke_standalone_minimal.sh`.
 
 ### 4. Within-sample mt:nuclear depth ratio
 
@@ -118,7 +118,7 @@ MITO_OVERVIEW_PYTHON="$PWD/.conda-release-check/bin/python" \
 
 | Check | Verdict | Observed evidence |
 | --- | --- | --- |
-| Deterministic unit/known-answer suite | PASS | 235 passed in 16.49 s |
+| Deterministic unit/known-answer suite | PASS | 239 passed in 17.07 s |
 | CLI step listing | PASS | command exited 0 |
 | Generic configured dry-run | PASS | command exited 0 |
 | Synthetic long-read workflow | PASS | all applicable steps completed; fixture mvTool and methylation paths exercised |
@@ -234,7 +234,7 @@ These differences describe filter dependence. They are not sensitivity, specific
 
 | Claim permitted for v0.3.0 | Supporting evidence | Boundary |
 | --- | --- | --- |
-| Shared, filtered alternate-allele counting is deterministic on known-answer fixtures | `tests/test_allele_counting.py`; 235-test PASS | No clinical calibration |
+| Shared, filtered alternate-allele counting is deterministic on known-answer fixtures | `tests/test_allele_counting.py`; 239-test PASS | No clinical calibration |
 | Co-segregation reuses the same observation filters | shared engine tests and synthetic long-read smoke | No biological phasing benchmark |
 | Default mvTool execution is offline | `tests/test_mvtool_modes.py`; standalone smoke reports `not_configured` | Network service content not validated |
 | Generic BAM/CRAM inputs are supported | config tests plus minimal standalone smoke | Platform breadth limited to tested environments |
@@ -262,7 +262,7 @@ Version `0.3.0` remains unreleased. The final tag, release date, and version-spe
 
 An external reviewer can:
 
-1. Run the 235-test suite and four synthetic workflows with the commands above.
+1. Run the 239-test suite and four synthetic workflows with the commands above.
 2. Verify the GM11906 and GM12878 tracked provenance JSON and SHA-256 records.
 3. Confirm `m.8344A>G` is `1027/740/0.720545` in the default GM11906 output.
 4. Confirm GM12878 uses exactly the labeled 1,000-query-name deterministic subset.

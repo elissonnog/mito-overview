@@ -38,7 +38,7 @@ The evaluated scope is a workflow/resource package. Clair3, NanoDel, in-pipeline
 ## Methods
 
 ### Standalone input and validation contract
-The minimal standalone configuration requires six keys: `WORK_ROOT`, `RUN_NAME`, `SAMPLE_ID`, `REF_FASTA`, `SOURCE_ALIGN_FILE`, and `MT_CONTIG`. Alignment mode is inferred from the `.bam` or `.cram` suffix; a conflicting explicit `SOURCE_ALIGN_MODE` is rejected so format-specific index and CRAM reference checks cannot be bypassed. Mitochondrial length is inferred from the FASTA index when `MT_LENGTH` is omitted. Explicit generic VCF and bedMethyl sidecars take precedence over legacy `wf-human-variation` discovery. Missing optional sidecars do not terminate the core workflow and instead produce `not_configured` outputs.
+The minimal standalone configuration requires six keys: `WORK_ROOT`, `RUN_NAME`, `SAMPLE_ID`, `REF_FASTA`, `SOURCE_ALIGN_FILE`, and `MT_CONTIG`. Alignment mode is inferred from the `.bam` or `.cram` suffix, and the suffix, any explicit `SOURCE_ALIGN_MODE`, and the encoded BAM/CRAM container must agree; this prevents renamed containers from bypassing format-specific index and CRAM reference checks. Mitochondrial length is inferred from the FASTA index when `MT_LENGTH` is omitted. Explicit generic VCF and bedMethyl sidecars take precedence over legacy `wf-human-variation` discovery. Missing optional sidecars do not terminate the core workflow and instead produce `not_configured` outputs.
 
 Before analytical execution, validation checks the FASTA index, BAM or CRAM index, mitochondrial contig, configured or inferred mitochondrial length, and CRAM reference accessibility. A configured length must agree with the FASTA index. The validation step cannot be omitted during normal execution. This contract permits standalone BAM/CRAM operation without deployment-specific paths or inputs.
 
@@ -135,7 +135,7 @@ Module states are restricted to `ok`, `not_configured`, `not_applicable`, `not_e
 ## Validation design
 
 ### Local deterministic implementation evidence
-Local validation was performed on macOS with Python 3.12.13, samtools/htslib 1.23.1, pysam 0.24.0, NumPy 2.5.1, pandas 3.0.3, Matplotlib 3.11.0, Pillow 12.3.0, Requests 2.34.2, and pytest 9.1.1. The corrected deterministic unit and known-answer suite reported exactly 235 passing tests in 16.49 s. CLI step listing exited successfully; minimal generic BAM and CRAM configurations each passed strict dry-run and full workflow execution.
+Local validation was performed on macOS with Python 3.12.13, samtools/htslib 1.23.1, pysam 0.24.0, NumPy 2.5.1, pandas 3.0.3, Matplotlib 3.11.0, Pillow 12.3.0, Requests 2.34.2, and pytest 9.1.1. The corrected deterministic unit and known-answer suite reported exactly 239 passing tests in 17.07 s. CLI step listing exited successfully; minimal generic BAM and CRAM configurations each passed strict dry-run and full workflow execution.
 
 Four synthetic smoke workflows were run locally:
 
@@ -146,7 +146,7 @@ Four synthetic smoke workflows were run locally:
 | `tests/smoke_public_pipeline_longread_nomethyl.sh` | PASS; core long-read reporting completed and methylation reported `not_configured` |
 | `tests/smoke_standalone_minimal.sh` | PASS; the six-key standalone contract completed without deployment-specific inputs |
 
-The 235-test result and four smoke results characterize the tested release-candidate state within the stated environment and evidence boundaries.
+The 239-test result and four smoke results characterize the tested release-candidate state within the stated environment and evidence boundaries.
 
 ### Public-data design and provenance
 The public validation matrix was executed twice at default observation filters and once under each descriptive filter profile at historical clean validation source commit `dc09114e1a0dcec2baf83d94549dfa41f3e49c8b`. Repeatability comparisons normalized TSV outputs. HTML and PNG outputs were evaluated for inventory, readability, dimensions, structure, and visual consistency rather than byte identity. These values are release-candidate supporting evidence; rerunning the matrix and binding its evidence to the exact final v0.3.0 commit remain release gates.

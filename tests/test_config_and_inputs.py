@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 import pytest
@@ -287,6 +288,55 @@ def test_explicit_alignment_mode_cannot_conflict_with_recognized_extension(
         ValueError,
         match=rf"SOURCE_ALIGN_MODE={requested_mode} conflicts with .*{extension}",
     ):
+        PipelineConfig.from_mapping(mapping)
+
+
+@pytest.mark.parametrize(
+    ("source_format", "disguised_name", "requested_mode", "expected_encoded"),
+    [
+        pytest.param("cram", "disguised.bam", "bam", "CRAM", id="cram-as-bam"),
+        pytest.param("bam", "disguised.cram", "cram", "BAM", id="bam-as-cram"),
+        pytest.param("cram", "disguised.dat", "bam", "CRAM", id="cram-as-generic-bam"),
+    ],
+)
+def test_resolved_alignment_mode_must_match_encoded_container(
+    minimal_inputs: tuple[Path, Path],
+    tmp_path: Path,
+    source_format: str,
+    disguised_name: str,
+    requested_mode: str,
+    expected_encoded: str,
+) -> None:
+    ref, bam = minimal_inputs
+    source = bam
+    if source_format == "cram":
+        source = write_alignment(
+            tmp_path / "source.cram",
+            {"MT": 10},
+            [ReadSpec("read1", "MT", 0, "A" * 10)],
+            reference_fasta=ref,
+        )
+    disguised = tmp_path / disguised_name
+    shutil.copyfile(source, disguised)
+    mapping = minimal_mapping(tmp_path, ref, disguised)
+    mapping["SOURCE_ALIGN_MODE"] = requested_mode
+
+    with pytest.raises(
+        ValueError,
+        match=rf"SOURCE_ALIGN_FILE content is {expected_encoded}.*{requested_mode}",
+    ):
+        PipelineConfig.from_mapping(mapping)
+
+
+def test_unrecognized_alignment_container_fails_before_execution(
+    minimal_inputs: tuple[Path, Path], tmp_path: Path
+) -> None:
+    ref, _ = minimal_inputs
+    invalid = tmp_path / "invalid.bam"
+    invalid.write_bytes(b"not-an-hts-container")
+    mapping = minimal_mapping(tmp_path, ref, invalid)
+
+    with pytest.raises(ValueError, match="not a recognizable BAM or CRAM container"):
         PipelineConfig.from_mapping(mapping)
 
 

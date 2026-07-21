@@ -168,7 +168,7 @@ def test_cram_missing_mt_sq_m5_fails_even_when_mt_record_decodes(
 ) -> None:
     ref = write_fasta(tmp_path / "reference.fa", {"MT": "A" * 10})
     cram = tmp_path / "missing_m5.cram"
-    cram.write_bytes(b"mock CRAM")
+    cram.write_bytes(b"CRAM")
     Path(f"{cram}.crai").write_bytes(b"mock CRAI")
     config = PipelineConfig.from_mapping(minimal_mapping(tmp_path, ref, cram))
     fetch_calls: list[tuple[object, ...]] = []
