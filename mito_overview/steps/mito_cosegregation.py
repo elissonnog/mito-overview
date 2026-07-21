@@ -18,6 +18,10 @@ from mito_overview.report_common import df_to_html_table, figure_html, metric_ca
 
 TOP_SITES_LIMIT = 8
 MIN_SHARED_READS_THRESHOLD = 25
+CONDITIONAL_UNIVERSE = "filtered_reads_spanning_both_sites"
+COSEGREGATION_METHOD = "alt_read_set_jaccard_conditioned_on_shared_spanning_reads"
+CANONICAL_JACCARD_COLUMN = "alt_jaccard_within_shared_spanning_reads"
+LEGACY_JACCARD_COLUMN = "jaccard_alt"
 SELECTED_SITE_COLUMNS = [
     "site_label",
     "position",
@@ -33,12 +37,14 @@ SELECTED_SITE_COLUMNS = [
 PAIRWISE_COLUMNS = [
     "site_i",
     "site_j",
+    "conditional_universe",
     "shared_reads",
     "alt_i_shared_reads",
     "alt_j_shared_reads",
     "co_alt_reads",
     "co_alt_fraction_shared",
-    "jaccard_alt",
+    CANONICAL_JACCARD_COLUMN,
+    LEGACY_JACCARD_COLUMN,
     "fraction_alt_i_also_alt_j",
     "fraction_alt_j_also_alt_i",
 ]
@@ -178,6 +184,13 @@ def _summarise_pairwise(
     alt_by_site: dict[str, set[str]],
     min_shared_reads: int,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Summarize alternate-read overlap within each pair's shared-spanning reads.
+
+    ``jaccard_alt`` is retained as a compatibility alias of the canonical
+    ``alt_jaccard_within_shared_spanning_reads`` field. Neither field is a
+    Jaccard index over the sites' global alternate-supporting read sets.
+    """
+
     labels = selected_sites["site_label"].astype(str).tolist()
     heatmap = pd.DataFrame(np.nan, index=labels, columns=labels, dtype=float)
     for label in labels:
@@ -199,25 +212,27 @@ def _summarise_pairwise(
             co_alt_reads = len(shared_reads & alt_i & alt_j)
             union_alt = alt_i_shared + alt_j_shared - co_alt_reads
             co_alt_fraction_shared = round((co_alt_reads / shared_count) if shared_count else 0.0, 6)
-            jaccard_alt = round((co_alt_reads / union_alt) if union_alt else 0.0, 6)
+            conditional_alt_jaccard = round((co_alt_reads / union_alt) if union_alt else 0.0, 6)
             fraction_alt_i_also_alt_j = round((co_alt_reads / alt_i_shared) if alt_i_shared else 0.0, 6)
             fraction_alt_j_also_alt_i = round((co_alt_reads / alt_j_shared) if alt_j_shared else 0.0, 6)
             rows.append(
                 {
                     "site_i": site_i,
                     "site_j": site_j,
+                    "conditional_universe": CONDITIONAL_UNIVERSE,
                     "shared_reads": shared_count,
                     "alt_i_shared_reads": alt_i_shared,
                     "alt_j_shared_reads": alt_j_shared,
                     "co_alt_reads": co_alt_reads,
                     "co_alt_fraction_shared": co_alt_fraction_shared,
-                    "jaccard_alt": jaccard_alt,
+                    CANONICAL_JACCARD_COLUMN: conditional_alt_jaccard,
+                    LEGACY_JACCARD_COLUMN: conditional_alt_jaccard,
                     "fraction_alt_i_also_alt_j": fraction_alt_i_also_alt_j,
                     "fraction_alt_j_also_alt_i": fraction_alt_j_also_alt_i,
                 }
             )
-            heatmap.loc[site_i, site_j] = jaccard_alt
-            heatmap.loc[site_j, site_i] = jaccard_alt
+            heatmap.loc[site_i, site_j] = conditional_alt_jaccard
+            heatmap.loc[site_j, site_i] = conditional_alt_jaccard
 
     if rows:
         pairwise_df = pd.DataFrame(rows, columns=PAIRWISE_COLUMNS)
@@ -275,10 +290,15 @@ def _write_heatmap(
     figure_height = max(5.0, len(labels) * 0.95)
     plt.figure(figsize=(figure_width, figure_height))
     image = plt.imshow(masked, vmin=0.0, vmax=1.0, cmap=cmap)
-    plt.colorbar(image, fraction=0.046, pad=0.04, label="Jaccard index")
+    plt.colorbar(
+        image,
+        fraction=0.046,
+        pad=0.04,
+        label="Alt-read Jaccard within shared-spanning reads",
+    )
     plt.xticks(range(len(labels)), labels, rotation=90)
     plt.yticks(range(len(labels)), labels)
-    plt.title(f"{sample_id} mitochondrial variant co-segregation")
+    plt.title(f"{sample_id} conditional co-segregation\n(shared-spanning reads only)")
     for row_idx in range(len(labels)):
         for col_idx in range(len(labels)):
             value = values[row_idx, col_idx]
@@ -359,19 +379,31 @@ def run_step(
     )
 
     strongest_pair = "NA"
-    strongest_pair_jaccard_alt = 0.0
+    strongest_pair_conditional_alt_jaccard = 0.0
     if not pairwise_df.empty:
         strongest_row = pairwise_df.sort_values(
-            ["jaccard_alt", "co_alt_reads", "shared_reads", "site_i", "site_j"],
+            [CANONICAL_JACCARD_COLUMN, "co_alt_reads", "shared_reads", "site_i", "site_j"],
             ascending=[False, False, False, True, True],
         ).iloc[0]
         strongest_pair = f"{strongest_row['site_i']} | {strongest_row['site_j']}"
-        strongest_pair_jaccard_alt = round(float(strongest_row["jaccard_alt"]), 6)
+        strongest_pair_conditional_alt_jaccard = round(float(strongest_row[CANONICAL_JACCARD_COLUMN]), 6)
 
     status = "not_evaluable" if status_message else "ok"
+    status_detail = (
+        "shared-spanning-read conditional co-segregation was not evaluable"
+        if status_message
+        else "shared-spanning-read conditional co-segregation completed"
+    )
     summary_rows = [
             {"metric": "status", "value": status},
+            {"metric": "status_detail", "value": status_detail},
             {"metric": "reason_code", "value": "no_candidate_sites_available" if status_message else ""},
+            {"metric": "method", "value": COSEGREGATION_METHOD},
+            {"metric": "conditional_universe", "value": CONDITIONAL_UNIVERSE},
+            {
+                "metric": "jaccard_alt_compatibility_alias_of",
+                "value": CANONICAL_JACCARD_COLUMN,
+            },
             {"metric": "selected_sites", "value": len(selected_df)},
             {
                 "metric": "pairwise_edges_meeting_shared_threshold",
@@ -388,8 +420,12 @@ def run_step(
             {"metric": "top_sites_limit", "value": TOP_SITES_LIMIT},
             {"metric": "strongest_pair", "value": strongest_pair},
             {
+                "metric": "strongest_pair_alt_jaccard_within_shared_spanning_reads",
+                "value": strongest_pair_conditional_alt_jaccard,
+            },
+            {
                 "metric": "strongest_pair_jaccard_alt",
-                "value": strongest_pair_jaccard_alt,
+                "value": strongest_pair_conditional_alt_jaccard,
             },
         ]
     summary_rows.extend(policy_rows(policy, filter_stats))
@@ -412,18 +448,27 @@ def run_step(
             metric_card("Selected sites", len(selected_df)),
             metric_card("Valid pairs", len(pairwise_df)),
             metric_card("Reads represented", reads_with_any_coverage),
-            metric_card("Strongest Jaccard", strongest_pair_jaccard_alt),
+            metric_card(
+                "Strongest alt Jaccard within shared-spanning reads",
+                strongest_pair_conditional_alt_jaccard,
+            ),
         ]
     )
     if status_message:
-        status_html = f"<p class='small-note'>{status_message}</p>"
+        status_html = f"<p class='small-note'><strong>Method/status:</strong> {status_detail}. {status_message}</p>"
     else:
-        status_html = ""
+        status_html = (
+            "<p class='small-note'><strong>Method/status:</strong> Analysis completed. "
+            "For each site pair, alternate-support sets were first restricted to filtered reads "
+            "spanning both positions.</p>"
+        )
     intro_html = (
         '<p class="muted">This page summarizes whether selected mitochondrial candidate sites '
         "tend to occur on the same long reads. The analysis uses the same read and base filters as "
-        "top candidate sites from the heteroplasmy step and reports pairwise co-occurrence among "
-        "reads that span both positions.</p>"
+        "the heteroplasmy step. Every pairwise quantity, including the alt-read Jaccard, is conditional "
+        "on reads that span both positions; it is not a Jaccard index over each site's global "
+        "alternate-supporting read set. The legacy jaccard_alt field is an exact compatibility alias "
+        f"of {CANONICAL_JACCARD_COLUMN}.</p>"
         f"<div class='metrics-grid'>{metrics_html}</div>{status_html}"
     )
     body_parts = [
@@ -433,13 +478,17 @@ def run_step(
     ]
     if heatmap_path is not None:
         body_parts.append(
-            "<section><h2>Co-segregation heatmap</h2>"
-            + figure_html(heatmap_path, "Pairwise Jaccard index for alt-supporting read sets")
+            "<section><h2>Conditional co-segregation within shared-spanning reads</h2>"
+            + figure_html(
+                heatmap_path,
+                "Alt-read Jaccard after restricting both sets to filtered reads spanning both positions; "
+                "this is not a global-set Jaccard",
+            )
             + "</section>"
         )
     body_parts.extend(
         [
-            "<section><h2>Pairwise co-segregation summary</h2>"
+            "<section><h2>Pairwise summary (conditional on shared-spanning reads)</h2>"
             + df_to_html_table(pairwise_df, max_rows=40)
             + "</section>",
             "<section><h2>Read burden summary</h2>"
@@ -453,7 +502,7 @@ def run_step(
 
     render_page(
         report_path,
-        "Mitochondrial Variant Co-segregation",
+        "Mitochondrial Variant Co-segregation (Shared-Spanning Reads)",
         sample_id,
         f"{mt_contig}:1-pairwise_selected_sites",
         intro_html,

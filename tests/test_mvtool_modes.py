@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pandas as pd
@@ -11,14 +12,18 @@ from mito_overview.steps import mito_mvtool_annotation as mvtool
 from ._helpers import metric_map
 
 
-def prepare_case(root: Path) -> tuple[Path, Path, Path]:
+def prepare_case(
+    root: Path,
+    rows: list[dict[str, object]] | None = None,
+) -> tuple[Path, Path, Path]:
     summary = root / "summary"
     figures = root / "figures"
     reports = root / "reports"
     summary.mkdir(parents=True)
-    pd.DataFrame(
-        [{"position": 10, "ref_base": "A", "alt_base": "C", "callable_depth": 100, "alt_count": 25}]
-    ).to_csv(summary / "mito_heteroplasmy_candidates.tsv", sep="\t", index=False)
+    candidate_rows = rows or [
+        {"position": 10, "ref_base": "A", "alt_base": "C", "callable_depth": 100, "alt_count": 25}
+    ]
+    pd.DataFrame(candidate_rows).to_csv(summary / "mito_heteroplasmy_candidates.tsv", sep="\t", index=False)
     return summary, figures, reports
 
 
@@ -86,6 +91,140 @@ def test_explicit_network_mode_with_mock_response(tmp_path: Path, monkeypatch: p
     )
     assert outputs["status"] == "ok"
     assert metric_map(outputs["summary_path"])["network_request_attempted"] == "1"
+
+
+def test_network_submits_every_candidate_once(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    candidate_rows = [
+        {"position": 10, "ref_base": "A", "alt_base": "C"},
+        {"position": 10, "ref_base": "A", "alt_base": "C"},
+        {"position": 20, "ref_base": "A", "alt_base": "G"},
+    ]
+    summary, figures, reports = prepare_case(tmp_path, candidate_rows)
+    submitted: list[str] = []
+
+    def post(self, url, *, data, timeout):
+        batch_inputs = data.decode().splitlines()
+        submitted.extend(batch_inputs)
+        return FakeResponse(
+            {"mseqdr": [{"Input": value, "Mitomap_status": "Reported"} for value in batch_inputs]}
+        )
+
+    monkeypatch.setattr(requests.Session, "post", post)
+    outputs = mvtool.run_step(
+        summary_dir=summary,
+        figure_dir=figures,
+        report_dir=reports,
+        sample_id="S1",
+        species="human",
+        mode="network",
+        api_url="https://mock.invalid/mvtool",
+        batch_size=1,
+    )
+
+    assert outputs["status"] == "ok"
+    assert submitted == ["m.10A>C", "m.20A>G"]
+    annotated = pd.read_csv(outputs["annot_path"], sep="\t")
+    assert annotated["Input"].tolist() == submitted
+    assert int(pd.read_csv(outputs["status_counts_path"], sep="\t")["candidate_sites"].sum()) == 2
+
+
+@pytest.mark.parametrize(
+    ("returned_rows", "reason_code"),
+    [
+        (
+            [
+                {"Input": "m.10A>C", "Mitomap_status": "Reported"},
+                {"Input": "m.10A>C", "Mitomap_status": "Reported"},
+            ],
+            "mvtool_duplicate_response_input",
+        ),
+        (
+            [
+                {"Input": "m.10A>C", "Mitomap_status": "Reported"},
+                {"Input": "m.999A>G", "Mitomap_status": "Reported"},
+            ],
+            "mvtool_unexpected_response_input",
+        ),
+        ([{"Input": "m.10A>C", "Mitomap_status": "Reported"}], "mvtool_missing_response_input"),
+        ([{"Mitomap_status": "Reported"}], "mvtool_missing_input_column"),
+    ],
+)
+def test_invalid_network_response_inputs_are_unavailable(
+    returned_rows: list[dict[str, object]],
+    reason_code: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    candidate_rows = [
+        {"position": 10, "ref_base": "A", "alt_base": "C"},
+        {"position": 20, "ref_base": "A", "alt_base": "G"},
+    ]
+    summary, figures, reports = prepare_case(tmp_path, candidate_rows)
+    monkeypatch.setattr(
+        requests.Session,
+        "post",
+        lambda self, *args, **kwargs: FakeResponse({"mseqdr": returned_rows}),
+    )
+
+    outputs = mvtool.run_step(
+        summary_dir=summary,
+        figure_dir=figures,
+        report_dir=reports,
+        sample_id="S1",
+        species="human",
+        mode="network",
+        api_url="https://mock.invalid/mvtool",
+    )
+
+    assert outputs["status"] == "unavailable"
+    assert metric_map(outputs["summary_path"])["reason_code"] == reason_code
+    assert pd.read_csv(outputs["annot_path"], sep="\t").empty
+    assert pd.read_csv(outputs["status_counts_path"], sep="\t").empty
+
+
+def test_fixture_does_not_fabricate_a_missing_candidate_from_defaults(tmp_path: Path) -> None:
+    summary, figures, reports = prepare_case(
+        tmp_path,
+        [{"position": 30, "ref_base": "A", "alt_base": "T"}],
+    )
+    fixture = Path(__file__).parent / "fixtures" / "mock_mvtool_annotations.json"
+
+    outputs = mvtool.run_step(
+        summary_dir=summary,
+        figure_dir=figures,
+        report_dir=reports,
+        sample_id="S1",
+        species="human",
+        mode="fixture",
+        fixture_json=fixture,
+    )
+
+    assert outputs["status"] == "unavailable"
+    assert metric_map(outputs["summary_path"])["reason_code"] == "mvtool_missing_response_input"
+    assert pd.read_csv(outputs["annot_path"], sep="\t").empty
+
+
+def test_fixture_mseqdr_rejects_unexpected_input(tmp_path: Path) -> None:
+    summary, figures, reports = prepare_case(tmp_path)
+    fixture = tmp_path / "unexpected_mvtool.json"
+    fixture.write_text(
+        json.dumps({"mseqdr": [{"Input": "m.99A>G", "Mitomap_status": "Reported"}]}),
+        encoding="utf-8",
+    )
+
+    outputs = mvtool.run_step(
+        summary_dir=summary,
+        figure_dir=figures,
+        report_dir=reports,
+        sample_id="S1",
+        species="human",
+        mode="fixture",
+        fixture_json=fixture,
+    )
+
+    assert outputs["status"] == "unavailable"
+    assert metric_map(outputs["summary_path"])["reason_code"] == "mvtool_unexpected_response_input"
+    assert pd.read_csv(outputs["annot_path"], sep="\t").empty
 
 
 @pytest.mark.parametrize(

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from collections import Counter
 import json
 import math
 from pathlib import Path
@@ -54,6 +55,14 @@ ANNOTATION_COLUMNS = [
     "Mitomap_Disease_normalized",
     "HmtDB_disease_normalized",
 ]
+
+
+class MvtoolResponseValidationError(ValueError):
+    """A nonfatal violation of the submitted-to-returned Input contract."""
+
+    def __init__(self, reason_code: str, message: str):
+        super().__init__(message)
+        self.reason_code = reason_code
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -140,6 +149,73 @@ def describe_api_source(api_url: str) -> str:
     return api_url
 
 
+def validate_mvtool_rows(
+    entries: list[object],
+    *,
+    submitted_inputs: list[str],
+) -> list[dict[str, object]]:
+    """Require exactly one response row for every Input submitted in a batch."""
+
+    submitted_counts = Counter(submitted_inputs)
+    if any(count != 1 for count in submitted_counts.values()):
+        raise ValueError("mvTool submitted Inputs must be unique within each batch")
+
+    invalid_row_indexes = [idx for idx, row in enumerate(entries) if not isinstance(row, dict)]
+    if invalid_row_indexes:
+        raise MvtoolResponseValidationError(
+            "mvtool_response_row_not_object",
+            "mvTool response rows must be objects; invalid row indexes: "
+            + ",".join(map(str, invalid_row_indexes[:10])),
+        )
+
+    rows = [dict(row) for row in entries]
+    if rows and all("Input" not in row for row in rows):
+        raise MvtoolResponseValidationError(
+            "mvtool_missing_input_column",
+            "mvTool response rows did not contain the required Input field",
+        )
+
+    missing_identity_indexes = [
+        idx
+        for idx, row in enumerate(rows)
+        if "Input" not in row or not isinstance(row["Input"], str) or not row["Input"].strip()
+    ]
+    if missing_identity_indexes:
+        raise MvtoolResponseValidationError(
+            "mvtool_missing_response_input",
+            "mvTool response rows had missing or blank Input values at indexes: "
+            + ",".join(map(str, missing_identity_indexes[:10])),
+        )
+
+    returned_inputs = [str(row["Input"]) for row in rows]
+    returned_counts = Counter(returned_inputs)
+    duplicate_inputs = sorted(value for value, count in returned_counts.items() if count > 1)
+    if duplicate_inputs:
+        raise MvtoolResponseValidationError(
+            "mvtool_duplicate_response_input",
+            "mvTool returned duplicate Input values: " + ",".join(duplicate_inputs[:10]),
+        )
+
+    submitted_set = set(submitted_inputs)
+    returned_set = set(returned_inputs)
+    unexpected_inputs = sorted(returned_set - submitted_set)
+    if unexpected_inputs:
+        raise MvtoolResponseValidationError(
+            "mvtool_unexpected_response_input",
+            "mvTool returned Input values that were not submitted in this batch: "
+            + ",".join(unexpected_inputs[:10]),
+        )
+
+    missing_inputs = sorted(submitted_set - returned_set)
+    if missing_inputs:
+        raise MvtoolResponseValidationError(
+            "mvtool_missing_response_input",
+            "mvTool omitted submitted Input values: " + ",".join(missing_inputs[:10]),
+        )
+
+    return rows
+
+
 def fetch_mvtool_rows(
     *,
     api_url: str,
@@ -153,15 +229,22 @@ def fetch_mvtool_rows(
         parsed = urlparse(api_url)
         fixture_path = Path(unquote(parsed.path))
         fixture_payload = json.loads(fixture_path.read_text(encoding="utf-8"))
+        if not isinstance(fixture_payload, dict):
+            raise ValueError("Local mvTool fixture root must be an object")
         if "records" in fixture_payload:
             records = fixture_payload.get("records", {})
             default_row = fixture_payload.get("default", {})
+            if not isinstance(records, dict) or not isinstance(default_row, dict):
+                raise ValueError("Local mvTool fixture records and default values must be objects")
             rows = []
             for variant in variants:
+                if variant not in records:
+                    continue
+                record = records[variant]
+                if not isinstance(record, dict):
+                    raise ValueError(f"Local mvTool fixture record for {variant} must be an object")
                 row = dict(default_row)
-                row.update(records.get(variant, {}))
-                row.setdefault("Input", variant)
-                row.setdefault("HGVS_g", variant)
+                row.update(record)
                 rows.append(row)
             return rows, 200
         if "mseqdr" in fixture_payload and isinstance(fixture_payload["mseqdr"], list):
@@ -172,6 +255,8 @@ def fetch_mvtool_rows(
     response = session.post(api_url, data=payload, timeout=timeout)
     response.raise_for_status()
     data = response.json()
+    if not isinstance(data, dict):
+        raise ValueError("mvTool response root was not an object")
     entries = data.get("mseqdr", [])
     if not isinstance(entries, list):
         raise ValueError("mvTool response did not contain a list under 'mseqdr'")
@@ -326,6 +411,7 @@ def run_step(
 
     candidates = candidates.copy()
     candidates["mvtool_input"] = [to_hgvs(r) for r in candidates.itertuples(index=False)]
+    candidates = candidates.drop_duplicates(subset=["mvtool_input"], keep="first").reset_index(drop=True)
     unique_inputs = candidates[["mvtool_input"]].drop_duplicates().reset_index(drop=True)
     session = requests.Session()
     results: list[dict[str, object]] = []
@@ -347,6 +433,10 @@ def run_step(
                 variants=subset["mvtool_input"].tolist(),
                 timeout=timeout,
             )
+            entries = validate_mvtool_rows(
+                entries,
+                submitted_inputs=subset["mvtool_input"].tolist(),
+            )
             batch_rows.append(
                 {
                     "batch": idx + 1,
@@ -357,7 +447,9 @@ def run_step(
             )
             results.extend(entries)
     except Exception as exc:
-        if isinstance(exc, requests.Timeout):
+        if isinstance(exc, MvtoolResponseValidationError):
+            reason_code = exc.reason_code
+        elif isinstance(exc, requests.Timeout):
             reason_code = "mvtool_network_timeout"
         elif mode == "fixture":
             reason_code = "mvtool_fixture_malformed"
@@ -375,6 +467,7 @@ def run_step(
                 {"metric": "status", "value": "unavailable"},
                 {"metric": "reason_code", "value": reason_code},
                 {"metric": "api_url", "value": api_url},
+                {"metric": "submitted_candidates", "value": int(len(unique_inputs))},
                 {"metric": "network_request_attempted", "value": int(mode == "network")},
                 {"metric": "error", "value": f"{type(exc).__name__}: {exc}"[:220]},
             ],
@@ -416,7 +509,13 @@ def run_step(
 
     keep_fields = [field for field in DEFAULT_FIELDS if field in annot_df.columns]
     annot_df = annot_df[keep_fields].copy()
-    merged = candidates.merge(annot_df, left_on="mvtool_input", right_on="Input", how="left")
+    merged = candidates.merge(
+        annot_df,
+        left_on="mvtool_input",
+        right_on="Input",
+        how="left",
+        validate="one_to_one",
+    )
 
     missing_values = pd.Series(pd.NA, index=merged.index, dtype="object")
     status_norm = normalize_text_values(merged.get("Mitomap_status", missing_values))
@@ -433,7 +532,7 @@ def run_step(
     if not mitomap_status_df.empty:
         status_counts = (
             mitomap_status_df.groupby("Mitomap_status_normalized", as_index=False)
-            .agg(candidate_sites=("mvtool_input", "count"))
+            .agg(candidate_sites=("mvtool_input", "nunique"))
             .sort_values("candidate_sites", ascending=False)
             .rename(columns={"Mitomap_status_normalized": "Mitomap_status"})
         )
@@ -445,7 +544,7 @@ def run_step(
         disease_summary = (
             disease_rows.groupby("Mitomap_Disease_normalized", as_index=False)
             .agg(
-                candidate_sites=("mvtool_input", "count"),
+                candidate_sites=("mvtool_input", "nunique"),
                 supporting_statuses=(
                     "Mitomap_status_normalized",
                     lambda s: ", ".join(sorted({str(v) for v in s.dropna()})) or "NA",
@@ -471,7 +570,7 @@ def run_step(
                     )
                 )
                 .groupby("AF_M1_bin", observed=False, as_index=False)
-                .agg(candidate_sites=("mvtool_input", "count"))
+                .agg(candidate_sites=("mvtool_input", "nunique"))
             )
             population_bin_summary = population_bin_summary[population_bin_summary["candidate_sites"] > 0].copy()
     population_bin_summary.to_csv(population_bins_path, sep="\t", index=False)
