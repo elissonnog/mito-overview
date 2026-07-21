@@ -457,6 +457,11 @@ def make_packet(tmp_path: Path) -> tuple[Path, Path, list[Path]]:
     rewrite_artifact_manifest(packet)
 
     publication = tmp_path / "github_publication.json"
+    publication_asset = {
+        "name": "mito-overview-v0.3.0-validation.zip",
+        "size": 123,
+        "sha256": "c" * 64,
+    }
     publication.write_text(
         json.dumps(
             {
@@ -468,7 +473,52 @@ def make_packet(tmp_path: Path) -> tuple[Path, Path, list[Path]]:
                 "github_release_url": f"{REPOSITORY}/releases/tag/v0.3.0",
                 "github_actions_run_id": RUN_ID,
                 "publication_state": "published",
+                "verification_state": "verified_published",
+                "verified": True,
                 "published_utc": "2026-07-21T18:00:00+00:00",
+                "tag_ref": {
+                    "ref": "refs/tags/v0.3.0",
+                    "object_type": "tag",
+                    "object_sha": "b" * 40,
+                },
+                "tag_object": {
+                    "tag": "v0.3.0",
+                    "tag_object_sha": "b" * 40,
+                    "target_type": "commit",
+                    "peeled_target_sha": COMMIT,
+                },
+                "hosting_protection": {
+                    "supported": True,
+                    "enabled": True,
+                },
+                "release": {
+                    "id": 7,
+                    "url": f"{REPOSITORY}/releases/tag/v0.3.0",
+                    "tag_name": "v0.3.0",
+                    "target_commitish": COMMIT,
+                    "draft": False,
+                    "immutable": True,
+                    "published_at": "2026-07-21T18:00:00+00:00",
+                },
+                "asset_upload_verified": True,
+                "local_asset_manifest": {
+                    "manifest_name": "SHA256SUMS",
+                    "sha256sums_sha256": "d" * 64,
+                    "assets": [publication_asset],
+                },
+                "remote_assets": [
+                    {
+                        "name": publication_asset["name"],
+                        "size": publication_asset["size"],
+                        "verified_sha256": publication_asset["sha256"],
+                    }
+                ],
+                "published_redownload_verification": {
+                    "method": "authenticated_redownload_sha256",
+                    "verified": True,
+                    "assets": [publication_asset],
+                },
+                "post_publish_verification": {"complete": True},
             },
             indent=2,
         )
@@ -665,7 +715,16 @@ def test_report_scientific_content_is_independent_of_publication_state(
 
     payload = json.loads(publication.read_text(encoding="utf-8"))
     payload["publication_state"] = "draft"
+    payload["verification_state"] = "verified_empty_draft"
     payload.pop("published_utc")
+    payload["release"].update(
+        {"draft": True, "immutable": False, "published_at": None}
+    )
+    payload["remote_assets"] = []
+    payload["asset_upload_verified"] = False
+    payload.pop("local_asset_manifest")
+    payload.pop("published_redownload_verification")
+    payload.pop("post_publish_verification")
     publication.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     draft = report_builder.generate_report(
         packet, publication, tmp_path / "draft-report"
@@ -673,6 +732,25 @@ def test_report_scientific_content_is_independent_of_publication_state(
 
     assert draft == published
     assert "publication state" not in draft.lower()
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("verified", False, "not verified"),
+        ("verification_state", "published_transition_recorded", "not fully verified"),
+    ],
+)
+def test_report_rejects_unverified_publication_receipt(
+    tmp_path: Path, field: str, value: object, message: str
+) -> None:
+    packet, publication, _ = make_packet(tmp_path)
+    payload = json.loads(publication.read_text(encoding="utf-8"))
+    payload[field] = value
+    publication.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+    with pytest.raises(report_builder.ReportValidationError, match=message):
+        report_builder.generate_report(packet, publication, tmp_path / "report")
 
 
 def test_cli_exposes_optional_pdf_handoff(tmp_path: Path) -> None:

@@ -28,8 +28,10 @@ REQUIRED_SDIST_PATHS = {
     "scripts/inventory_visual_artifacts.py",
     "scripts/publish_github_release_v0.3.0.py",
     "scripts/refresh_tracked_public_validation_assets_v0.3.0.py",
+    "scripts/run_fresh_public_tag_validation_v0.3.0.sh",
     "scripts/run_mito_pipeline.sh",
     "scripts/safe_extract_validation_zip.py",
+    "scripts/sanitize_validation_evidence.py",
     "scripts/summarize_filter_profiles.py",
     "tests/_helpers.py",
     "tests/conftest.py",
@@ -38,6 +40,7 @@ REQUIRED_SDIST_PATHS = {
     "tests/fixtures/mock_phymer_vendor/resources/Build_16_-_rCRS-based_haplogroup_motifs.csv",
     "tests/smoke_public_pipeline.sh",
     "tests/test_validation_packet.py",
+    "tests/test_sanitize_validation_evidence.py",
 }
 
 

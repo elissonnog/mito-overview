@@ -78,11 +78,21 @@ release date.
 - [ ] Independent macOS and Ubuntu clean-room public runs start from public
   HTTPS clones at `FINAL_SHA` and pass.
 - [ ] Annotated tag `v0.3.0` peels to `FINAL_SHA` and is never rewritten.
-- [ ] A fresh public-tag clone passes package, unit, and synthetic checks.
+- [ ] `scripts/run_fresh_public_tag_validation_v0.3.0.sh` clones the public
+  annotated tag through HTTPS, verifies its peeled `FINAL_SHA`, and records
+  `PASS` for its pinned environment, wheel/sdist, installed CLI, complete unit
+  suite, four smoke workflows, and both example builders.
+- [ ] The fresh-tag evidence manifest verifies, contains no local absolute
+  path, and its receipt is supplied to every publisher phase with
+  `--tag-validation-receipt`. Missing, failed, or tampered evidence blocks all
+  GitHub release mutations.
 
 ## Release asset gate
 
 - [ ] The draft GitHub release targets the existing `v0.3.0` tag.
+- [ ] Report generation uses either a verified empty-draft receipt or a fully
+  verified published receipt; transition-only or unverified metadata cannot
+  produce a passing report.
 - [ ] Repository immutable releases are enabled before draft creation, and the
   queried published release reports `immutable=true`.
 - [ ] Canonical assets include wheel, sdist, validation ZIP, Markdown/DOCX/PDF

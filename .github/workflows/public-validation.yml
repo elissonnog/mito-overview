@@ -173,6 +173,10 @@ jobs:
             echo "Raw genomic input or alignment entered artifact staging" >&2
             exit 1
           fi
+          python scripts/sanitize_validation_evidence.py "$ARTIFACT_ROOT" \
+            --replace "$GITHUB_WORKSPACE=\${REPOSITORY_CHECKOUT}" \
+            --replace "$RUNNER_TEMP=\${RUNNER_TEMP}" \
+            --replace "$HOME=\${HOME}"
           (
             cd "$ARTIFACT_ROOT"
             find . -type f ! -name SHA256SUMS -print0 \

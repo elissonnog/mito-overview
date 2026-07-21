@@ -46,6 +46,97 @@ def _write_assets(root: Path) -> dict[str, bytes]:
     return {**payloads, "SHA256SUMS": manifest}
 
 
+def _write_tag_validation_evidence(root: Path) -> Path:
+    root.mkdir(parents=True, exist_ok=True)
+    cases = root / "cases.tsv"
+    cases.write_text(
+        "case_id\tverdict\tdetail\n"
+        + "".join(
+            f"{case_id}\tPASS\tverified fixture evidence\n"
+            for case_id in sorted(publication.REQUIRED_TAG_VALIDATION_CASES)
+        ),
+        encoding="utf-8",
+    )
+    (root / "environment.txt").write_text(
+        "\n".join(
+            (
+                "python=3.12.13",
+                "samtools=1.23.1",
+                "htslib=1.23.1",
+                "minimap2=2.31-r1302",
+                "bwa=0.7.19-r1273",
+                "threads=4",
+            )
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (root / "tag_identity.json").write_text(
+        json.dumps(
+            {
+                "annotated_tag": True,
+                "checked_out_commit": FINAL_SHA,
+                "git_commit": FINAL_SHA,
+                "release_tag": publication.EXPECTED_TAG,
+                "tag_object_sha": TAG_OBJECT_SHA,
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (root / "commands").mkdir(exist_ok=True)
+    (root / "logs").mkdir(exist_ok=True)
+    (root / "commands/run.sh").write_text("pytest -q\n", encoding="utf-8")
+    (root / "logs/run.log").write_text("all checks passed\n", encoding="utf-8")
+    manifest = root / "evidence.sha256"
+    receipt = root / "fresh_public_tag_validation.json"
+    evidence_files = sorted(
+        path
+        for path in root.rglob("*")
+        if path.is_file() and path not in {manifest, receipt}
+    )
+    manifest.write_text(
+        "".join(
+            f"{_sha256(path.read_bytes())}  {path.relative_to(root).as_posix()}\n"
+            for path in evidence_files
+        ),
+        encoding="utf-8",
+    )
+    receipt.write_text(
+        json.dumps(
+            {
+                "schema_version": publication.TAG_VALIDATION_SCHEMA_VERSION,
+                "validation_profile": publication.TAG_VALIDATION_PROFILE,
+                "evidence_type": "fresh_public_tag_validation",
+                "repository": f"https://github.com/{REPOSITORY}",
+                "repository_slug": REPOSITORY,
+                "release_tag": publication.EXPECTED_TAG,
+                "git_commit": FINAL_SHA,
+                "checked_out_commit": FINAL_SHA,
+                "tag_object_sha": TAG_OBJECT_SHA,
+                "public_https_clone": True,
+                "detached_head": True,
+                "clean_worktree": True,
+                "verdict": "PASS",
+                "verified": True,
+                "case_count": len(publication.REQUIRED_TAG_VALIDATION_CASES),
+                "cases_path": "cases.tsv",
+                "environment_path": "environment.txt",
+                "tag_identity_path": "tag_identity.json",
+                "evidence_manifest_path": "evidence.sha256",
+                "evidence_manifest_sha256": _sha256(manifest.read_bytes()),
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return receipt
+
+
 class FakeGhRunner:
     def __init__(
         self,
@@ -235,6 +326,9 @@ def _config(
     *,
     asset_dir: Path | None = None,
 ) -> Any:
+    tag_receipt = _write_tag_validation_evidence(
+        output_dir.parent / "fresh-tag-validation"
+    )
     return publication.PublicationConfig(
         repository=REPOSITORY,
         final_sha=FINAL_SHA,
@@ -242,6 +336,7 @@ def _config(
         output_directory=output_dir,
         phase=phase,
         github_actions_run_id=RUN_ID,
+        tag_validation_receipt=tag_receipt,
         asset_directory=asset_dir,
     )
 
@@ -293,6 +388,10 @@ def test_create_draft_requires_existing_annotated_tag_and_records_report_identit
     assert record["publication_state"] == "draft"
     assert record["tag_ref"]["object_sha"] == TAG_OBJECT_SHA
     assert record["tag_object"]["peeled_target_sha"] == FINAL_SHA
+    assert record["fresh_public_tag_validation"]["verdict"] == "PASS"
+    assert record["fresh_public_tag_validation"]["case_count"] == len(
+        publication.REQUIRED_TAG_VALIDATION_CASES
+    )
     assert record["hosting_protection"] == {
         "supported": True,
         "enabled": True,
@@ -303,6 +402,25 @@ def test_create_draft_requires_existing_annotated_tag_and_records_report_identit
     assert runner.mutations == ["enable_immutable_releases", "create_release"]
     assert not any("releases/tags/" in " ".join(call) for call in runner.calls)
     assert not any(call[2].endswith("git/tags") for call in runner.calls if len(call) > 2)
+
+
+def test_missing_or_tampered_fresh_tag_evidence_blocks_before_github_mutation(
+    tmp_path: Path,
+) -> None:
+    runner = FakeGhRunner()
+    config = _config(tmp_path / "publication", "create-draft")
+    (config.tag_validation_receipt.parent / "logs/run.log").write_text(
+        "tampered\n", encoding="utf-8"
+    )
+
+    with pytest.raises(publication.PublicationError, match="hash mismatch"):
+        publication.publish_github_release(config, runner)
+    assert runner.calls == []
+
+    config.tag_validation_receipt.unlink()
+    with pytest.raises(publication.PublicationError, match="receipt is required"):
+        publication.publish_github_release(config, runner)
+    assert runner.calls == []
 
 
 @pytest.mark.parametrize("tag_problem", ["missing", "lightweight"])
@@ -673,12 +791,18 @@ def test_main_and_tag_drift_fail_before_remote_mutation(tmp_path: Path) -> None:
         assert runner.mutations == []
 
 
-def test_cli_requires_phase_assets_and_github_actions_run_id() -> None:
+def test_cli_requires_phase_assets_run_id_and_tag_validation_receipt() -> None:
     parser = publication._parser()
     base = [REPOSITORY, FINAL_SHA, publication.EXPECTED_TAG, "output"]
     with pytest.raises(SystemExit):
         parser.parse_args([*base, "--create-draft"])
-    common = [*base, "--github-actions-run-id", str(RUN_ID)]
+    common = [
+        *base,
+        "--github-actions-run-id",
+        str(RUN_ID),
+        "--tag-validation-receipt",
+        "fresh-tag-validation/fresh_public_tag_validation.json",
+    ]
     assert parser.parse_args([*common, "--create-draft"]).phase == "create-draft"
     upload = parser.parse_args(
         [*common, "--upload-verify", "--asset-directory", "assets"]

@@ -1505,6 +1505,14 @@ def test_github_only_packet_builds_and_verifies_from_fresh_extraction(
     output = tmp_path / "output"
     packet_builder.build_packet(packet_args(validation, repo, output))
     packet = output / "packet"
+    source_public_manifest = (
+        validation
+        / "acceptance/ubuntu_public_validation/artifact/SHA256SUMS"
+    )
+    packaged_public_manifest = (
+        packet / "acceptance/ubuntu_public_validation/artifact/SHA256SUMS"
+    )
+    assert packaged_public_manifest.read_bytes() == source_public_manifest.read_bytes()
 
     run_record = json.loads((packet / "run.json").read_text(encoding="utf-8"))
     identity = json.loads((packet / "release_identity.json").read_text(encoding="utf-8"))
@@ -2226,6 +2234,21 @@ def test_packet_normalizes_local_absolute_paths(tmp_path: Path) -> None:
     )
     assert "/Users/" not in copied
     assert "${HOME}" in copied
+
+
+def test_packet_rejects_local_paths_inside_immutable_public_artifact(
+    tmp_path: Path,
+) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    artifact_root = validation / "acceptance/ubuntu_public_validation/artifact"
+    artifact_log = artifact_root / "results/logs/runner.log"
+    artifact_log.parent.mkdir(parents=True, exist_ok=True)
+    artifact_log.write_text("checkout=/home/runner/work/mito-overview\n", encoding="utf-8")
+    rewrite_public_artifact_manifest(artifact_root)
+
+    with pytest.raises(ValueError, match="absolute user path"):
+        packet_builder.build_packet(packet_args(validation, repo, tmp_path / "output"))
 
 
 def test_packet_rejects_ci_run_identity_drift(tmp_path: Path) -> None:

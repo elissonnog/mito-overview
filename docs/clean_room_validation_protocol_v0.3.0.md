@@ -136,11 +136,14 @@ complete rerun from a new final commit.
    public HTTPS repository at `FINAL_SHA`.
 6. Build and verify the GitHub-only validation packet from both its source
    directory and a fresh extraction.
-7. Create annotated tag `v0.3.0` at `FINAL_SHA`, validate the public tag, and
-   never move it.
+7. Create annotated tag `v0.3.0` at `FINAL_SHA`, run
+   `scripts/run_fresh_public_tag_validation_v0.3.0.sh` from an absent work and
+   evidence root, verify its hash-manifested PASS receipt, and never move the
+   tag. Every publisher phase requires that exact receipt.
 8. Enable immutable releases through GitHub's repository setting, create a
    draft release, build the report from
    queried draft metadata, upload and redownload the complete asset inventory,
    verify `SHA256SUMS` against every other asset, publish, and capture the
-   queried release/tag/asset receipt.
+   queried release/tag/asset receipt. Report construction rejects unverified,
+   transition-only, or internally inconsistent publication metadata.
 9. Stop before manuscript, bioRxiv, Notion, or MCW/HPC work.

@@ -23,6 +23,42 @@ def run_deletion_fixture(tmp_path: Path, reads: list[ReadSpec]) -> dict[str, Pat
     )
 
 
+def test_empty_alignment_preserves_all_deletion_table_schemas(tmp_path: Path) -> None:
+    outputs = run_deletion_fixture(tmp_path, [])
+
+    expected_columns = {
+        "events_path": (
+            "read_name",
+            "event_start",
+            "event_end",
+            "deletion_size",
+            "event_bin_start",
+            "event_bin_end",
+            "is_primary_read",
+            "has_sa_tag",
+        ),
+        "clusters_path": (
+            "event_bin_start",
+            "event_bin_end",
+            "supporting_reads",
+            "median_deletion_size",
+            "min_deletion_size",
+            "max_deletion_size",
+            "support_fraction_primary",
+        ),
+        "reads_path": (
+            "read_name",
+            "has_large_deletion",
+            "is_supplementary",
+            "has_sa_tag",
+        ),
+    }
+    for output_name, columns in expected_columns.items():
+        table = pd.read_csv(outputs[output_name], sep="\t")
+        assert tuple(table.columns) == columns
+        assert table.empty
+
+
 def test_split_alignment_summary_counts_unique_read_names(tmp_path: Path) -> None:
     outputs = run_deletion_fixture(
         tmp_path,
@@ -48,6 +84,13 @@ def test_split_alignment_summary_counts_unique_read_names(tmp_path: Path) -> Non
     assert int(float(summary["reads_with_large_deletion"])) == 0
     assert int(float(summary["candidate_deletion_clusters"])) == 0
     assert pd.read_csv(outputs["events_path"], sep="\t").empty
+    read_flags = pd.read_csv(outputs["reads_path"], sep="\t")
+    assert tuple(read_flags.columns) == (
+        "read_name",
+        "has_large_deletion",
+        "is_supplementary",
+        "has_sa_tag",
+    )
     assert clusters.empty
     assert "Only CIGAR deletion operations meeting the configured minimum size" in report
     assert "Supplementary-alignment status and SA tags are summarized separately" in report
@@ -86,6 +129,23 @@ def test_large_deletion_read_count_deduplicates_alignment_segments(tmp_path: Pat
     assert int(float(summary["reads_with_large_deletion"])) == 1
     assert int(float(summary["reads_with_supplementary_or_SA"])) == 1
     assert len(events) == 2
+    assert events[
+        [
+            "event_start",
+            "event_end",
+            "deletion_size",
+            "event_bin_start",
+            "event_bin_end",
+        ]
+    ].drop_duplicates().to_dict("records") == [
+        {
+            "event_start": 6,
+            "event_end": 105,
+            "deletion_size": 100,
+            "event_bin_start": 0,
+            "event_bin_end": 100,
+        }
+    ]
     assert clusters["supporting_reads"].tolist() == [1]
     assert "Qualifying CIGAR-deletion bins" in report
     assert "Supplementary-alignment status and SA tags are summarized separately" in report

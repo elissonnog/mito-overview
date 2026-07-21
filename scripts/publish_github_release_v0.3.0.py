@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import hashlib
 import json
 import os
@@ -19,6 +20,8 @@ from typing import Any, Protocol, Sequence
 
 EXPECTED_TAG = "v0.3.0"
 PUBLICATION_SCHEMA_VERSION = "1.0"
+TAG_VALIDATION_SCHEMA_VERSION = "1.0"
+TAG_VALIDATION_PROFILE = "fresh_public_tag_validation_v1"
 API_VERSION = "2026-03-10"
 ACCEPT_HEADER = "application/vnd.github+json"
 PHASES = ("create-draft", "upload-verify", "publish")
@@ -30,6 +33,25 @@ SHA_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 ASSET_NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,254}$")
 CHECKSUM_LINE_PATTERN = re.compile(
     r"^(?P<digest>[0-9a-f]{64})  (?P<name>[A-Za-z0-9][A-Za-z0-9._+-]{0,254})$"
+)
+EVIDENCE_CHECKSUM_LINE_PATTERN = re.compile(
+    r"^(?P<digest>[0-9a-f]{64})  (?P<path>[A-Za-z0-9][A-Za-z0-9._+/-]{0,1023})$"
+)
+REQUIRED_TAG_VALIDATION_CASES = frozenset(
+    {
+        "public_https_tag_clone",
+        "annotated_tag_identity",
+        "clean_tag_checkout",
+        "locked_environment",
+        "wheel_sdist_build",
+        "installed_cli",
+        "unit_tests",
+        "smoke_longread",
+        "smoke_shortread",
+        "smoke_longread_nomethyl",
+        "smoke_standalone",
+        "example_builders",
+    }
 )
 CANONICAL_ASSET_NAMES = frozenset(
     {
@@ -125,6 +147,7 @@ class PublicationConfig:
     output_directory: Path
     phase: str
     github_actions_run_id: int
+    tag_validation_receipt: Path
     asset_directory: Path | None = None
 
 
@@ -167,6 +190,10 @@ def _validate_config(config: PublicationConfig) -> PublicationConfig:
         or config.github_actions_run_id <= 0
     ):
         raise PublicationError("GitHub Actions run ID must be a positive integer")
+    tag_validation_receipt = config.tag_validation_receipt.expanduser()
+    if tag_validation_receipt.is_symlink() or not tag_validation_receipt.is_file():
+        raise PublicationError("Fresh public-tag validation receipt is required")
+    tag_validation_receipt = tag_validation_receipt.resolve(strict=True)
 
     asset_directory: Path | None = None
     if config.phase == "create-draft":
@@ -200,6 +227,7 @@ def _validate_config(config: PublicationConfig) -> PublicationConfig:
         output_directory=output_directory,
         phase=config.phase,
         github_actions_run_id=config.github_actions_run_id,
+        tag_validation_receipt=tag_validation_receipt,
         asset_directory=asset_directory,
     )
 
@@ -737,6 +765,7 @@ def _base_receipt(
         "tag_ref": tag_ref,
         "tag_object": tag_object,
         "release": _release_record(release),
+        "fresh_public_tag_validation": _validate_tag_validation_receipt(config),
     }
     if publication_state == "published":
         payload["published_at"] = release.get("published_at")
@@ -773,6 +802,152 @@ def _load_json(path: Path, label: str) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise PublicationError(f"{label} must contain a JSON object")
     return payload
+
+
+def _safe_evidence_path(value: str) -> Path:
+    path = Path(value)
+    if (
+        path.is_absolute()
+        or not path.parts
+        or any(part in {"", ".", ".."} for part in path.parts)
+    ):
+        raise PublicationError(f"Unsafe fresh-tag evidence path: {value!r}")
+    return path
+
+
+def _validate_tag_validation_receipt(
+    config: PublicationConfig,
+) -> dict[str, Any]:
+    receipt_path = config.tag_validation_receipt
+    payload = _load_json(receipt_path, "fresh public-tag validation receipt")
+    expected = {
+        "schema_version": TAG_VALIDATION_SCHEMA_VERSION,
+        "validation_profile": TAG_VALIDATION_PROFILE,
+        "evidence_type": "fresh_public_tag_validation",
+        "repository": _repository_url(config),
+        "repository_slug": config.repository,
+        "release_tag": config.tag,
+        "git_commit": config.final_sha,
+        "checked_out_commit": config.final_sha,
+        "public_https_clone": True,
+        "detached_head": True,
+        "clean_worktree": True,
+        "verdict": "PASS",
+        "verified": True,
+        "cases_path": "cases.tsv",
+        "environment_path": "environment.txt",
+        "tag_identity_path": "tag_identity.json",
+        "evidence_manifest_path": "evidence.sha256",
+    }
+    for field, value in expected.items():
+        if payload.get(field) != value:
+            raise PublicationError(
+                f"Fresh public-tag validation mismatch for {field}: "
+                f"expected {value!r}, observed {payload.get(field)!r}"
+            )
+    tag_object_sha = str(payload.get("tag_object_sha", ""))
+    if SHA_PATTERN.fullmatch(tag_object_sha) is None:
+        raise PublicationError("Fresh public-tag validation has no annotated tag object SHA")
+
+    root = receipt_path.parent
+    manifest_path = root / "evidence.sha256"
+    if manifest_path.is_symlink() or not manifest_path.is_file():
+        raise PublicationError("Fresh public-tag evidence manifest is missing")
+    manifest: dict[str, str] = {}
+    for line_number, line in enumerate(
+        manifest_path.read_text(encoding="utf-8").splitlines(), start=1
+    ):
+        match = EVIDENCE_CHECKSUM_LINE_PATTERN.fullmatch(line)
+        if match is None:
+            raise PublicationError(
+                f"Malformed fresh-tag evidence manifest line {line_number}: {line!r}"
+            )
+        relative = _safe_evidence_path(match.group("path")).as_posix()
+        if relative in {receipt_path.name, manifest_path.name} or relative in manifest:
+            raise PublicationError("Fresh-tag evidence manifest is duplicate or self-referential")
+        manifest[relative] = match.group("digest")
+    if not manifest:
+        raise PublicationError("Fresh public-tag evidence manifest is empty")
+    actual: set[str] = set()
+    for candidate in root.rglob("*"):
+        if candidate.is_symlink() or (
+            not candidate.is_file() and not candidate.is_dir()
+        ):
+            raise PublicationError(
+                "Fresh public-tag evidence contains a symlink or special file"
+            )
+        if candidate.is_file() and candidate not in {receipt_path, manifest_path}:
+            actual.add(candidate.relative_to(root).as_posix())
+    if set(manifest) != actual:
+        raise PublicationError("Fresh public-tag evidence manifest inventory differs")
+    for relative, expected_digest in manifest.items():
+        if _sha256_file(root / relative) != expected_digest:
+            raise PublicationError(f"Fresh public-tag evidence hash mismatch: {relative}")
+    manifest_sha = _sha256_file(manifest_path)
+    if payload.get("evidence_manifest_sha256") != manifest_sha:
+        raise PublicationError("Fresh public-tag evidence manifest digest differs")
+
+    cases_path = root / "cases.tsv"
+    with cases_path.open(encoding="utf-8", newline="") as handle:
+        reader = csv.DictReader(handle, delimiter="\t")
+        if tuple(reader.fieldnames or ()) != ("case_id", "verdict", "detail"):
+            raise PublicationError("Fresh public-tag case table schema differs")
+        rows = list(reader)
+    case_ids = [row["case_id"] for row in rows]
+    if (
+        len(case_ids) != len(set(case_ids))
+        or set(case_ids) != set(REQUIRED_TAG_VALIDATION_CASES)
+        or any(row["verdict"] != "PASS" or not row["detail"] for row in rows)
+    ):
+        raise PublicationError("Fresh public-tag validation cases are incomplete or non-PASS")
+    if payload.get("case_count") != len(rows):
+        raise PublicationError("Fresh public-tag validation case count differs")
+
+    tag_identity = _load_json(root / "tag_identity.json", "fresh-tag identity evidence")
+    if tag_identity != {
+        "annotated_tag": True,
+        "checked_out_commit": config.final_sha,
+        "git_commit": config.final_sha,
+        "release_tag": config.tag,
+        "tag_object_sha": tag_object_sha,
+    }:
+        raise PublicationError("Fresh public-tag annotated-tag identity differs")
+    environment = (root / "environment.txt").read_text(encoding="utf-8")
+    for required_line in (
+        "python=3.12.13",
+        "samtools=1.23.1",
+        "htslib=1.23.1",
+        "minimap2=2.31-r1302",
+        "bwa=0.7.19-r1273",
+        "threads=4",
+    ):
+        if required_line not in environment.splitlines():
+            raise PublicationError(
+                f"Fresh public-tag environment lacks required identity: {required_line}"
+            )
+    forbidden_paths = re.compile(
+        r"/Users/[^/\s]+|/home/[^/\s]+|/private/tmp(?:/[^\s]*)?"
+    )
+    for relative in manifest:
+        path = root / relative
+        try:
+            text = path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            continue
+        if forbidden_paths.search(text):
+            raise PublicationError(
+                f"Fresh public-tag evidence contains an absolute user path: {relative}"
+            )
+    return {
+        "schema_version": TAG_VALIDATION_SCHEMA_VERSION,
+        "validation_profile": TAG_VALIDATION_PROFILE,
+        "receipt_sha256": _sha256_file(receipt_path),
+        "evidence_manifest_sha256": manifest_sha,
+        "tag_object_sha": tag_object_sha,
+        "case_count": len(rows),
+        "verdict": "PASS",
+        "verified": True,
+    }
 
 
 def _validate_receipt_identity(record: dict[str, Any], config: PublicationConfig) -> None:
@@ -1219,6 +1394,7 @@ def publish_github_release(
     """Execute one resumable publication phase and return its JSON receipt."""
 
     validated = _validate_config(config)
+    _validate_tag_validation_receipt(validated)
     command_runner = runner or SubprocessRunner()
     if validated.phase == "create-draft":
         return _create_draft_mode(command_runner, validated)
@@ -1245,6 +1421,12 @@ def _parser() -> argparse.ArgumentParser:
         type=int,
         required=True,
         help="Exact successful FINAL_SHA GitHub Actions run ID",
+    )
+    parser.add_argument(
+        "--tag-validation-receipt",
+        type=Path,
+        required=True,
+        help="Hash-manifested PASS receipt from a fresh public v0.3.0 tag clone",
     )
     phases = parser.add_mutually_exclusive_group(required=True)
     phases.add_argument(
@@ -1285,6 +1467,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         output_directory=args.output_directory,
         phase=args.phase,
         github_actions_run_id=args.github_actions_run_id,
+        tag_validation_receipt=args.tag_validation_receipt,
         asset_directory=args.asset_directory,
     )
     try:

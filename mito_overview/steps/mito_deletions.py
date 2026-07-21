@@ -35,6 +35,12 @@ CLUSTER_COLUMNS = [
     "max_deletion_size",
     "support_fraction_primary",
 ]
+READ_COLUMNS = [
+    "read_name",
+    "has_large_deletion",
+    "is_supplementary",
+    "has_sa_tag",
+]
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -139,7 +145,7 @@ def run_step(
     print(f"[deletions] finished scanning primary_reads={primary_reads} candidate_events={len(event_rows)}")
 
     event_df = pd.DataFrame(event_rows, columns=EVENT_COLUMNS)
-    read_df = pd.DataFrame(read_rows)
+    read_df = pd.DataFrame(read_rows, columns=READ_COLUMNS)
     if not event_df.empty:
         cluster_df = (
             event_df.groupby(["event_bin_start", "event_bin_end"], as_index=False)

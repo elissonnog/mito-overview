@@ -3717,7 +3717,12 @@ def _text_payload(path: Path) -> str | None:
         return None
 
 
-def sanitize_packet_paths(packet_root: Path, replacements: dict[Path, str]) -> None:
+def sanitize_packet_paths(
+    packet_root: Path,
+    replacements: dict[Path, str],
+    immutable_roots: tuple[Path, ...] = (),
+) -> None:
+    protected = tuple(path.resolve(strict=False) for path in immutable_roots)
     ordered = sorted(
         ((str(path.resolve(strict=False)), marker) for path, marker in replacements.items()),
         key=lambda item: len(item[0]),
@@ -3725,6 +3730,9 @@ def sanitize_packet_paths(packet_root: Path, replacements: dict[Path, str]) -> N
     )
     for path in sorted(packet_root.rglob("*")):
         if not path.is_file() or path.name == "verify_bundle.sh":
+            continue
+        resolved = path.resolve(strict=False)
+        if any(resolved.is_relative_to(root) for root in protected):
             continue
         text = _text_payload(path)
         if text is None:
@@ -6012,7 +6020,19 @@ def build_packet(args: argparse.Namespace) -> Path:
     cache_root = getattr(args, "cache_root", None)
     if cache_root is not None:
         replacements[cache_root] = "${PUBLIC_CACHE}"
-    sanitize_packet_paths(args.packet_root, replacements)
+    packaged_public_artifact = (
+        args.packet_root / "acceptance/ubuntu_public_validation/artifact"
+    )
+    sanitize_packet_paths(
+        args.packet_root,
+        replacements,
+        immutable_roots=(packaged_public_artifact,),
+    )
+    validate_downloaded_public_artifact_identity(
+        packaged_public_artifact,
+        str(release_identity["git_commit"]),
+        int(public_validation_identity["run_id"]),
+    )
 
     packaged_environment = validate_public_environment(
         args.packet_root / PUBLIC_ENVIRONMENT_PACKET_PATH

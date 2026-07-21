@@ -240,5 +240,7 @@ def test_ci_uses_fixed_runners_and_public_artifacts_exclude_raw_inputs() -> None
     assert "raw_inputs.tsv" in public
     assert "CACHE_SEAL.sha256" in public
     assert "shasum -a 256 -c SHA256SUMS" in public
+    assert "sanitize_validation_evidence.py" in public
+    assert "--replace \"$RUNNER_TEMP=\\${RUNNER_TEMP}\"" in public
     assert 'f"platform-{os.environ[' in smoke
     assert '"EXPECTED_PLATFORM"' in smoke

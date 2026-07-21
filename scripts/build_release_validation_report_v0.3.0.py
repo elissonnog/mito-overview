@@ -660,6 +660,12 @@ def validate_publication(
         "github_release_url",
         "github_actions_run_id",
         "publication_state",
+        "verification_state",
+        "verified",
+        "tag_ref",
+        "tag_object",
+        "hosting_protection",
+        "release",
     }
     missing = sorted(required - set(publication))
     if missing:
@@ -674,6 +680,76 @@ def validate_publication(
         raise ReportValidationError(
             "publication_state must be either 'draft' or 'published'"
         )
+    if publication["verified"] is not True:
+        raise ReportValidationError("GitHub publication receipt is not verified")
+
+    commit = str(run["git_commit"])
+    tag_ref = publication["tag_ref"]
+    tag_object = publication["tag_object"]
+    if not isinstance(tag_ref, dict) or not isinstance(tag_object, dict):
+        raise ReportValidationError("GitHub publication receipt lacks annotated-tag identity")
+    tag_object_sha = str(tag_ref.get("object_sha", ""))
+    if (
+        tag_ref.get("ref") != f"refs/tags/{EXPECTED_VERSION}"
+        or tag_ref.get("object_type") != "tag"
+        or COMMIT_RE.fullmatch(tag_object_sha) is None
+        or tag_object.get("tag") != EXPECTED_VERSION
+        or tag_object.get("tag_object_sha") != tag_object_sha
+        or tag_object.get("target_type") != "commit"
+        or tag_object.get("peeled_target_sha") != commit
+    ):
+        raise ReportValidationError("GitHub publication annotated-tag identity is invalid")
+
+    hosting = publication["hosting_protection"]
+    if (
+        not isinstance(hosting, dict)
+        or hosting.get("supported") is not True
+        or hosting.get("enabled") is not True
+    ):
+        raise ReportValidationError("GitHub immutable-release protection is not verified")
+
+    release_record = publication["release"]
+    if not isinstance(release_record, dict):
+        raise ReportValidationError("GitHub publication release record is malformed")
+    if (
+        not isinstance(release_record.get("id"), int)
+        or release_record.get("tag_name") != EXPECTED_VERSION
+        or release_record.get("target_commitish") != commit
+        or release_record.get("url")
+        != f"{str(run['repository']).rstrip('/')}/releases/tag/{EXPECTED_VERSION}"
+    ):
+        raise ReportValidationError("GitHub publication release identity is invalid")
+
+    verification_state = publication["verification_state"]
+    publication_state = publication["publication_state"]
+    if publication_state == "draft":
+        if verification_state not in {"verified_empty_draft", "verified_draft_assets"}:
+            raise ReportValidationError("Draft GitHub receipt is not in a verified state")
+        if (
+            release_record.get("draft") is not True
+            or release_record.get("immutable") is not False
+            or release_record.get("published_at") is not None
+        ):
+            raise ReportValidationError("Verified draft release state is inconsistent")
+        if verification_state == "verified_empty_draft":
+            if publication.get("remote_assets") != []:
+                raise ReportValidationError("Verified empty draft unexpectedly contains assets")
+        else:
+            validate_publication_assets(publication, "redownload_verification")
+    else:
+        if verification_state != "verified_published":
+            raise ReportValidationError("Published GitHub receipt is not fully verified")
+        if (
+            release_record.get("draft") is not False
+            or release_record.get("immutable") is not True
+            or not release_record.get("published_at")
+        ):
+            raise ReportValidationError("Verified published release state is inconsistent")
+        post_publish = publication.get("post_publish_verification")
+        if not isinstance(post_publish, dict) or post_publish.get("complete") is not True:
+            raise ReportValidationError("Post-publication verification is incomplete")
+        validate_publication_assets(publication, "published_redownload_verification")
+
     if publication["publication_state"] == "published":
         published_utc = publication.get("published_utc")
         if not isinstance(published_utc, str) or not published_utc:
@@ -707,6 +783,56 @@ def validate_publication(
     identity_value(
         (("run", run), ("publication", publication)), "github_actions_run_id"
     )
+
+
+def validate_publication_assets(
+    publication: dict[str, object], redownload_field: str
+) -> None:
+    if publication.get("asset_upload_verified") is not True:
+        raise ReportValidationError("GitHub release asset upload is not verified")
+    manifest = publication.get("local_asset_manifest")
+    remote_assets = publication.get("remote_assets")
+    redownload = publication.get(redownload_field)
+    if (
+        not isinstance(manifest, dict)
+        or manifest.get("manifest_name") != "SHA256SUMS"
+        or SHA256_RE.fullmatch(str(manifest.get("sha256sums_sha256", ""))) is None
+        or not isinstance(manifest.get("assets"), list)
+        or not isinstance(remote_assets, list)
+        or not isinstance(redownload, dict)
+        or redownload.get("verified") is not True
+        or redownload.get("method") != "authenticated_redownload_sha256"
+        or not isinstance(redownload.get("assets"), list)
+    ):
+        raise ReportValidationError("GitHub release asset-verification evidence is malformed")
+
+    def asset_map(values: object, *, remote: bool) -> dict[str, tuple[int, str]]:
+        if not isinstance(values, list) or not values:
+            raise ReportValidationError("GitHub release asset inventory is empty")
+        result: dict[str, tuple[int, str]] = {}
+        for item in values:
+            if not isinstance(item, dict):
+                raise ReportValidationError("GitHub release asset inventory is malformed")
+            name = item.get("name")
+            size = item.get("size")
+            digest = item.get("verified_sha256" if remote else "sha256")
+            if (
+                not isinstance(name, str)
+                or not name
+                or name in result
+                or not isinstance(size, int)
+                or size < 0
+                or SHA256_RE.fullmatch(str(digest)) is None
+            ):
+                raise ReportValidationError("GitHub release asset inventory is invalid")
+            result[name] = (size, str(digest))
+        return result
+
+    local = asset_map(manifest["assets"], remote=False)
+    remote = asset_map(remote_assets, remote=True)
+    downloaded = asset_map(redownload["assets"], remote=False)
+    if local != remote or local != downloaded:
+        raise ReportValidationError("GitHub release asset verification inventories differ")
 
 
 def validate_identity(
