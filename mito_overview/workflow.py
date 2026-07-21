@@ -44,7 +44,7 @@ STEP_DESCRIPTIONS = {
     "extract": "Extract mitochondrial read and methylation assets.",
     "mito_qc": "Summarize read-level mitochondrial QC metrics.",
     "heteroplasmy": "Compute filtered mitochondrial alternate-allele summaries.",
-    "deletions": "Summarize long-read mtDNA deletion burden.",
+    "deletions": "Summarize long-read CIGAR-deletion candidates.",
     "copy_number": "Estimate the mt:nuclear depth proxy.",
     "feature_annotation": "Annotate mtDNA features and control-region context.",
     "cosegregation": "Summarize co-occurrence of selected mtDNA variants on long reads.",

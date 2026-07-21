@@ -67,6 +67,7 @@ class AlleleObservation:
     base_quality: int
     mapping_quality: int
     is_reverse: bool
+    alignment_support_key: str
 
 
 @dataclass
@@ -100,6 +101,23 @@ def _read_mean_quality(alignment: pysam.AlignedSegment) -> float | None:
     if qualities is None or len(qualities) == 0:
         return None
     return float(fmean(qualities))
+
+
+def _alignment_support_key(alignment: pysam.AlignedSegment) -> str:
+    """Return a stable key that distinguishes paired or split alignment records."""
+
+    fields = (
+        alignment.query_name,
+        alignment.flag,
+        alignment.reference_id,
+        alignment.reference_start,
+        alignment.reference_end,
+        alignment.next_reference_id,
+        alignment.next_reference_start,
+        alignment.template_length,
+        alignment.cigarstring or "",
+    )
+    return "\x1f".join(str(value) for value in fields)
 
 
 def _passing_observations(
@@ -165,6 +183,7 @@ def _passing_observations(
                 base_quality=base_quality,
                 mapping_quality=int(alignment.mapping_quality),
                 is_reverse=bool(alignment.is_reverse),
+                alignment_support_key=_alignment_support_key(alignment),
             )
         )
 
@@ -443,7 +462,7 @@ def collect_site_read_calls(
     sites: dict[int, str],
     policy: AlleleFilterPolicy,
 ) -> tuple[dict[int, set[str]], dict[int, set[str]], AlleleFilterStats]:
-    """Collect passing covered and alternate-read names at one-based sites."""
+    """Collect passing covered and alternate support keys at one-based sites."""
 
     coverage = {position: set() for position in sites}
     alternate = {position: set() for position in sites}
@@ -466,8 +485,13 @@ def collect_site_read_calls(
             ):
                 alt_base = sites[position].upper()
                 for observation in observations:
-                    coverage[position].add(observation.read_name)
+                    support_key = (
+                        observation.read_name
+                        if policy.ignore_overlaps
+                        else observation.alignment_support_key
+                    )
+                    coverage[position].add(support_key)
                     if observation.base == alt_base:
-                        alternate[position].add(observation.read_name)
+                        alternate[position].add(support_key)
     _finalize_stats(stats, read_sets)
     return coverage, alternate, stats

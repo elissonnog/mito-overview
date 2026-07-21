@@ -11,6 +11,75 @@ from mito_overview.workflow import run_pipeline, validate_config
 from ._helpers import ReadSpec, write_alignment, write_fasta
 
 
+GRCH38_AUTOSOME_LENGTHS = (
+    248_956_422,
+    242_193_529,
+    198_295_559,
+    190_214_555,
+    181_538_259,
+    170_805_979,
+    159_345_973,
+    145_138_636,
+    138_394_717,
+    133_797_422,
+    135_086_622,
+    133_275_309,
+    114_364_328,
+    107_043_718,
+    101_991_189,
+    90_338_345,
+    83_257_441,
+    80_373_285,
+    58_617_616,
+    64_444_167,
+    46_709_983,
+    50_818_468,
+)
+GRCM39_AUTOSOME_LENGTHS = (
+    195_154_279,
+    181_755_017,
+    159_745_316,
+    156_860_686,
+    151_758_149,
+    149_588_044,
+    144_995_196,
+    130_127_694,
+    124_359_700,
+    130_530_862,
+    121_973_369,
+    120_092_757,
+    120_883_175,
+    125_139_656,
+    104_073_951,
+    98_008_968,
+    95_294_699,
+    90_720_763,
+    61_420_004,
+)
+
+
+def complete_reference_contigs(
+    autosome_lengths: tuple[int, ...],
+    sex_chromosome_lengths: tuple[int, int],
+    mt_length: int,
+) -> dict[str, int]:
+    return {
+        "MT": mt_length,
+        **{str(index): length for index, length in enumerate(autosome_lengths, 1)},
+        "X": sex_chromosome_lengths[0],
+        "Y": sex_chromosome_lengths[1],
+    }
+
+
+def write_fai_stub(reference: Path, contig_lengths: dict[str, int]) -> Path:
+    reference.write_text(">placeholder\nA\n", encoding="ascii")
+    Path(f"{reference}.fai").write_text(
+        "".join(f"{name}\t{length}\t0\t1\t2\n" for name, length in contig_lengths.items()),
+        encoding="ascii",
+    )
+    return reference
+
+
 def minimal_mapping(root: Path, ref: Path, alignment: Path) -> dict[str, str]:
     return {
         "WORK_ROOT": str(root / "runs"),
@@ -41,9 +110,114 @@ def test_minimal_bam_contract_infers_mode_length_and_scope(
     monkeypatch.setattr("mito_overview.workflow.shutil.which", lambda _: "/usr/bin/samtools")
     assert config.source_align_mode == "bam"
     assert config.mt_length == 10
+    assert config.detected_species == "unknown"
     assert config.reference_scope == "mt_only"
     assert config.mvtool_mode == "disabled"
     assert validate_config(config) == []
+
+
+@pytest.mark.parametrize(
+    ("expected_species", "autosome_lengths", "sex_chromosome_lengths", "mt_length"),
+    [
+        pytest.param(
+            "human",
+            GRCH38_AUTOSOME_LENGTHS,
+            (156_040_895, 57_227_415),
+            16_569,
+            id="human-grch38",
+        ),
+        pytest.param(
+            "mouse",
+            GRCM39_AUTOSOME_LENGTHS,
+            (169_476_592, 91_455_967),
+            16_299,
+            id="mouse-grcm39",
+        ),
+    ],
+)
+def test_six_key_generic_reference_infers_species_from_complete_profile(
+    expected_species: str,
+    autosome_lengths: tuple[int, ...],
+    sex_chromosome_lengths: tuple[int, int],
+    mt_length: int,
+    tmp_path: Path,
+) -> None:
+    contigs = complete_reference_contigs(
+        autosome_lengths, sex_chromosome_lengths, mt_length
+    )
+    ref = write_fai_stub(tmp_path / "reference.fa", contigs)
+    mapping = minimal_mapping(tmp_path, ref, tmp_path / "input.bam")
+
+    config = PipelineConfig.from_mapping(mapping)
+
+    assert len(mapping) == 6
+    assert config.requested_species == "auto"
+    assert config.detected_species == expected_species
+    assert config.reference_build_guess == "unknown"
+    assert config.reference_scope == "whole_genome"
+
+
+@pytest.mark.parametrize(
+    "contigs",
+    [
+        pytest.param(
+            {
+                "MT": 16_569,
+                "1": GRCH38_AUTOSOME_LENGTHS[0],
+                "X": 156_040_895,
+                "Y": 57_227_415,
+            },
+            id="reduced-human-reference",
+        ),
+        pytest.param(
+            complete_reference_contigs(
+                GRCH38_AUTOSOME_LENGTHS,
+                (156_040_895, 57_227_415),
+                16_570,
+            ),
+            id="wrong-mt-length",
+        ),
+        pytest.param(
+            {
+                name: length if name == "MT" else length * 99 // 100
+                for name, length in complete_reference_contigs(
+                    GRCH38_AUTOSOME_LENGTHS,
+                    (156_040_895, 57_227_415),
+                    16_569,
+                ).items()
+            },
+            id="scaled-human-profile",
+        ),
+    ],
+)
+def test_six_key_generic_reference_does_not_infer_species_from_ambiguous_profile(
+    contigs: dict[str, int], tmp_path: Path
+) -> None:
+    ref = write_fai_stub(tmp_path / "human_reference.fa", contigs)
+    mapping = minimal_mapping(tmp_path, ref, tmp_path / "input.bam")
+
+    config = PipelineConfig.from_mapping(mapping)
+
+    assert len(mapping) == 6
+    assert config.detected_species == "unknown"
+    assert config.reference_scope == "custom"
+
+
+def test_explicit_species_overrides_complete_profile_inference(tmp_path: Path) -> None:
+    contigs = complete_reference_contigs(
+        GRCH38_AUTOSOME_LENGTHS,
+        (156_040_895, 57_227_415),
+        16_569,
+    )
+    ref = write_fai_stub(tmp_path / "reference.fa", contigs)
+    mapping = minimal_mapping(tmp_path, ref, tmp_path / "input.bam")
+    mapping["SPECIES"] = "mouse"
+
+    config = PipelineConfig.from_mapping(mapping)
+
+    assert config.requested_species == "mouse"
+    assert config.detected_species == "mouse"
+    assert config.reference_scope == "custom"
 
 
 def test_minimal_cram_contract_opens_with_reference(

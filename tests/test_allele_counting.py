@@ -113,6 +113,36 @@ def test_cosegregation_counts_only_selected_sites_with_shared_filters(tmp_path: 
     assert stats.unique_reads_accepted == 1
 
 
+def test_cosegregation_preserves_accepted_overlaps_when_suppression_is_disabled(
+    tmp_path: Path,
+) -> None:
+    bam = write_alignment(
+        tmp_path / "overlap_disabled.bam",
+        {"MT": 1},
+        [
+            ReadSpec("paired", "MT", 0, "A", flag=65, qualities=(35,)),
+            ReadSpec("paired", "MT", 0, "C", flag=129, qualities=(30,)),
+        ],
+    )
+    policy = AlleleFilterPolicy(ignore_overlaps=False)
+    counts = count_contig_alleles(
+        bam_path=bam,
+        contig="MT",
+        length=1,
+        policy=policy,
+    )
+    coverage, alternate, stats = collect_site_read_calls(
+        bam_path=bam,
+        contig="MT",
+        sites={1: "C"},
+        policy=policy,
+    )
+
+    assert sum(counts.base_counts[0].values()) == 2
+    assert len(coverage[1]) == counts.stats.accepted_observations == stats.accepted_observations == 2
+    assert len(alternate[1]) == counts.base_counts[0]["C"] == 1
+
+
 def test_heteroplasmy_outputs_canonical_fraction_and_compatibility_alias(
     high_depth_case: tuple[Path, Path], tmp_path: Path
 ) -> None:

@@ -40,10 +40,18 @@ def test_split_alignment_summary_counts_unique_read_names(tmp_path: Path) -> Non
         ],
     )
     summary = metric_map(outputs["summary_path"])
+    clusters = pd.read_csv(outputs["clusters_path"], sep="\t")
+    report = outputs["report_path"].read_text(encoding="utf-8")
+
     assert int(float(summary["primary_reads"])) == 2
     assert int(float(summary["reads_with_supplementary_or_SA"])) == 1
     assert int(float(summary["reads_with_large_deletion"])) == 0
+    assert int(float(summary["candidate_deletion_clusters"])) == 0
     assert pd.read_csv(outputs["events_path"], sep="\t").empty
+    assert clusters.empty
+    assert "Only CIGAR deletion operations meeting the configured minimum size" in report
+    assert "Supplementary-alignment status and SA tags are summarized separately" in report
+    assert "do not create bin support on their own" in report
 
 
 def test_large_deletion_read_count_deduplicates_alignment_segments(tmp_path: Path) -> None:
@@ -79,5 +87,7 @@ def test_large_deletion_read_count_deduplicates_alignment_segments(tmp_path: Pat
     assert int(float(summary["reads_with_supplementary_or_SA"])) == 1
     assert len(events) == 2
     assert clusters["supporting_reads"].tolist() == [1]
+    assert "Qualifying CIGAR-deletion bins" in report
+    assert "Supplementary-alignment status and SA tags are summarized separately" in report
     assert "structural screen" in report
     assert "rather than a finalized SV caller output" in report

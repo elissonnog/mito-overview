@@ -224,6 +224,41 @@ def test_reference_scope_auto_recognizes_complete_assemblies(
         ),
         pytest.param(
             {
+                name: length if name == "MT" else length * 99 // 100
+                for name, length in reference_contigs(GRCH38_AUTOSOME_LENGTHS).items()
+            },
+            "human",
+            id="uniformly-scaled-profile",
+        ),
+        pytest.param(
+            reference_contigs(
+                GRCH38_AUTOSOME_LENGTHS,
+                sex_chromosome_lengths=GRCH37_SEX_CHROMOSOME_LENGTHS,
+            ),
+            "human",
+            id="mixed-human-build-profile",
+        ),
+        pytest.param(
+            {**reference_contigs(GRCH38_AUTOSOME_LENGTHS), "chr12": 133_275_310},
+            "human",
+            id="one-base-modified-autosome",
+        ),
+        pytest.param(
+            reference_contigs(GRCH38_AUTOSOME_LENGTHS, mt_length=16_570),
+            "human",
+            id="wrong-human-mt-length",
+        ),
+        pytest.param(
+            reference_contigs(
+                GRCM39_AUTOSOME_LENGTHS,
+                mt_length=16_569,
+                sex_chromosome_lengths=GRCM39_SEX_CHROMOSOME_LENGTHS,
+            ),
+            "mouse",
+            id="wrong-mouse-mt-length",
+        ),
+        pytest.param(
+            {
                 name: length
                 for name, length in reference_contigs(GRCH38_AUTOSOME_LENGTHS).items()
                 if name != "chr22"
@@ -259,6 +294,11 @@ def test_reference_scope_auto_rejects_unrecognized_assemblies(
             reference_contigs(GRCH38_AUTOSOME_LENGTHS),
             "unknown",
             id="unsupported-species",
+        ),
+        pytest.param(
+            reference_contigs(GRCH38_AUTOSOME_LENGTHS, mt_length=16_570),
+            "human",
+            id="wrong-mt-length",
         ),
     ],
 )
@@ -329,7 +369,7 @@ def test_numt_interpretation_is_suppressed_without_whole_genome_scope(
     assert metrics["numt_interpretation_status"] == "not_evaluable"
     assert metrics["reason_code"] == reason
     assert metrics["heuristic_numt_risk"] == "not_evaluable"
-    assert metrics["heuristic_numt_risk_score"] == ""
+    assert metrics["heuristic_numt_risk_score"] == "NA"
     assert metrics["reads_evaluated"] == "1"
 
 

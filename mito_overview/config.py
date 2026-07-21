@@ -104,14 +104,24 @@ def detect_reference_build(reference_fasta: str | Path) -> str:
     return "unknown"
 
 
-def detect_species(reference_fasta: str | Path, requested_species: str = "auto") -> str:
-    """Infer species from the requested value and reference name."""
+def detect_species(
+    reference_fasta: str | Path,
+    requested_species: str = "auto",
+    *,
+    contig_lengths: dict[str, int] | None = None,
+    mt_contig: str = "",
+) -> str:
+    """Infer species from an explicit value, a complete profile, or the reference name."""
 
     requested = (requested_species or "auto").strip().lower()
-    build = detect_reference_build(reference_fasta)
-    ref_name = Path(reference_fasta).name.lower()
     if requested not in {"", "auto"}:
         return requested
+    if contig_lengths and mt_contig:
+        # A present index is stronger evidence than a potentially misleading filename.
+        return _infer_species_from_reference_profile(contig_lengths, mt_contig)
+
+    build = detect_reference_build(reference_fasta)
+    ref_name = Path(reference_fasta).name.lower()
     if build in {"mm10", "mm39"} or "mouse" in ref_name or "mus" in ref_name:
         return "mouse"
     if build in {"hg19", "hg38"} or "human" in ref_name or "grch" in ref_name:
@@ -193,88 +203,173 @@ def _infer_alignment_mode(path: Path, requested: str) -> str:
     raise ValueError("SOURCE_ALIGN_MODE is required when SOURCE_ALIGN_FILE is not .bam or .cram")
 
 
-_REFERENCE_AUTOSOME_LENGTHS: dict[str, tuple[int, ...]] = {
-    # GRCh38 and GRCm39 primary autosomes; GRCh37 and GRCm38 remain within 5%.
-    "human": (
-        248_956_422,
-        242_193_529,
-        198_295_559,
-        190_214_555,
-        181_538_259,
-        170_805_979,
-        159_345_973,
-        145_138_636,
-        138_394_717,
-        133_797_422,
-        135_086_622,
-        133_275_309,
-        114_364_328,
-        107_043_718,
-        101_991_189,
-        90_338_345,
-        83_257_441,
-        80_373_285,
-        58_617_616,
-        64_444_167,
-        46_709_983,
-        50_818_468,
+@dataclass(frozen=True)
+class _ReferenceProfile:
+    species: str
+    build: str
+    autosome_lengths: tuple[int, ...]
+    sex_chromosome_lengths: tuple[int, int]
+    mt_length: int
+
+
+_REFERENCE_PROFILES = (
+    _ReferenceProfile(
+        species="human",
+        build="GRCh37",
+        autosome_lengths=(
+            249_250_621,
+            243_199_373,
+            198_022_430,
+            191_154_276,
+            180_915_260,
+            171_115_067,
+            159_138_663,
+            146_364_022,
+            141_213_431,
+            135_534_747,
+            135_006_516,
+            133_851_895,
+            115_169_878,
+            107_349_540,
+            102_531_392,
+            90_354_753,
+            81_195_210,
+            78_077_248,
+            59_128_983,
+            63_025_520,
+            48_129_895,
+            51_304_566,
+        ),
+        sex_chromosome_lengths=(155_270_560, 59_373_566),
+        mt_length=16_569,
     ),
-    "mouse": (
-        195_154_279,
-        181_755_017,
-        159_745_316,
-        156_860_686,
-        151_758_149,
-        149_588_044,
-        144_995_196,
-        130_127_694,
-        124_359_700,
-        130_530_862,
-        121_973_369,
-        120_092_757,
-        120_883_175,
-        125_139_656,
-        104_073_951,
-        98_008_968,
-        95_294_699,
-        90_720_763,
-        61_420_004,
+    _ReferenceProfile(
+        species="human",
+        build="GRCh38",
+        autosome_lengths=(
+            248_956_422,
+            242_193_529,
+            198_295_559,
+            190_214_555,
+            181_538_259,
+            170_805_979,
+            159_345_973,
+            145_138_636,
+            138_394_717,
+            133_797_422,
+            135_086_622,
+            133_275_309,
+            114_364_328,
+            107_043_718,
+            101_991_189,
+            90_338_345,
+            83_257_441,
+            80_373_285,
+            58_617_616,
+            64_444_167,
+            46_709_983,
+            50_818_468,
+        ),
+        sex_chromosome_lengths=(156_040_895, 57_227_415),
+        mt_length=16_569,
     ),
-}
-_REFERENCE_SEX_CHROMOSOME_LENGTHS: dict[str, tuple[int, int]] = {
-    "human": (156_040_895, 57_227_415),
-    "mouse": (169_476_592, 91_455_967),
-}
-_MAX_CHROMOSOME_LENGTH_DEVIATION_PERCENT = 5
+    _ReferenceProfile(
+        species="mouse",
+        build="GRCm38",
+        autosome_lengths=(
+            195_471_971,
+            182_113_224,
+            160_039_680,
+            156_508_116,
+            151_834_684,
+            149_736_546,
+            145_441_459,
+            129_401_213,
+            124_595_110,
+            130_694_993,
+            122_082_543,
+            120_129_022,
+            120_421_639,
+            124_902_244,
+            104_043_685,
+            98_207_768,
+            94_987_271,
+            90_702_639,
+            61_431_566,
+        ),
+        sex_chromosome_lengths=(171_031_299, 91_744_698),
+        mt_length=16_299,
+    ),
+    _ReferenceProfile(
+        species="mouse",
+        build="GRCm39",
+        autosome_lengths=(
+            195_154_279,
+            181_755_017,
+            159_745_316,
+            156_860_686,
+            151_758_149,
+            149_588_044,
+            144_995_196,
+            130_127_694,
+            124_359_700,
+            130_530_862,
+            121_973_369,
+            120_092_757,
+            120_883_175,
+            125_139_656,
+            104_073_951,
+            98_008_968,
+            95_294_699,
+            90_720_763,
+            61_420_004,
+        ),
+        sex_chromosome_lengths=(169_476_592, 91_455_967),
+        mt_length=16_299,
+    ),
+)
+
+
+def _matches_reference_profile(
+    contig_lengths: dict[str, int], mt_contig: str, profile: _ReferenceProfile
+) -> bool:
+    if contig_lengths.get(mt_contig) != profile.mt_length:
+        return False
+
+    expected_nuclear_lengths = tuple(
+        (str(index), length) for index, length in enumerate(profile.autosome_lengths, 1)
+    ) + tuple(zip(("X", "Y"), profile.sex_chromosome_lengths, strict=True))
+
+    # Assembly lengths are exact identifiers; only standard contig-name aliases vary.
+    return any(
+        all(
+            contig_lengths.get(f"{prefix}{name}") == length
+            for name, length in expected_nuclear_lengths
+        )
+        for prefix in ("", "chr")
+    )
+
+
+def _infer_species_from_reference_profile(
+    contig_lengths: dict[str, int], mt_contig: str
+) -> str:
+    matched_species = {
+        profile.species
+        for profile in _REFERENCE_PROFILES
+        if _matches_reference_profile(contig_lengths, mt_contig, profile)
+    }
+    return matched_species.pop() if len(matched_species) == 1 else "unknown"
 
 
 def _has_recognized_nuclear_chromosome_profile(
-    contig_lengths: dict[str, int], species: str
+    contig_lengths: dict[str, int], mt_contig: str, species: str
 ) -> bool:
     normalized_species = (species or "").strip().lower()
-    expected_autosome_lengths = _REFERENCE_AUTOSOME_LENGTHS.get(normalized_species)
-    if expected_autosome_lengths is None:
-        return False
-    expected_lengths = tuple(
-        (str(index), length) for index, length in enumerate(expected_autosome_lengths, 1)
-    ) + tuple(
-        zip(
-            ("X", "Y"),
-            _REFERENCE_SEX_CHROMOSOME_LENGTHS[normalized_species],
-            strict=True,
-        )
+    return any(
+        profile.species == normalized_species
+        and _matches_reference_profile(contig_lengths, mt_contig, profile)
+        for profile in _REFERENCE_PROFILES
     )
-
-    for prefix in ("", "chr"):
-        if not all(f"{prefix}{name}" in contig_lengths for name, _ in expected_lengths):
-            continue
-        if all(
-            abs(contig_lengths[f"{prefix}{name}"] - expected) * 100
-            <= expected * _MAX_CHROMOSOME_LENGTH_DEVIATION_PERCENT
-            for name, expected in expected_lengths
-        ):
-            return True
-    return False
 
 
 def detect_reference_scope(
@@ -295,7 +390,7 @@ def detect_reference_scope(
     if contigs == {mt_contig}:
         physically_inferred = "mt_only"
     elif mt_contig in contigs and _has_recognized_nuclear_chromosome_profile(
-        contig_lengths, species
+        contig_lengths, mt_contig, species
     ):
         physically_inferred = "whole_genome"
     if requested == "auto":
@@ -393,7 +488,12 @@ class PipelineConfig:
             )
 
         requested_species = str(merged["SPECIES"])
-        detected_species = detect_species(ref_fasta, requested_species)
+        detected_species = detect_species(
+            ref_fasta,
+            requested_species,
+            contig_lengths=fai_lengths,
+            mt_contig=mt_contig,
+        )
         reference_scope = detect_reference_scope(
             requested=str(merged["REFERENCE_SCOPE"]),
             contig_lengths=fai_lengths,

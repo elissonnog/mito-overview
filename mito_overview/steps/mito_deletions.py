@@ -191,7 +191,7 @@ def run_step(
         plt.bar(labels, top["supporting_reads"], color="#b91c1c")
         plt.xticks(rotation=90)
         plt.ylabel("Supporting reads")
-        plt.title(f"{sample_id} candidate mtDNA deletion clusters")
+        plt.title(f"{sample_id} qualifying CIGAR-deletion bins")
         plt.tight_layout()
         fig_path = figure_dir / "mito_deletion_clusters.png"
         plt.savefig(fig_path, dpi=150)
@@ -200,27 +200,33 @@ def run_step(
     metrics_html = "".join(
         [
             metric_card("Primary reads", primary_reads),
-            metric_card("Reads with large deletion", reads_with_large_deletion),
-            metric_card("Candidate clusters", len(cluster_df)),
+            metric_card("Reads with qualifying CIGAR deletion", reads_with_large_deletion),
+            metric_card("CIGAR-deletion bins", len(cluster_df)),
             metric_card("Min deletion size", min_deletion_size),
         ]
     )
     intro_html = (
-        '<p class="muted">Large mitochondrial deletion candidates are summarized from CIGAR deletion segments '
-        "and supplementary-structure flags in the mito-only BAM. This page is intended as a structural screen "
-        "rather than a finalized SV caller output.</p>"
+        '<p class="muted">Only CIGAR deletion operations meeting the configured minimum size of '
+        f"{min_deletion_size} bp create or support candidate bins, whether they occur on retained primary or "
+        "supplementary alignment records. Supplementary-alignment status and SA tags are summarized separately "
+        "as alignment-structure evidence and do not create bin support on their own. This page is intended as a "
+        "structural screen rather than a finalized SV caller output.</p>"
         f"<div class='metrics-grid'>{metrics_html}</div>"
     )
     body_parts = [
         "<section><h2>Deletion summary</h2>" + df_to_html_table(summary_df, max_rows=20) + "</section>",
-        "<section><h2>Candidate deletion clusters</h2>" + df_to_html_table(cluster_df, max_rows=25) + "</section>",
-        "<section><h2>Read-level deletion events</h2>" + df_to_html_table(event_df, max_rows=30) + "</section>",
+        "<section><h2>Qualifying CIGAR-deletion bins</h2>"
+        + df_to_html_table(cluster_df, max_rows=25)
+        + "</section>",
+        "<section><h2>Qualifying CIGAR-deletion events</h2>"
+        + df_to_html_table(event_df, max_rows=30)
+        + "</section>",
     ]
     if fig_path:
         body_parts.insert(
             1,
-            "<section><h2>Top deletion clusters</h2>"
-            + figure_html(fig_path, "Top mitochondrial deletion-support clusters")
+            "<section><h2>Top CIGAR-deletion bins</h2>"
+            + figure_html(fig_path, "Top mitochondrial CIGAR-deletion bins")
             + "</section>",
         )
 
