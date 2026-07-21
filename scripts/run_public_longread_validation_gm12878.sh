@@ -22,13 +22,29 @@ echo "[longread-gm12878] workdir: ${WORKDIR}"
 echo "[longread-gm12878] output dir: ${OUTPUT_DIR}"
 echo "[longread-gm12878] python: ${MITO_OVERVIEW_PYTHON:-python3}"
 
+INPUT_MODE="${MITO_OVERVIEW_PUBLIC_INPUT_MODE:-download}"
+case "${INPUT_MODE}" in
+  download|offline) ;;
+  *)
+    echo "MITO_OVERVIEW_PUBLIC_INPUT_MODE must be download or offline" >&2
+    exit 1
+    ;;
+esac
+
 if [[ -n "${MITO_OVERVIEW_PYTHON:-}" ]]; then
   TOOL_BIN="$(cd "$(dirname "${MITO_OVERVIEW_PYTHON}")" && pwd)"
-  export PATH="${TOOL_BIN}${PATH:+:${PATH}}"
+  case ":${PATH}:" in
+    *":${TOOL_BIN}:"*) ;;
+    *) export PATH="${PATH:+${PATH}:}${TOOL_BIN}" ;;
+  esac
 fi
 PYTHON_BIN="${MITO_OVERVIEW_PYTHON:-python3}"
 
-for tool in curl minimap2 samtools; do
+required_tools=(minimap2 samtools)
+if [[ "${INPUT_MODE}" == download ]]; then
+  required_tools+=(curl)
+fi
+for tool in "${required_tools[@]}"; do
   if ! command -v "${tool}" >/dev/null 2>&1; then
     echo "Required tool not found in PATH: ${tool}" >&2
     exit 1
@@ -40,18 +56,23 @@ mkdir -p "${MPLCONFIGDIR}"
 export XDG_CACHE_HOME="${WORKDIR}/.cache"
 mkdir -p "${XDG_CACHE_HOME}"
 
-DATA_DIR="${MITO_OVERVIEW_LONGREAD_DATA_DIR:-${WORKDIR}/downloads}"
+RAW_DATA_DIR="${MITO_OVERVIEW_LONGREAD_RAW_DATA_DIR:-${MITO_OVERVIEW_LONGREAD_DATA_DIR:-${WORKDIR}/downloads}}"
+DERIVED_DIR="${MITO_OVERVIEW_LONGREAD_DERIVED_DIR:-${WORKDIR}/derived}"
 REF_DIR="${WORKDIR}/reference"
 SAMPLE_DIR="${WORKDIR}/sample"
 HV_DIR="${SAMPLE_DIR}/human_variation"
 RUN_ROOT="${WORKDIR}/runs"
 FINAL_DIR="${WORKDIR}/final_bundle"
-mkdir -p "${DATA_DIR}" "${REF_DIR}" "${HV_DIR}" "${RUN_ROOT}"
+mkdir -p "${RAW_DATA_DIR}" "${DERIVED_DIR}" "${REF_DIR}" "${HV_DIR}" "${RUN_ROOT}"
 
 download_if_missing() {
   local url="$1"
   local dest="$2"
   if [[ ! -s "${dest}" ]]; then
+    if [[ "${INPUT_MODE}" == offline ]]; then
+      echo "Offline public validation input is missing: ${dest}" >&2
+      exit 1
+    fi
     echo "[longread-gm12878] downloading ${url}"
     curl \
       --fail \
@@ -90,17 +111,17 @@ copy_if_exists() {
   fi
 }
 
-THREADS="${MITO_OVERVIEW_LONGREAD_THREADS:-2}"
-FASTQ_GZ="${MITO_OVERVIEW_LONGREAD_FASTQ_GZ:-${DATA_DIR}/SRR18110025.fastq.gz}"
+THREADS="${MITO_OVERVIEW_LONGREAD_THREADS:-4}"
+FASTQ_GZ="${MITO_OVERVIEW_LONGREAD_FASTQ_GZ:-${RAW_DATA_DIR}/SRR18110025.fastq.gz}"
 SUBSET_READ_NAMES="${MITO_OVERVIEW_LONGREAD_SUBSET_READ_NAMES:-1000}"
 SUBSET_SEED="${MITO_OVERVIEW_LONGREAD_SUBSET_SEED:-mito-overview-v0.3.0-GM12878-SRR18110025}"
-SUBSET_FASTQ="${MITO_OVERVIEW_LONGREAD_SUBSET_FASTQ:-${DATA_DIR}/SRR18110025.deterministic-qnames-${SUBSET_READ_NAMES}.fastq.gz}"
+SUBSET_FASTQ="${MITO_OVERVIEW_LONGREAD_SUBSET_FASTQ:-${DERIVED_DIR}/SRR18110025.deterministic-qnames-${SUBSET_READ_NAMES}.fastq.gz}"
 SUBSET_FASTQ_PROVENANCE="${MITO_OVERVIEW_LONGREAD_SUBSET_FASTQ_PROVENANCE:-${SUBSET_FASTQ}.provenance.json}"
 SUBSET_NAMES="${MITO_OVERVIEW_LONGREAD_SUBSET_NAMES:-${SUBSET_FASTQ}.selected_qnames.txt}"
 ALIGN_BAM="${MITO_OVERVIEW_LONGREAD_ALIGN_BAM:-${HV_DIR}/GM12878_ONT_longread.deterministic-qnames-${SUBSET_READ_NAMES}.mt.bam}"
 ALIGN_PROVENANCE="${MITO_OVERVIEW_LONGREAD_ALIGN_PROVENANCE:-${ALIGN_BAM}.provenance.json}"
 
-if [[ "${FASTQ_GZ}" == "${DATA_DIR}/SRR18110025.fastq.gz" ]]; then
+if [[ "${FASTQ_GZ}" == "${RAW_DATA_DIR}/SRR18110025.fastq.gz" ]]; then
   download_if_missing \
     "https://ftp.sra.ebi.ac.uk/vol1/fastq/SRR181/025/SRR18110025/SRR18110025_1.fastq.gz" \
     "${FASTQ_GZ}"
@@ -108,7 +129,7 @@ elif [[ ! -s "${FASTQ_GZ}" ]]; then
   echo "Requested MITO_OVERVIEW_LONGREAD_FASTQ_GZ does not exist or is empty: ${FASTQ_GZ}" >&2
   exit 1
 fi
-if [[ "${FASTQ_GZ}" == "${DATA_DIR}/SRR18110025.fastq.gz" ]]; then
+if [[ "${FASTQ_GZ}" == "${RAW_DATA_DIR}/SRR18110025.fastq.gz" ]]; then
   observed_md5="$(file_md5 "${FASTQ_GZ}")"
   if [[ "${observed_md5}" != "d5bfb9aeba04cae5f3dd79462a42e5b0" ]]; then
     echo "ENA MD5 mismatch for ${FASTQ_GZ}: expected d5bfb9aeba04cae5f3dd79462a42e5b0, observed ${observed_md5}" >&2

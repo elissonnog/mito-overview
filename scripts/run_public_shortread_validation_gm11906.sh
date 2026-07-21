@@ -22,13 +22,29 @@ echo "[shortread-gm11906] workdir: ${WORKDIR}"
 echo "[shortread-gm11906] output dir: ${OUTPUT_DIR}"
 echo "[shortread-gm11906] python: ${MITO_OVERVIEW_PYTHON:-python3}"
 
+INPUT_MODE="${MITO_OVERVIEW_PUBLIC_INPUT_MODE:-download}"
+case "${INPUT_MODE}" in
+  download|offline) ;;
+  *)
+    echo "MITO_OVERVIEW_PUBLIC_INPUT_MODE must be download or offline" >&2
+    exit 1
+    ;;
+esac
+
 if [[ -n "${MITO_OVERVIEW_PYTHON:-}" ]]; then
   TOOL_BIN="$(cd "$(dirname "${MITO_OVERVIEW_PYTHON}")" && pwd)"
-  export PATH="${TOOL_BIN}${PATH:+:${PATH}}"
+  case ":${PATH}:" in
+    *":${TOOL_BIN}:"*) ;;
+    *) export PATH="${PATH:+${PATH}:}${TOOL_BIN}" ;;
+  esac
 fi
 PYTHON_BIN="${MITO_OVERVIEW_PYTHON:-python3}"
 
-for tool in curl bwa samtools; do
+required_tools=(bwa samtools)
+if [[ "${INPUT_MODE}" == download ]]; then
+  required_tools+=(curl)
+fi
+for tool in "${required_tools[@]}"; do
   if ! command -v "${tool}" >/dev/null 2>&1; then
     echo "Required tool not found in PATH: ${tool}" >&2
     exit 1
@@ -40,18 +56,23 @@ mkdir -p "${MPLCONFIGDIR}"
 export XDG_CACHE_HOME="${WORKDIR}/.cache"
 mkdir -p "${XDG_CACHE_HOME}"
 
-DATA_DIR="${MITO_OVERVIEW_SHORTREAD_DATA_DIR:-${WORKDIR}/downloads}"
+RAW_DATA_DIR="${MITO_OVERVIEW_SHORTREAD_RAW_DATA_DIR:-${MITO_OVERVIEW_SHORTREAD_DATA_DIR:-${WORKDIR}/downloads}}"
+DERIVED_DIR="${MITO_OVERVIEW_SHORTREAD_DERIVED_DIR:-${WORKDIR}/derived}"
 REF_DIR="${WORKDIR}/reference"
 SAMPLE_DIR="${WORKDIR}/sample"
 HV_DIR="${SAMPLE_DIR}/human_variation"
 RUN_ROOT="${WORKDIR}/runs"
 FINAL_DIR="${WORKDIR}/final_bundle"
-mkdir -p "${DATA_DIR}" "${REF_DIR}" "${HV_DIR}" "${RUN_ROOT}"
+mkdir -p "${RAW_DATA_DIR}" "${DERIVED_DIR}" "${REF_DIR}" "${HV_DIR}" "${RUN_ROOT}"
 
 download_if_missing() {
   local url="$1"
   local dest="$2"
   if [[ ! -s "${dest}" ]]; then
+    if [[ "${INPUT_MODE}" == offline ]]; then
+      echo "Offline public validation input is missing: ${dest}" >&2
+      exit 1
+    fi
     echo "[shortread-gm11906] downloading ${url}"
     # Use explicit retries and timeouts so stalled public mirrors fail fast
     # instead of making the validation look frozen.
@@ -95,30 +116,30 @@ copy_if_needed() {
   cp "${src}" "${dest}"
 }
 
-download_if_missing "https://ftp.sra.ebi.ac.uk/vol1/fastq/SRR108/085/SRR10804585/SRR10804585_1.fastq.gz" "${DATA_DIR}/SRR10804585_1.fastq.gz"
-download_if_missing "https://ftp.sra.ebi.ac.uk/vol1/fastq/SRR108/085/SRR10804585/SRR10804585_2.fastq.gz" "${DATA_DIR}/SRR10804585_2.fastq.gz"
-download_if_missing "https://ftp.sra.ebi.ac.uk/vol1/fastq/SRR108/090/SRR10804590/SRR10804590_1.fastq.gz" "${DATA_DIR}/SRR10804590_1.fastq.gz"
-download_if_missing "https://ftp.sra.ebi.ac.uk/vol1/fastq/SRR108/090/SRR10804590/SRR10804590_2.fastq.gz" "${DATA_DIR}/SRR10804590_2.fastq.gz"
-download_if_missing "https://ftp.sra.ebi.ac.uk/vol1/fastq/SRR108/057/SRR10804657/SRR10804657_1.fastq.gz" "${DATA_DIR}/SRR10804657_1.fastq.gz"
-download_if_missing "https://ftp.sra.ebi.ac.uk/vol1/fastq/SRR108/057/SRR10804657/SRR10804657_2.fastq.gz" "${DATA_DIR}/SRR10804657_2.fastq.gz"
-assert_md5 "${DATA_DIR}/SRR10804585_1.fastq.gz" 3f5ea26a5791894071462d4970bc9e5a
-assert_md5 "${DATA_DIR}/SRR10804585_2.fastq.gz" c5b408425612f63b33cefd2d49c157d1
-assert_md5 "${DATA_DIR}/SRR10804590_1.fastq.gz" e8b5132a8be8c179bfc6dbc0f3e1bee9
-assert_md5 "${DATA_DIR}/SRR10804590_2.fastq.gz" 4d6977526136739de2d90baa8d45b484
-assert_md5 "${DATA_DIR}/SRR10804657_1.fastq.gz" 8f082f73cb64bf56ea8a053fe80eeb06
-assert_md5 "${DATA_DIR}/SRR10804657_2.fastq.gz" 62b7d1b2294a580c021f5fa1f52609be
+download_if_missing "https://ftp.sra.ebi.ac.uk/vol1/fastq/SRR108/085/SRR10804585/SRR10804585_1.fastq.gz" "${RAW_DATA_DIR}/SRR10804585_1.fastq.gz"
+download_if_missing "https://ftp.sra.ebi.ac.uk/vol1/fastq/SRR108/085/SRR10804585/SRR10804585_2.fastq.gz" "${RAW_DATA_DIR}/SRR10804585_2.fastq.gz"
+download_if_missing "https://ftp.sra.ebi.ac.uk/vol1/fastq/SRR108/090/SRR10804590/SRR10804590_1.fastq.gz" "${RAW_DATA_DIR}/SRR10804590_1.fastq.gz"
+download_if_missing "https://ftp.sra.ebi.ac.uk/vol1/fastq/SRR108/090/SRR10804590/SRR10804590_2.fastq.gz" "${RAW_DATA_DIR}/SRR10804590_2.fastq.gz"
+download_if_missing "https://ftp.sra.ebi.ac.uk/vol1/fastq/SRR108/057/SRR10804657/SRR10804657_1.fastq.gz" "${RAW_DATA_DIR}/SRR10804657_1.fastq.gz"
+download_if_missing "https://ftp.sra.ebi.ac.uk/vol1/fastq/SRR108/057/SRR10804657/SRR10804657_2.fastq.gz" "${RAW_DATA_DIR}/SRR10804657_2.fastq.gz"
+assert_md5 "${RAW_DATA_DIR}/SRR10804585_1.fastq.gz" 3f5ea26a5791894071462d4970bc9e5a
+assert_md5 "${RAW_DATA_DIR}/SRR10804585_2.fastq.gz" c5b408425612f63b33cefd2d49c157d1
+assert_md5 "${RAW_DATA_DIR}/SRR10804590_1.fastq.gz" e8b5132a8be8c179bfc6dbc0f3e1bee9
+assert_md5 "${RAW_DATA_DIR}/SRR10804590_2.fastq.gz" 4d6977526136739de2d90baa8d45b484
+assert_md5 "${RAW_DATA_DIR}/SRR10804657_1.fastq.gz" 8f082f73cb64bf56ea8a053fe80eeb06
+assert_md5 "${RAW_DATA_DIR}/SRR10804657_2.fastq.gz" 62b7d1b2294a580c021f5fa1f52609be
 
-R1_FASTQ="${DATA_DIR}/GM11906_MERRF_R1.fastq.gz"
-R2_FASTQ="${DATA_DIR}/GM11906_MERRF_R2.fastq.gz"
+R1_FASTQ="${DERIVED_DIR}/GM11906_MERRF_R1.fastq.gz"
+R2_FASTQ="${DERIVED_DIR}/GM11906_MERRF_R2.fastq.gz"
 cat \
-  "${DATA_DIR}/SRR10804585_1.fastq.gz" \
-  "${DATA_DIR}/SRR10804590_1.fastq.gz" \
-  "${DATA_DIR}/SRR10804657_1.fastq.gz" \
+  "${RAW_DATA_DIR}/SRR10804585_1.fastq.gz" \
+  "${RAW_DATA_DIR}/SRR10804590_1.fastq.gz" \
+  "${RAW_DATA_DIR}/SRR10804657_1.fastq.gz" \
   > "${R1_FASTQ}"
 cat \
-  "${DATA_DIR}/SRR10804585_2.fastq.gz" \
-  "${DATA_DIR}/SRR10804590_2.fastq.gz" \
-  "${DATA_DIR}/SRR10804657_2.fastq.gz" \
+  "${RAW_DATA_DIR}/SRR10804585_2.fastq.gz" \
+  "${RAW_DATA_DIR}/SRR10804590_2.fastq.gz" \
+  "${RAW_DATA_DIR}/SRR10804657_2.fastq.gz" \
   > "${R2_FASTQ}"
 
 REF_FASTA="${REF_DIR}/NC_012920.1.fa"
@@ -128,17 +149,17 @@ if [[ ! -f "${REF_FASTA}.bwt" ]]; then
   bwa index "${REF_FASTA}"
 fi
 
-THREADS="${MITO_OVERVIEW_SHORTREAD_THREADS:-2}"
+THREADS="${MITO_OVERVIEW_SHORTREAD_THREADS:-4}"
 ALIGN_BAM="${MITO_OVERVIEW_SHORTREAD_ALIGN_BAM:-${HV_DIR}/GM11906_MERRF_shortread.mt.bam}"
 ALIGN_PROVENANCE="${MITO_OVERVIEW_SHORTREAD_ALIGN_PROVENANCE:-${ALIGN_BAM}.provenance.json}"
 ALIGN_DERIVATION_ID="bwa-mem-samtools-sort-v1"
 PROVENANCE_INPUTS=(
-  --input "SRR10804585_R1=${DATA_DIR}/SRR10804585_1.fastq.gz"
-  --input "SRR10804585_R2=${DATA_DIR}/SRR10804585_2.fastq.gz"
-  --input "SRR10804590_R1=${DATA_DIR}/SRR10804590_1.fastq.gz"
-  --input "SRR10804590_R2=${DATA_DIR}/SRR10804590_2.fastq.gz"
-  --input "SRR10804657_R1=${DATA_DIR}/SRR10804657_1.fastq.gz"
-  --input "SRR10804657_R2=${DATA_DIR}/SRR10804657_2.fastq.gz"
+  --input "SRR10804585_R1=${RAW_DATA_DIR}/SRR10804585_1.fastq.gz"
+  --input "SRR10804585_R2=${RAW_DATA_DIR}/SRR10804585_2.fastq.gz"
+  --input "SRR10804590_R1=${RAW_DATA_DIR}/SRR10804590_1.fastq.gz"
+  --input "SRR10804590_R2=${RAW_DATA_DIR}/SRR10804590_2.fastq.gz"
+  --input "SRR10804657_R1=${RAW_DATA_DIR}/SRR10804657_1.fastq.gz"
+  --input "SRR10804657_R2=${RAW_DATA_DIR}/SRR10804657_2.fastq.gz"
   --input "combined_R1=${R1_FASTQ}"
   --input "combined_R2=${R2_FASTQ}"
 )
