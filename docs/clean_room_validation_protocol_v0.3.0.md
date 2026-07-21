@@ -57,7 +57,7 @@ after byte-count, MD5, SHA-256, gzip, and FASTQ validation.
 | `SRR10804657_2.fastq.gz` | 21,573,731 | `62b7d1b2294a580c021f5fa1f52609be` | `bfc555c7e722695b02110027757bba4d7fc88f487798423cd6809e8a771a5184` |
 | `SRR18110025.fastq.gz` | 2,033,558,460 | `d5bfb9aeba04cae5f3dd79462a42e5b0` | `c0872ee9ceb772ee5a4b76735c0d670e2159764b23dd800b6eb1f4933da11320` |
 
-The first six files are paired ends from three single-cell ATAC-seq libraries (`GSM4238454`, `GSM4238459`, and `GSM4238526`). NCBI GEO identifies each library as derived from the GM11906 lymphoblastoid line. They are concatenated as a pseudo-bulk compatibility input; they are not conventional short-read WGS, three independent patients, or a bulk heteroplasmy measurement. The sealed manifest records the run, BioSample, GEO accession, source cell line, library strategy, library unit, and primary metadata URL.
+The first six files are paired ends from three single-cell ATAC-seq libraries (`GSM4238454`, `GSM4238459`, and `GSM4238526`). NCBI GEO identifies each library as derived from the GM11906 lymphoblastoid line. They are concatenated as a pseudo-bulk compatibility input; unequal callable depth makes pooled allele fractions read-observation weighted rather than equal-weight per cell. The input is not conventional short-read WGS, three independent patients, or a bulk heteroplasmy measurement. The sealed manifest records the run, BioSample, GEO accession, source cell line, library strategy, library unit, and primary metadata URL.
 
 The tracked `NC_012920.1.fa` reference must have SHA-256
 `fc392cde8e63b4d2e3a870bb97cc0626dea33d46dfb8abdebffada040f42ec92`.

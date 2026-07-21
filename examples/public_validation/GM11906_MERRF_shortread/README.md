@@ -11,14 +11,14 @@ Example context:
 - default observation filters: BaseQ `13`, MAPQ `20`, readQ `10`
 
 Included assets:
-- report-native figures from the fixed input
+- report-native figures from the deterministic pooled input
 - key summary tables from the validation output
 - a focused `8344` mpileup record
 - a condensed key-findings table
 - input and run provenance records
 
 What these assets support:
-- fixed-input reduced short-read workflow execution
+- reduced short-read workflow execution after deterministic pooled-input reconstruction
 - representation of `m.8344A>G` in candidate, feature, and consequence outputs
 - report/resource generation and explicit status handling
 
@@ -43,6 +43,8 @@ Mode-gated status values:
 
 Repeatability scope:
 - the pooled fraction summarizes passing read observations across three libraries; it is not a per-cell estimate, a calibrated sample heteroplasmy estimate, or a modality benchmark
+- unequal callable depth across the three source libraries makes the pooled fraction read-observation weighted rather than equal-weight per cell
+- each clean-room platform matrix reconstructs the paired pseudo-bulk and BWA alignment from the six sealed accession FASTQs
 - two default invocations produced matching normalized TSVs and structurally consistent HTML/PNG artifacts
-- this result is conditional on the provenance-verified fixed BAM and does not include alignment regeneration
-- the asset pack supports workflow execution and report/resource inspection for this fixed input
+- those two invocations use the same newly generated within-matrix BAM, separating report repeatability from alignment reconstruction
+- the asset pack supports workflow execution and report/resource inspection for this prespecified input
