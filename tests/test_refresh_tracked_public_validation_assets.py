@@ -102,7 +102,7 @@ def make_matrix(root: Path) -> Path:
 
     # A completed matrix contains much more than the tracked public inventory.
     pollutants = {
-        "logs/default.log": b"workdir=/Users/private/matrix-work\n",
+        "logs/default.log": b"workdir=/nonportable/matrix-work\n",
         "commands/default.sh": b"#!/bin/sh\necho replay\n",
         "environment/pip-freeze.txt": b"private-package==1.0\n",
         f"{refresher.SHORT_CASE}/provenance/GM11906_MERRF_shortread.source_libraries.tsv": (
@@ -304,7 +304,7 @@ def test_rejects_symlink_in_existing_destination(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize(
     "absolute_path",
-    ["/Users/private/research/output.tsv", r"C:\\Users\\private\\output.tsv"],
+    ["/nonportable/research/output.tsv", r"Z:\\nonportable\\output.tsv"],
 )
 def test_rejects_local_absolute_paths_in_allowlisted_assets(
     tmp_path: Path,
