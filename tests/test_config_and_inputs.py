@@ -6,7 +6,7 @@ import pytest
 
 from mito_overview.config import PipelineConfig
 from mito_overview.paths import RunPaths
-from mito_overview.workflow import run_pipeline, validate_config
+from mito_overview.workflow import STEP_STATUS_OUTPUTS, run_pipeline, validate_config
 
 from ._helpers import ReadSpec, write_alignment, write_fasta
 
@@ -188,6 +188,17 @@ def test_six_key_generic_reference_infers_species_from_complete_profile(
             },
             id="scaled-human-profile",
         ),
+        pytest.param(
+            {
+                **complete_reference_contigs(
+                    GRCH38_AUTOSOME_LENGTHS,
+                    (156_040_895, 57_227_415),
+                    16_569,
+                ),
+                "chrUn_hybrid": 10_000,
+            },
+            id="extra-hybrid-contig",
+        ),
     ],
 )
 def test_six_key_generic_reference_does_not_infer_species_from_ambiguous_profile(
@@ -218,6 +229,17 @@ def test_explicit_species_overrides_complete_profile_inference(tmp_path: Path) -
     assert config.requested_species == "mouse"
     assert config.detected_species == "mouse"
     assert config.reference_scope == "custom"
+
+
+def test_cosegregation_empty_table_contract_includes_conditional_jaccard() -> None:
+    columns = STEP_STATUS_OUTPUTS["cosegregation"]["empty_tables"][  # type: ignore[index]
+        "mito_cosegregation_pairwise.tsv"
+    ]
+    assert columns[7:10] == [
+        "conditional_universe",
+        "alt_jaccard_within_shared_spanning_reads",
+        "jaccard_alt",
+    ]
 
 
 def test_minimal_cram_contract_opens_with_reference(

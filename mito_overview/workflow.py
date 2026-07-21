@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
 from dataclasses import dataclass
@@ -12,7 +13,11 @@ from typing import Callable
 import pandas as pd
 import pysam
 
-from .config import PipelineConfig
+from .config import (
+    PipelineConfig,
+    detect_physical_reference_scope,
+    detect_reference_profile,
+)
 from .paths import RunPaths
 from .report_common import render_status_page
 from .table_contracts import validate_module_state
@@ -125,6 +130,8 @@ STEP_STATUS_OUTPUTS: dict[str, dict[str, object]] = {
                 "alt_j_shared_reads",
                 "co_alt_reads",
                 "co_alt_fraction_shared",
+                "conditional_universe",
+                "alt_jaccard_within_shared_spanning_reads",
                 "jaccard_alt",
                 "fraction_alt_i_also_alt_j",
                 "fraction_alt_j_also_alt_i",
@@ -333,6 +340,174 @@ def _write_not_applicable_step(
     return StepResult(step_name, "not_applicable", note)
 
 
+@dataclass(frozen=True)
+class AlignmentReferenceContract:
+    """Independent FASTA/header evidence used to gate nuclear interpretation."""
+
+    alignment_scope: str
+    alignment_profile: str
+    effective_scope: str
+    cram_reference_compatibility: str
+    issues: tuple[str, ...] = ()
+
+    def context_rows(self) -> list[tuple[str, str]]:
+        return [
+            ("reference_scope_alignment_header", self.alignment_scope),
+            ("reference_profile_alignment_header", self.alignment_profile),
+            ("reference_scope_effective", self.effective_scope),
+            ("reference_scope_resolved", self.effective_scope),
+            ("cram_reference_compatibility", self.cram_reference_compatibility),
+        ]
+
+
+def _alignment_index_available(config: PipelineConfig) -> bool:
+    if config.source_align_mode == "cram":
+        candidates = [
+            Path(f"{config.source_align_file}.crai"),
+            config.source_align_file.with_suffix(".crai"),
+        ]
+    else:
+        candidates = [
+            Path(f"{config.source_align_file}.bai"),
+            config.source_align_file.with_suffix(".bai"),
+        ]
+    return any(path.exists() for path in candidates)
+
+
+def _effective_reference_scope(
+    config: PipelineConfig,
+    alignment_scope: str,
+    alignment_profile: str,
+    *,
+    cram_reference_compatibility: str,
+) -> str:
+    if config.requested_reference_scope == "custom":
+        return "custom"
+    if config.source_align_mode == "cram" and cram_reference_compatibility != "verified_m5":
+        return "custom"
+    if config.requested_reference_scope == "mt_only":
+        return "mt_only"
+    if config.reference_scope == "mt_only":
+        return "mt_only" if alignment_scope == "mt_only" else "custom"
+    if config.reference_scope != "whole_genome":
+        return "custom"
+    if (
+        config.fasta_reference_scope == "whole_genome"
+        and alignment_scope == "whole_genome"
+        and config.fasta_reference_profile != "unrecognized"
+        and config.fasta_reference_profile == alignment_profile
+    ):
+        return "whole_genome"
+    return "custom"
+
+
+def _reference_sequence_md5(config: PipelineConfig) -> str:
+    with pysam.FastaFile(str(config.ref_fasta)) as reference:
+        sequence = reference.fetch(config.mt_contig)
+    return hashlib.md5(sequence.upper().encode("ascii")).hexdigest()
+
+
+def _inspect_alignment_reference(config: PipelineConfig) -> AlignmentReferenceContract:
+    if not config.source_align_file.exists():
+        return AlignmentReferenceContract(
+            alignment_scope="not_evaluable",
+            alignment_profile="unrecognized",
+            effective_scope="custom",
+            cram_reference_compatibility=(
+                "not_evaluable" if config.source_align_mode == "cram" else "not_applicable"
+            ),
+        )
+
+    mode = "rc" if config.source_align_mode == "cram" else "rb"
+    kwargs = (
+        {"reference_filename": str(config.ref_fasta)}
+        if mode == "rc" and config.ref_fasta.exists()
+        else {}
+    )
+    issues: list[str] = []
+    compatibility = "not_applicable" if mode == "rb" else "not_evaluable"
+    try:
+        with pysam.AlignmentFile(str(config.source_align_file), mode, **kwargs) as alignment:
+            header_lengths = dict(zip(alignment.references, alignment.lengths, strict=True))
+            alignment_scope = detect_physical_reference_scope(header_lengths, config.mt_contig)
+            alignment_profile = detect_reference_profile(header_lengths, config.mt_contig)
+
+            mt_header_valid = True
+            if config.mt_contig not in header_lengths:
+                mt_header_valid = False
+                issues.append(f"Alignment header does not contain MT_CONTIG={config.mt_contig}")
+            elif header_lengths[config.mt_contig] != config.mt_length:
+                mt_header_valid = False
+                issues.append(
+                    f"Alignment header length {header_lengths[config.mt_contig]} for "
+                    f"{config.mt_contig} does not match MT_LENGTH={config.mt_length}"
+                )
+
+            if mt_header_valid and _alignment_index_available(config):
+                try:
+                    next(alignment.fetch(config.mt_contig, 0, config.mt_length), None)
+                except (OSError, ValueError) as exc:
+                    input_label = "CRAM/reference pair" if mode == "rc" else "BAM input"
+                    issues.append(f"Could not query indexed {input_label}: {exc}")
+
+            if mode == "rc" and mt_header_valid:
+                sq_records = alignment.header.to_dict().get("SQ", [])
+                mt_sq = next(
+                    (record for record in sq_records if record.get("SN") == config.mt_contig),
+                    {},
+                )
+                header_md5 = str(mt_sq.get("M5", "")).strip().lower()
+                if header_md5:
+                    try:
+                        reference_md5 = _reference_sequence_md5(config)
+                    except (OSError, ValueError, KeyError) as exc:
+                        issues.append(
+                            "Could not establish CRAM/reference sequence compatibility for "
+                            f"MT_CONTIG={config.mt_contig}: {exc}"
+                        )
+                    else:
+                        if header_md5 == reference_md5:
+                            compatibility = "verified_m5"
+                        else:
+                            compatibility = "mismatch"
+                            issues.append(
+                                "CRAM/reference sequence mismatch for "
+                                f"MT_CONTIG={config.mt_contig}: alignment SQ M5={header_md5}, "
+                                f"REF_FASTA MD5={reference_md5}"
+                            )
+                else:
+                    compatibility = "missing_m5"
+                    issues.append(
+                        "Could not establish CRAM/reference sequence compatibility for "
+                        f"MT_CONTIG={config.mt_contig}: alignment MT SQ M5 is missing or blank; "
+                        "M5-to-FASTA identity is required"
+                    )
+    except (OSError, ValueError) as exc:
+        input_label = "CRAM/reference pair" if mode == "rc" else "BAM input"
+        issues.append(f"Could not open indexed {input_label}: {exc}")
+        return AlignmentReferenceContract(
+            alignment_scope="not_evaluable",
+            alignment_profile="unrecognized",
+            effective_scope="custom",
+            cram_reference_compatibility=compatibility,
+            issues=tuple(issues),
+        )
+
+    effective_scope = _effective_reference_scope(
+        config,
+        alignment_scope,
+        alignment_profile,
+        cram_reference_compatibility=compatibility,
+    )
+    return AlignmentReferenceContract(
+        alignment_scope=alignment_scope,
+        alignment_profile=alignment_profile,
+        effective_scope=effective_scope,
+        cram_reference_compatibility=compatibility,
+        issues=tuple(issues),
+    )
+
+
 def validate_config(config: PipelineConfig, strict_files: bool = False) -> list[str]:
     """Return validation issues for the supplied configuration."""
 
@@ -365,37 +540,18 @@ def validate_config(config: PipelineConfig, strict_files: bool = False) -> list[
     alignment_index_available = False
     if config.source_align_file.exists():
         if config.source_align_mode == "bam":
-            candidates = [Path(f"{config.source_align_file}.bai"), config.source_align_file.with_suffix(".bai")]
-            alignment_index_available = any(path.exists() for path in candidates)
+            alignment_index_available = _alignment_index_available(config)
             if not alignment_index_available:
                 issues.append(f"Missing BAM index for {config.source_align_file}")
         else:
-            candidates = [Path(f"{config.source_align_file}.crai"), config.source_align_file.with_suffix(".crai")]
-            alignment_index_available = any(path.exists() for path in candidates)
+            alignment_index_available = _alignment_index_available(config)
             if not alignment_index_available:
                 issues.append(f"Missing CRAM index for {config.source_align_file}")
             if not config.ref_fasta.exists():
                 issues.append("CRAM input requires an available REF_FASTA")
 
     if config.source_align_file.exists() and config.ref_fasta.exists() and alignment_index_available:
-        mode = "rc" if config.source_align_mode == "cram" else "rb"
-        kwargs = {"reference_filename": str(config.ref_fasta)} if mode == "rc" else {}
-        try:
-            with pysam.AlignmentFile(str(config.source_align_file), mode, **kwargs) as alignment:
-                header_lengths = dict(zip(alignment.references, alignment.lengths, strict=True))
-                if config.mt_contig not in header_lengths:
-                    issues.append(f"Alignment header does not contain MT_CONTIG={config.mt_contig}")
-                elif header_lengths[config.mt_contig] != config.mt_length:
-                    issues.append(
-                        f"Alignment header length {header_lengths[config.mt_contig]} for {config.mt_contig} "
-                        f"does not match MT_LENGTH={config.mt_length}"
-                    )
-                else:
-                    # Decode one indexed record when present; this catches CRAM/reference incompatibility early.
-                    next(alignment.fetch(config.mt_contig, 0, config.mt_length), None)
-        except (OSError, ValueError) as exc:
-            input_label = "CRAM/reference pair" if mode == "rc" else "BAM input"
-            issues.append(f"Could not open indexed {input_label}: {exc}")
+        issues.extend(_inspect_alignment_reference(config).issues)
 
     if config.mvtool_mode == "fixture" and config.mvtool_fixture_json is None:
         issues.append("MVTOOL_MODE=fixture requires MVTOOL_FIXTURE_JSON")
@@ -425,13 +581,17 @@ def write_context_files(config: PipelineConfig, paths: RunPaths) -> None:
 
     stage_context_tsv = paths.stage_dir / "run_context.tsv"
     stage_context_json = paths.stage_dir / "run_context.json"
-    rows = config.context_rows() + paths.context_rows()
+    reference_contract = _inspect_alignment_reference(config)
+    config_rows = [
+        row for row in config.context_rows() if row[0] != "reference_scope_resolved"
+    ] + reference_contract.context_rows()
+    rows = config_rows + paths.context_rows()
     stage_context_tsv.write_text(
         "field\tvalue\n" + "\n".join(f"{field}\t{value}" for field, value in rows) + "\n",
         encoding="utf-8",
     )
     payload = {
-        "config": {field: value for field, value in config.context_rows()},
+        "config": {field: value for field, value in config_rows},
         "paths": {field: value for field, value in paths.context_rows()},
     }
     stage_context_json.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
@@ -617,7 +777,7 @@ def _run_copy_number(config: PipelineConfig, paths: RunPaths, strict_files: bool
         mt_contig=config.mt_contig,
         mt_length=config.mt_length,
         species=config.detected_species,
-        reference_scope=config.reference_scope,
+        reference_scope=_inspect_alignment_reference(config).effective_scope,
         window_size=config.nuclear_window_size,
         window_count=config.nuclear_window_count,
     )
@@ -689,7 +849,7 @@ def _run_numt_qc(config: PipelineConfig, paths: RunPaths, strict_files: bool) ->
         sample_id=config.sample_id,
         mt_contig=config.mt_contig,
         mt_length=config.mt_length,
-        reference_scope=config.reference_scope,
+        reference_scope=_inspect_alignment_reference(config).effective_scope,
     )
     status = str(outputs.get("status", "ok"))
     (paths.log_dir / f"numt_qc.{status}").write_text(status + "\n", encoding="utf-8")

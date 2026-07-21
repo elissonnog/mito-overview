@@ -267,6 +267,14 @@ def test_reference_scope_auto_recognizes_complete_assemblies(
             id="missing-autosome",
         ),
         pytest.param(
+            {
+                **reference_contigs(GRCH38_AUTOSOME_LENGTHS),
+                "chrUn_hybrid": 10_000,
+            },
+            "human",
+            id="extra-hybrid-contig",
+        ),
+        pytest.param(
             reference_contigs(GRCH38_AUTOSOME_LENGTHS),
             "rat",
             id="unsupported-species",

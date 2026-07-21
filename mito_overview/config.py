@@ -333,30 +333,55 @@ _REFERENCE_PROFILES = (
 def _matches_reference_profile(
     contig_lengths: dict[str, int], mt_contig: str, profile: _ReferenceProfile
 ) -> bool:
-    if contig_lengths.get(mt_contig) != profile.mt_length:
-        return False
-
     expected_nuclear_lengths = tuple(
         (str(index), length) for index, length in enumerate(profile.autosome_lengths, 1)
     ) + tuple(zip(("X", "Y"), profile.sex_chromosome_lengths, strict=True))
 
-    # Assembly lengths are exact identifiers; only standard contig-name aliases vary.
+    # Assembly profiles are exact; standard chromosome prefixes are the only aliases.
     return any(
-        all(
-            contig_lengths.get(f"{prefix}{name}") == length
-            for name, length in expected_nuclear_lengths
-        )
+        contig_lengths
+        == {
+            mt_contig: profile.mt_length,
+            **{f"{prefix}{name}": length for name, length in expected_nuclear_lengths},
+        }
         for prefix in ("", "chr")
     )
+
+
+def _matching_reference_profiles(
+    contig_lengths: dict[str, int], mt_contig: str
+) -> tuple[_ReferenceProfile, ...]:
+    return tuple(
+        profile
+        for profile in _REFERENCE_PROFILES
+        if _matches_reference_profile(contig_lengths, mt_contig, profile)
+    )
+
+
+def detect_reference_profile(contig_lengths: dict[str, int], mt_contig: str) -> str:
+    """Return the unique exact assembly profile represented by a contig map."""
+
+    matches = _matching_reference_profiles(contig_lengths, mt_contig)
+    if len(matches) != 1:
+        return "unrecognized"
+    return f"{matches[0].species}:{matches[0].build}"
+
+
+def detect_physical_reference_scope(contig_lengths: dict[str, int], mt_contig: str) -> str:
+    """Classify a FASTA index or alignment header without configuration overrides."""
+
+    if set(contig_lengths) == {mt_contig}:
+        return "mt_only"
+    if detect_reference_profile(contig_lengths, mt_contig) != "unrecognized":
+        return "whole_genome"
+    return "custom"
 
 
 def _infer_species_from_reference_profile(
     contig_lengths: dict[str, int], mt_contig: str
 ) -> str:
     matched_species = {
-        profile.species
-        for profile in _REFERENCE_PROFILES
-        if _matches_reference_profile(contig_lengths, mt_contig, profile)
+        profile.species for profile in _matching_reference_profiles(contig_lengths, mt_contig)
     }
     return matched_species.pop() if len(matched_species) == 1 else "unknown"
 
@@ -424,6 +449,8 @@ class PipelineConfig:
     requested_species: str
     detected_species: str
     reference_build_guess: str
+    fasta_reference_scope: str
+    fasta_reference_profile: str
     requested_reference_scope: str
     reference_scope: str
     read_mode: str
@@ -500,6 +527,8 @@ class PipelineConfig:
             mt_contig=mt_contig,
             species=detected_species,
         )
+        fasta_reference_scope = detect_physical_reference_scope(fai_lengths, mt_contig)
+        fasta_reference_profile = detect_reference_profile(fai_lengths, mt_contig)
         read_mode = str(merged["READ_MODE"]).strip().lower()
         assay_type = str(merged["ASSAY_TYPE"]).strip().lower()
         mvtool_mode = str(merged["MVTOOL_MODE"]).strip().lower()
@@ -548,6 +577,8 @@ class PipelineConfig:
             requested_species=requested_species,
             detected_species=detected_species,
             reference_build_guess=detect_reference_build(ref_fasta),
+            fasta_reference_scope=fasta_reference_scope,
+            fasta_reference_profile=fasta_reference_profile,
             requested_reference_scope=str(merged["REFERENCE_SCOPE"]).strip().lower(),
             reference_scope=reference_scope,
             read_mode=read_mode,
@@ -636,6 +667,9 @@ class PipelineConfig:
             ("species_detected", self.detected_species),
             ("reference_build_guess", self.reference_build_guess),
             ("reference_scope_requested", self.requested_reference_scope),
+            ("reference_scope_fasta", self.fasta_reference_scope),
+            ("reference_profile_fasta", self.fasta_reference_profile),
+            ("reference_scope_configured", self.reference_scope),
             ("reference_scope_resolved", self.reference_scope),
             ("mt_contig", self.mt_contig),
             ("mt_length", str(self.mt_length)),
