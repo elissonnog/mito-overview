@@ -1,1 +1,1 @@
-contig	start	end	window_size	mean_depth
+contig	start	end	window_size	mean_depth	valid_for_denominator

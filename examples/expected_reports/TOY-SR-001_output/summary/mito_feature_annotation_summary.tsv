@@ -1,2 +1,2 @@
-feature_class	feature_label	candidate_sites	mean_heteroplasmy
-control_region	D-loop/control region	1	0.3
+feature_class	feature_label	candidate_sites	mean_alt_allele_fraction	mean_heteroplasmy
+control_region	D-loop/control region	1	0.3	0.3

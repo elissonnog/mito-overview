@@ -29,7 +29,7 @@ full_length_fraction	0.3721
 candidate_site_count	16
 selected_cosegregation_sites	8
 candidate_deletion_clusters	13.0
-deletion_screen_method	CIGAR/SA candidate structural screen
+deletion_screen_method	CIGAR-deletion candidate screen; supplementary/SA evidence summarized separately
 largest_median_deletion	1394.0
 max_deletion_support_fraction_primary	0.001374
 numt_interpretation_status	not_evaluable

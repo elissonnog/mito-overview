@@ -189,7 +189,7 @@ done
   "gm12878_default=GM12878:default:${OUTPUT_ROOT}/outputs/gm12878_default_run1" \
   "gm12878_lenient=GM12878:lenient:${OUTPUT_ROOT}/outputs/gm12878_lenient" \
   "gm12878_strict=GM12878:strict:${OUTPUT_ROOT}/outputs/gm12878_strict"
-record_case filter_profiles descriptive_sensitivity 1 1 PASS "0/0/0, 13/20/10, and 20/30/15 profiles summarized"
+record_case filter_profiles filter_dependence 1 1 PASS "0/0/0, 13/20/10, and 20/30/15 profiles summarized"
 
 "${PYTHON_BIN}" "${REPO_ROOT}/scripts/hash_validation_inputs.py" \
   "${CACHE_ROOT}" "${OUTPUT_ROOT}/inputs.sha256"

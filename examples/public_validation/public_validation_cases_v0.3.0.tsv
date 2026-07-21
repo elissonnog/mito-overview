@@ -11,4 +11,4 @@ gm11906_repeatability	repeatability	1	1	PASS	normalized TSVs matched
 gm11906_visual_integrity	visual_integrity	1	1	PASS	HTML/PNG artifacts were readable and structurally consistent across repeats
 gm12878_repeatability	repeatability	1	1	PASS	normalized TSVs matched conditional on the fixed reduced BAM
 gm12878_visual_integrity	visual_integrity	1	1	PASS	HTML/PNG artifacts were readable and structurally consistent across repeats
-filter_profiles	descriptive_sensitivity	1	1	PASS	0/0/0, 13/20/10, and 20/30/15 profiles summarized
+filter_profiles	filter_dependence	1	1	PASS	0/0/0, 13/20/10, and 20/30/15 profiles summarized

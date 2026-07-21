@@ -1,0 +1,14 @@
+metric	value
+status	ok
+variant_comparison_status	not_configured
+phased_variant_vcf_present	0
+unphased_variant_vcf_present	0
+major_fingerprint_sites	11
+phased_mt_variant_records	0
+np_mt_variant_records	0
+shared_mt_variant_records	0
+phased_only_mt_variant_records	0
+np_only_mt_variant_records	0
+formal_haplogroup_assignment_status	not_applicable
+formal_haplogroup_best_match	NA
+major_variant_fingerprint	8860:A>G; 14831:G>A; 4769:A>G; 13326:T>C; 7337:G>A; 14872:C>T; 15326:A>G; 4745:A>G; 2259:C>T; 1438:A>G; 13680:C>T

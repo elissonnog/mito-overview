@@ -1,4 +1,8 @@
 metric	value
+status	ok
+reference_scope	mt_only
+numt_interpretation_status	not_evaluable
+reason_code	reference_scope_mt_only
 reads_evaluated	10
 low_mapq_fraction_lt20	0.0
 very_low_mapq_fraction_lt5	0.0
@@ -7,5 +11,5 @@ heavy_softclip_fraction_gt0.2	0.0
 sa_tag_fraction	0.0
 supplementary_fraction_all_reads	0.0
 full_length_fraction	0.0
-heuristic_numt_risk	moderate
-heuristic_numt_risk_score	2
+heuristic_numt_risk	not_evaluable
+heuristic_numt_risk_score	

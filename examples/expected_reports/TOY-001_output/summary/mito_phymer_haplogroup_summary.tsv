@@ -1,5 +1,6 @@
 metric	value
 status	ok
+reason_code	
 sample_label	mito_phymer_consensus
 best_haplogroup	H1a1
 best_score	0.982

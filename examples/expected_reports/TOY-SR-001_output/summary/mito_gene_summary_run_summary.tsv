@@ -1,4 +1,6 @@
 metric	value
+status	ok
+reason_code	
 features_summarized	3
 features_with_candidate_sites	1
 features_with_deletion_cluster_overlap	0

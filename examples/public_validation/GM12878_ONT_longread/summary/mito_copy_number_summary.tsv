@@ -3,4 +3,4 @@ status	not_applicable
 step	copy_number
 read_mode	long
 assay_type	targeted_mt
-message	Copy-number proxy is only interpreted for whole-genome data and is skipped for targeted mtDNA assays.
+message	The experimental within-sample mt:nuclear depth ratio requires whole-genome data and is skipped for targeted mtDNA assays.

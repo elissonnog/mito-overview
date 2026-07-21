@@ -1,4 +1,8 @@
 metric	value
+status	ok
+variant_comparison_status	ok
+phased_variant_vcf_present	1
+unphased_variant_vcf_present	1
 major_fingerprint_sites	0
 phased_mt_variant_records	1
 np_mt_variant_records	2

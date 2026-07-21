@@ -1,1 +1,1 @@
-position	ref_base	alt_base	depth	alt_count	heteroplasmy_fraction	A	C	G	T
+position	ref_base	alt_base	callable_depth	depth	alt_count	alt_allele_fraction	heteroplasmy_fraction	alt_forward	alt_reverse	A	C	G	T
