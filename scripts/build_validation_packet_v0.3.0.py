@@ -20,6 +20,7 @@ from pathlib import Path
 
 EXPECTED_RELEASE_VERSION = "v0.3.0"
 EXPECTED_PACKAGE_NAME = "mito-overview"
+ZENODO_DOI_PATTERN = r"10\.5281/zenodo\.[1-9][0-9]*"
 
 REQUIRED_TOP_LEVEL = (
     "run.json",
@@ -110,7 +111,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--version", default=EXPECTED_RELEASE_VERSION)
     parser.add_argument("--repository", default="https://github.com/elissonnog/mito-overview")
-    parser.add_argument("--doi", default="UNRESERVED")
+    parser.add_argument("--doi", required=True)
     return parser.parse_args()
 
 
@@ -149,7 +150,7 @@ def normalize_project_name(value: str) -> str:
 
 
 def parse_environment_identity(path: Path) -> dict[str, str]:
-    required = {"release_version", "git_commit", "repository"}
+    required = {"release_version", "git_commit", "repository", "archive_doi"}
     values: dict[str, str] = {}
     for line in path.read_text(encoding="utf-8").splitlines():
         key, separator, value = line.partition("=")
@@ -164,7 +165,9 @@ def parse_environment_identity(path: Path) -> dict[str, str]:
     return values
 
 
-def read_release_metadata(repo_root: Path) -> tuple[str, dict[str, str], dict[str, str]]:
+def read_release_metadata(
+    repo_root: Path,
+) -> tuple[str, dict[str, str], dict[str, str], str]:
     metadata_paths = {
         "pyproject.toml": repo_root / "pyproject.toml",
         "mito_overview/__init__.py": repo_root / "mito_overview" / "__init__.py",
@@ -191,7 +194,11 @@ def read_release_metadata(repo_root: Path) -> tuple[str, dict[str, str], dict[st
     citation_match = re.search(r"(?m)^version:\s*([^\s#]+)", citation_text)
     if citation_match is None:
         raise ValueError("CITATION.cff does not define a top-level version")
+    citation_doi_matches = re.findall(r"(?m)^doi:\s*([^\s#]+)", citation_text)
+    if len(citation_doi_matches) != 1:
+        raise ValueError("CITATION.cff must define exactly one top-level DOI")
     citation_version = citation_match.group(1).strip("'\"")
+    citation_doi = citation_doi_matches[0].strip("'\"")
 
     versions = {
         "pyproject.toml": pyproject_version,
@@ -199,7 +206,7 @@ def read_release_metadata(repo_root: Path) -> tuple[str, dict[str, str], dict[st
         "CITATION.cff": citation_version,
     }
     hashes = {label: sha256(path) for label, path in metadata_paths.items()}
-    return package_name, versions, hashes
+    return package_name, versions, hashes, citation_doi
 
 
 def parse_distribution_metadata(text: str, source: Path) -> tuple[str, str]:
@@ -511,12 +518,15 @@ def resolve_release_identity(
     release_version: str,
     repository: str,
     asserted_commit: str | None,
+    archive_doi: str,
 ) -> dict[str, object]:
     repo_root = repo_root.resolve()
     if release_version != EXPECTED_RELEASE_VERSION:
         raise ValueError(
             f"This packet builder is release-locked to {EXPECTED_RELEASE_VERSION}, got {release_version}"
         )
+    if re.fullmatch(ZENODO_DOI_PATTERN, archive_doi) is None:
+        raise ValueError(f"A canonical reserved Zenodo DOI is required: {archive_doi!r}")
     package_version = release_version.removeprefix("v")
     head = git_output(repo_root, "rev-parse", "HEAD")
     if not re.fullmatch(r"[0-9a-f]{40}", head):
@@ -542,8 +552,13 @@ def resolve_release_identity(
             "environment.txt repository does not match packet repository: "
             f"{environment['repository']} != {repository}"
         )
+    if environment["archive_doi"] != archive_doi:
+        raise ValueError(
+            "environment.txt archive_doi does not match requested archive DOI: "
+            f"{environment['archive_doi']} != {archive_doi}"
+        )
 
-    package_name, versions, metadata_hashes = read_release_metadata(repo_root)
+    package_name, versions, metadata_hashes, citation_doi = read_release_metadata(repo_root)
     if normalize_project_name(package_name) != normalize_project_name(EXPECTED_PACKAGE_NAME):
         raise ValueError(f"Unexpected project name in pyproject.toml: {package_name!r}")
     mismatches = [
@@ -556,6 +571,11 @@ def resolve_release_identity(
             f"Release metadata mismatch for {release_version}: {', '.join(mismatches)}; "
             f"update pyproject.toml, mito_overview/__init__.py, and CITATION.cff to {package_version}"
         )
+    if citation_doi != archive_doi:
+        raise ValueError(
+            f"CITATION.cff DOI does not match requested archive DOI: "
+            f"{citation_doi} != {archive_doi}"
+        )
 
     return {
         "schema_version": "1.0",
@@ -566,6 +586,9 @@ def resolve_release_identity(
         "git_commit": head,
         "environment_release_version": environment["release_version"],
         "environment_git_commit": environment["git_commit"],
+        "environment_archive_doi": environment["archive_doi"],
+        "archive_doi": archive_doi,
+        "citation_doi": citation_doi,
         "metadata_versions": versions,
         "metadata_sha256": metadata_hashes,
         "source_worktree_clean": True,
@@ -714,7 +737,7 @@ for relative, expected in artifact_hashes.items():
 parse_manifest(root / "inputs.sha256", packet_paths=False)
 
 def parse_environment(path):
-    wanted = {"release_version", "git_commit", "repository"}
+    wanted = {"release_version", "git_commit", "repository", "archive_doi"}
     values = {}
     for line in path.read_text(encoding="utf-8").splitlines():
         key, separator, value = line.partition("=")
@@ -742,6 +765,17 @@ if len({run.get("git_commit"), identity.get("git_commit"), environment.get("git_
     raise SystemExit("release commit is inconsistent across packet evidence")
 if len({run.get("repository"), identity.get("repository"), environment.get("repository")}) != 1:
     raise SystemExit("repository identity is inconsistent across packet evidence")
+archive_doi = run.get("archive_doi")
+if not re.fullmatch(r"10\.5281/zenodo\.[1-9][0-9]*", str(archive_doi or "")):
+    raise SystemExit("packet does not contain a canonical reserved Zenodo DOI")
+if len({
+    archive_doi,
+    identity.get("archive_doi"),
+    identity.get("citation_doi"),
+    identity.get("environment_archive_doi"),
+    environment.get("archive_doi"),
+}) != 1:
+    raise SystemExit("archive DOI is inconsistent across packet evidence")
 if identity.get("environment_release_version") != "v0.3.0" or environment.get("release_version") != "v0.3.0":
     raise SystemExit("environment release version mismatch")
 if identity.get("source_worktree_clean") is not True:
@@ -1061,6 +1095,7 @@ def build_packet(args: argparse.Namespace) -> Path:
         args.version,
         args.repository,
         args.commit,
+        args.doi,
     )
     acceptance_rows = validate_acceptance_evidence(
         args.validation_root,
@@ -1120,7 +1155,7 @@ def build_packet(args: argparse.Namespace) -> Path:
         "release_version": release_identity["release_version"],
         "git_commit": release_identity["git_commit"],
         "repository": release_identity["repository"],
-        "archive_doi": args.doi,
+        "archive_doi": release_identity["archive_doi"],
         "generated_utc": datetime.now(timezone.utc).isoformat(),
         "case_count": case_count,
         "verdict_counts": verdict_counts,

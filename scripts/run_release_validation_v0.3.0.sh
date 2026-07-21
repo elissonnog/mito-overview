@@ -1,29 +1,160 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ $# -ne 1 ]]; then
-  echo "Usage: MITO_OVERVIEW_GITHUB_RUN_ID=RUN_ID $0 VALIDATION_ROOT" >&2
+usage() {
+  cat >&2 <<EOF
+Usage: MITO_OVERVIEW_GITHUB_RUN_ID=RUN_ID $0 \\
+  VALIDATION_ROOT CACHE_ROOT PACKET_ROOT \\
+  AUDIT_ZIP [ARCHIVE_DOI]
+DOI may instead be supplied as MITO_OVERVIEW_ARCHIVE_DOI.
+EOF
+}
+
+if [[ $# -lt 4 || $# -gt 5 ]]; then
+  usage
   exit 1
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-VALIDATION_ROOT="$1"
 PYTHON_BIN="${MITO_OVERVIEW_PYTHON:-python3}"
 REPOSITORY="https://github.com/elissonnog/mito-overview"
 GITHUB_REPOSITORY="elissonnog/mito-overview"
 GITHUB_RUN_ID="${MITO_OVERVIEW_GITHUB_RUN_ID:-}"
 FRESH_CLONE_CASE_ID="fresh_clone_candidate_commit"
-CANDIDATE_COMMIT="$(git -C "${REPO_ROOT}" rev-parse HEAD)"
+EXPECTED_AUDIT_ZIP="mito-overview-v0.3.0-validation.zip"
+
+resolve_path() {
+  local label="$1"
+  local value="$2"
+  if [[ -z "${value}" || "${value}" == *$'\n'* || "${value}" == *$'\r'* || \
+    "${value}" == *$'\t'* ]]; then
+    echo "${label} must be a non-empty path without control characters." >&2
+    return 1
+  fi
+  "${PYTHON_BIN}" - "${value}" <<'PY'
+import sys
+from pathlib import Path
+
+print(Path(sys.argv[1]).expanduser().resolve(strict=False))
+PY
+}
+
+VALIDATION_ROOT="$(resolve_path "Validation root" "$1")"
+CACHE_ROOT="$(resolve_path "Cache root" "$2")"
+PACKET_ROOT="$(resolve_path "Packet root" "$3")"
+AUDIT_ZIP="$(resolve_path "Audit ZIP" "$4")"
+DOI_ARGUMENT="${5:-}"
+DOI_ENVIRONMENT="${MITO_OVERVIEW_ARCHIVE_DOI:-}"
+PACKET_BUILD_LOG="${AUDIT_ZIP}.build.log"
+PACKET_VERIFY_LOG="${AUDIT_ZIP}.verify.log"
+PACKET_SHA256="${AUDIT_ZIP}.sha256"
+PACKET_RECEIPT="${AUDIT_ZIP}.verification.json"
+
+if [[ -n "${DOI_ARGUMENT}" ]] && [[ -n "${DOI_ENVIRONMENT}" ]] && \
+  [[ "${DOI_ARGUMENT}" != "${DOI_ENVIRONMENT}" ]]; then
+  echo "ARCHIVE_DOI argument and MITO_OVERVIEW_ARCHIVE_DOI disagree." >&2
+  exit 1
+fi
+ARCHIVE_DOI="${DOI_ARGUMENT:-${DOI_ENVIRONMENT}}"
+if [[ ! "${ARCHIVE_DOI}" =~ ^10\.5281/zenodo\.[1-9][0-9]*$ ]]; then
+  echo "A canonical reserved Zenodo DOI (10.5281/zenodo.<record-id>) is required; UNRESERVED is not accepted." >&2
+  exit 1
+fi
+
+"${PYTHON_BIN}" - \
+  "${REPO_ROOT}" "${VALIDATION_ROOT}" "${CACHE_ROOT}" \
+  "${PACKET_ROOT}" "${AUDIT_ZIP}" "${EXPECTED_AUDIT_ZIP}" <<'PY'
+import sys
+from pathlib import Path
+
+repo_root, validation_root, cache_root, packet_root, audit_zip = map(
+    Path, sys.argv[1:6]
+)
+expected_zip = sys.argv[6]
+directory_roots = {
+    "validation root": validation_root,
+    "cache root": cache_root,
+    "packet root": packet_root,
+}
+
+for label, path in directory_roots.items():
+    if path == Path(path.anchor):
+        raise SystemExit(f"{label} must not be a filesystem root: {path}")
+if audit_zip.name != expected_zip:
+    raise SystemExit(
+        f"Audit ZIP must be named {expected_zip!r}, not {audit_zip.name!r}"
+    )
+
+def contains(parent: Path, child: Path) -> bool:
+    return child == parent or parent in child.parents
+
+items = list(directory_roots.items())
+for index, (left_label, left) in enumerate(items):
+    for right_label, right in items[index + 1 :]:
+        if contains(left, right) or contains(right, left):
+            raise SystemExit(
+                f"{left_label} and {right_label} must not overlap: {left}; {right}"
+            )
+for label, path in items:
+    if contains(path, audit_zip):
+        raise SystemExit(f"Audit ZIP must be outside {label}: {path}")
+    if contains(repo_root, path) or contains(path, repo_root):
+        raise SystemExit(f"{label} must be outside the release repository: {path}")
+if contains(repo_root, audit_zip):
+    raise SystemExit(f"Audit ZIP must be outside the release repository: {audit_zip}")
+PY
+
+"${PYTHON_BIN}" - "${REPO_ROOT}/CITATION.cff" "${ARCHIVE_DOI}" <<'PY'
+import sys
+from pathlib import Path
+
+citation_path = Path(sys.argv[1])
+expected_doi = sys.argv[2]
+values = []
+for line in citation_path.read_text(encoding="utf-8").splitlines():
+    if line.startswith("doi:"):
+        values.append(line.partition(":")[2].split("#", 1)[0].strip().strip("'\""))
+if values != [expected_doi]:
+    raise SystemExit(
+        "CITATION.cff must contain exactly one synchronized top-level DOI "
+        f"matching {expected_doi!r}; observed {values!r}"
+    )
+PY
 
 if [[ -n "$(git -C "${REPO_ROOT}" status --porcelain)" ]]; then
   echo "Release validation requires a clean Git worktree." >&2
   exit 1
 fi
+CANDIDATE_COMMIT="$(git -C "${REPO_ROOT}" rev-parse HEAD)"
 if [[ -d "${VALIDATION_ROOT}" && -n "$(find "${VALIDATION_ROOT}" -mindepth 1 -maxdepth 1 -print -quit)" ]]; then
   echo "Validation root must be absent or empty: ${VALIDATION_ROOT}" >&2
   exit 1
 fi
+if [[ -e "${VALIDATION_ROOT}" && ! -d "${VALIDATION_ROOT}" ]]; then
+  echo "Validation root exists and is not a directory: ${VALIDATION_ROOT}" >&2
+  exit 1
+fi
+if [[ -d "${PACKET_ROOT}" && -n "$(find "${PACKET_ROOT}" -mindepth 1 -maxdepth 1 -print -quit)" ]]; then
+  echo "Packet root must be absent or empty: ${PACKET_ROOT}" >&2
+  exit 1
+fi
+if [[ -e "${PACKET_ROOT}" && ! -d "${PACKET_ROOT}" ]]; then
+  echo "Packet root exists and is not a directory: ${PACKET_ROOT}" >&2
+  exit 1
+fi
+if [[ -e "${CACHE_ROOT}" && ! -d "${CACHE_ROOT}" ]]; then
+  echo "Cache root exists and is not a directory: ${CACHE_ROOT}" >&2
+  exit 1
+fi
+for output in \
+  "${AUDIT_ZIP}" "${PACKET_BUILD_LOG}" "${PACKET_VERIFY_LOG}" \
+  "${PACKET_SHA256}" "${PACKET_RECEIPT}"; do
+  if [[ -e "${output}" || -L "${output}" ]]; then
+    echo "Release output must not already exist: ${output}" >&2
+    exit 1
+  fi
+done
 if [[ ! "${GITHUB_RUN_ID}" =~ ^[1-9][0-9]*$ ]]; then
   echo "MITO_OVERVIEW_GITHUB_RUN_ID must identify a completed GitHub Actions run." >&2
   exit 1
@@ -40,6 +171,7 @@ mkdir -p \
   "${VALIDATION_ROOT}/expected" \
   "${VALIDATION_ROOT}/work" \
   "${VALIDATION_ROOT}/dist"
+mkdir -p "$(dirname "${AUDIT_ZIP}")"
 
 CASES_TSV="${VALIDATION_ROOT}/cases.tsv"
 printf 'case_id\tcategory\tinput_available\texpected_available\tverdict\tdetail\n' > "${CASES_TSV}"
@@ -215,6 +347,8 @@ PY
   echo "git_commit=${CANDIDATE_COMMIT}"
   echo "git_branch=$(git -C "${REPO_ROOT}" branch --show-current)"
   echo "repository=${REPOSITORY}"
+  echo "archive_doi=${ARCHIVE_DOI}"
+  echo "validation_cache_root=${CACHE_ROOT}"
   echo "date_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   uname -a
   if command -v sw_vers >/dev/null 2>&1; then sw_vers; fi
@@ -270,7 +404,7 @@ cp "${REPO_ROOT}/examples/synthetic_data/TOY-SR-001/expected_alleles.tsv" \
 PUBLIC_ROOT="${VALIDATION_ROOT}/public"
 run_logged public_validation_matrix public \
   env MITO_OVERVIEW_PYTHON="${PYTHON_BIN}" \
-  MITO_OVERVIEW_VALIDATION_CACHE="${MITO_OVERVIEW_VALIDATION_CACHE:-${XDG_CACHE_HOME:-${HOME}/.cache}/mito-overview/validation/v0.3.0}" \
+  MITO_OVERVIEW_VALIDATION_CACHE="${CACHE_ROOT}" \
   "${REPO_ROOT}/scripts/run_public_validation_matrix_v0.3.0.sh" "${PUBLIC_ROOT}"
 tail -n +2 "${PUBLIC_ROOT}/cases.tsv" >> "${CASES_TSV}"
 
@@ -280,4 +414,149 @@ if [[ "$(git -C "${REPO_ROOT}" rev-parse HEAD)" != "${CANDIDATE_COMMIT}" ]] || \
   exit 1
 fi
 
-echo "[release-validation] completed at ${VALIDATION_ROOT}"
+if ! "${PYTHON_BIN}" "${REPO_ROOT}/scripts/build_validation_packet_v0.3.0.py" \
+  "${VALIDATION_ROOT}" "${PACKET_ROOT}" "${AUDIT_ZIP}" \
+  --repo-root "${REPO_ROOT}" \
+  --commit "${CANDIDATE_COMMIT}" \
+  --cache-root "${CACHE_ROOT}" \
+  --version "v0.3.0" \
+  --repository "${REPOSITORY}" \
+  --doi "${ARCHIVE_DOI}" > "${PACKET_BUILD_LOG}" 2>&1; then
+  cat "${PACKET_BUILD_LOG}" >&2
+  exit 1
+fi
+cat "${PACKET_BUILD_LOG}"
+
+if [[ ! -s "${AUDIT_ZIP}" ]]; then
+  echo "Audit ZIP was not created or is empty: ${AUDIT_ZIP}" >&2
+  exit 1
+fi
+if [[ ! -x "${PACKET_ROOT}/verify_bundle.sh" ]]; then
+  echo "Packet verifier was not created or is not executable: ${PACKET_ROOT}/verify_bundle.sh" >&2
+  exit 1
+fi
+
+: > "${PACKET_VERIFY_LOG}"
+echo "[packet-root-verifier] ${PACKET_ROOT}/verify_bundle.sh" >> "${PACKET_VERIFY_LOG}"
+if ! "${PACKET_ROOT}/verify_bundle.sh" >> "${PACKET_VERIFY_LOG}" 2>&1; then
+  cat "${PACKET_VERIFY_LOG}" >&2
+  exit 1
+fi
+
+ZIP_VERIFY_ROOT="${VALIDATION_ROOT}/work/audit_zip_verify"
+mkdir -p "${ZIP_VERIFY_ROOT}"
+"${PYTHON_BIN}" - "${AUDIT_ZIP}" "${ZIP_VERIFY_ROOT}" <<'PY'
+import shutil
+import stat
+import sys
+import zipfile
+from pathlib import Path, PurePosixPath
+
+zip_path = Path(sys.argv[1])
+extract_root = Path(sys.argv[2]).resolve()
+with zipfile.ZipFile(zip_path) as archive:
+    infos = archive.infolist()
+    names = [info.filename for info in infos]
+    if not names or len(names) != len(set(names)):
+        raise SystemExit("Audit ZIP is empty or contains duplicate member names")
+    for info in infos:
+        member = PurePosixPath(info.filename)
+        mode = (info.external_attr >> 16) & 0o170000
+        if (
+            not info.filename
+            or "\\" in info.filename
+            or member.is_absolute()
+            or ".." in member.parts
+            or stat.S_ISLNK(mode)
+        ):
+            raise SystemExit(f"Unsafe audit ZIP member: {info.filename!r}")
+        destination = (extract_root / Path(*member.parts)).resolve()
+        if extract_root != destination and extract_root not in destination.parents:
+            raise SystemExit(f"Audit ZIP member escapes extraction root: {info.filename!r}")
+        if info.is_dir():
+            destination.mkdir(parents=True, exist_ok=True)
+            continue
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        with archive.open(info) as source, destination.open("wb") as target:
+            shutil.copyfileobj(source, target)
+PY
+
+echo "[audit-zip-verifier] ${AUDIT_ZIP}" >> "${PACKET_VERIFY_LOG}"
+if ! bash "${ZIP_VERIFY_ROOT}/verify_bundle.sh" >> "${PACKET_VERIFY_LOG}" 2>&1; then
+  cat "${PACKET_VERIFY_LOG}" >&2
+  exit 1
+fi
+
+"${PYTHON_BIN}" - \
+  "${ZIP_VERIFY_ROOT}/run.json" "${PACKET_VERIFY_LOG}" \
+  "${ARCHIVE_DOI}" "${CANDIDATE_COMMIT}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+run = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+log = Path(sys.argv[2]).read_text(encoding="utf-8")
+doi = sys.argv[3]
+commit = sys.argv[4]
+if run.get("archive_doi") != doi:
+    raise SystemExit("Audit ZIP DOI does not match the reserved DOI input")
+if run.get("git_commit") != commit:
+    raise SystemExit("Audit ZIP commit does not match the validated candidate")
+expected = f"verified mito-overview v0.3.0 packet at commit {commit}"
+if log.count(expected) != 2:
+    raise SystemExit("Both packet-root and audit-ZIP verifier evidence are required")
+PY
+cat "${PACKET_VERIFY_LOG}"
+
+AUDIT_ZIP_SHA256="$("${PYTHON_BIN}" - "${AUDIT_ZIP}" <<'PY'
+import hashlib
+import sys
+from pathlib import Path
+
+digest = hashlib.sha256()
+with Path(sys.argv[1]).open("rb") as handle:
+    for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+        digest.update(chunk)
+print(digest.hexdigest())
+PY
+)"
+printf '%s  %s\n' "${AUDIT_ZIP_SHA256}" "${EXPECTED_AUDIT_ZIP}" > "${PACKET_SHA256}"
+
+if [[ "$(git -C "${REPO_ROOT}" rev-parse HEAD)" != "${CANDIDATE_COMMIT}" ]] || \
+  [[ -n "$(git -C "${REPO_ROOT}" status --porcelain)" ]]; then
+  echo "Release repository changed while packaging candidate ${CANDIDATE_COMMIT}." >&2
+  exit 1
+fi
+
+"${PYTHON_BIN}" - \
+  "${PACKET_RECEIPT}" "${CANDIDATE_COMMIT}" "${ARCHIVE_DOI}" \
+  "${AUDIT_ZIP}" "${AUDIT_ZIP_SHA256}" "${PACKET_ROOT}" \
+  "${PACKET_BUILD_LOG}" "${PACKET_VERIFY_LOG}" <<'PY'
+import json
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+receipt = {
+    "schema_version": "1.0",
+    "evidence_type": "release_validation_archive_verification",
+    "verdict": "PASS",
+    "release_version": "v0.3.0",
+    "git_commit": sys.argv[2],
+    "archive_doi": sys.argv[3],
+    "audit_zip": sys.argv[4],
+    "audit_zip_sha256": sys.argv[5],
+    "packet_root": sys.argv[6],
+    "build_log": sys.argv[7],
+    "verification_log": sys.argv[8],
+    "verifier_runs": ["packet_root", "fresh_audit_zip_extraction"],
+    "generated_utc": datetime.now(timezone.utc).isoformat(),
+}
+Path(sys.argv[1]).write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
+PY
+
+echo "[release-validation] PASS"
+echo "[release-validation] candidate commit: ${CANDIDATE_COMMIT}"
+echo "[release-validation] audit ZIP: ${AUDIT_ZIP}"
+echo "[release-validation] SHA-256: ${AUDIT_ZIP_SHA256}"
+echo "[release-validation] verification receipt: ${PACKET_RECEIPT}"

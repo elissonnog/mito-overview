@@ -24,6 +24,7 @@ SPEC.loader.exec_module(packet_builder)
 REPOSITORY = "https://github.com/elissonnog/mito-overview"
 GITHUB_REPOSITORY = "elissonnog/mito-overview"
 GITHUB_RUN_ID = 123456
+TEST_DOI = "10.5281/zenodo.12345678"
 
 
 def write_cases(path: Path, rows: list[dict[str, str]]) -> None:
@@ -64,7 +65,11 @@ def run(command: list[str], cwd: Path) -> str:
     return result.stdout.strip()
 
 
-def create_release_repo(tmp_path: Path, version: str = "0.3.0") -> tuple[Path, str]:
+def create_release_repo(
+    tmp_path: Path,
+    version: str = "0.3.0",
+    doi: str = TEST_DOI,
+) -> tuple[Path, str]:
     repo = tmp_path / "release-repo"
     (repo / "mito_overview").mkdir(parents=True)
     (repo / "pyproject.toml").write_text(
@@ -83,7 +88,12 @@ def create_release_repo(tmp_path: Path, version: str = "0.3.0") -> tuple[Path, s
         encoding="utf-8",
     )
     (repo / "CITATION.cff").write_text(
-        f"cff-version: 1.2.0\ntitle: mito-overview\nversion: {version}\n",
+        (
+            "cff-version: 1.2.0\n"
+            "title: mito-overview\n"
+            f"version: {version}\n"
+            f"doi: {doi}\n"
+        ),
         encoding="utf-8",
     )
     run(["git", "init", "-q"], repo)
@@ -201,6 +211,7 @@ def create_validation_root(
     commit: str,
     *,
     environment_commit: str | None = None,
+    archive_doi: str = TEST_DOI,
     dist_version: str = "0.3.0",
 ) -> tuple[Path, str]:
     root = tmp_path / "validation"
@@ -239,6 +250,7 @@ def create_validation_root(
                 "release_version=v0.3.0",
                 f"git_commit={environment_commit or commit}",
                 f"repository={REPOSITORY}",
+                f"archive_doi={archive_doi}",
                 "python=3.12",
                 "",
             ]
@@ -289,7 +301,7 @@ def packet_args(
         cache_root=None,
         version="v0.3.0",
         repository=REPOSITORY,
-        doi="UNRESERVED",
+        doi=TEST_DOI,
     )
 
 
@@ -377,6 +389,10 @@ def test_packet_copies_runtime_evidence_and_self_verifies(tmp_path: Path) -> Non
     run_record = json.loads((packet / "run.json").read_text(encoding="utf-8"))
     assert identity["git_commit"] == commit
     assert run_record["git_commit"] == commit
+    assert identity["archive_doi"] == TEST_DOI
+    assert identity["citation_doi"] == TEST_DOI
+    assert identity["environment_archive_doi"] == TEST_DOI
+    assert run_record["archive_doi"] == TEST_DOI
     assert set(identity["acceptance_cases"]) == packet_builder.ACCEPTANCE_CASE_IDS
     assert set(identity["metadata_versions"].values()) == {"0.3.0"}
     assert {entry["kind"] for entry in identity["dist_artifacts"]} == {"wheel", "sdist"}
@@ -559,6 +575,33 @@ def test_packet_rejects_environment_commit_not_at_head(tmp_path: Path) -> None:
         packet_builder.build_packet(packet_args(validation_root, repo, tmp_path / "output"))
 
 
+def test_packet_rejects_environment_doi_mismatch(tmp_path: Path) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation_root, _ = create_validation_root(
+        tmp_path,
+        commit,
+        archive_doi="10.5281/zenodo.87654321",
+    )
+    with pytest.raises(ValueError, match="environment.txt archive_doi does not match"):
+        packet_builder.build_packet(packet_args(validation_root, repo, tmp_path / "output"))
+
+
+def test_packet_rejects_citation_doi_mismatch(tmp_path: Path) -> None:
+    repo, commit = create_release_repo(tmp_path, doi="10.5281/zenodo.87654321")
+    validation_root, _ = create_validation_root(tmp_path, commit)
+    with pytest.raises(ValueError, match="CITATION.cff DOI does not match"):
+        packet_builder.build_packet(packet_args(validation_root, repo, tmp_path / "output"))
+
+
+def test_packet_rejects_unreserved_doi(tmp_path: Path) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation_root, _ = create_validation_root(tmp_path, commit)
+    args = packet_args(validation_root, repo, tmp_path / "output")
+    args.doi = "UNRESERVED"
+    with pytest.raises(ValueError, match="canonical reserved Zenodo DOI"):
+        packet_builder.build_packet(args)
+
+
 def test_packet_rejects_arbitrary_commit_assertion(tmp_path: Path) -> None:
     repo, commit = create_release_repo(tmp_path)
     validation_root, _ = create_validation_root(tmp_path, commit)
@@ -652,6 +695,28 @@ def test_verifier_rejects_tampered_release_identity(tmp_path: Path) -> None:
     )
     assert verification.returncode != 0
     assert "release commit is inconsistent" in verification.stderr
+
+
+def test_verifier_rejects_tampered_archive_doi(tmp_path: Path) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation_root, _ = create_validation_root(tmp_path, commit)
+    output_root = tmp_path / "output"
+    packet_builder.build_packet(packet_args(validation_root, repo, output_root))
+    packet = output_root / "packet"
+    rewrite_json(
+        packet / "run.json",
+        lambda value: value.__setitem__("archive_doi", "10.5281/zenodo.87654321"),
+    )
+    rewrite_artifact_manifest(packet)
+
+    verification = subprocess.run(
+        [str(packet / "verify_bundle.sh")],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert verification.returncode != 0
+    assert "archive DOI is inconsistent" in verification.stderr
 
 
 def test_verifier_rejects_unmanifested_artifact(tmp_path: Path) -> None:
