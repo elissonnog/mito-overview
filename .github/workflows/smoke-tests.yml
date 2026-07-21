@@ -20,7 +20,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
 
@@ -34,11 +34,12 @@ jobs:
           test "${checked_out_commit}" = "${EXPECTED_COMMIT}"
 
       - name: Set up conda environment
-        uses: conda-incubator/setup-miniconda@fc2d68f6413eb2d87b895e92f8584b5b94a10167 # v3
+        uses: conda-incubator/setup-miniconda@8ee1f361103df19b6f8c8655fd3967a8ecb162d5 # v4.0.1
         with:
           environment-file: environment.yml
           activate-environment: mito-overview
-          auto-activate-base: false
+          auto-activate: false
+          conda-remove-defaults: true
 
       - name: Show versions
         run: |
