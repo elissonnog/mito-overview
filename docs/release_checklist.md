@@ -68,7 +68,8 @@ release date.
 - [ ] PR 3 contains current `main`, is no longer draft, and has green Ubuntu
   and macOS checks at its exact final head.
 - [ ] Independent release, scientific, and reproducibility reviews have no
-  unresolved blockers.
+  unresolved blockers and their structured read-only audit records are bound
+  to the reviewed PR-head tree.
 - [ ] The merged `main` commit is frozen as `FINAL_SHA`.
 - [ ] Push-event Ubuntu and macOS CI both report `head_sha=FINAL_SHA`.
 - [ ] Independent macOS and Ubuntu clean-room public runs start from public
@@ -80,11 +81,14 @@ release date.
 
 - [ ] The draft GitHub release targets the existing `v0.3.0` tag.
 - [ ] Canonical assets include wheel, sdist, validation ZIP, Markdown/DOCX/PDF
-  report, machine-readable verification record, release notes, environment
-  records, and `SHA256SUMS`.
-- [ ] Every uploaded asset matches `SHA256SUMS` before publication.
+  report, the Markdown report's sibling figure directory as a tar archive,
+  machine-readable verification record, release notes, environment records,
+  and `SHA256SUMS`.
+- [ ] `SHA256SUMS` covers every other uploaded asset; the downloaded manifest
+  is byte-identical to the prepared manifest and verifies every listed asset.
 - [ ] The published release, tag target, asset inventory, hashes, and hosting
-  immutability/protection state are captured in `github_publication.json`.
+  immutability/protection state are queried from GitHub and captured in
+  `github_publication.json`.
 
 ## Stop rules
 

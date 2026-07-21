@@ -135,5 +135,8 @@ complete rerun from a new final commit.
    directory and a fresh extraction.
 7. Create annotated tag `v0.3.0` at `FINAL_SHA`, validate the public tag, and
    never move it.
-8. Publish the verified GitHub release assets and record their SHA-256 values.
+8. Enable immutable releases, create a draft release, build the report from
+   queried draft metadata, upload and redownload the complete asset inventory,
+   verify `SHA256SUMS` against every other asset, publish, and capture the
+   queried release/tag/asset receipt.
 9. Stop before manuscript, bioRxiv, Notion, or MCW/HPC work.

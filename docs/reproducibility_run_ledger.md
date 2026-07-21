@@ -59,13 +59,19 @@ The GM12878 exercise uses a deterministic 1,000-query-name reduced ONT input and
 ## Active Release Command
 
 ```bash
-MITO_OVERVIEW_GITHUB_RUN_ID=<run-id> \
+export PATH="<locked-env-prefix>/bin:$PATH"
+export MITO_OVERVIEW_PYTHON="<locked-env-prefix>/bin/python"
+
+MITO_OVERVIEW_PR_NUMBER=3 \
+MITO_OVERVIEW_PR_RUN_ID=<successful-pr-smoke-run-id> \
+MITO_OVERVIEW_GITHUB_RUN_ID=<successful-main-push-smoke-run-id> \
+MITO_OVERVIEW_PUBLIC_RUN_ID=<successful-ubuntu-public-run-id> \
 ./scripts/run_release_validation_v0.3.0.sh \
   <validation-root> <raw-cache-root> <packet-root> \
   <mito-overview-v0.3.0-validation.zip>
 ```
 
-The runner must reject legacy DOI/Zenodo arguments, clone public GitHub HTTPS at an exact 40-character commit, build/install distributions outside the checkout, collect CI identity and resource evidence, build schema `2.0` profile `github_release_validation_v1`, and verify both the packet root and a fresh ZIP extraction.
+The runner must reject legacy DOI/Zenodo arguments, require an absent raw-cache path, clone public GitHub HTTPS at an exact 40-character commit, build/install distributions outside the checkout, collect exact PR-head, final-push, and Ubuntu-public-run evidence, build schema `2.0` profile `github_release_validation_v1`, and verify both the packet root and a fresh ZIP extraction. The environment prefix must have been solved from the matching platform specification and must satisfy the runner's exact runtime-version checks; ambient Mac tools are not accepted.
 
 ## Ordered Finish Gate
 
@@ -75,7 +81,7 @@ The runner must reject legacy DOI/Zenodo arguments, clone public GitHub HTTPS at
 4. Push PR #3 and require green Ubuntu/macOS CI at the exact head.
 5. Merge to `main`; record `FINAL_SHA`; require successful push-event CI at that exact SHA.
 6. Run a fresh macOS public clean-room reproduction from an empty cache and the Ubuntu public workflow at `FINAL_SHA`; compare normalized outputs and module states.
-7. Build and verify the audit ZIP and human-readable MD/DOCX/PDF report, including report-native figures.
-8. Tag exactly `FINAL_SHA` as annotated `v0.3.0`, rerun tag-clone package/unit/synthetic checks, publish verified GitHub assets, and record the publication receipt.
+7. Build and verify the audit ZIP, then tag exactly `FINAL_SHA` as annotated `v0.3.0` and rerun tag-clone package/unit/synthetic checks.
+8. Enable immutable releases, create the draft GitHub release, query its actual metadata, build and visually inspect the human-readable MD/DOCX/PDF report with report-native figures, upload and redownload all prepared assets, verify their hashes, publish, and record the queried publication receipt.
 
 Any commit after `FINAL_SHA` invalidates the release evidence. Any defect after publication is corrected forward as `v0.3.1`; the `v0.3.0` tag is never moved.
