@@ -38,7 +38,7 @@ Candidate counts are lenient=`33`, default=`33`, and strict=`33`; accepted obser
 The reduced short-read targeted-mt profile writes `not_applicable` status outputs for `deletions`, `copy_number`, `cosegregation`, `numt_qc`, `phymer_haplogroup`, `identity_qc`, `circularity_qc`, and `methylation_exploratory`. Optional `mvtool_annotation` is `not_configured` when disabled.
 
 ## Repeatability and claim scope
-Two default invocations from the same provenance-verified BAM produced matching normalized TSVs. HTML and PNG artifacts were readable and structurally consistent across the repeats. This result is conditional on the fixed BAM; it does not assess download, FASTQ combination, or alignment regeneration. The evidence supports workflow execution, report/resource generation, profile sensitivity, and mode gating only.
+Two default invocations from the same provenance-verified BAM produced matching normalized TSVs. HTML and PNG artifacts were readable and structurally consistent across the repeats. This result is conditional on the fixed BAM; it does not assess download, FASTQ combination, or alignment regeneration. The evidence supports workflow execution, report/resource generation, descriptive filter dependence, and mode gating only.
 
 Tracked asset pack:
 - `examples/public_validation/GM11906_MERRF_shortread`

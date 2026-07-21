@@ -1,15 +1,15 @@
 # mito-overview
 
-`mito-overview` is a Python-based workflow for mode-gated mitochondrial DNA (mtDNA) evidence reporting from aligned BAM or CRAM inputs. The current public implementation provides a long-read-oriented profile and a reduced short-read compatibility profile that preserves the analytical layers applicable without long molecules or ONT methylation tracks. The repository emphasizes synchronized HTML, TSV, and figure generation for mitochondrial QC, alternate-allele screening, structural screening, depth-proxy reporting when nuclear context is available, feature annotation, same-read co-occurrence, and warning-oriented QC.
+`mito-overview` is a Python-based workflow for mode-gated mitochondrial DNA (mtDNA) evidence reporting from aligned BAM or CRAM inputs. The current public implementation provides a long-read-oriented profile and a reduced short-read compatibility profile that preserves the analytical layers applicable without long molecules or ONT methylation tracks. The repository emphasizes synchronized HTML, TSV, and figure generation for mitochondrial QC, alternate-allele screening, structural screening, an experimental within-sample mt:nuclear depth ratio when nuclear context is evaluable, feature annotation, same-read co-occurrence, and warning-oriented QC.
 
-Version `0.3.0` is documented as a workflow/resource release. Its public validation evidence covers report execution, synchronized artifacts, mode/status gating, filter-profile sensitivity, and repeatability from provenance-verified fixed BAM inputs.
+Version `0.3.0` is an unreleased workflow/resource release candidate. Its public validation evidence covers report execution, synchronized artifacts, mode/status gating, filter-profile dependence, and repeatability from provenance-verified fixed BAM inputs; no final tag, release date, or version-specific DOI is claimed.
 
 ## Scope
 - aligned BAM or CRAM input
 - mitochondrial subset extraction
 - heteroplasmy screening
-- deletion-like structural screening
-- mtDNA depth and copy-number proxy estimation
+- CIGAR-deletion structural screening with a separate supplementary-alignment/`SA` summary
+- experimental within-sample mt:nuclear depth ratio when nuclear context is evaluable
 - mitochondrial feature and gene-level summarization
 - NUMT-aware and circularity-aware QC
 - optional exploratory methylation summaries
@@ -18,7 +18,7 @@ Version `0.3.0` is documented as a workflow/resource release. Its public validat
 ## Implemented read profiles
 - `long`
   - intended for ONT-style mtDNA workflows
-  - supports the full current report structure, including long-read-only layers such as deletion screening, same-read co-occurrence, NUMT/circularity warning pages, and exploratory methylation
+  - supports the full current report structure, including long-read-only layers such as CIGAR-deletion screening, same-read co-occurrence, NUMT/circularity warning pages, and exploratory methylation
   - when ONT bedmethyl sidecars are absent, the core long-read layers still run and the exploratory methylation page degrades to an explicit status-only report
 - `short`
   - intended for short-read mtDNA-aligned inputs
@@ -26,7 +26,7 @@ Version `0.3.0` is documented as a workflow/resource release. Its public validat
   - currently exercised in the public repository as an auxiliary compatibility path with a synthetic toy sample and one public proof-of-principle example
 
 ## Current implemented scope
-The public mirror currently covers the working core already ported from the internal pipeline. The modules below are implemented in the public mirror and exercised by the current synthetic smoke-test and example-bundle workflow:
+The modules below are implemented in the public repository and exercised by the synthetic smoke-test and example-bundle workflow:
 - portable config loading
 - run layout and provenance writing
 - mitochondrial asset extraction
@@ -149,14 +149,14 @@ Run the public reduced short-read proof-of-principle example:
 
 ```bash
 ./scripts/run_public_shortread_validation_gm11906.sh \
-  /tmp/GM11906_reduced_shortread_output
+  "$PWD/validation_outputs/GM11906_reduced_shortread"
 ```
 
 Run the public long-read proof-of-principle example:
 
 ```bash
 ./scripts/run_public_longread_validation_gm12878.sh \
-  /tmp/GM12878_ONT_longread_output
+  "$PWD/validation_outputs/GM12878_ONT_longread"
 ```
 
 ## Output contract
@@ -173,7 +173,7 @@ A synthetic public-core example bundle is staged at:
 
 Pages `01` through `14` in the example bundle correspond to the currently ported public report pages. In the bundled toy smoke-test path, pages `13` and `14` are exercised through local fixture resources so that a fresh clone can exercise the optional human enrichment interfaces without a private Phy-Mer checkout or live network dependency.
 
-In the short-read targeted-mt profile, pages `03`, `04`, `06`, `08`, `09`, `11`, `12`, and `13` are expected to be explicit status pages rather than active long-read analyses. In a short-read WGS profile, page `04` can remain active as a depth-proxy layer, but the long-read structural and molecule-level pages remain status-only.
+In the short-read targeted-mt profile, pages `03`, `04`, `06`, `08`, `09`, `11`, `12`, and `13` are expected to be explicit status pages rather than active long-read analyses. In a short-read WGS profile, page `04` can report the experimental within-sample mt:nuclear depth ratio, but the long-read structural and molecule-level pages remain status-only.
 
 In long-read mode without ONT bedmethyl sidecars, page `12` is expected to be a stable status-only methylation report while the core long-read analytical pages remain active.
 
@@ -185,10 +185,9 @@ In long-read mode without ONT bedmethyl sidecars, page `12` is expected to be a 
 - `mito-overview` does not bundle external Phy-Mer code or mvTool data resources; see [`docs/license_notes.md`](docs/license_notes.md)
 
 ## Repository status
-- public repository with a functional core, tracked synthetic smoke-test assets, and an active software/resource preprint draft
+- unreleased v0.3.0 release candidate with a functional core, tracked synthetic smoke-test assets, and an active software/resource preprint draft
 - current repository now includes a synthetic public example bundle generated from the public-core workflow
 - current repository now includes a short-read synthetic bundle plus bounded public long-read and short-read proof-of-principle asset packs
-- v0.3.0 public validation evidence was generated from clean commit `dc09114`
 - cite the software metadata in [`CITATION.cff`](CITATION.cff) and use tagged releases for archived versions
 - canonical free-format manuscript source is [`paper/preprint_draft.md`](paper/preprint_draft.md)
 - design notes for the public package are in [`docs/overview.md`](docs/overview.md) and [`docs/methodology.md`](docs/methodology.md)
@@ -197,22 +196,20 @@ In long-read mode without ONT bedmethyl sidecars, page `12` is expected to be a 
 - release-readiness requirements are in [`docs/release_checklist.md`](docs/release_checklist.md)
 - related-software positioning is in [`docs/related_software_landscape.md`](docs/related_software_landscape.md)
 - the current reproducibility evidence ledger is in [`docs/reproducibility_run_ledger.md`](docs/reproducibility_run_ledger.md)
-- the current release-validation audit template is in [`docs/release_validation_audit_2026-07-07.md`](docs/release_validation_audit_2026-07-07.md)
 - contribution and issue-reporting guidance is in [`CONTRIBUTING.md`](CONTRIBUTING.md)
 
 ## Public long-read reduced-input example
 The repository includes an asset pack from a fixed deterministic subset of a public ONT targeted-mt run:
 - [`examples/public_validation/GM12878_ONT_longread`](examples/public_validation/GM12878_ONT_longread)
 
-This example uses a public GM12878 targeted-mt ONT run from BioProject `PRJNA809571` / run `SRR18110025`, described in the source metadata as `Long read mitochondrial genome sequencing using Cas9-guided adaptor ligation`:
+This example uses the public GM12878 targeted-mt ONT dataset reported by Vandiver et al. (2022), BioProject `PRJNA809571` / run `SRR18110025`, described as `Long read mitochondrial genome sequencing using Cas9-guided adaptor ligation`:
+- [Vandiver et al., Mitochondrion 2022, PMCID PMC9399971](https://pmc.ncbi.nlm.nih.gov/articles/PMC9399971/)
 - [NCBI BioProject PRJNA809571](https://www.ncbi.nlm.nih.gov/bioproject/PRJNA809571)
 - [ENA run SRR18110025](https://www.ebi.ac.uk/ena/browser/view/SRR18110025)
-- [Slapnik et al., Sci Rep 2024](https://www.nature.com/articles/s41598-024-78270-0)
-- [Frascarelli et al., Front Genet 2023](https://pubmed.ncbi.nlm.nih.gov/37456669/)
 
-The v0.3.0 input is exactly a seeded deterministic subset of `1,000` query names selected from `193,043` source FASTQ records. Its provenance-verified mapped-only BAM has `728` mapped unique query names represented by `728` primary alignments and `543` supplementary records.
+The release-candidate input is exactly a seeded deterministic subset of `1,000` query names selected from `193,043` source FASTQ records. The reads were aligned to `NC_012920.1` with minimap2 `2.31-r1302`; the provenance-verified mapped-only BAM has `728` mapped unique query names represented by `728` primary alignments and `543` supplementary records.
 
-At `MIN_CALLABLE_DEPTH=100`, `MIN_ALT_ALLELE_FRACTION=0.10`, and default BaseQ/MAPQ/readQ filters `13/20/10`, the workflow reports `16` candidates, `7,143,152` accepted observations, and `2,047,476` excluded observations. The structural screen emits `13` singleton CIGAR/SA bins. Statuses are `not_applicable` for copy number and Phy-Mer, `not_configured` for mvTool and methylation, and `not_evaluable` for NUMT interpretation with `reference_scope_mt_only`.
+At `MIN_CALLABLE_DEPTH=100`, `MIN_ALT_ALLELE_FRACTION=0.10`, and default BaseQ/MAPQ/readQ filters `13/20/10`, the workflow reports `16` candidates, `7,143,152` accepted observations, and `2,047,476` excluded observations. The structural screen emits `13` singleton CIGAR-deletion bins, each supported by one query name; separately, `542` query names have a supplementary alignment or `SA` tag. Statuses are `not_applicable` for the within-sample mt:nuclear depth ratio and Phy-Mer, `not_configured` for mvTool and methylation, and `not_evaluable` for NUMT interpretation with `reference_scope_mt_only`.
 
 | GM12878 profile | BaseQ/MAPQ/readQ | Candidates | Accepted observations |
 | --- | --- | ---: | ---: |

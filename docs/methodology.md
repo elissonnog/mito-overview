@@ -1,15 +1,15 @@
 # Methodology
 
 ## Core analytical logic
-The v0.3.0 public package uses a modular, mode-gated report workflow. Read mode and assay type determine whether each layer runs, writes a status-only output, or is marked `not_applicable`.
+The unreleased v0.3.0 release candidate uses a modular, mode-gated report workflow. Read mode and assay type determine whether each layer runs, writes a status-only output, or is marked `not_applicable`.
 
 Primary analytical layers:
 1. metadata discovery and provenance capture
 2. mitochondrial read extraction
 3. QC and coverage profiling
 4. heteroplasmy analysis
-5. deletion and rearrangement profiling
-6. copy-number proxy estimation
+5. CIGAR-deletion screening with a separate supplementary-alignment/`SA` summary
+6. experimental within-sample mt:nuclear depth ratio
 7. mitochondrial feature annotation
 8. same-read co-occurrence
 9. mitochondrial gene-summary aggregation
@@ -30,7 +30,7 @@ The default allele-observation filters are:
 | `ALLELE_MIN_MAPPING_QUALITY` | 20 |
 | `ALLELE_MIN_READ_MEAN_QUALITY` | 10 |
 
-The v0.3.0 sensitivity matrix uses lenient `0/0/0`, default `13/20/10`, and strict `20/30/15` BaseQ/MAPQ/readQ profiles. Candidate thresholds do not change between those profiles.
+The v0.3.0 filter-dependence matrix uses lenient `0/0/0`, default `13/20/10`, and strict `20/30/15` BaseQ/MAPQ/readQ profiles. Candidate thresholds do not change between those profiles.
 
 For GM11906, candidate counts are lenient=`33`, default=`33`, and strict=`33`, while accepted observations are lenient=`44,052,664`, default=`44,052,664`, and strict=`42,676,166`. For GM12878 qn1000, candidate counts are lenient=`32`, default=`16`, and strict=`15`, while accepted observations are lenient=`8,278,969`, default=`7,143,152`, and strict=`6,046,355`.
 
@@ -46,7 +46,7 @@ For GM11906, candidate counts are lenient=`33`, default=`33`, and strict=`33`, w
 - `not_configured`: an optional input or integration was not enabled.
 - `not_evaluable`: an output is generated, but its input scope does not support that interpretation.
 
-For the GM12878 targeted-mt input, copy number and Phy-Mer are `not_applicable`, mvTool and methylation are `not_configured`, and NUMT interpretation is `not_evaluable` with reason `reference_scope_mt_only`.
+For the GM12878 targeted-mt input, the within-sample mt:nuclear depth ratio and Phy-Mer are `not_applicable`, mvTool and methylation are `not_configured`, and NUMT interpretation is `not_evaluable` with reason `reference_scope_mt_only`.
 
 ## Repeatability scope
 The v0.3.0 repeatability checks invoke the workflow twice from each provenance-verified fixed BAM, compare normalized TSV outputs, and inspect HTML/PNG structure. They do not regenerate the GM12878 query-name subset or either dataset's alignment. Results therefore support fixed-input workflow and resource repeatability only.

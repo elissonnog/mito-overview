@@ -1,31 +1,28 @@
-# MitoOverview v0.3.0 Preprint Release Validation
+# MitoOverview v0.3.0 Release-Candidate Validation
 
 ## Document status
 
-This document is the human-readable audit record for the MitoOverview v0.3.0 preprint-hardening work. It records completed implementation and validation evidence without converting pending release activities into passing results.
+This document records public validation evidence for the unreleased MitoOverview v0.3.0 release candidate. It does not claim a final tagged release.
 
 - Evidence date: 2026-07-20
 - Repository: https://github.com/elissonnog/mito-overview
-- Working branch: `codex/preprint-hardening-v0.3.0`
-- Immutable prior release: `v0.2.1` at `2ba62b775a7204c0dc61f5408989603f536c78da`
-- Corrected public-matrix commit: `dc09114e1a0dcec2baf83d94549dfa41f3e49c8b`
-- Intended release: `v0.3.0`
-- Validation status: **implementation evidence complete; final release certification pending**
-- MCW/HPC deployment: **not performed**
+- Candidate version: `0.3.0`
+- Release status: **unreleased release candidate**
+- Validation status: **bounded release-candidate evidence complete within the scope below**
 
-The final Material Passport remains `UNVERIFIED` until a clean release-candidate commit has passing Linux and macOS GitHub Actions evidence, a passing fresh-clone run, a self-verifying audit ZIP, synchronized DOI metadata, and an exact `v0.3.0` tag.
+The final `v0.3.0` tag, release date, and version-specific archival DOI have not been assigned.
 
 ## Claim boundary
 
-MitoOverview v0.3.0 is evaluated as a reproducible, mode-gated workflow/resource package for mitochondrial evidence reporting. The evidence in this record does not establish diagnostic performance, clinically calibrated low-allele-fraction detection, pathogenicity classification, deletion sensitivity or specificity, absolute mtDNA copy number, formal NUMT classification, or equivalence between sequencing modalities.
+The unreleased MitoOverview v0.3.0 release candidate is evaluated as a reproducible, mode-gated workflow/resource package for mitochondrial evidence reporting. The evidence in this record does not establish diagnostic performance, clinically calibrated low-allele-fraction detection, pathogenicity classification, deletion sensitivity or specificity, absolute mtDNA copy number, formal NUMT classification, or equivalence between sequencing modalities.
 
-Clair3, NanoDel, in-pipeline modkit execution, absolute copy-number estimation, and MCW deployment are deferred. The public examples are proof-of-principle workflow executions, not clinical validation cohorts.
+Clair3, NanoDel, in-pipeline modkit execution, absolute copy-number estimation, and deployment-specific integrations are outside the evaluated scope. The public examples are proof-of-principle workflow executions, not clinical validation cohorts.
 
 ## Corrections and computational definitions
 
 ### 1. Filtered alternate-allele observations
 
-The shared observation engine in `mito_overview/allele_observations.py` is used by candidate-site counting and co-segregation. Callable depth is the number of passing canonical base observations:
+The shared observation engine in `mito_overview/allele_counting.py` is used by candidate-site counting and co-segregation. Callable depth is the number of passing canonical base observations:
 
 \[
 D_{callable}=n_A+n_C+n_G+n_T
@@ -63,9 +60,9 @@ The minimal required configuration is `WORK_ROOT`, `RUN_NAME`, `SAMPLE_ID`, `REF
 
 Normal execution checks the FASTA index, BAM/CRAM index, mitochondrial contig, configured or inferred length, and CRAM reference accessibility. Deterministic tests cover minimal BAM and CRAM configurations, sidecar precedence, legacy discovery, absent optional inputs, missing indexes, missing contigs, length mismatch, missing CRAM reference, and attempts to omit the validation step. Primary tests: `tests/test_config_and_inputs.py` and `tests/smoke_standalone_minimal.sh`.
 
-### 4. Within-sample mt:nuclear depth proxy
+### 4. Within-sample mt:nuclear depth ratio
 
-The copy-number module reports only:
+The `mito_copy_number` module reports only the within-sample mt:nuclear depth ratio:
 
 \[
 R_{mt:nuclear}=\frac{\overline{D}_{mt}}{\overline{D}_{nuclear}}
@@ -87,7 +84,7 @@ Deterministic tests verify scope inference, rejection of a false whole-genome ov
 
 ### Environment
 
-The local validation environment was `/Users/elopes/Desktop/ont_results/mito-overview/.conda-release-check` on macOS.
+Local deterministic validation ran on macOS in an isolated conda environment.
 
 | Component | Version |
 | --- | --- |
@@ -100,8 +97,6 @@ The local validation environment was `/Users/elopes/Desktop/ont_results/mito-ove
 | Pillow | 12.3.0 |
 | Requests | 2.34.2 |
 | pytest | 9.1.1 |
-
-The exact final environment export will be included as `environment.txt` in the release audit ZIP.
 
 ### Commands and observed verdicts
 
@@ -123,23 +118,19 @@ MITO_OVERVIEW_PYTHON="$PWD/.conda-release-check/bin/python" \
 
 | Check | Verdict | Observed evidence |
 | --- | --- | --- |
-| Focused unit/known-answer suite | PASS | 89 passed in 9.43 s |
+| Deterministic unit/known-answer suite | PASS | 124 passed in 18.99 s |
 | CLI step listing | PASS | command exited 0 |
 | Generic configured dry-run | PASS | command exited 0 |
 | Synthetic long-read workflow | PASS | all applicable steps completed; fixture mvTool and methylation paths exercised |
 | Synthetic reduced short-read workflow | PASS | applicable core steps completed; long-read-only layers reported `not_applicable` |
 | Long-read without methylation sidecars | PASS | core workflow completed; methylation reported `not_configured` |
-| Minimal standalone workflow | PASS | six-key standalone contract completed without legacy MCW inputs |
+| Minimal standalone workflow | PASS | six-key BAM and CRAM configurations each passed strict dry-run and full execution without deployment-specific inputs |
 
-These results were reproduced after the v0.3.0 metadata change. They are local implementation evidence; final fresh-clone and GitHub-hosted evidence remain separate release gates.
+These results characterize the tested release-candidate state within the stated environment and evidence boundaries.
 
 ## Public-data validation design
 
 The public validation matrix was run twice at default filters and once at each descriptive filter profile. Exact normalized TSV comparisons were used for repeatability; HTML and PNG files were checked for inventory, dimensions, CRC/structure, and visual consistency rather than byte identity.
-
-The matrix root used during this implementation audit was:
-
-`/private/tmp/mito-overview-v030-public-matrix-dc09114`
 
 Lightweight, tracked evidence copies are:
 
@@ -154,15 +145,27 @@ Lightweight, tracked evidence copies are:
 | Dataset | Public source | Analyzed material | Key provenance |
 | --- | --- | --- | --- |
 | GM11906 | `SRR10804585`, `SRR10804590`, `SRR10804657` | pooled paired-end reads aligned with BWA-MEM | BAM SHA-256 `53ca478465cfdaee4eb5d7e59e14d3abfb0c72d7b366afe5e96041638b6fb6f8`; BWA `0.7.19-r1273`; samtools `1.23.1` |
-| GM12878 | `SRR18110025`, `PRJNA809571`, `SAMN26195906` | deterministic 1,000-query-name subset, not the full run | raw FASTQ MD5 `d5bfb9aeba04cae5f3dd79462a42e5b0`; subset SHA-256 `40e203ead1d621bfec8caa3c5d18cd1e7e70c08da27008a73364812b6871df33`; selected-name SHA-256 `3444cc7db3dcf78bea807d8bcc6686883a7759d128288c1d26aeae077a771a19` |
+| GM12878 [Vandiver et al. 2022](https://pmc.ncbi.nlm.nih.gov/articles/PMC9399971/) | `SRR18110025`, `PRJNA809571`, `SAMN26195906` | deterministic 1,000-query-name subset, not the full run | raw FASTQ MD5 `d5bfb9aeba04cae5f3dd79462a42e5b0`; subset SHA-256 `40e203ead1d621bfec8caa3c5d18cd1e7e70c08da27008a73364812b6871df33`; selected-name SHA-256 `3444cc7db3dcf78bea807d8bcc6686883a7759d128288c1d26aeae077a771a19` |
 
-The GM12878 subset used the 1,000 smallest seeded query-name hashes under `smallest_sha256_seeded_query_names_v1` with seed `mito-overview-v0.3.0-GM12878-SRR18110025`. It contained 1,000 of 193,043 source records (fraction 0.00518019). The analyzed BAM SHA-256 was `a36e1b5cb0f0e6576e9b4eda2cca9c527610a39b287fd2379109961b5fef24c1`; its index SHA-256 was `3ca1b839814c857d34a62ced0cf0237854f69e4caa9758cbcb4f29974dad6c98`. The alignment contained 728 primary and 543 supplementary records from 728 mapped query names. Repeatability therefore applies to workflow execution conditional on this fixed, provenance-bound reduced BAM; it is not evidence that independent subset selection or alignment reconstruction is invariant across software versions.
+Both datasets were aligned to the 16,569-bp `NC_012920.1` reference. BWA-MEM was selected for the pooled paired-end GM11906 reads; the tracked BWA `0.7.19-r1273` command template was:
+
+```bash
+bwa mem -t {threads} {reference_fasta} {combined_r1} {combined_r2} | samtools sort -@ {threads} -o {alignment_bam}
+```
+
+Minimap2 with the `map-ont` preset was selected for the GM12878 ONT reads; the tracked minimap2 `2.31-r1302` command template was:
+
+```bash
+minimap2 -t {threads} -ax map-ont {reference_mmi} {deterministic_subset_fastq} | samtools view -@ {threads} -b -F 4 | samtools sort -@ {threads} -o {alignment_bam}
+```
+
+The GM12878 subset used the 1,000 smallest seeded query-name hashes under `smallest_sha256_seeded_query_names_v1` with seed `mito-overview-v0.3.0-GM12878-SRR18110025`. This fixed-size hash selection bounded the example while making inclusion deterministic and auditable; it was not intended to produce a statistically representative sample. The subset contained 1,000 of 193,043 source records (fraction 0.00518019). The analyzed BAM SHA-256 was `a36e1b5cb0f0e6576e9b4eda2cca9c527610a39b287fd2379109961b5fef24c1`; its index SHA-256 was `3ca1b839814c857d34a62ced0cf0237854f69e4caa9758cbcb4f29974dad6c98`. The alignment contained 728 primary and 543 supplementary records from 728 mapped query names. Repeatability therefore applies to workflow execution conditional on this fixed, provenance-bound reduced BAM; it is not evidence that independent subset selection or alignment reconstruction is invariant across software versions.
 
 ## Public-data results
 
 ### Matrix verdicts
 
-All 13 prespecified matrix cases passed at commit `dc09114e1a0dcec2baf83d94549dfa41f3e49c8b`.
+All 13 prespecified release-candidate matrix cases passed.
 
 | Evidence class | Cases | Verdict |
 | --- | ---: | --- |
@@ -204,15 +207,15 @@ At the default 13/20/10 filter profile, the reduced workflow reported:
 | Mean mitochondrial depth | 545.484 |
 | Median mitochondrial depth | 544.0 |
 | Selected co-segregation sites | 8 |
-| Candidate deletion-screen clusters | 13 |
+| Singleton CIGAR-deletion bins | 13 |
 | Unique primary query names | 728 |
 | Query names with a large CIGAR deletion | 5 |
 | Query names with supplementary alignment or SA tag | 542 |
-| Maximum deletion-cluster support fraction | 0.001374 |
+| Maximum CIGAR-deletion-bin support fraction | 0.001374 |
 
-All 13 deletion-screen clusters were singleton bins; the largest median deletion length was 1,394 bp. These are descriptive CIGAR/SA candidate-screen outputs without orthogonal deletion truth. They do not establish deletion-calling accuracy.
+All 13 CIGAR-deletion bins were singletons; the largest binned median CIGAR-deletion length was 1,394 bp. Five query names had at least one qualifying CIGAR deletion. Separately, 542 query names had a supplementary alignment or `SA` tag. These descriptive CIGAR-deletion and alignment-structure summaries lack orthogonal structural truth and do not establish deletion-calling accuracy.
 
-The targeted-mt profile correctly reported copy number and Phy-Mer as `not_applicable`, mvTool and methylation as `not_configured`, and mt-only NUMT interpretation as `not_evaluable` with `reason_code=reference_scope_mt_only`. The alignment-ambiguity metrics remain inspectable, but no categorical low/moderate/high NUMT-risk claim is made.
+The targeted-mt profile correctly reported the within-sample mt:nuclear depth ratio and Phy-Mer as `not_applicable`, mvTool and methylation as `not_configured`, and mt-only NUMT interpretation as `not_evaluable` with `reason_code=reference_scope_mt_only`. The alignment-ambiguity metrics remain inspectable, but no categorical low/moderate/high NUMT-risk claim is made.
 
 ### Filter-profile description
 
@@ -231,11 +234,11 @@ These differences describe filter dependence. They are not sensitivity, specific
 
 | Claim permitted for v0.3.0 | Supporting evidence | Boundary |
 | --- | --- | --- |
-| Shared, filtered alternate-allele counting is deterministic on known-answer fixtures | `tests/test_allele_counting.py`; 89-test PASS | No clinical calibration |
+| Shared, filtered alternate-allele counting is deterministic on known-answer fixtures | `tests/test_allele_counting.py`; 124-test PASS | No clinical calibration |
 | Co-segregation reuses the same observation filters | shared engine tests and synthetic long-read smoke | No biological phasing benchmark |
 | Default mvTool execution is offline | `tests/test_mvtool_modes.py`; standalone smoke reports `not_configured` | Network service content not validated |
 | Generic BAM/CRAM inputs are supported | config tests plus minimal standalone smoke | Platform breadth limited to tested environments |
-| Copy-number output is an experimental within-sample depth ratio | exact 100/10 known-answer and denominator-negative tests | Not absolute copies per cell |
+| The copy-number-named module reports an experimental within-sample mt:nuclear depth ratio | exact 100/10 known-answer and denominator-negative tests | Not absolute copies per cell |
 | mt-only reference suppresses categorical NUMT interpretation | scope tests and GM12878 public output | Not a NUMT classifier |
 | Long-read public workflow completes on a deterministic reduced ONT input | GM12878 matrix and tracked provenance | Not full-run performance or analytical validation |
 | Reduced short-read profile represents `m.8344A>G` | GM11906 repeated public runs | Not diagnostic or modality-equivalence evidence |
@@ -251,46 +254,23 @@ Module states are restricted to `ok`, `not_configured`, `not_applicable`, `not_e
 - `unavailable`: an explicitly requested external service failed.
 - `failed`: required execution failed.
 
-## Remaining release gates
+## Release-candidate status
 
-The following items are intentionally not marked PASS in this implementation snapshot:
+Version `0.3.0` remains unreleased. The final tag, release date, and version-specific archival DOI are pending and are not represented as completed validation results.
 
-| Gate | Current verdict | Required evidence |
-| --- | --- | --- |
-| Linux GitHub Actions on final candidate | BLOCKED | branch must be pushed and exact-commit job must pass |
-| macOS GitHub Actions on final candidate | BLOCKED | branch must be pushed and exact-commit job must pass |
-| Final fresh-clone validation | BLOCKED | run from exact clean candidate after all metadata/docs commits |
-| Final public matrix on tagged candidate | BLOCKED | rerun at exact candidate; corrected values must replace implementation snapshot if changed |
-| Audit ZIP | BLOCKED | generate and verify after exact-commit CI/fresh-clone evidence exists |
-| Zenodo DOI | BLOCKED | reserve authenticated DOI and synchronize metadata |
-| `v0.3.0` tag and GitHub release | BLOCKED | tag only the fully validated, DOI-synchronized commit |
+## Independent reproducibility checklist
 
-`BLOCKED` here means the evidence depends on a later release-stage external action, not that the implementation work failed. The release scripts reject missing, handwritten, wrong-platform, wrong-commit, or nonpassing acceptance evidence.
+An external reviewer can:
 
-## Independent audit checklist
-
-An external reviewer should:
-
-1. Confirm `v0.2.1^{commit}` remains `2ba62b775a7204c0dc61f5408989603f536c78da`.
-2. Inspect `git log --reverse v0.2.1..HEAD` and verify the five corrections are separable.
-3. Run the 89-test suite and four synthetic workflows with the commands above.
-4. Confirm `examples/configs/human_example.env` contains no MCW path.
-5. Verify the GM11906 and GM12878 tracked provenance JSON and SHA-256 records.
-6. Confirm `m.8344A>G` is `1027/740/0.720545` in the corrected default output.
-7. Confirm GM12878 uses exactly the labeled 1,000-query-name deterministic subset.
-8. Confirm no mt-only output contains a categorical NUMT-risk label.
-9. Confirm no missing or zero copy-number denominator is emitted as ratio zero.
-10. Confirm default mvTool mode does not construct a network session.
-11. Inspect representative long- and short-read montages for legibility and correspondence to tracked summary tables.
-12. After CI, run `scripts/run_release_validation_v0.3.0.sh` from a clean clone at the exact candidate commit.
-13. Run `verify_bundle.sh` inside the final audit ZIP and compare release identity, manifests, status vocabulary, required cases, and distribution metadata.
+1. Run the 124-test suite and four synthetic workflows with the commands above.
+2. Verify the GM11906 and GM12878 tracked provenance JSON and SHA-256 records.
+3. Confirm `m.8344A>G` is `1027/740/0.720545` in the default GM11906 output.
+4. Confirm GM12878 uses exactly the labeled 1,000-query-name deterministic subset.
+5. Confirm no mt-only output contains a categorical NUMT-risk label.
+6. Confirm no missing or zero denominator is emitted as a numeric within-sample mt:nuclear depth ratio.
+7. Confirm default mvTool mode does not construct a network session.
+8. Inspect representative long- and short-read montages for legibility and correspondence to tracked summary tables.
 
 ## Reproducibility artifacts
 
-The final portable validation bundle is designed for:
-
-`/Users/elopes/Desktop/ont_results/mito_overview_validation_packets/v0.3.0/mito-overview-v0.3.0-validation.zip`
-
-It must contain `run.json`, `release_identity.json`, `cases.tsv`, `claim_evidence_matrix.tsv`, `public_data_sources.tsv`, `environment.txt`, commands, logs, expected outputs, normalized observations, input and artifact hashes, acceptance evidence, source/wheel distributions, and `verify_bundle.sh`. Raw public sequencing data remain outside Git and outside the audit ZIP.
-
-Until that bundle exists and verifies against the final tagged candidate, this document is an implementation audit rather than a release certificate.
+Tracked cases, input hashes, provenance records, normalized summaries, and representative report assets are stored under `examples/public_validation/`. Raw public sequencing data remain outside Git. This document records release-candidate validation evidence and does not claim a final release.

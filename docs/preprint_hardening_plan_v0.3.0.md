@@ -9,7 +9,7 @@
 - Immutable prior release: `v0.2.1`
 - Immutable prior release commit: `2ba62b775a7204c0dc61f5408989603f536c78da`
 - Reviewed report-figure commit: `1f0928266a142a904f6fa216a2abd7c9a2b72f7d`
-- Implementation branch: `codex/preprint-hardening-v0.3.0`
+- Implementation branch: local release-candidate branch; branch names are not release metadata
 - Intended release: `v0.3.0`
 - Scope boundary: public Mac/GitHub mirror only; the MCW/HPC installation is not modified or deployed by this work
 
@@ -109,7 +109,7 @@ GM11906 must retain `m.8344A>G` for that manuscript claim to remain. GM12878 mus
 
 ## Audit Outputs
 
-The human-readable audit is `docs/preprint_release_validation_v0.3.0.md`. The portable bundle is generated at `/Users/elopes/Desktop/ont_results/mito_overview_validation_packets/v0.3.0/mito-overview-v0.3.0-validation.zip` and contains `run.json`, case and claim-evidence tables, data-source records, environment and command transcripts, normalized expected/observed outputs, SHA-256 manifests, and `verify_bundle.sh`. Raw public data remain outside Git.
+The human-readable audit is `docs/preprint_release_validation_v0.3.0.md`. The portable bundle is generated outside Git at `$MITO_OVERVIEW_VALIDATION_ROOT/v0.3.0/mito-overview-v0.3.0-validation.zip` and contains `run.json`, case and claim-evidence tables, data-source records, environment and command transcripts, normalized expected/observed outputs, SHA-256 manifests, and `verify_bundle.sh`. Raw public data remain outside Git.
 
 ## Release Gates
 

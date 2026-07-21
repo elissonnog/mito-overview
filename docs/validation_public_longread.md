@@ -1,17 +1,24 @@
-# Public ONT long-read reduced-input workflow evidence
+# Public ONT long-read reduced-input release-candidate evidence
 
-`mito-overview` v0.3.0 includes a bounded public GM12878 ONT targeted-mt example for exercising the long-read report workflow and its assay-mode status handling.
+The unreleased `mito-overview` v0.3.0 release candidate includes a bounded public GM12878 ONT targeted-mt example for exercising the long-read report workflow and its assay-mode status handling.
 
 ## Evidence scope
 - evidence snapshot: `2026-07-20`
-- clean source commit: `dc09114`
 - public accessions: BioProject `PRJNA809571`, run `SRR18110025`
+- dataset source: [Vandiver et al., 2022, PMCID PMC9399971](https://pmc.ncbi.nlm.nih.gov/articles/PMC9399971/)
 - public assay description: `Long read mitochondrial genome sequencing using Cas9-guided adaptor ligation`
+- alignment reference: `NC_012920.1`
 - profile: `READ_MODE=long`, `ASSAY_TYPE=targeted_mt`
 - runner: `scripts/run_public_longread_validation_gm12878.sh`
 
 ## Fixed reduced input
-The source FASTQ contains `193,043` records. The v0.3.0 input is exactly a seeded deterministic subset of `1,000` query names, with one FASTQ record per selected name. The provenance-verified mapped-only BAM contains:
+The source FASTQ contains `193,043` records. To bound the workflow example while making inclusion deterministic and auditable, the release-candidate input uses exactly the `1,000` smallest seeded query-name SHA-256 scores under `smallest_sha256_seeded_query_names_v1`, with seed `mito-overview-v0.3.0-GM12878-SRR18110025`. This subset is not presented as statistically representative. The selected reads were aligned to `NC_012920.1` with minimap2 `2.31-r1302` and samtools `1.23.1` using the tracked command template:
+
+```bash
+minimap2 -t {threads} -ax map-ont {reference_mmi} {deterministic_subset_fastq} | samtools view -@ {threads} -b -F 4 | samtools sort -@ {threads} -o {alignment_bam}
+```
+
+The provenance-verified mapped-only BAM contains:
 
 - `728` mapped unique query names
 - `728` primary alignments
@@ -28,15 +35,16 @@ The default run reports:
 - `16` candidate sites
 - `7,143,152` accepted observations
 - `2,047,476` excluded observations
-- `13` singleton CIGAR/SA structural-screen bins
+- `13` singleton CIGAR-deletion bins, each supported by one query name
+- `542` query names with a supplementary alignment or `SA` tag, summarized separately
 
-The 13 screen bins each have one supporting primary read. They are descriptive workflow output from this fixed input.
+The bins are descriptive CIGAR-deletion workflow output from this fixed input. Supplementary-alignment/`SA` status is a separate alignment-structure summary and does not itself define a bin.
 
 Targeted-mt and optional-layer status values are:
 
 | Layer | Status | Detail |
 | --- | --- | --- |
-| `copy_number` | `not_applicable` | targeted-mt input lacks the required nuclear context |
+| within-sample mt:nuclear depth ratio (`copy_number`) | `not_applicable` | targeted-mt input lacks the required nuclear context |
 | `phymer_haplogroup` | `not_applicable` | targeted-mt assay gating |
 | `mvtool_annotation` | `not_configured` | optional integration disabled |
 | `methylation_exploratory` | `not_configured` | no bedmethyl sidecars configured |
@@ -54,13 +62,12 @@ Candidate counts are lenient=`32`, default=`16`, and strict=`15`; accepted obser
 | strict | 20 | 30 | 15 | 15 | 6,046,355 | 3,144,273 |
 
 ## Repeatability and claim scope
-Two default invocations from the same provenance-verified BAM produced matching normalized TSVs. HTML and PNG artifacts were readable and structurally consistent across the repeats. This evidence supports fixed-input workflow execution, report/resource generation, profile sensitivity, and status gating only.
+Two default invocations from the same provenance-verified BAM produced matching normalized TSVs. HTML and PNG artifacts were readable and structurally consistent across the repeats. This evidence supports fixed-input workflow execution, report/resource generation, filter-profile dependence, and status gating only.
 
 Tracked asset pack:
 - `examples/public_validation/GM12878_ONT_longread`
 
 References and source metadata:
+- [Vandiver et al., Mitochondrion 2022, PMCID PMC9399971](https://pmc.ncbi.nlm.nih.gov/articles/PMC9399971/)
 - [NCBI BioProject PRJNA809571](https://www.ncbi.nlm.nih.gov/bioproject/PRJNA809571)
 - [ENA run SRR18110025](https://www.ebi.ac.uk/ena/browser/view/SRR18110025)
-- [Slapnik et al., Sci Rep 2024](https://www.nature.com/articles/s41598-024-78270-0)
-- [Frascarelli et al., Front Genet 2023](https://pubmed.ncbi.nlm.nih.gov/37456669/)
