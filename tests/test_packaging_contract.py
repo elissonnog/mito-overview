@@ -229,6 +229,12 @@ def test_ci_uses_fixed_runners_and_public_artifacts_exclude_raw_inputs() -> None
     assert "Raw genomic input or alignment entered artifact staging" in public
     assert 'MITO_OVERVIEW_REQUIRE_INSTALLED: "1"' in public
     assert "MITO_OVERVIEW_EXPECTED_PLATFORM=linux-64" in public
+    assert "run_network_isolated_v0.3.0.sh" in public
+    assert "sudo -n true" in public
+    assert "command -v unshare" in public
+    assert "command -v setpriv" in public
+    assert "network_isolation.tsv" in public
+    assert "offline_isolation" in public
     assert "runtime_versions.json" not in public  # staged through the results/environment tree.
     assert "oracle_assertions.tsv" in public
     assert "raw_inputs.tsv" in public

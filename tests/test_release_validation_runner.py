@@ -74,12 +74,17 @@ def test_public_matrix_is_bound_to_public_clone_and_force_installed_wheel() -> N
     text = RUNNER.read_text(encoding="utf-8")
     assert 'PREPARE_SCRIPT="${FRESH_CLONE_ROOT}/scripts/' in text
     assert 'PUBLIC_MATRIX="${FRESH_CLONE_ROOT}/scripts/' in text
+    assert 'ISOLATION_WRAPPER="${FRESH_CLONE_ROOT}/scripts/' in text
     assert 'ORACLE="${FRESH_CLONE_ROOT}/examples/' in text
     assert 'MITO_OVERVIEW_PYTHON="${FRESH_PYTHON}"' in text
     assert "MITO_OVERVIEW_REQUIRE_INSTALLED=1" in text
     assert "PYTHONPATH=" in text
     assert "pip install --force-reinstall" in text
     assert '"mito-overview":"0.3.0"' in text
+    assert '"${ISOLATION_WRAPPER}"' in text
+    assert "--evidence" in text
+    assert "network_isolation_verdict" in text
+    assert "offline_isolation" in text
 
 
 def test_runner_requires_three_platform_ci_artifacts_and_cross_platform_result() -> None:

@@ -10,6 +10,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).parents[1]
 PREPARE = REPO_ROOT / "scripts" / "prepare_public_validation_cache_v0.3.0.sh"
 MATRIX = REPO_ROOT / "scripts" / "run_public_validation_matrix_v0.3.0.sh"
+ISOLATION_WRAPPER = REPO_ROOT / "scripts" / "run_network_isolated_v0.3.0.sh"
 SHORT_RUNNER = REPO_ROOT / "scripts" / "run_public_shortread_validation_gm11906.sh"
 LONG_RUNNER = REPO_ROOT / "scripts" / "run_public_longread_validation_gm12878.sh"
 ASSERT_ORACLE = REPO_ROOT / "scripts" / "assert_public_validation_oracle_v0.3.0.py"
@@ -402,8 +403,9 @@ def test_matrix_requires_installed_distribution_and_exact_runtime_contract() -> 
         assert expected in contract
 
 
-def test_cache_only_mode_guards_project_network_entrypoints_without_overclaim() -> None:
+def test_offline_mode_requires_os_isolation_and_keeps_entrypoint_canaries() -> None:
     matrix = MATRIX.read_text(encoding="utf-8")
+    wrapper = ISOLATION_WRAPPER.read_text(encoding="utf-8")
     short = SHORT_RUNNER.read_text(encoding="utf-8")
     long = LONG_RUNNER.read_text(encoding="utf-8")
     mvtool = (
@@ -411,14 +413,126 @@ def test_cache_only_mode_guards_project_network_entrypoints_without_overclaim() 
     ).read_text(encoding="utf-8")
 
     assert "for guarded_command in curl wget" in matrix
-    assert "not an operating-system network sandbox" in matrix
+    assert "run_network_isolated_v0.3.0.sh" in matrix
+    assert "offline_isolation" in matrix
+    assert "network_isolation_verdict" in matrix
     assert "MITO_OVERVIEW_SHORTREAD_MVTOOL_MODE=disabled" in matrix
     assert "MITO_OVERVIEW_LONGREAD_MVTOOL_MODE=disabled" in matrix
     assert "curl" in short and "wget" not in short
     assert "curl" in long and "wget" not in long
     assert "requests.Session" in mvtool
     assert "project_network_entrypoints" in matrix
-    assert "offline_isolation" not in matrix
+    assert "sandbox-exec -p '(version 1) (allow default) (deny network*)'" in wrapper
+    assert '"${SUDO_BIN}" -n "${UNSHARE_BIN}" --net --' in wrapper
+    assert '--reuid="${INVOKING_UID}"' in wrapper
+    assert '--regid="${INVOKING_GID}"' in wrapper
+    assert "parent_loopback_control" in wrapper
+    assert "isolated_loopback_probe" in wrapper
+    assert "network_isolation_verdict" in wrapper
+    assert "fallback" not in wrapper.lower()
+
+
+def test_matrix_fails_closed_without_wrapper_evidence(tmp_path: Path) -> None:
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    env = os.environ.copy()
+    env.pop("MITO_OVERVIEW_NETWORK_ISOLATION_ACTIVE", None)
+    env.pop("MITO_OVERVIEW_NETWORK_ISOLATION_EVIDENCE", None)
+    result = subprocess.run(
+        [
+            str(MATRIX),
+            "--mode",
+            "offline",
+            "--cache",
+            str(cache),
+            "--work",
+            str(tmp_path / "work"),
+            "--output",
+            str(tmp_path / "output"),
+            "--oracle",
+            str(ORACLE),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert result.returncode != 0
+    assert "must run through scripts/run_network_isolated_v0.3.0.sh" in result.stderr
+    assert not (tmp_path / "work").exists()
+    assert not (tmp_path / "output").exists()
+
+
+def test_matrix_rejects_malformed_isolation_evidence_before_execution(
+    tmp_path: Path,
+) -> None:
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    evidence = tmp_path / "network_isolation.tsv"
+    evidence.write_text(
+        "field\tvalue\nnetwork_isolation_verdict\tPASS\n",
+        encoding="utf-8",
+    )
+    result = subprocess.run(
+        [
+            str(MATRIX),
+            "--mode",
+            "offline",
+            "--cache",
+            str(cache),
+            "--work",
+            str(tmp_path / "work"),
+            "--output",
+            str(tmp_path / "output"),
+            "--oracle",
+            str(ORACLE),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "MITO_OVERVIEW_NETWORK_ISOLATION_ACTIVE": "1",
+            "MITO_OVERVIEW_NETWORK_ISOLATION_EVIDENCE": str(evidence),
+        },
+    )
+    assert result.returncode != 0
+    assert "network-isolation evidence mismatch" in result.stderr
+    assert not (tmp_path / "work").exists()
+    assert not (tmp_path / "output").exists()
+
+
+def test_isolation_wrapper_rejects_incomplete_or_reused_interfaces(tmp_path: Path) -> None:
+    missing_command = subprocess.run(
+        [str(ISOLATION_WRAPPER), "--evidence", str(tmp_path / "evidence.tsv"), "--"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert missing_command.returncode == 2
+    assert "A command is required" in missing_command.stderr
+
+    existing = tmp_path / "existing.tsv"
+    existing.write_text("do not reuse\n", encoding="utf-8")
+    reused = subprocess.run(
+        [str(ISOLATION_WRAPPER), "--evidence", str(existing), "--", "/usr/bin/true"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert reused.returncode != 0
+    assert "must not already exist" in reused.stderr
+
+
+def test_network_isolation_shell_entrypoints_pass_bash_syntax() -> None:
+    for path in (ISOLATION_WRAPPER, MATRIX):
+        completed = subprocess.run(
+            ["bash", "-n", str(path)],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        assert completed.returncode == 0, completed.stderr
 
 
 def test_oracle_has_exactly_six_unique_profiles() -> None:

@@ -7,10 +7,10 @@ Usage: run_public_validation_matrix_v0.3.0.sh \
   --mode offline --cache SEALED_RAW_CACHE --work WORK_ROOT \
   --output OUTPUT_ROOT --oracle ORACLE_TSV
 
-Only sealed-cache execution is accepted. Prepare the seven-FASTQ raw cache
-first with scripts/prepare_public_validation_cache_v0.3.0.sh. The "offline"
-mode guards known project network entrypoints; it is not an operating-system
-network sandbox.
+Only sealed-cache execution inside scripts/run_network_isolated_v0.3.0.sh is
+accepted. Prepare the seven-FASTQ raw cache first with
+scripts/prepare_public_validation_cache_v0.3.0.sh. The wrapper denies network
+access for this process tree; curl/wget canaries remain defense-in-depth.
 EOF
 }
 
@@ -76,12 +76,94 @@ if [[ "${EXPECTED_PLATFORM}" != "${DETECTED_PLATFORM}" ]]; then
   exit 1
 fi
 
+ISOLATION_ACTIVE="${MITO_OVERVIEW_NETWORK_ISOLATION_ACTIVE:-}"
+ISOLATION_EVIDENCE="${MITO_OVERVIEW_NETWORK_ISOLATION_EVIDENCE:-}"
+[[ "${ISOLATION_ACTIVE}" == 1 ]] || {
+  echo "Public validation must run through scripts/run_network_isolated_v0.3.0.sh" >&2
+  exit 1
+}
+[[ "${ISOLATION_EVIDENCE}" == /* ]] || {
+  echo "Network-isolation evidence path must be absolute" >&2
+  exit 1
+}
+[[ -f "${ISOLATION_EVIDENCE}" && ! -L "${ISOLATION_EVIDENCE}" ]] || {
+  echo "Network-isolation evidence is missing, non-regular, or a symlink: ${ISOLATION_EVIDENCE}" >&2
+  exit 1
+}
+
+validate_network_isolation_evidence() {
+  "${PYTHON_BIN}" -I - \
+    "$1" "$(uname -s)/$(uname -m)" "$(id -u)" "$(id -g)" <<'PY'
+import os
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+platform_id = sys.argv[2]
+current_uid = sys.argv[3]
+current_gid = sys.argv[4]
+if path.is_symlink() or not path.is_file():
+    raise SystemExit("network-isolation evidence must be a regular non-symlink file")
+if path.stat().st_uid != os.getuid():
+    raise SystemExit("network-isolation evidence is not owned by the isolated user")
+
+lines = path.read_text(encoding="utf-8").splitlines()
+if not lines or lines[0] != "field\tvalue":
+    raise SystemExit("network-isolation evidence has an invalid header")
+values = {}
+for line in lines[1:]:
+    fields = line.split("\t")
+    if len(fields) != 2 or not fields[0] or fields[0] in values:
+        raise SystemExit("network-isolation evidence contains a malformed or duplicate field")
+    values[fields[0]] = fields[1]
+
+method_by_platform = {
+    "Darwin/x86_64": "macos_sandbox_exec_deny_network",
+    "Darwin/arm64": "macos_sandbox_exec_deny_network",
+    "Linux/x86_64": "linux_unshare_network_namespace",
+}
+expected = {
+    "schema_version": "1.0",
+    "platform": platform_id,
+    "isolation_method": method_by_platform.get(platform_id, ""),
+    "isolation_scope": "process_tree",
+    "parent_loopback_control": "reachable",
+    "isolated_loopback_probe": "blocked",
+    "probe_target": "parent_loopback_listener",
+    "invoking_uid": current_uid,
+    "invoking_gid": current_gid,
+    "child_uid": current_uid,
+    "child_gid": current_gid,
+    "network_isolation_verdict": "PASS",
+}
+for field, expected_value in expected.items():
+    observed = values.get(field)
+    if not expected_value or observed != expected_value:
+        raise SystemExit(
+            f"network-isolation evidence mismatch for {field}: "
+            f"{observed!r} != {expected_value!r}"
+        )
+if not values.get("probe_error"):
+    raise SystemExit("network-isolation evidence lacks the blocked-probe error")
+PY
+}
+
+validate_network_isolation_evidence "${ISOLATION_EVIDENCE}"
+ISOLATION_EVIDENCE_SHA256="$(${PYTHON_BIN} -I - "${ISOLATION_EVIDENCE}" <<'PY'
+import hashlib
+import sys
+from pathlib import Path
+
+print(hashlib.sha256(Path(sys.argv[1]).read_bytes()).hexdigest())
+PY
+)"
+
 # Hidden MITO_OVERVIEW_* settings make a public replay non-auditable. The
 # interpreter is the only allowed launcher override; every scientific setting
 # below is explicit and recorded in each replay command.
 while IFS='=' read -r name _; do
   case "${name}" in
-    MITO_OVERVIEW_PYTHON|MITO_OVERVIEW_REQUIRE_INSTALLED|MITO_OVERVIEW_EXPECTED_PLATFORM) ;;
+    MITO_OVERVIEW_PYTHON|MITO_OVERVIEW_REQUIRE_INSTALLED|MITO_OVERVIEW_EXPECTED_PLATFORM|MITO_OVERVIEW_NETWORK_ISOLATION_ACTIVE|MITO_OVERVIEW_NETWORK_ISOLATION_EVIDENCE) ;;
     MITO_OVERVIEW_*)
       echo "Unexpected ambient validation setting: ${name}" >&2
       exit 1
@@ -122,6 +204,7 @@ mkdir -p \
   "${DERIVED_ROOT}/GM11906" "${DERIVED_ROOT}/GM12878" \
   "${OUTPUT_ROOT}/commands" "${OUTPUT_ROOT}/logs" "${OUTPUT_ROOT}/outputs" \
   "${OUTPUT_ROOT}/observed_normalized" "${OUTPUT_ROOT}/environment"
+cp "${ISOLATION_EVIDENCE}" "${OUTPUT_ROOT}/environment/network_isolation.tsv"
 
 for guarded_command in curl wget; do
 cat > "${CANARY_BIN}/${guarded_command}" <<'EOF'
@@ -262,10 +345,10 @@ else
 fi
 cat > "${OUTPUT_ROOT}/environment/network_entrypoint_contract.tsv" <<'EOF'
 entrypoint	control	scope
+all IP sockets	OS process-tree isolation	macOS sandbox-exec deny network* or Linux network namespace
 curl	PATH canary	release public-data runners
 wget	PATH canary	defensive command guard
 mvTool requests	MVTOOL_MODE=disabled	pipeline external annotation module
-socket/network namespace	not controlled	not an operating-system network sandbox
 EOF
 
 env -i "${common_environment[@]}" \
@@ -466,6 +549,23 @@ if [[ -s "${CANARY_LOG}" ]]; then
   cat "${CANARY_LOG}" >&2
   exit 1
 fi
+validate_network_isolation_evidence "${ISOLATION_EVIDENCE}"
+POSTFLIGHT_ISOLATION_SHA256="$(${PYTHON_BIN} -I - "${ISOLATION_EVIDENCE}" <<'PY'
+import hashlib
+import sys
+from pathlib import Path
+
+print(hashlib.sha256(Path(sys.argv[1]).read_bytes()).hexdigest())
+PY
+)"
+[[ "${POSTFLIGHT_ISOLATION_SHA256}" == "${ISOLATION_EVIDENCE_SHA256}" ]] || {
+  echo "Network-isolation evidence changed during matrix execution" >&2
+  exit 1
+}
+cmp -s "${ISOLATION_EVIDENCE}" "${OUTPUT_ROOT}/environment/network_isolation.tsv" || {
+  echo "Recorded network-isolation evidence differs from the validated source" >&2
+  exit 1
+}
 
 awk -F '\t' 'NR > 1 {print $14 "  " $11}' \
   "${CACHE_ROOT}/raw_inputs.tsv" > "${OUTPUT_ROOT}/inputs.sha256"
@@ -503,7 +603,9 @@ record_case gm12878_visual_integrity visual_integrity 1 1 PASS "${visual_details
 record_case filter_profiles filter_dependence 1 1 PASS "all six frozen filter-profile oracles passed"
 record_case public_oracle exact_oracle 1 1 PASS "all expected values, inventories, and statuses matched"
 record_case raw_cache_seal input_integrity 1 1 PASS "seven-FASTQ sealed cache passed preflight and postflight"
+record_case offline_isolation os_network_isolation 1 1 PASS \
+  "parent loopback was reachable before isolation and blocked inside the isolated process tree"
 record_case project_network_entrypoints cache_only_execution 1 1 PASS \
-  "curl/wget canaries were not invoked and mvTool was disabled; this is not an OS network sandbox"
+  "OS isolation passed; curl/wget canaries were not invoked and mvTool was disabled"
 
 echo "[validation-matrix] PASS output=${OUTPUT_ROOT} work=${WORK_ROOT}"

@@ -754,8 +754,9 @@ cp "${REPO_ROOT}/examples/synthetic_data/TOY-SR-001/expected_alleles.tsv"   "${V
 
 PREPARE_SCRIPT="${FRESH_CLONE_ROOT}/scripts/prepare_public_validation_cache_v0.3.0.sh"
 PUBLIC_MATRIX="${FRESH_CLONE_ROOT}/scripts/run_public_validation_matrix_v0.3.0.sh"
+ISOLATION_WRAPPER="${FRESH_CLONE_ROOT}/scripts/run_network_isolated_v0.3.0.sh"
 ORACLE="${FRESH_CLONE_ROOT}/examples/public_validation/public_validation_oracle_v0.3.0.tsv"
-for required in "${PREPARE_SCRIPT}" "${PUBLIC_MATRIX}" "${ORACLE}"; do
+for required in "${PREPARE_SCRIPT}" "${PUBLIC_MATRIX}" "${ISOLATION_WRAPPER}" "${ORACLE}"; do
   if [[ ! -e "${required}" ]]; then
     echo "Required clean-room validation component is missing: ${required}" >&2
     exit 1
@@ -774,6 +775,7 @@ case "$(uname -s)/$(uname -m)" in
 esac
 
 PUBLIC_ROOT="${VALIDATION_ROOT}/public"
+NETWORK_ISOLATION_EVIDENCE="${VALIDATION_ROOT}/work/public_network_isolation.tsv"
 mkdir -p "${VALIDATION_ROOT}/work/public_home" \
   "${VALIDATION_ROOT}/work/public_tmp" \
   "${VALIDATION_ROOT}/work/public_xdg_cache"
@@ -787,12 +789,24 @@ run_logged public_validation_matrix public \
     MITO_OVERVIEW_PYTHON="${FRESH_PYTHON}" \
     MITO_OVERVIEW_REQUIRE_INSTALLED=1 \
     MITO_OVERVIEW_EXPECTED_PLATFORM="${LOCAL_PUBLIC_PLATFORM}" \
-    "${PUBLIC_MATRIX}" \
-      --mode offline \
-      --cache "${CACHE_ROOT}" \
-      --work "${VALIDATION_ROOT}/work/public_matrix" \
-      --output "${PUBLIC_ROOT}" \
-      --oracle "${ORACLE}"
+    "${ISOLATION_WRAPPER}" \
+      --evidence "${NETWORK_ISOLATION_EVIDENCE}" -- \
+      "${PUBLIC_MATRIX}" \
+        --mode offline \
+        --cache "${CACHE_ROOT}" \
+        --work "${VALIDATION_ROOT}/work/public_matrix" \
+        --output "${PUBLIC_ROOT}" \
+        --oracle "${ORACLE}"
+grep -Fqx $'network_isolation_verdict\tPASS' \
+  "${PUBLIC_ROOT}/environment/network_isolation.tsv" || {
+  echo "Public validation did not preserve valid OS-level network-isolation evidence" >&2
+  exit 1
+}
+grep -Fq $'offline_isolation\tos_network_isolation\t1\t1\tPASS\t' \
+  "${PUBLIC_ROOT}/cases.tsv" || {
+  echo "Public validation did not record a passing OS-level isolation case" >&2
+  exit 1
+}
 tail -n +2 "${PUBLIC_ROOT}/cases.tsv" >> "${CASES_TSV}"
 cp -R "${PUBLIC_ROOT}/environment" \
   "${VALIDATION_ROOT}/acceptance/macos_public_environment"

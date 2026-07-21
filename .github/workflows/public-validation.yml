@@ -100,21 +100,35 @@ jobs:
             ./scripts/prepare_public_validation_cache_v0.3.0.sh \
               --cache "$RAW_CACHE"
 
-      - name: Run sealed-cache public matrix against frozen oracle
+      - name: Preflight fail-closed Linux network namespace
+        run: |
+          command -v sudo
+          command -v unshare
+          command -v setpriv
+          sudo -n true
+
+      - name: Run network-isolated sealed-cache matrix against frozen oracle
         run: |
           RAW_CACHE="$RUNNER_TEMP/mito-overview-public-inputs-v0.3.0"
           VALIDATION_ROOT="$RUNNER_TEMP/mito-overview-public-validation-v0.3.0"
+          ISOLATION_EVIDENCE="$RUNNER_TEMP/mito-overview-public-network-isolation.tsv"
           /usr/bin/time -v -o "$RUNNER_TEMP/public-matrix-resource-usage.txt" \
             env \
               MITO_OVERVIEW_PYTHON="$(command -v python)" \
               MITO_OVERVIEW_REQUIRE_INSTALLED=1 \
               MITO_OVERVIEW_EXPECTED_PLATFORM=linux-64 \
-              ./scripts/run_public_validation_matrix_v0.3.0.sh \
-              --mode offline \
-              --cache "$RAW_CACHE" \
-              --work "$VALIDATION_ROOT/work" \
-              --output "$VALIDATION_ROOT/results" \
-              --oracle examples/public_validation/public_validation_oracle_v0.3.0.tsv
+              ./scripts/run_network_isolated_v0.3.0.sh \
+                --evidence "$ISOLATION_EVIDENCE" -- \
+                ./scripts/run_public_validation_matrix_v0.3.0.sh \
+                  --mode offline \
+                  --cache "$RAW_CACHE" \
+                  --work "$VALIDATION_ROOT/work" \
+                  --output "$VALIDATION_ROOT/results" \
+                  --oracle examples/public_validation/public_validation_oracle_v0.3.0.tsv
+          grep -Fqx $'network_isolation_verdict\tPASS' \
+            "$VALIDATION_ROOT/results/environment/network_isolation.tsv"
+          grep -Fq $'offline_isolation\tos_network_isolation\t1\t1\tPASS\t' \
+            "$VALIDATION_ROOT/results/cases.tsv"
 
       - name: Stage derived evidence only
         if: ${{ always() }}
