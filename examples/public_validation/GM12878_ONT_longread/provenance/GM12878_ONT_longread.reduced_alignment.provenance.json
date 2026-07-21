@@ -1,13 +1,13 @@
 {
   "alignment": {
-    "bytes": 8676581,
+    "bytes": 8676517,
     "name": "GM12878_ONT_longread.deterministic-qnames-1000.mt.bam",
-    "sha256": "a36e1b5cb0f0e6576e9b4eda2cca9c527610a39b287fd2379109961b5fef24c1"
+    "sha256": "11605372e020dc79d3c1f0e05bc89441c3ef132e1343a19d37379df22c2ae04a"
   },
   "alignment_index": {
     "bytes": 1840,
     "name": "GM12878_ONT_longread.deterministic-qnames-1000.mt.bam.bai",
-    "sha256": "3ca1b839814c857d34a62ced0cf0237854f69e4caa9758cbcb4f29974dad6c98"
+    "sha256": "eb4dd1d907a32b0202c479215ff3a9fe3ad2788a65127bbafc6f74ac4a27b366"
   },
   "dataset_id": "GM12878_SRR18110025_ONT_reduced_qn1000",
   "derivation": {
@@ -24,7 +24,7 @@
       "samtools": "samtools 1.23.1"
     }
   },
-  "generated_utc": "2026-07-20T21:25:18.338786+00:00",
+  "generated_utc": "2026-07-21T21:11:17.917670+00:00",
   "provenance_type": "public_alignment",
   "public_inputs": [
     {
@@ -44,9 +44,9 @@
     {
       "bytes": 1133,
       "label": "deterministic_subset_manifest",
-      "md5": "cf7881f7c5be992374f610652c9cd664",
+      "md5": "029d764f6bd3281ad4df1055ec3d559a",
       "name": "SRR18110025.deterministic-qnames-1000.fastq.gz.provenance.json",
-      "sha256": "319e43734ce654c49aec41f6e0bd3547f007170afa600939fc2d6ab1844f9668"
+      "sha256": "79dab672955f6b229d227f710c541659769088e66c99ad2b511ae3b370ffff15"
     },
     {
       "bytes": 18422,

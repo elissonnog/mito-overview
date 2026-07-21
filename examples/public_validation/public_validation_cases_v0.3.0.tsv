@@ -1,14 +1,18 @@
 case_id	category	input_available	expected_available	verdict	detail
-gm11906_default_run1	public_default	1	1	PASS	GM11906 short-read workflow completed
-gm11906_default_run2	public_default	1	1	PASS	GM11906 short-read workflow completed
-gm11906_lenient	public_lenient	1	1	PASS	GM11906 short-read workflow completed
-gm11906_strict	public_strict	1	1	PASS	GM11906 short-read workflow completed
-gm12878_default_run1	public_default	1	1	PASS	GM12878 provenance-verified 1000-query-name reduced workflow completed
-gm12878_default_run2	public_default	1	1	PASS	GM12878 provenance-verified 1000-query-name reduced workflow completed
-gm12878_lenient	public_lenient	1	1	PASS	GM12878 provenance-verified 1000-query-name reduced workflow completed
-gm12878_strict	public_strict	1	1	PASS	GM12878 provenance-verified 1000-query-name reduced workflow completed
-gm11906_repeatability	repeatability	1	1	PASS	normalized TSVs matched
-gm11906_visual_integrity	visual_integrity	1	1	PASS	HTML/PNG artifacts were readable and structurally consistent across repeats
-gm12878_repeatability	repeatability	1	1	PASS	normalized TSVs matched conditional on the fixed reduced BAM
-gm12878_visual_integrity	visual_integrity	1	1	PASS	HTML/PNG artifacts were readable and structurally consistent across repeats
-filter_profiles	filter_dependence	1	1	PASS	0/0/0, 13/20/10, and 20/30/15 profiles summarized
+gm11906_default_run1	public_default	1	1	PASS	runner and exact v0.3.0 oracle passed
+gm11906_default_run2	public_default	1	1	PASS	runner and exact v0.3.0 oracle passed
+gm11906_lenient	public_lenient	1	1	PASS	runner and exact v0.3.0 oracle passed
+gm11906_strict	public_strict	1	1	PASS	runner and exact v0.3.0 oracle passed
+gm12878_default_run1	public_default	1	1	PASS	runner and exact v0.3.0 oracle passed
+gm12878_default_run2	public_default	1	1	PASS	runner and exact v0.3.0 oracle passed
+gm12878_lenient	public_lenient	1	1	PASS	runner and exact v0.3.0 oracle passed
+gm12878_strict	public_strict	1	1	PASS	runner and exact v0.3.0 oracle passed
+gm11906_repeatability	repeatability	1	1	PASS	gm11906:normalized TSVs matched
+gm12878_repeatability	repeatability	1	1	PASS	gm12878:normalized TSVs matched
+gm11906_visual_integrity	visual_integrity	1	1	PASS	gm11906:HTML structures and decoded PNG pixels matched
+gm12878_visual_integrity	visual_integrity	1	1	PASS	gm12878:HTML structures and decoded PNG pixels matched
+filter_profiles	filter_dependence	1	1	PASS	all six frozen filter-profile oracles passed
+public_oracle	exact_oracle	1	1	PASS	all expected values, inventories, and statuses matched
+raw_cache_seal	input_integrity	1	1	PASS	seven-FASTQ sealed cache passed preflight and postflight
+offline_isolation	os_network_isolation	1	1	PASS	parent loopback was reachable before isolation and blocked inside the isolated process tree
+project_network_entrypoints	cache_only_execution	1	1	PASS	OS isolation passed; curl/wget canaries were not invoked and mvTool was disabled

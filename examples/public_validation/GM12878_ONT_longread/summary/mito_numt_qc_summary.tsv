@@ -3,6 +3,10 @@ status	ok
 reference_scope	mt_only
 numt_interpretation_status	not_evaluable
 reason_code	reference_scope_mt_only
+missing_required_read_columns	none
+missing_required_summary_metrics	none
+primary_indicator_valid	1
+primary_evidence_available	1
 reads_evaluated	728
 low_mapq_fraction_lt20	0.0
 very_low_mapq_fraction_lt5	0.0
@@ -12,4 +16,4 @@ sa_tag_fraction	0.744505
 supplementary_fraction_all_reads	0.427223
 full_length_fraction	0.3721
 heuristic_numt_risk	not_evaluable
-heuristic_numt_risk_score	
+heuristic_numt_risk_score	NA

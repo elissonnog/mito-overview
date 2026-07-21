@@ -1,15 +1,15 @@
 {
   "alignment": {
-    "bytes": 46086859,
+    "bytes": 46086800,
     "name": "GM11906_MERRF_shortread.mt.bam",
-    "sha256": "53ca478465cfdaee4eb5d7e59e14d3abfb0c72d7b366afe5e96041638b6fb6f8"
+    "sha256": "a18f2194487dbbd0ce72eeeedcd6203d8675ec47b5fb351454b7f506ed014166"
   },
   "alignment_index": {
     "bytes": 296,
     "name": "GM11906_MERRF_shortread.mt.bam.bai",
-    "sha256": "e9d2ac3e313eab8b2294e4385b6b80980540c8b2e4e1033d7ff8625322c717da"
+    "sha256": "6c72ca88df03041f5eb91aee3133047b1e21805141733ac9c04e4bed5fe808c2"
   },
-  "dataset_id": "GM11906_MERRF_reduced_shortread",
+  "dataset_id": "GM11906_pooled_scATAC",
   "derivation": {
     "command_template": "bwa mem -t {threads} {reference_fasta} {combined_r1} {combined_r2} | samtools sort -@ {threads} -o {alignment_bam}",
     "derivation_id": "bwa-mem-samtools-sort-v1",
@@ -21,7 +21,7 @@
       "samtools": "samtools 1.23.1"
     }
   },
-  "generated_utc": "2026-07-20T20:59:01.921671+00:00",
+  "generated_utc": "2026-07-21T20:47:03.989685+00:00",
   "provenance_type": "public_alignment",
   "public_inputs": [
     {
@@ -83,12 +83,12 @@
   ],
   "reference": {
     "bytes": 16864,
-    "name": "GM11906_provenance_reference.fa",
+    "name": "NC_012920.1.fa",
     "sha256": "fc392cde8e63b4d2e3a870bb97cc0626dea33d46dfb8abdebffada040f42ec92"
   },
   "reference_index": {
     "bytes": 27,
-    "name": "GM11906_provenance_reference.fa.fai",
+    "name": "NC_012920.1.fa.fai",
     "sha256": "38e4cd6941e7dca67cfc91f9f11db4f9aed29eb809a530796f75f3a94b6ac7e0"
   },
   "schema_version": "1.0"

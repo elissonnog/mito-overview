@@ -1,9 +1,8 @@
 # MitoOverview v0.3.0 Release-Candidate Validation
 
-> **Historical candidate-validation snapshot.** The 239-test, 13-case,
-> 46-normalized-file, fixed-BAM results below record the bounded 2026-07-20
-> candidate evidence. They are not the active v0.3.0 release gate. The active
-> seven-FASTQ, 17-case protocol is defined in
+> **Provisional candidate-validation record.** The local results below include
+> the 2026-07-21 seven-FASTQ, 17-case matrix and its regenerated lightweight
+> public assets. They are not yet bound to `FINAL_SHA`. The active release gate is defined in
 > [`clean_room_validation_protocol_v0.3.0.md`](clean_room_validation_protocol_v0.3.0.md),
 > and its current state is tracked in
 > [`reproducibility_run_ledger.md`](reproducibility_run_ledger.md).
@@ -12,11 +11,11 @@
 
 This document records public validation evidence for the unreleased MitoOverview v0.3.0 release candidate. It does not claim a final tagged release.
 
-- Evidence date: 2026-07-20
+- Evidence date: 2026-07-21
 - Repository: https://github.com/elissonnog/mito-overview
 - Candidate version: `0.3.0`
 - Release status: **unreleased release candidate**
-- Validation status: **historical bounded evidence recorded; exact-final-commit validation pending**
+- Validation status: **local provisional matrix passed; exact-final-commit cross-platform validation pending**
 
 The final `v0.3.0` tag has not been assigned. Zenodo, an archival DOI, and manuscript work are outside this GitHub-only validation gate.
 
@@ -138,7 +137,7 @@ These results characterize the tested release-candidate state within the stated 
 
 ## Public-data validation design
 
-The public validation matrix was run twice at default filters and once at each descriptive filter profile at historical clean validation source commit `dc09114e1a0dcec2baf83d94549dfa41f3e49c8b`. Exact normalized TSV comparisons were used for repeatability; HTML and PNG files were checked for inventory, dimensions, CRC/structure, and visual consistency rather than byte identity. These tracked outputs are release-candidate supporting evidence, not evidence bound to the eventual final v0.3.0 commit. Exact-final-commit reruns and the self-verifying audit ZIP remain release gates.
+The local public validation matrix reconstructed both alignments from the seven sealed FASTQs, ran two default report invocations and one invocation per descriptive filter profile, and passed all 17 required cases. Exact normalized TSV and decoded-pixel comparisons were used for same-platform repeatability; HTML files were compared structurally. All 256 frozen scientific oracle assertions passed. The matrix ran inside macOS process-tree network isolation, with the parent connectivity control reachable and the isolated child probe blocked. These tracked outputs are provisional supporting evidence, not evidence bound to the eventual final v0.3.0 commit. Exact-`FINAL_SHA` macOS and Ubuntu reruns and the self-verifying audit ZIP remain release gates.
 
 Lightweight, tracked evidence copies are:
 
@@ -152,7 +151,7 @@ Lightweight, tracked evidence copies are:
 
 | Dataset | Public source | Analyzed material | Key provenance |
 | --- | --- | --- | --- |
-| GM11906 | `SRR10804585`, `SRR10804590`, `SRR10804657` | pooled paired-end reads aligned with BWA-MEM | BAM SHA-256 `53ca478465cfdaee4eb5d7e59e14d3abfb0c72d7b366afe5e96041638b6fb6f8`; BWA `0.7.19-r1273`; samtools `1.23.1` |
+| GM11906 | `SRR10804585`, `SRR10804590`, `SRR10804657` | pooled paired-end reads aligned with BWA-MEM | BAM SHA-256 `a18f2194487dbbd0ce72eeeedcd6203d8675ec47b5fb351454b7f506ed014166`; BWA `0.7.19-r1273`; samtools `1.23.1` |
 | GM12878 [Vandiver et al. 2022](https://pmc.ncbi.nlm.nih.gov/articles/PMC9399971/) | `SRR18110025`, `PRJNA809571`, `SAMN26195906` | deterministic 1,000-query-name subset, not the full run | raw FASTQ MD5 `d5bfb9aeba04cae5f3dd79462a42e5b0`; subset SHA-256 `40e203ead1d621bfec8caa3c5d18cd1e7e70c08da27008a73364812b6871df33`; selected-name SHA-256 `3444cc7db3dcf78bea807d8bcc6686883a7759d128288c1d26aeae077a771a19` |
 
 Both datasets were aligned to the 16,569-bp `NC_012920.1` reference. BWA-MEM was selected for the pooled paired-end GM11906 reads; the tracked BWA `0.7.19-r1273` command template was:
@@ -167,13 +166,13 @@ Minimap2 with the `map-ont` preset was selected for the GM12878 ONT reads; the t
 minimap2 -t {threads} -ax map-ont {reference_mmi} {deterministic_subset_fastq} | samtools view -@ {threads} -b -F 4 | samtools sort -@ {threads} -o {alignment_bam}
 ```
 
-The GM12878 subset used the 1,000 smallest seeded query-name hashes under `smallest_sha256_seeded_query_names_v1` with seed `mito-overview-v0.3.0-GM12878-SRR18110025`. This fixed-size hash selection bounded the example while making inclusion deterministic and auditable; it was not intended to produce a statistically representative sample. The subset contained 1,000 of 193,043 source records (fraction 0.00518019). The analyzed BAM SHA-256 was `a36e1b5cb0f0e6576e9b4eda2cca9c527610a39b287fd2379109961b5fef24c1`; its index SHA-256 was `3ca1b839814c857d34a62ced0cf0237854f69e4caa9758cbcb4f29974dad6c98`. The alignment contained 728 primary and 543 supplementary records from 728 mapped query names. Repeatability therefore applies to workflow execution conditional on this fixed, provenance-bound reduced BAM; it is not evidence that independent subset selection or alignment reconstruction is invariant across software versions.
+The GM12878 subset used the 1,000 smallest seeded query-name hashes under `smallest_sha256_seeded_query_names_v1` with seed `mito-overview-v0.3.0-GM12878-SRR18110025`. This fixed-size hash selection bounded the example while making inclusion deterministic and auditable; it was not intended to produce a statistically representative sample. The subset contained 1,000 of 193,043 source records (fraction 0.00518019). The provisional BAM SHA-256 was `11605372e020dc79d3c1f0e05bc89441c3ef132e1343a19d37379df22c2ae04a`; its index SHA-256 was `eb4dd1d907a32b0202c479215ff3a9fe3ad2788a65127bbafc6f74ac4a27b366`. The alignment contained 728 primary and 543 supplementary records from 728 mapped query names. The two default report invocations reused this newly generated derivative; cross-platform reconstruction remains a final release gate.
 
 ## Public-data results
 
 ### Matrix verdicts
 
-All 13 prespecified historical fixed-BAM matrix cases passed at the historical clean source commit. The active seven-FASTQ protocol defines 17 required matrix cases and remains pending until those cases pass and are packet-bound at the exact final candidate commit.
+All 17 required local matrix cases passed. These provisional results remain pending release acceptance until the same contract passes on macOS and Ubuntu and is packet-bound to the exact final commit.
 
 | Evidence class | Cases | Verdict |
 | --- | ---: | --- |
@@ -184,8 +183,12 @@ All 13 prespecified historical fixed-BAM matrix cases passed at the historical c
 | Normalized-TSV repeatability | 2 | PASS |
 | HTML/PNG integrity and structural consistency | 2 | PASS |
 | Filter-profile summary | 1 | PASS |
+| Frozen scientific oracle | 1 | PASS |
+| Raw-cache seal | 1 | PASS |
+| OS process-tree network isolation | 1 | PASS |
+| Project network-entrypoint canaries | 1 | PASS |
 
-Both normalized repeat diffs were empty. Both visual-structure diffs were empty. Each default normalized inventory contained 46 files under the historical normalizer. Both default workflows contained 14 HTML pages; GM11906 contained seven report PNGs and GM12878 contained 15 before representative tracked figures were selected.
+Both normalized repeat diffs and both visual-structure diffs were empty. Each default workflow contained 44 summary TSVs and 14 HTML pages; GM11906 contained seven report PNGs and GM12878 contained 15 before representative tracked figures were selected.
 
 ### GM11906 reduced short-read proof of principle
 
