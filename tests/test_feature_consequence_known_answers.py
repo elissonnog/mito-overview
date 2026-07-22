@@ -93,16 +93,23 @@ def write_feature_gating_fixture(
 def run_canonical_consequence_fixture(
     tmp_path: Path,
     candidates: list[tuple[int, str, str]],
-) -> tuple[pd.DataFrame, pd.DataFrame]:
+    *,
+    allele_fractions: dict[tuple[int, str, str], float] | None = None,
+    clinvar_vcf: Path | None = None,
+) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, Path | str]]:
     summary_dir = tmp_path / "canonical-summary"
     summary_dir.mkdir(parents=True)
     candidate_rows = [
         "position\tref_base\talt_base\tdepth\talt_allele_fraction\theteroplasmy_fraction"
     ]
-    candidate_rows.extend(
-        f"{position}\t{ref_base}\t{alt_base}\t100\t0.25\t0.25"
-        for position, ref_base, alt_base in candidates
-    )
+    allele_fractions = allele_fractions or {}
+    for position, ref_base, alt_base in candidates:
+        key = (position, ref_base, alt_base)
+        allele_fraction = allele_fractions.get(key, 0.25)
+        candidate_rows.append(
+            f"{position}\t{ref_base}\t{alt_base}\t100\t"
+            f"{allele_fraction}\t{allele_fraction}"
+        )
     (summary_dir / "mito_heteroplasmy_candidates.tsv").write_text(
         "\n".join(candidate_rows) + "\n",
         encoding="ascii",
@@ -133,10 +140,11 @@ def run_canonical_consequence_fixture(
         mt_contig="MT",
         mt_length=16569,
         ref_fasta=fasta,
+        np_clinvar_vcf=clinvar_vcf,
     )
     overlaps = pd.read_csv(summary_dir / "mito_feature_overlap_candidates.tsv", sep="\t")
     annotations = pd.read_csv(outputs["annot_path"], sep="\t", keep_default_na=False)
-    return overlaps, annotations
+    return overlaps, annotations, outputs
 
 
 def run_consequence(tmp_path: Path, summary_dir: Path, fasta: Path, **kwargs: str) -> dict[str, Path | str]:
@@ -377,7 +385,7 @@ def test_disabled_control_region_state_is_explicitly_not_configured(
 def test_overlapping_mitochondrial_cds_emit_one_stably_ordered_consequence_each(
     tmp_path: Path,
 ) -> None:
-    overlaps, annotations = run_canonical_consequence_fixture(
+    overlaps, annotations, _ = run_canonical_consequence_fixture(
         tmp_path,
         [(8530, "A", "C"), (9207, "A", "C"), (10762, "G", "A")],
     )
@@ -411,8 +419,80 @@ def test_overlapping_mitochondrial_cds_emit_one_stably_ordered_consequence_each(
     ]
 
 
+def test_overlapping_feature_summaries_distinguish_sites_variants_and_annotation_rows(
+    tmp_path: Path,
+) -> None:
+    candidates = [(8530, "A", "C"), (9207, "A", "C"), (10762, "G", "A")]
+    allele_fractions = {
+        (8530, "A", "C"): 0.1,
+        (9207, "A", "C"): 0.25,
+        (10762, "G", "A"): 0.5,
+    }
+    _, annotations, outputs = run_canonical_consequence_fixture(
+        tmp_path,
+        candidates,
+        allele_fractions=allele_fractions,
+    )
+
+    summary = metric_map(Path(outputs["summary_path"]))
+    class_summary = pd.read_csv(outputs["class_path"], sep="\t")
+    missense = class_summary[class_summary["consequence_class"] == "missense_variant"].iloc[0]
+
+    assert len(annotations) == 6
+    assert summary["candidate_sites_annotated"] == "3"
+    assert summary["candidate_variants_annotated"] == "3"
+    assert summary["annotation_rows"] == "6"
+    assert summary["protein_coding_sites"] == "3"
+    assert summary["protein_coding_variants"] == "3"
+    assert summary["protein_coding_annotation_rows"] == "6"
+    assert int(missense["candidate_sites"]) == 2
+    assert int(missense["candidate_variants"]) == 2
+    assert int(missense["annotation_rows"]) == 3
+    assert float(missense["mean_alt_allele_fraction"]) == pytest.approx(0.3)
+
+
+def test_clinvar_summary_deduplicates_overlaps_and_distinguishes_variant_keys(
+    tmp_path: Path,
+) -> None:
+    clinvar_vcf = tmp_path / "clinvar.vcf"
+    clinvar_vcf.write_text(
+        "##fileformat=VCFv4.2\n"
+        "##contig=<ID=MT,length=16569>\n"
+        '##INFO=<ID=CLNSIG,Number=.,Type=String,Description="Clinical significance">\n'
+        '##INFO=<ID=CLNDN,Number=.,Type=String,Description="Disease name">\n'
+        "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n"
+        "MT\t8530\t.\tA\tC,G\t.\tPASS\tCLNSIG=Pathogenic;CLNDN=Test_condition\n",
+        encoding="ascii",
+    )
+
+    _, annotations, outputs = run_canonical_consequence_fixture(
+        tmp_path,
+        [(8530, "A", "C"), (8530, "A", "G")],
+        clinvar_vcf=clinvar_vcf,
+    )
+
+    summary = metric_map(Path(outputs["summary_path"]))
+    clinvar_summary = pd.read_csv(outputs["clinvar_path"], sep="\t")
+
+    assert len(annotations) == 4
+    assert summary["candidate_sites_annotated"] == "1"
+    assert summary["candidate_variants_annotated"] == "2"
+    assert summary["annotation_rows"] == "4"
+    assert summary["sites_with_clinvar_annotation"] == "1"
+    assert summary["variants_with_clinvar_annotation"] == "2"
+    assert summary["clinvar_annotation_rows"] == "4"
+    assert clinvar_summary.to_dict(orient="records") == [
+        {
+            "clinvar_significance": "Pathogenic",
+            "candidate_sites": 1,
+            "candidate_variants": 2,
+            "annotation_rows": 4,
+        }
+    ]
+
+
 def test_mt_nd2_m4471t_to_c_is_conservative_start_loss(tmp_path: Path) -> None:
-    _, annotations = run_canonical_consequence_fixture(tmp_path, [(4471, "T", "C")])
+    _, annotations, _ = run_canonical_consequence_fixture(tmp_path, [(4471, "T", "C")])
 
     assert annotations[
         [
