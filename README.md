@@ -236,13 +236,13 @@ This example pools paired-end reads from three single-cell ATAC-seq libraries de
 - [GEO `GSM4238526` / `SRR10804657`](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSM4238526)
 - [Coriell GM11906](https://www.coriell.org/0/Sections/Search/Sample_Detail.aspx?Ref=GM11906)
 
-The MitoOverview run uses `READ_MODE=short` and the `ASSAY_TYPE=targeted_mt` report profile because the regenerated alignment contains only mtDNA. With `MIN_CALLABLE_DEPTH=10`, `MIN_ALT_ALLELE_FRACTION=0.20`, and default BaseQ/MAPQ/readQ filters `13/20/10`, the v0.3.0 validation oracle expects `33` candidates, `44,052,664` accepted observations, and `7,293,106` excluded observations. The `m.8344A>G` row is expected at depth `1,027`, with alternate count `740`, observed alternate allele fraction `0.720545`, and `MT-TK` / `tRNA_variant` annotation. This fraction is calculated across pooled passing read observations and is not a per-cell or independently calibrated sample heteroplasmy estimate. Final exact-commit observed values and commit-bound provenance will be distributed in the GitHub release validation packet; until that packet passes, these values remain frozen oracle expectations with local provisional supporting observations.
+The MitoOverview run uses `READ_MODE=short` and the `ASSAY_TYPE=targeted_mt` report profile because the regenerated alignment contains only mtDNA. With `MIN_CALLABLE_DEPTH=10`, `MIN_ALT_ALLELE_FRACTION=0.20`, and default BaseQ/MAPQ/readQ filters `13/20/10`, the v0.3.0 validation oracle expects `33` candidates, `44,048,838` accepted observations, and `7,296,932` excluded observations. Overlapping mates contribute at most one representative fragment observation per position: observations are ranked by BaseQ and MAPQ, discordant top-quality ties are excluded as ambiguous, and concordant ties use read 1, then read 2, then a stable alignment key. Forward/reverse counts therefore describe representative fragments after overlap suppression, not independent support from both mates. The `m.8344A>G` row is expected at depth `1,027`, with alternate count `740`, observed alternate allele fraction `0.720545`, and `MT-TK` / `tRNA_variant` annotation. This fraction is calculated across pooled passing read observations and is not a per-cell or independently calibrated sample heteroplasmy estimate. Final exact-commit observed values and commit-bound provenance will be distributed in the GitHub release validation packet; until that packet passes, these values remain frozen oracle expectations with local provisional supporting observations.
 
 | GM11906 profile | BaseQ/MAPQ/readQ | Candidates | Accepted observations |
 | --- | --- | ---: | ---: |
-| lenient | `0/0/0` | 33 | 44,052,664 |
-| default | `13/20/10` | 33 | 44,052,664 |
-| strict | `20/30/15` | 33 | 42,676,166 |
+| lenient | `0/0/0` | 33 | 44,048,838 |
+| default | `13/20/10` | 33 | 44,048,838 |
+| strict | `20/30/15` | 33 | 42,675,832 |
 
 Each clean-room platform matrix reconstructs the pooled paired FASTQs and BWA alignment from the six sealed accession FASTQs. The two default report invocations within that matrix use the same newly generated derivative for normalized-table comparison. See [`docs/validation_public_shortread.md`](docs/validation_public_shortread.md) for the evidence scope.
 

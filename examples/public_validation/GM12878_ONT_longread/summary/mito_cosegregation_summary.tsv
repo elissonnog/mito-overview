@@ -15,7 +15,9 @@ top_sites_limit	8
 strongest_pair	8860:A>G | 14831:G>A
 strongest_pair_alt_jaccard_within_shared_spanning_reads	1.0
 strongest_pair_jaccard_alt	1.0
-allele_counting_method	pysam_pileup_shared_filter_v1
+allele_counting_method	pysam_pileup_shared_filter_v2
+allele_overlap_resolution	highest_baseq_mapq_discordant_ties_excluded_concordant_read1_first
+allele_overlap_strand_convention	representative_fragment_read1_then_read2_then_alignment_key
 allele_min_base_quality	13
 allele_min_mapping_quality	20
 allele_min_read_mean_quality	10.0
@@ -34,6 +36,7 @@ excluded_deletion_or_refskip	104
 excluded_missing_base	0
 excluded_noncanonical_base	0
 excluded_overlap	0
+excluded_overlap_ambiguous	0
 excluded_max_depth	0
 unique_reads_seen	597
 unique_reads_accepted	593
@@ -47,4 +50,5 @@ unique_reads_excluded_deletion_or_refskip	93
 unique_reads_excluded_missing_base	0
 unique_reads_excluded_noncanonical_base	0
 unique_reads_excluded_overlap	0
+unique_reads_excluded_overlap_ambiguous	0
 unique_reads_excluded_max_depth	0

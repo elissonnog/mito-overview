@@ -382,7 +382,7 @@ FROZEN_ORACLE_REPOSITORY_PATH = Path(
     "examples/public_validation/public_validation_oracle_v0.3.0.tsv"
 )
 FROZEN_ORACLE_PACKET_PATH = "public_validation_oracle_v0.3.0.tsv"
-FROZEN_ORACLE_SHA256 = "a50852f92136d008d83e8fd86ca9888b1885c66a566f5cfb13ba30db696a68e4"
+FROZEN_ORACLE_SHA256 = "221f6d4eba86d5d37e674aeaed553ac5d9829a5a216d116db38da35d58448e92"
 FROZEN_RAW_INPUT_MANIFEST_SHA256 = (
     "188d9e493c7cc43dc63c6bfe972914af5ae42cadb6cb2f59092cb13452adf756"
 )
@@ -6015,7 +6015,7 @@ if any(
 ):
     raise SystemExit("raw_inputs.tsv identity or FASTQ-record evidence mismatch")
 
-frozen_oracle_sha256 = "a50852f92136d008d83e8fd86ca9888b1885c66a566f5cfb13ba30db696a68e4"
+frozen_oracle_sha256 = "221f6d4eba86d5d37e674aeaed553ac5d9829a5a216d116db38da35d58448e92"
 oracle_path = root / "public_validation_oracle_v0.3.0.tsv"
 if digest(oracle_path) != frozen_oracle_sha256:
     raise SystemExit("public-validation oracle is not the frozen v0.3.0 table")

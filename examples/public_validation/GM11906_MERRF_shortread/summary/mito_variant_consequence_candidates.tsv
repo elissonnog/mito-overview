@@ -16,7 +16,7 @@ position	ref_base	alt_base	depth	alt_allele_fraction	heteroplasmy_fraction	featu
 7028	C	T	3447	0.998549	0.998549	MT-CO1	protein_coding	synonymous_variant	GCC	GCT	p.A375A	NA	NA
 14766	C	T	1337	0.998504	0.998504	MT-CYB	protein_coding	missense_variant	ACT	ATT	p.T7I	NA	NA
 263	A	G	1335	0.998502	0.998502	D-loop/control region	control_region	control_region_variant	NA	NA	NA	NA	NA
-12612	A	G	3001	0.998334	0.998334	MT-ND5	protein_coding	synonymous_variant	GTA	GTG	p.V92V	NA	NA
+12612	A	G	2999	0.998333	0.998333	MT-ND5	protein_coding	synonymous_variant	GTA	GTG	p.V92V	NA	NA
 1438	A	G	2702	0.99815	0.99815	MT-RNR1	Mt_rRNA	rRNA_variant	NA	NA	NA	NA	NA
 462	C	T	1852	0.99784	0.99784	D-loop/control region	control_region	control_region_variant	NA	NA	NA	NA	NA
 10398	A	G	2164	0.997689	0.997689	MT-ND3	protein_coding	missense_variant	ACC	GCC	p.T114A	NA	NA
@@ -29,6 +29,6 @@ position	ref_base	alt_base	depth	alt_allele_fraction	heteroplasmy_fraction	featu
 15452	C	A	2723	0.994491	0.994491	MT-CYB	protein_coding	missense_variant	CTT	ATT	p.L236I	NA	NA
 11719	G	A	2458	0.991863	0.991863	MT-ND4	protein_coding	synonymous_variant	GGG	GGA	p.G320G	NA	NA
 185	G	A	1749	0.99028	0.99028	D-loop/control region	control_region	control_region_variant	NA	NA	NA	NA	NA
-6554	C	T	3494	0.971666	0.971666	MT-CO1	protein_coding	synonymous_variant	ACC	ACT	p.T217T	NA	NA
+6554	C	T	3492	0.972222	0.972222	MT-CO1	protein_coding	synonymous_variant	ACC	ACT	p.T217T	NA	NA
 8202	T	C	2643	0.775255	0.775255	MT-CO2	protein_coding	missense_variant	TTC	TCC	p.F206S	NA	NA
 8344	A	G	1027	0.720545	0.720545	MT-TK	Mt_tRNA	tRNA_variant	NA	NA	NA	NA	NA

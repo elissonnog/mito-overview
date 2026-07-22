@@ -68,9 +68,9 @@ the validation workspace and must never be accepted as raw-cache inputs.
 
 | Dataset | Profile | BaseQ/MAPQ/readQ | Candidate sites | Accepted observations | Excluded observations |
 | --- | --- | --- | ---: | ---: | ---: |
-| GM11906 pooled scATAC | lenient | `0/0/0` | 33 | 44,052,664 | 7,293,106 |
-| GM11906 pooled scATAC | default | `13/20/10` | 33 | 44,052,664 | 7,293,106 |
-| GM11906 pooled scATAC | strict | `20/30/15` | 33 | 42,676,166 | 8,669,604 |
+| GM11906 pooled scATAC | lenient | `0/0/0` | 33 | 44,048,838 | 7,296,932 |
+| GM11906 pooled scATAC | default | `13/20/10` | 33 | 44,048,838 | 7,296,932 |
+| GM11906 pooled scATAC | strict | `20/30/15` | 33 | 42,675,832 | 8,669,938 |
 | GM12878 qn1000 | lenient | `0/0/0` | 32 | 8,278,969 | 911,659 |
 | GM12878 qn1000 | default | `13/20/10` | 16 | 7,143,152 | 2,047,476 |
 | GM12878 qn1000 | strict | `20/30/15` | 15 | 6,046,355 | 3,144,273 |

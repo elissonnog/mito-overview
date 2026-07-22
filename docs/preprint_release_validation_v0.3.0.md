@@ -47,7 +47,7 @@ For reference base \(r\), the alternate count is the largest non-reference canon
 AF_{alt}=\frac{n_{alt}}{D_{callable}}
 \]
 
-The public defaults are base quality 13, mapping quality 20, mean read quality 10, no pileup depth cap, excluded SAM flag mask 3844, and overlap suppression enabled. These are reporting defaults rather than clinically calibrated thresholds. `alt_allele_fraction` is canonical; `heteroplasmy_fraction` is retained as a deprecated 0.x compatibility alias.
+The public defaults are base quality 13, mapping quality 20, mean read quality 10, no pileup depth cap, excluded SAM flag mask 3844, and overlap suppression enabled. Passing observations with the same query name and position are ranked by BaseQ and then MAPQ. Discordant top-quality ties are excluded as ambiguous; concordant ties use read 1 as the representative fragment when present, followed by read 2 and a stable alignment key. Forward/reverse counts therefore describe representative fragments after overlap suppression, not independent observations from both mates. `excluded_overlap_ambiguous` counts excluded observation records, whereas `unique_reads_excluded_overlap_ambiguous` counts unique query names. These are reporting defaults rather than clinically calibrated thresholds. `alt_allele_fraction` is canonical; `heteroplasmy_fraction` is retained as a deprecated 0.x compatibility alias.
 
 The summary records candidate-evaluable positions and classifies candidate coverage as `none`, `partial`, or `complete`. If canonical observations exist but no position reaches `MIN_CALLABLE_DEPTH`, the layer emits `status=not_evaluable` and `reason_code=no_positions_meet_min_callable_depth`. Under partial coverage, a zero-candidate result is restricted to the evaluable positions and cannot support a whole-mtDNA absence statement. Under complete coverage, a zero-candidate result means only that no site exceeded the configured thresholds. Same-read co-occurrence ratios are also undefined when their set denominator is zero; those values are serialized as `NA` with per-statistic status fields, rather than as numerical zero.
 
@@ -157,9 +157,9 @@ The packet trust boundary is ordered and explicit. The final validation ZIP must
 
 ## Public-data validation design
 
-The local public validation matrix reconstructed both alignments from the seven sealed FASTQs, ran two default report invocations and one invocation per descriptive filter profile, and passed all 17 required cases. Exact normalized TSV and decoded-pixel comparisons were used for same-platform repeatability; HTML files were compared structurally. Its then-current scientific oracle passed, but assertion counts and derivative hashes are intentionally not presented as release evidence in this non-commit-bound snapshot. The matrix ran inside macOS process-tree network isolation, with the parent connectivity control reachable and the isolated child probe blocked. Exact-`FINAL_SHA` macOS and Ubuntu reruns, external archive-digest verification, and internal packet verification remain release gates.
+The local public validation matrix reconstructed both alignments from the seven sealed FASTQs, ran two default report invocations and one invocation per descriptive filter profile, and passed all 17 required cases and all 366 reviewed oracle assertions at candidate commit `0bd64d2eed7400cd8772e77504b8ceab1f668cd8`. Exact normalized TSV and decoded-pixel comparisons were used for same-platform repeatability; HTML files were compared structurally. The matrix ran inside macOS process-tree network isolation, with the parent connectivity control reachable and the isolated child probe blocked. This is commit-specific candidate evidence, not final release evidence: exact-`FINAL_SHA` empty-cache macOS and Ubuntu reruns, packet verification, and publication checks remain release gates.
 
-After independent scientific review, the default public outputs were regenerated with the fail-closed upstream-status contracts and the aligned-reference completeness definition described above. The GM11906 marker result and candidate/observation aggregates were unchanged. For GM12878, the historical compatibility field `primary_full_length_fraction` changed from a reference-span-derived `473/728 = 0.649725` to an aligned-reference result of `25/728 = 0.034341`; the new numerator excludes CIGAR `D` and `N` operations and is not interpreted as intact-molecule evidence. The corrected two-run defaults were inserted into a fresh provisional matrix, and the fail-closed refresher rebuilt the exact 56-file tracked public asset inventory. The changed scatter and four-panel montage passed visual inspection. These cached reruns support candidate asset correction only and do not replace the required empty-cache exact-final-commit reproduction.
+After independent scientific review, the default public outputs were regenerated with the fail-closed upstream-status contracts and the aligned-reference completeness definition described above. A later deterministic overlap audit found that equal-quality discordant mate observations depended on BAM record order. The corrected engine excludes those ambiguous ties. In GM11906 default/lenient runs this moved 3,826 selected observations to exclusion (`7,652` ambiguous observation records from `3,543` query names); in the strict run it moved 334 selected observations (`668` records from `331` query names). Total observation accounting was conserved exactly, candidate counts remained 33, and the `m.8344A>G` depth, alternate count, strand counts, and fraction were unchanged. GM12878 had zero ambiguous overlaps and no scientific-oracle changes. For GM12878, the historical compatibility field `primary_full_length_fraction` changed from a reference-span-derived `473/728 = 0.649725` to an aligned-reference result of `25/728 = 0.034341`; the new numerator excludes CIGAR `D` and `N` operations and is not interpreted as intact-molecule evidence. The corrected two-run defaults were inserted into a fresh provisional matrix, and the fail-closed refresher rebuilt the exact 56-file tracked public asset inventory. The changed report-native figures and montage passed integrity and same-platform decoded-pixel checks. These cached reruns support candidate asset correction only and do not replace the required empty-cache exact-final-commit reproduction.
 
 Lightweight, tracked evidence copies are:
 
@@ -214,7 +214,7 @@ Both normalized repeat diffs and both visual-structure diffs were empty. Each de
 
 ### GM11906 reduced short-read proof of principle
 
-At the default 13/20/10 filter profile, the workflow reported 33 candidate sites, 44,052,664 accepted canonical-base observations, and 7,293,106 accounted excluded observations. The literature-associated `m.8344A>G` site remained present with:
+At the default 13/20/10 filter profile, the workflow reported 33 candidate sites, 44,048,838 accepted canonical-base observations, and 7,296,932 accounted excluded observations. The literature-associated `m.8344A>G` site remained present with:
 
 | Field | Value |
 | --- | ---: |
@@ -254,9 +254,9 @@ The targeted-mt profile correctly reported the within-sample mt:nuclear depth ra
 
 | Dataset | Profile | BQ/MAPQ/readQ | Candidates | Accepted observations | Excluded observations | `m.8344A>G` AF |
 | --- | --- | --- | ---: | ---: | ---: | ---: |
-| GM11906 | lenient | 0/0/0 | 33 | 44,052,664 | 7,293,106 | 0.720545 |
-| GM11906 | default | 13/20/10 | 33 | 44,052,664 | 7,293,106 | 0.720545 |
-| GM11906 | strict | 20/30/15 | 33 | 42,676,166 | 8,669,604 | 0.733469 |
+| GM11906 | lenient | 0/0/0 | 33 | 44,048,838 | 7,296,932 | 0.720545 |
+| GM11906 | default | 13/20/10 | 33 | 44,048,838 | 7,296,932 | 0.720545 |
+| GM11906 | strict | 20/30/15 | 33 | 42,675,832 | 8,669,938 | 0.733469 |
 | GM12878 | lenient | 0/0/0 | 32 | 8,278,969 | 911,659 | NA |
 | GM12878 | default | 13/20/10 | 16 | 7,143,152 | 2,047,476 | NA |
 | GM12878 | strict | 20/30/15 | 15 | 6,046,355 | 3,144,273 | NA |

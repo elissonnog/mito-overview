@@ -24,8 +24,8 @@ What these assets support:
 
 Observed default-profile values:
 - candidate sites: `33`
-- accepted observations: `44,052,664`
-- excluded observations: `7,293,106`
+- accepted observations: `44,048,838`
+- excluded observations: `7,296,932`
 - `m.8344A>G`: depth `1,027`, alternate count `740`, pooled observed alternate allele fraction `0.720545`
 - feature/consequence output: `MT-TK`, `tRNA_variant`
 
@@ -33,9 +33,9 @@ Filter profiles:
 
 | Profile | BaseQ/MAPQ/readQ | Candidates | Accepted observations | Excluded observations |
 | --- | --- | ---: | ---: | ---: |
-| lenient | `0/0/0` | 33 | 44,052,664 | 7,293,106 |
-| default | `13/20/10` | 33 | 44,052,664 | 7,293,106 |
-| strict | `20/30/15` | 33 | 42,676,166 | 8,669,604 |
+| lenient | `0/0/0` | 33 | 44,048,838 | 7,296,932 |
+| default | `13/20/10` | 33 | 44,048,838 | 7,296,932 |
+| strict | `20/30/15` | 33 | 42,675,832 | 8,669,938 |
 
 Mode-gated status values:
 - `deletions`, `copy_number`, `cosegregation`, `numt_qc`, `phymer_haplogroup`, `identity_qc`, `circularity_qc`, and `methylation_exploratory`: `not_applicable`

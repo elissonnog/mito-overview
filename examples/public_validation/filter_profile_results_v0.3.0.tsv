@@ -1,7 +1,7 @@
 case_id	dataset	profile	min_base_quality	min_mapping_quality	min_read_mean_quality	candidate_sites	accepted_observations	excluded_observations	m8344_A_G_present	m8344_A_G_alt_allele_fraction
-gm11906_default	GM11906	default	13	20	10.0	33	44052664	7293106	1	0.720545
-gm11906_lenient	GM11906	lenient	0	0	0.0	33	44052664	7293106	1	0.720545
-gm11906_strict	GM11906	strict	20	30	15.0	33	42676166	8669604	1	0.733469
+gm11906_default	GM11906	default	13	20	10.0	33	44048838	7296932	1	0.720545
+gm11906_lenient	GM11906	lenient	0	0	0.0	33	44048838	7296932	1	0.720545
+gm11906_strict	GM11906	strict	20	30	15.0	33	42675832	8669938	1	0.733469
 gm12878_default	GM12878	default	13	20	10.0	16	7143152	2047476	0	
 gm12878_lenient	GM12878	lenient	0	0	0.0	32	8278969	911659	0	
 gm12878_strict	GM12878	strict	20	30	15.0	15	6046355	3144273	0	

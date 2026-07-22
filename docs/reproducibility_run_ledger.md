@@ -50,6 +50,10 @@ The GM12878 exercise uses a deterministic 1,000-query-name reduced ONT input and
 | visual QA | final report-native HTML/PNG inventory and report DOCX/PDF rendering inspected | pending |
 | GitHub publication | PR merged, push CI green, immutable annotated tag and verified assets published | pending |
 
+## Candidate Checkpoint
+
+Candidate `0bd64d2eed7400cd8772e77504b8ceab1f668cd8` completed the sealed-cache macOS public matrix after independent review of the deterministic overlap correction. All 17 required cases and all 366 reviewed oracle assertions passed. Both default-run normalized TSV comparisons, decoded-pixel comparisons, and HTML structural comparisons were identical; cache postflight and process-tree network-isolation checks passed. GM11906 retained 33 candidates and the `m.8344A>G` result (`740/1027`, alternate allele fraction `0.720545`) after ambiguous equal-quality mate ties were moved from accepted to excluded accounting. GM12878 had no overlap ambiguities and retained its prespecified public results. This checkpoint is candidate evidence only; it does not satisfy the exact public `FINAL_SHA`, empty-cache cross-platform, packet, tag, or publication gates above.
+
 ## Public Input Provenance
 
 - `SRR10804585` / `GSM4238454`, `SRR10804590` / `GSM4238459`, and `SRR10804657` / `GSM4238526` are separate C1 single-cell ATAC-seq libraries from the GM11906 lymphoblastoid line.

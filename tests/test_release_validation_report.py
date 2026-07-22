@@ -391,7 +391,7 @@ def make_packet(tmp_path: Path) -> tuple[Path, Path, list[Path]]:
         packet / "filter_profile_results.tsv",
         report_builder.EVIDENCE_COLUMNS["filter_profile_results.tsv"],
         [
-            ["gm11906_default", "GM11906", "default", "13", "20", "10", "33", "44052664", "7293106", "1", "0.720545"],
+            ["gm11906_default", "GM11906", "default", "13", "20", "10", "33", "44048838", "7296932", "1", "0.720545"],
             ["gm12878_default", "GM12878", "default", "13", "20", "10", "16", "7143152", "2047476", "0", ""],
         ],
     )
@@ -399,7 +399,7 @@ def make_packet(tmp_path: Path) -> tuple[Path, Path, list[Path]]:
         packet / "public_validation_oracle_v0.3.0.tsv",
         report_builder.EVIDENCE_COLUMNS["public_validation_oracle_v0.3.0.tsv"],
         [
-            ["GM11906", "default", "33", "44052664", "7293106", "0.720545", "44", "14", "7"],
+            ["GM11906", "default", "33", "44048838", "7296932", "0.720545", "44", "14", "7"],
             ["GM12878", "default", "16", "7143152", "2047476", "", "44", "14", "15"],
         ],
     )

@@ -25,21 +25,21 @@ The example-specific candidate thresholds are `MIN_CALLABLE_DEPTH=10` and `MIN_A
 The provisional default run reported:
 
 - `33` candidate sites
-- `44,052,664` accepted observations
-- `7,293,106` excluded observations
+- `44,048,838` accepted observations
+- `7,296,932` excluded observations
 - `m.8344A>G` at depth `1,027`, with `740` alternate observations and pooled observed alternate allele fraction `0.720545`
 - `MT-TK` feature context and `tRNA_variant` consequence output for position `8344`
 
 ## Filter-profile matrix
 Profiles vary only the allele-observation quality filters; candidate thresholds remain fixed.
 
-Provisional candidate counts were lenient=`33`, default=`33`, and strict=`33`; accepted observations were lenient=`44,052,664`, default=`44,052,664`, and strict=`42,676,166`.
+Provisional candidate counts were lenient=`33`, default=`33`, and strict=`33`; accepted observations were lenient=`44,048,838`, default=`44,048,838`, and strict=`42,675,832`.
 
 | Profile | BaseQ | MAPQ | ReadQ | Candidate sites | Accepted observations | Excluded observations |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| lenient | 0 | 0 | 0 | 33 | 44,052,664 | 7,293,106 |
-| default | 13 | 20 | 10 | 33 | 44,052,664 | 7,293,106 |
-| strict | 20 | 30 | 15 | 33 | 42,676,166 | 8,669,604 |
+| lenient | 0 | 0 | 0 | 33 | 44,048,838 | 7,296,932 |
+| default | 13 | 20 | 10 | 33 | 44,048,838 | 7,296,932 |
+| strict | 20 | 30 | 15 | 33 | 42,675,832 | 8,669,938 |
 
 ## Mode-state oracle
 The public oracle now requires an explicit expected workflow-module state for every one of the 14 report pages. Blank expected states, unknown states, missing status keys, and malformed status values fail validation rather than being skipped.
