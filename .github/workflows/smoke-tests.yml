@@ -68,6 +68,7 @@ jobs:
           cp "$LOCK_FILE" "$RUNNER_TEMP/environment/"
           python - <<'PY'
           from importlib.metadata import version
+          import hashlib
           import json
           import os
           import platform
@@ -118,8 +119,26 @@ jobs:
               raise SystemExit(
                   f"runner architecture mismatch: {platform.machine()} != {expected_machine}"
               )
+          environment_root = Path(os.environ["RUNNER_TEMP"]) / "environment"
+          evidence_names = (
+              f"conda-{os.environ['EXPECTED_PLATFORM']}.explicit.txt",
+              f"pip-{os.environ['EXPECTED_PLATFORM']}.txt",
+              f"environment-{os.environ['EXPECTED_PLATFORM']}.yml",
+              f"python-{os.environ['EXPECTED_PLATFORM']}.txt",
+          )
+          evidence_files = {}
+          for name in evidence_names:
+              payload = (environment_root / name).read_bytes()
+              evidence_files[name] = {
+                  "sha256": hashlib.sha256(payload).hexdigest(),
+                  "size_bytes": len(payload),
+              }
+          manifest_payload = "".join(
+              f"{name}\t{evidence_files[name]['sha256']}\t{evidence_files[name]['size_bytes']}\n"
+              for name in sorted(evidence_files)
+          ).encode("utf-8")
           identity = {
-              "schema_version": "1.0",
+              "schema_version": "2.0",
               "git_commit": subprocess.run(
                   ["git", "rev-parse", "HEAD"],
                   check=True,
@@ -134,10 +153,14 @@ jobs:
               "machine": platform.machine(),
               "python": platform.python_version(),
               "resolved_environment": True,
+              "evidence_files": evidence_files,
+              "evidence_manifest_sha256": hashlib.sha256(manifest_payload).hexdigest(),
+              "source_lock_sha256": evidence_files[
+                  f"environment-{os.environ['EXPECTED_PLATFORM']}.yml"
+              ]["sha256"],
           }
           destination = (
-              Path(os.environ["RUNNER_TEMP"])
-              / "environment"
+              environment_root
               / f"platform-{os.environ['EXPECTED_PLATFORM']}.json"
           )
           destination.write_text(

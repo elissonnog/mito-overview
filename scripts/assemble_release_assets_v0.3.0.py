@@ -364,6 +364,8 @@ def validate_environment_locks(root: Path, final_sha: str) -> None:
         )
     for platform in ("linux-64", "osx-64", "osx-arm64"):
         record = read_json(root / platform / f"platform-{platform}.json", "platform lock record")
+        if record.get("schema_version") != "2.0":
+            raise AssemblyError(f"{platform} lock record schema is not 2.0")
         if record.get("git_commit") != final_sha:
             raise AssemblyError(f"{platform} lock record is not bound to FINAL_SHA")
         if record.get("platform_id") != platform or record.get("resolved_environment") is not True:
@@ -373,6 +375,32 @@ def validate_environment_locks(root: Path, final_sha: str) -> None:
         ).strip()
         if python_text != "Python 3.12.13":
             raise AssemblyError(f"{platform} Python evidence is not Python 3.12.13")
+        evidence_names = {
+            f"conda-{platform}.explicit.txt",
+            f"pip-{platform}.txt",
+            f"environment-{platform}.yml",
+            f"python-{platform}.txt",
+        }
+        evidence_files = record.get("evidence_files")
+        if not isinstance(evidence_files, dict) or set(evidence_files) != evidence_names:
+            raise AssemblyError(f"{platform} evidence-file manifest inventory mismatch")
+        manifest_lines = []
+        for name in sorted(evidence_names):
+            payload = (root / platform / name).read_bytes()
+            observed_sha256 = hashlib.sha256(payload).hexdigest()
+            observed_size = len(payload)
+            item = evidence_files.get(name)
+            if not isinstance(item, dict):
+                raise AssemblyError(f"{platform} evidence-file record is malformed: {name}")
+            if item.get("sha256") != observed_sha256 or item.get("size_bytes") != observed_size:
+                raise AssemblyError(f"{platform} evidence-file digest mismatch: {name}")
+            manifest_lines.append(f"{name}\t{observed_sha256}\t{observed_size}\n")
+        observed_manifest = hashlib.sha256("".join(manifest_lines).encode("utf-8")).hexdigest()
+        if record.get("evidence_manifest_sha256") != observed_manifest:
+            raise AssemblyError(f"{platform} evidence manifest digest mismatch")
+        lock_name = f"environment-{platform}.yml"
+        if record.get("source_lock_sha256") != evidence_files[lock_name]["sha256"]:
+            raise AssemblyError(f"{platform} source-lock digest mismatch")
 
 
 def populate_and_verify_stage(

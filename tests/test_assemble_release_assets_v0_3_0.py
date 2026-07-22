@@ -246,12 +246,37 @@ def _write_inputs(root: Path) -> dict[str, Path]:
         (target / f"pip-{platform}.txt").write_text("pysam==0.24.0\n")
         (target / f"environment-{platform}.yml").write_text("name: fixture\n")
         (target / f"python-{platform}.txt").write_text("Python 3.12.13\n")
+        evidence_names = (
+            f"conda-{platform}.explicit.txt",
+            f"pip-{platform}.txt",
+            f"environment-{platform}.yml",
+            f"python-{platform}.txt",
+        )
+        evidence_files = {
+            name: {
+                "sha256": _sha256(target / name),
+                "size_bytes": (target / name).stat().st_size,
+            }
+            for name in evidence_names
+        }
+        manifest_payload = "".join(
+            f"{name}\t{evidence_files[name]['sha256']}\t{evidence_files[name]['size_bytes']}\n"
+            for name in sorted(evidence_files)
+        ).encode("utf-8")
         (target / f"platform-{platform}.json").write_text(
             json.dumps(
                 {
+                    "schema_version": "2.0",
                     "git_commit": FINAL_SHA,
                     "platform_id": platform,
                     "resolved_environment": True,
+                    "evidence_files": evidence_files,
+                    "evidence_manifest_sha256": hashlib.sha256(
+                        manifest_payload
+                    ).hexdigest(),
+                    "source_lock_sha256": evidence_files[
+                        f"environment-{platform}.yml"
+                    ]["sha256"],
                 }
             )
             + "\n"
@@ -354,11 +379,25 @@ def test_assembler_rejects_stale_text_identity(tmp_path: Path, target: str) -> N
 def test_assembler_rejects_stale_environment_lock(tmp_path: Path) -> None:
     inputs = _write_inputs(tmp_path)
     path = inputs["locks"] / "linux-64" / "platform-linux-64.json"
-    path.write_text(json.dumps({"git_commit": "b" * 40}) + "\n")
+    record = json.loads(path.read_text(encoding="utf-8"))
+    record["git_commit"] = "b" * 40
+    path.write_text(json.dumps(record) + "\n")
 
     completed, _ = _run(tmp_path, inputs)
     assert completed.returncode != 0
     assert "lock record is not bound to FINAL_SHA" in completed.stderr
+
+
+def test_assembler_rejects_environment_file_changed_after_ci_manifest(
+    tmp_path: Path,
+) -> None:
+    inputs = _write_inputs(tmp_path)
+    path = inputs["locks"] / "linux-64" / "pip-linux-64.txt"
+    path.write_text("pysam==0.24.1\n", encoding="utf-8")
+
+    completed, _ = _run(tmp_path, inputs)
+    assert completed.returncode != 0
+    assert "evidence-file digest mismatch" in completed.stderr
 
 
 def test_assembler_rejects_unexpected_environment_lock_file(tmp_path: Path) -> None:
