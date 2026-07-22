@@ -1,7 +1,16 @@
 metric	value
-tracks_available	5.0
-np_rows	2.0
-proxy_rows	2.0
-shared_np_proxy_positions	2.0
+status	ok
+reason_code	
+tracks_available	5
+np_rows	2
+proxy_rows	2
+shared_np_proxy_positions	2
+evaluable_np_proxy_positions	2
 np_proxy_mean_abs_difference	2.5
+np_proxy_mean_abs_difference_denominator_positions	2
+np_proxy_mean_abs_difference_status	ok
+np_proxy_mean_abs_difference_reason_code	
 np_proxy_correlation	1.0
+np_proxy_correlation_denominator_positions	2
+np_proxy_correlation_status	ok
+np_proxy_correlation_reason_code	
