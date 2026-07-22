@@ -30,6 +30,48 @@ EXPECTED_GM11906_RAW_INPUT_LABELS = [
     "SRR10804657_R2",
 ]
 
+MODULE_STATES = frozenset(
+    {
+        "ok",
+        "not_configured",
+        "not_applicable",
+        "not_evaluable",
+        "unavailable",
+        "failed",
+    }
+)
+MODULE_STATUS_SPECS = (
+    ("mito_qc_module_status", "mito_qc_summary.tsv"),
+    ("heteroplasmy_module_status", "mito_heteroplasmy_summary.tsv"),
+    ("deletions_module_status", "mito_deletion_summary.tsv"),
+    ("copy_number_module_status", "mito_copy_number_summary.tsv"),
+    ("feature_annotation_module_status", "mito_feature_annotation_summary.tsv"),
+    ("cosegregation_module_status", "mito_cosegregation_summary.tsv"),
+    ("gene_summary_module_status", "mito_gene_summary_run_summary.tsv"),
+    ("numt_qc_module_status", "mito_numt_qc_summary.tsv"),
+    ("identity_qc_module_status", "mito_identity_qc_summary.tsv"),
+    ("variant_consequence_module_status", "mito_variant_consequence_summary.tsv"),
+    ("circularity_qc_module_status", "mito_circularity_qc_summary.tsv"),
+    (
+        "methylation_exploratory_module_status",
+        "mito_methylation_exploratory_summary.tsv",
+    ),
+    ("phymer_haplogroup_module_status", "mito_phymer_haplogroup_summary.tsv"),
+    ("mvtool_annotation_module_status", "mito_mvtool_annotation_summary.tsv"),
+)
+MODULE_STATUS_FIELDS = tuple(field for field, _ in MODULE_STATUS_SPECS)
+INTERPRETATION_STATUS_FIELDS = ("numt_interpretation_status",)
+REQUIRED_STATUS_FIELDS = MODULE_STATUS_FIELDS + INTERPRETATION_STATUS_FIELDS
+NUMT_INTERPRETATION_REASON_FIELD = "numt_interpretation_reason_code"
+FEATURE_ANNOTATION_SUCCESS_COLUMNS = frozenset(
+    {
+        "feature_class",
+        "feature_label",
+        "candidate_sites",
+        "mean_alt_allele_fraction",
+    }
+)
+
 
 @dataclass
 class Assertion:
@@ -59,11 +101,69 @@ def read_tsv(path: Path) -> list[dict[str, str]]:
     return rows
 
 
+def read_oracle(path: Path) -> list[dict[str, str]]:
+    """Load the oracle after validating its closed status-field contract."""
+
+    with path.open(encoding="utf-8", newline="") as handle:
+        reader = csv.DictReader(handle, delimiter="\t")
+        fieldnames = reader.fieldnames or []
+        if len(fieldnames) != len(set(fieldnames)):
+            raise ValueError("Oracle contains duplicate column names")
+        observed_status_fields = {
+            field for field in fieldnames if field.endswith("_status")
+        }
+        expected_status_fields = set(REQUIRED_STATUS_FIELDS)
+        if observed_status_fields != expected_status_fields:
+            missing = sorted(expected_status_fields - observed_status_fields)
+            unexpected = sorted(observed_status_fields - expected_status_fields)
+            raise ValueError(
+                "Oracle status columns do not match the required closed set: "
+                f"missing={missing or 'none'} unexpected={unexpected or 'none'}"
+            )
+        if NUMT_INTERPRETATION_REASON_FIELD not in fieldnames:
+            raise ValueError(
+                f"Oracle is missing {NUMT_INTERPRETATION_REASON_FIELD}"
+            )
+        rows = [
+            {key: "" if value in (None, ".") else value for key, value in row.items()}
+            for row in reader
+        ]
+
+    if not rows:
+        raise ValueError("Oracle contains no data rows")
+    for row_number, row in enumerate(rows, start=2):
+        for field in REQUIRED_STATUS_FIELDS:
+            value = row.get(field, "").strip()
+            if not value:
+                raise ValueError(
+                    f"Oracle row {row_number} has blank required status {field}"
+                )
+            if value not in MODULE_STATES:
+                raise ValueError(
+                    f"Oracle row {row_number} has invalid {field}={value!r}"
+                )
+        reason = row.get(NUMT_INTERPRETATION_REASON_FIELD, "").strip()
+        if not reason:
+            raise ValueError(
+                f"Oracle row {row_number} has blank "
+                f"{NUMT_INTERPRETATION_REASON_FIELD}"
+            )
+    return rows
+
+
 def metric_map(path: Path) -> dict[str, str]:
     rows = read_tsv(path)
     if not rows or set(rows[0]) != {"metric", "value"}:
         raise ValueError(f"Expected metric/value TSV: {path}")
-    return {row["metric"]: row["value"] for row in rows}
+    metrics: dict[str, str] = {}
+    for row in rows:
+        metric = row["metric"].strip()
+        if not metric:
+            raise ValueError(f"Blank metric key in {path}")
+        if metric in metrics:
+            raise ValueError(f"Duplicate metric key {metric!r} in {path}")
+        metrics[metric] = row["value"].strip()
+    return metrics
 
 
 def decimal_equal(left: str, right: str) -> bool:
@@ -212,30 +312,90 @@ def assert_marker(audit: Auditor, case_id: str, output: Path, oracle: dict[str, 
                 )
 
 
-def assert_statuses(audit: Auditor, case_id: str, summary: Path, oracle: dict[str, str]) -> None:
-    specifications = (
-        ("copy_number_status", "mito_copy_number_summary.tsv", "status"),
-        ("phymer_status", "mito_phymer_haplogroup_summary.tsv", "status"),
-        ("methylation_status", "mito_methylation_exploratory_summary.tsv", "status"),
-        ("mvtool_status", "mito_mvtool_annotation_summary.tsv", "status"),
-        ("numt_module_status", "mito_numt_qc_summary.tsv", "status"),
-        (
-            "numt_interpretation_status",
-            "mito_numt_qc_summary.tsv",
-            "numt_interpretation_status",
-        ),
-        ("numt_reason_code", "mito_numt_qc_summary.tsv", "reason_code"),
+def feature_annotation_status(path: Path) -> str:
+    """Resolve the successful feature table without inventing a biological state."""
+
+    with path.open(encoding="utf-8", newline="") as handle:
+        reader = csv.DictReader(handle, delimiter="\t")
+        fieldnames = reader.fieldnames or []
+    if set(fieldnames) == {"metric", "value"}:
+        metrics = metric_map(path)
+        status = metrics.get("status", "")
+        if not status:
+            raise ValueError(f"Missing status metric in {path}")
+        return status
+    if FEATURE_ANNOTATION_SUCCESS_COLUMNS.issubset(fieldnames):
+        return "ok"
+    raise ValueError(
+        f"Feature-annotation output has neither a status table nor the successful schema: {path}"
     )
+
+
+def assert_statuses(
+    audit: Auditor,
+    case_id: str,
+    summary: Path,
+    oracle: dict[str, str],
+) -> None:
     loaded: dict[str, dict[str, str]] = {}
-    for oracle_field, filename, metric in specifications:
-        if not oracle[oracle_field]:
-            continue
-        loaded.setdefault(filename, metric_map(summary / filename))
+    observed_module_statuses: dict[str, str] = {}
+    for oracle_field, filename in MODULE_STATUS_SPECS:
+        expected = oracle[oracle_field]
+        path = summary / filename
+        if oracle_field == "feature_annotation_module_status":
+            observed = feature_annotation_status(path)
+        else:
+            loaded.setdefault(filename, metric_map(path))
+            if "status" not in loaded[filename]:
+                raise ValueError(f"Missing status metric in {path}")
+            observed = loaded[filename]["status"]
+        observed_module_statuses[oracle_field] = observed
+        detail = ""
+        if observed not in MODULE_STATES:
+            detail = f"observed status is outside the allowed vocabulary {sorted(MODULE_STATES)}"
         audit.assert_value(
-            f"{case_id}.status.{oracle_field}",
-            oracle[oracle_field],
-            loaded[filename].get(metric),
+            f"{case_id}.module_status.{oracle_field}",
+            expected,
+            observed,
+            detail=detail,
         )
+
+    numt_metrics = loaded["mito_numt_qc_summary.tsv"]
+    numt_module_status = observed_module_statuses["numt_qc_module_status"]
+    expected_interpretation = oracle["numt_interpretation_status"]
+    expected_reason = oracle[NUMT_INTERPRETATION_REASON_FIELD]
+    if numt_module_status == "not_applicable":
+        # The short-read status-only page predates a nested interpretation metric.
+        # Module gating makes the interpretation explicitly not applicable.
+        observed_interpretation = numt_metrics.get(
+            "numt_interpretation_status", "not_applicable"
+        )
+        observed_reason = numt_metrics.get(
+            "reason_code", "module_not_applicable"
+        )
+    else:
+        if "numt_interpretation_status" not in numt_metrics:
+            raise ValueError(
+                f"Missing numt_interpretation_status metric in "
+                f"{summary / 'mito_numt_qc_summary.tsv'}"
+            )
+        if "reason_code" not in numt_metrics:
+            raise ValueError(
+                f"Missing NUMT interpretation reason_code metric in "
+                f"{summary / 'mito_numt_qc_summary.tsv'}"
+            )
+        observed_interpretation = numt_metrics["numt_interpretation_status"]
+        observed_reason = numt_metrics["reason_code"]
+    audit.assert_value(
+        f"{case_id}.interpretation_status.numt_interpretation_status",
+        expected_interpretation,
+        observed_interpretation,
+    )
+    audit.assert_value(
+        f"{case_id}.interpretation_status.{NUMT_INTERPRETATION_REASON_FIELD}",
+        expected_reason,
+        observed_reason,
+    )
 
 
 def assert_longread_metrics(
@@ -365,7 +525,7 @@ def main() -> None:
     args = parse_args()
     audit = Auditor()
     try:
-        oracle_rows = read_tsv(args.oracle)
+        oracle_rows = read_oracle(args.oracle)
     except (FileNotFoundError, ValueError) as exc:
         raise SystemExit(f"Cannot load public-validation oracle: {exc}") from exc
     oracle_by_key = {(row["dataset"], row["profile"]): row for row in oracle_rows}

@@ -4,7 +4,7 @@ The repository tracks a bounded public GM12878 ONT targeted-mt example for exerc
 
 ## Evidence scope
 - provisional evidence snapshot: `2026-07-21`
-- local matrix result: all `17/17` required cases and `256/256` scientific oracle assertions passed under macOS process-tree network isolation
+- historical local matrix result: all `17/17` required cases and `256/256` then-current scientific oracle assertions passed under macOS process-tree network isolation; the expanded 14-module oracle requires a fresh matrix rerun
 - tracked-output status: regenerated from the seven-FASTQ matrix; not final v0.3.0 release-packet evidence
 - public accessions: BioProject `PRJNA809571`, run `SRR18110025`
 - dataset source: [Vandiver et al., 2022, PMCID PMC9399971](https://pmc.ncbi.nlm.nih.gov/articles/PMC9399971/)
@@ -46,15 +46,27 @@ The provisional default run reported:
 
 The bins are descriptive CIGAR-deletion workflow output from this fixed input. Supplementary-alignment/`SA` status is a separate alignment-structure summary and does not itself define a bin.
 
-Targeted-mt and optional-layer status values are:
+## Mode-state oracle
+The public oracle requires an explicit workflow-module state for all 14 report pages. It rejects blank expectations, undeclared states, missing status keys, and malformed values.
 
-| Layer | Status | Detail |
+| Report module | State | Basis |
 | --- | --- | --- |
-| within-sample mt:nuclear depth ratio (`copy_number`) | `not_applicable` | targeted-mt input lacks the required nuclear context |
-| `phymer_haplogroup` | `not_applicable` | targeted-mt assay gating |
-| `mvtool_annotation` | `not_configured` | optional integration disabled |
-| `methylation_exploratory` | `not_configured` | no bedmethyl sidecars configured |
-| NUMT interpretation | `not_evaluable` | `reference_scope_mt_only` |
+| `mito_qc` | `ok` | long-read alignment QC executed |
+| `heteroplasmy` | `ok` | filtered alternate-allele counting executed |
+| `deletions` | `ok` | descriptive CIGAR-deletion screen executed |
+| `copy_number` | `not_applicable` | targeted-mt input lacks a nuclear denominator |
+| `feature_annotation` | `ok` | candidate feature annotation executed |
+| `cosegregation` | `ok` | same-molecule co-occurrence summary executed |
+| `gene_summary` | `ok` | available candidate, deletion, and co-occurrence evidence was summarized |
+| `numt_qc` | `ok` | alignment-ambiguity metrics executed |
+| `identity_qc` | `ok` | available fingerprint evidence was summarized |
+| `variant_consequence` | `ok` | candidate consequence annotation executed |
+| `circularity_qc` | `ok` | circular-reference edge-context QC executed |
+| `methylation_exploratory` | `not_configured` | no bedMethyl sidecars configured |
+| `phymer_haplogroup` | `not_applicable` | targeted-mt profile does not assert complete-genome context |
+| `mvtool_annotation` | `not_configured` | optional network integration is disabled |
+
+Workflow-module state is not the same as interpretation state. Here, `numt_qc` is `ok` because alignment-ambiguity metrics were calculated, while `numt_interpretation_status=not_evaluable` with `numt_interpretation_reason_code=reference_scope_mt_only` because an mt-only reference cannot support categorical NUMT interpretation.
 
 ## Filter-profile matrix
 Profiles vary only the allele-observation quality filters; candidate thresholds remain fixed.

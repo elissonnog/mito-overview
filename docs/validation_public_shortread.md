@@ -4,7 +4,7 @@ The repository tracks a GM11906 compatibility example made by pooling three publ
 
 ## Evidence scope
 - provisional evidence snapshot: `2026-07-21`
-- local matrix result: all `17/17` required cases and `256/256` scientific oracle assertions passed under macOS process-tree network isolation
+- historical local matrix result: all `17/17` required cases and `256/256` then-current scientific oracle assertions passed under macOS process-tree network isolation; the expanded 14-module oracle requires a fresh matrix rerun
 - tracked-output status: regenerated from the seven-FASTQ matrix; not final v0.3.0 release-packet evidence
 - source runs: `SRR10804585`, `SRR10804590`, and `SRR10804657`
 - sample context: three single-cell ATAC-seq libraries from one GM11906 lymphoblastoid line, pooled as a pseudo-bulk
@@ -41,8 +41,27 @@ Provisional candidate counts were lenient=`33`, default=`33`, and strict=`33`; a
 | default | 13 | 20 | 10 | 33 | 44,052,664 | 7,293,106 |
 | strict | 20 | 30 | 15 | 33 | 42,676,166 | 8,669,604 |
 
-## Mode-gated statuses
-In the provisional run, the reduced short-read targeted-mt profile wrote `not_applicable` status outputs for `deletions`, `copy_number`, `cosegregation`, `numt_qc`, `phymer_haplogroup`, `identity_qc`, `circularity_qc`, and `methylation_exploratory`. Optional `mvtool_annotation` was `not_configured` when disabled.
+## Mode-state oracle
+The public oracle now requires an explicit expected workflow-module state for every one of the 14 report pages. Blank expected states, unknown states, missing status keys, and malformed status values fail validation rather than being skipped.
+
+| Report module | State | Basis |
+| --- | --- | --- |
+| `mito_qc` | `ok` | short-read alignment QC executed |
+| `heteroplasmy` | `ok` | filtered alternate-allele counting executed |
+| `deletions` | `not_applicable` | current deletion screen is long-read-specific |
+| `copy_number` | `not_applicable` | targeted-mt input lacks a nuclear denominator |
+| `feature_annotation` | `ok` | candidate feature annotation executed |
+| `cosegregation` | `not_applicable` | same-molecule co-occurrence is long-read-specific |
+| `gene_summary` | `ok` | available candidate evidence was summarized |
+| `numt_qc` | `not_applicable` | current alignment-ambiguity heuristics are long-read-specific |
+| `identity_qc` | `not_applicable` | current identity workflow is long-read-specific |
+| `variant_consequence` | `ok` | candidate consequence annotation executed |
+| `circularity_qc` | `not_applicable` | current edge-context heuristics are long-read-specific |
+| `methylation_exploratory` | `not_applicable` | ONT bedMethyl evidence does not apply to this profile |
+| `phymer_haplogroup` | `not_applicable` | targeted-mt profile does not assert complete-genome context |
+| `mvtool_annotation` | `not_configured` | optional network integration is disabled |
+
+Workflow-module state and interpretation state are separate. Because `numt_qc` is skipped for this short-read profile, NUMT interpretation is explicitly recorded in the oracle as `not_applicable` with reason `module_not_applicable`; it is not treated as a blank or silently omitted expectation. The status-only module output does not carry a nested interpretation metric, so the oracle derives this one interpretation state only from the verified `numt_qc=not_applicable` gate.
 
 ## Repeatability and claim scope
 The matrix first reconstructed the pooled FASTQs and alignment, then used that newly generated derivative for two default report invocations. Their normalized TSVs and decoded PNG pixels matched exactly, and their HTML structures matched. This separates report repeatability from alignment variability while still testing the raw-FASTQ derivation once in the matrix. The evidence supports workflow execution, report/resource generation, descriptive filter dependence, and mode gating only. The pooled alternate allele fraction is not a per-cell value, a calibrated sample heteroplasmy estimate, or evidence of short-read WGS performance.

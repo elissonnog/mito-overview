@@ -12,6 +12,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 
 REPO_ROOT = Path(__file__).parents[1]
 PREPARE = REPO_ROOT / "scripts" / "prepare_public_validation_cache_v0.3.0.sh"
@@ -33,6 +35,25 @@ GM11906_SOURCE_METADATA = (
     / "gm11906_ncbi_source_metadata_v0.3.0.json"
 )
 PREPRINT_VALIDATION_DOC = REPO_ROOT / "docs" / "preprint_release_validation_v0.3.0.md"
+REPORT_MODULE_STATUS_OUTPUTS = (
+    ("mito_qc_module_status", "mito_qc_summary.tsv"),
+    ("heteroplasmy_module_status", "mito_heteroplasmy_summary.tsv"),
+    ("deletions_module_status", "mito_deletion_summary.tsv"),
+    ("copy_number_module_status", "mito_copy_number_summary.tsv"),
+    ("feature_annotation_module_status", "mito_feature_annotation_summary.tsv"),
+    ("cosegregation_module_status", "mito_cosegregation_summary.tsv"),
+    ("gene_summary_module_status", "mito_gene_summary_run_summary.tsv"),
+    ("numt_qc_module_status", "mito_numt_qc_summary.tsv"),
+    ("identity_qc_module_status", "mito_identity_qc_summary.tsv"),
+    ("variant_consequence_module_status", "mito_variant_consequence_summary.tsv"),
+    ("circularity_qc_module_status", "mito_circularity_qc_summary.tsv"),
+    (
+        "methylation_exploratory_module_status",
+        "mito_methylation_exploratory_summary.tsv",
+    ),
+    ("phymer_haplogroup_module_status", "mito_phymer_haplogroup_summary.tsv"),
+    ("mvtool_annotation_module_status", "mito_mvtool_annotation_summary.tsv"),
+)
 
 
 def read_tsv(path: Path) -> list[dict[str, str]]:
@@ -104,6 +125,18 @@ def write_metric_table(path: Path, values: dict[str, object]) -> None:
     )
 
 
+def write_feature_annotation_state(path: Path, status: str) -> None:
+    if status == "ok":
+        path.write_text(
+            "feature_class\tfeature_label\tcandidate_sites\t"
+            "mean_alt_allele_fraction\tmean_heteroplasmy\n"
+            "Mt_tRNA\tMT-TK\t1\t0.720545\t0.720545\n",
+            encoding="utf-8",
+        )
+    else:
+        write_metric_table(path, {"status": status, "reason_code": "fixture_state"})
+
+
 def write_candidates(path: Path, count: int, marker_fraction: str) -> None:
     rows = []
     if marker_fraction:
@@ -157,6 +190,8 @@ def write_case_output(root: Path, case_id: str, oracle: dict[str, str]) -> None:
     write_metric_table(
         summary / "mito_heteroplasmy_summary.tsv",
         {
+            "status": oracle["heteroplasmy_module_status"],
+            "reason_code": "",
             "allele_min_base_quality": oracle["min_base_quality"],
             "allele_min_mapping_quality": oracle["min_mapping_quality"],
             "allele_min_read_mean_quality": oracle["min_read_mean_quality"],
@@ -164,20 +199,36 @@ def write_case_output(root: Path, case_id: str, oracle: dict[str, str]) -> None:
             "excluded_observations": oracle["excluded_observations"],
         },
     )
-    write_metric_table(
-        summary / "mito_copy_number_summary.tsv", {"status": oracle["copy_number_status"]}
+    for oracle_field, filename in (
+        ("mito_qc_module_status", "mito_qc_summary.tsv"),
+        ("deletions_module_status", "mito_deletion_summary.tsv"),
+        ("copy_number_module_status", "mito_copy_number_summary.tsv"),
+        ("cosegregation_module_status", "mito_cosegregation_summary.tsv"),
+        ("gene_summary_module_status", "mito_gene_summary_run_summary.tsv"),
+        ("identity_qc_module_status", "mito_identity_qc_summary.tsv"),
+        ("variant_consequence_module_status", "mito_variant_consequence_summary.tsv"),
+        ("circularity_qc_module_status", "mito_circularity_qc_summary.tsv"),
+        (
+            "methylation_exploratory_module_status",
+            "mito_methylation_exploratory_summary.tsv",
+        ),
+        ("phymer_haplogroup_module_status", "mito_phymer_haplogroup_summary.tsv"),
+        ("mvtool_annotation_module_status", "mito_mvtool_annotation_summary.tsv"),
+    ):
+        write_metric_table(summary / filename, {"status": oracle[oracle_field]})
+    write_feature_annotation_state(
+        summary / "mito_feature_annotation_summary.tsv",
+        oracle["feature_annotation_module_status"],
     )
-    write_metric_table(
-        summary / "mito_mvtool_annotation_summary.tsv", {"status": oracle["mvtool_status"]}
-    )
-    write_metric_table(
-        summary / "mito_numt_qc_summary.tsv",
-        {
-            "status": oracle["numt_module_status"],
-            "numt_interpretation_status": oracle["numt_interpretation_status"],
-            "reason_code": oracle["numt_reason_code"],
-        },
-    )
+    numt_values = {"status": oracle["numt_qc_module_status"]}
+    if oracle["numt_qc_module_status"] != "not_applicable":
+        numt_values.update(
+            {
+                "numt_interpretation_status": oracle["numt_interpretation_status"],
+                "reason_code": oracle["numt_interpretation_reason_code"],
+            }
+        )
+    write_metric_table(summary / "mito_numt_qc_summary.tsv", numt_values)
     (summary / "mito_variant_consequence_candidates.tsv").write_text(
         "position\tref_base\talt_base\tfeature_label\tfeature_class\tconsequence_class\n"
         "8344\tA\tG\tMT-TK\tMt_tRNA\ttRNA_variant\n",
@@ -186,16 +237,9 @@ def write_case_output(root: Path, case_id: str, oracle: dict[str, str]) -> None:
 
     if oracle["dataset"] == "GM12878":
         write_metric_table(
-            summary / "mito_phymer_haplogroup_summary.tsv",
-            {"status": oracle["phymer_status"]},
-        )
-        write_metric_table(
-            summary / "mito_methylation_exploratory_summary.tsv",
-            {"status": oracle["methylation_status"]},
-        )
-        write_metric_table(
             summary / "mito_qc_summary.tsv",
             {
+                "status": oracle["mito_qc_module_status"],
                 "mapped_reads": oracle["mapped_reads"],
                 "primary_reads": oracle["primary_reads"],
                 "supplementary_reads": oracle["supplementary_reads"],
@@ -205,11 +249,15 @@ def write_case_output(root: Path, case_id: str, oracle: dict[str, str]) -> None:
         )
         write_metric_table(
             summary / "mito_cosegregation_summary.tsv",
-            {"selected_sites": oracle["selected_cosegregation_sites"]},
+            {
+                "status": oracle["cosegregation_module_status"],
+                "selected_sites": oracle["selected_cosegregation_sites"],
+            },
         )
         write_metric_table(
             summary / "mito_deletion_summary.tsv",
             {
+                "status": oracle["deletions_module_status"],
                 "candidate_deletion_clusters": oracle["deletion_clusters"],
                 "reads_with_large_deletion": oracle["deletion_query_names"],
                 "reads_with_supplementary_or_SA": oracle["supplementary_sa_query_names"],
@@ -309,7 +357,11 @@ def build_matrix_fixture(root: Path) -> None:
             )
 
 
-def run_oracle(matrix_root: Path, report: Path) -> subprocess.CompletedProcess[str]:
+def run_oracle(
+    matrix_root: Path,
+    report: Path,
+    oracle: Path = ORACLE,
+) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [
             "python3",
@@ -317,7 +369,7 @@ def run_oracle(matrix_root: Path, report: Path) -> subprocess.CompletedProcess[s
             "--matrix-root",
             str(matrix_root),
             "--oracle",
-            str(ORACLE),
+            str(oracle),
             "--report",
             str(report),
         ],
@@ -325,6 +377,42 @@ def run_oracle(matrix_root: Path, report: Path) -> subprocess.CompletedProcess[s
         capture_output=True,
         text=True,
     )
+
+
+def replace_or_add_metric(path: Path, metric: str, value: str) -> None:
+    rows = read_tsv(path)
+    replaced = False
+    for row in rows:
+        if row["metric"] == metric:
+            row["value"] = value
+            replaced = True
+    if not replaced:
+        rows.append({"metric": metric, "value": value})
+    with path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=["metric", "value"],
+            delimiter="\t",
+            lineterminator="\n",
+        )
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def write_oracle_fixture(
+    path: Path,
+    rows: list[dict[str, str]],
+    fieldnames: list[str],
+) -> None:
+    with path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=fieldnames,
+            delimiter="\t",
+            lineterminator="\n",
+        )
+        writer.writeheader()
+        writer.writerows(rows)
 
 
 def test_owned_shell_scripts_are_syntactically_valid() -> None:
@@ -475,6 +563,196 @@ def test_oracle_rejects_deterministic_candidate_regression(tmp_path: Path) -> No
     assert result.returncode != 0
     assert "gm12878_default_run1.candidate_sites" in result.stderr
     assert any(row["verdict"] == "FAIL" for row in read_tsv(report))
+
+
+@pytest.mark.parametrize(
+    ("dataset", "case_id", "oracle_field", "filename"),
+    [
+        (dataset, case_id, oracle_field, filename)
+        for dataset, case_id in (
+            ("GM11906", "gm11906_default_run1"),
+            ("GM12878", "gm12878_default_run1"),
+        )
+        for oracle_field, filename in REPORT_MODULE_STATUS_OUTPUTS
+    ],
+)
+def test_oracle_rejects_every_report_module_state_regression(
+    tmp_path: Path,
+    dataset: str,
+    case_id: str,
+    oracle_field: str,
+    filename: str,
+) -> None:
+    matrix_root = tmp_path / "matrix"
+    build_matrix_fixture(matrix_root)
+    path = matrix_root / "outputs" / case_id / "summary" / filename
+    if oracle_field == "feature_annotation_module_status":
+        write_metric_table(path, {"status": "failed", "reason_code": "injected"})
+    else:
+        replace_or_add_metric(path, "status", "failed")
+
+    report = tmp_path / "oracle_assertions.tsv"
+    result = run_oracle(matrix_root, report)
+    assert result.returncode != 0
+    assertion_id = f"{case_id}.module_status.{oracle_field}"
+    assert assertion_id in result.stderr
+    assert any(
+        row["assertion_id"] == assertion_id and row["verdict"] == "FAIL"
+        for row in read_tsv(report)
+    ), dataset
+
+
+@pytest.mark.parametrize(
+    ("case_id", "regressed_status"),
+    (
+        ("gm11906_default_run1", "not_evaluable"),
+        ("gm12878_default_run1", "ok"),
+    ),
+)
+def test_oracle_rejects_numt_interpretation_state_regression(
+    tmp_path: Path,
+    case_id: str,
+    regressed_status: str,
+) -> None:
+    matrix_root = tmp_path / "matrix"
+    build_matrix_fixture(matrix_root)
+    path = (
+        matrix_root
+        / "outputs"
+        / case_id
+        / "summary"
+        / "mito_numt_qc_summary.tsv"
+    )
+    replace_or_add_metric(path, "numt_interpretation_status", regressed_status)
+
+    report = tmp_path / "oracle_assertions.tsv"
+    result = run_oracle(matrix_root, report)
+    assert result.returncode != 0
+    assertion_id = (
+        f"{case_id}.interpretation_status.numt_interpretation_status"
+    )
+    assert assertion_id in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("case_id", "regressed_reason"),
+    (
+        ("gm11906_default_run1", "wrong_module_reason"),
+        ("gm12878_default_run1", "wrong_reference_scope"),
+    ),
+)
+def test_oracle_rejects_numt_interpretation_reason_regression(
+    tmp_path: Path,
+    case_id: str,
+    regressed_reason: str,
+) -> None:
+    matrix_root = tmp_path / "matrix"
+    build_matrix_fixture(matrix_root)
+    path = (
+        matrix_root
+        / "outputs"
+        / case_id
+        / "summary"
+        / "mito_numt_qc_summary.tsv"
+    )
+    replace_or_add_metric(path, "reason_code", regressed_reason)
+
+    report = tmp_path / "oracle_assertions.tsv"
+    result = run_oracle(matrix_root, report)
+    assert result.returncode != 0
+    assert (
+        f"{case_id}.interpretation_status.numt_interpretation_reason_code"
+        in result.stderr
+    )
+
+
+@pytest.mark.parametrize("value", ("", "not-a-module-state"))
+def test_oracle_rejects_blank_or_malformed_expected_module_state(
+    tmp_path: Path,
+    value: str,
+) -> None:
+    matrix_root = tmp_path / "matrix"
+    build_matrix_fixture(matrix_root)
+    rows = read_tsv(ORACLE)
+    fieldnames = list(rows[0])
+    rows[0]["deletions_module_status"] = value
+    modified_oracle = tmp_path / "modified_oracle.tsv"
+    write_oracle_fixture(modified_oracle, rows, fieldnames)
+
+    result = run_oracle(
+        matrix_root,
+        tmp_path / "oracle_assertions.tsv",
+        modified_oracle,
+    )
+    assert result.returncode != 0
+    assert "deletions_module_status" in result.stderr
+
+
+@pytest.mark.parametrize("mutation", ("missing", "unexpected"))
+def test_oracle_requires_the_exact_closed_status_key_set(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    matrix_root = tmp_path / "matrix"
+    build_matrix_fixture(matrix_root)
+    rows = read_tsv(ORACLE)
+    fieldnames = list(rows[0])
+    if mutation == "missing":
+        fieldnames.remove("identity_qc_module_status")
+        for row in rows:
+            row.pop("identity_qc_module_status")
+    else:
+        fieldnames.append("invented_module_status")
+        for row in rows:
+            row["invented_module_status"] = "ok"
+    modified_oracle = tmp_path / "modified_oracle.tsv"
+    write_oracle_fixture(modified_oracle, rows, fieldnames)
+
+    result = run_oracle(
+        matrix_root,
+        tmp_path / "oracle_assertions.tsv",
+        modified_oracle,
+    )
+    assert result.returncode != 0
+    assert "Oracle status columns do not match the required closed set" in result.stderr
+
+
+def test_oracle_rejects_blank_expected_numt_interpretation_reason(
+    tmp_path: Path,
+) -> None:
+    matrix_root = tmp_path / "matrix"
+    build_matrix_fixture(matrix_root)
+    rows = read_tsv(ORACLE)
+    fieldnames = list(rows[0])
+    rows[0]["numt_interpretation_reason_code"] = ""
+    modified_oracle = tmp_path / "modified_oracle.tsv"
+    write_oracle_fixture(modified_oracle, rows, fieldnames)
+
+    result = run_oracle(
+        matrix_root,
+        tmp_path / "oracle_assertions.tsv",
+        modified_oracle,
+    )
+    assert result.returncode != 0
+    assert "blank numt_interpretation_reason_code" in result.stderr
+
+
+def test_oracle_rejects_missing_observed_status_metric(tmp_path: Path) -> None:
+    matrix_root = tmp_path / "matrix"
+    build_matrix_fixture(matrix_root)
+    path = (
+        matrix_root
+        / "outputs"
+        / "gm12878_default_run1"
+        / "summary"
+        / "mito_deletion_summary.tsv"
+    )
+    rows = [row for row in read_tsv(path) if row["metric"] != "status"]
+    write_oracle_fixture(path, rows, ["metric", "value"])
+
+    result = run_oracle(matrix_root, tmp_path / "oracle_assertions.tsv")
+    assert result.returncode != 0
+    assert "Missing status metric" in result.stderr
 
 
 def test_prepare_rejects_unexpected_unsealed_cache_content_without_network(
