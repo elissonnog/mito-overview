@@ -10,6 +10,10 @@ from mito_overview.paths import RunPaths
 from mito_overview.steps.mito_copy_number import WINDOW_COLUMNS
 from mito_overview.steps.mito_cosegregation import PAIRWISE_COLUMNS
 from mito_overview.steps.mito_identity_qc import FINGERPRINT_COLUMNS
+from mito_overview.steps.mito_methylation_exploratory import (
+    COMPARISON_COLUMNS,
+    ROW_COLUMNS,
+)
 from mito_overview.workflow import STEP_STATUS_OUTPUTS, run_pipeline, validate_config
 
 from ._helpers import ReadSpec, write_alignment, write_fasta
@@ -276,6 +280,12 @@ def test_status_only_table_schemas_match_active_module_contracts() -> None:
     assert empty_tables["cosegregation"]["mito_cosegregation_pairwise.tsv"] == PAIRWISE_COLUMNS
     assert empty_tables["identity_qc"]["mito_identity_major_variant_fingerprint.tsv"] == (
         FINGERPRINT_COLUMNS
+    )
+    assert empty_tables["methylation_exploratory"]["mito_methylation_track_rows.tsv"] == (
+        ROW_COLUMNS
+    )
+    assert empty_tables["methylation_exploratory"]["mito_methylation_np_vs_proxy.tsv"] == (
+        COMPARISON_COLUMNS
     )
 
 

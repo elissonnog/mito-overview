@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pandas as pd
+import pysam
 import pytest
 
 from mito_overview.allele_counting import (
@@ -13,6 +14,29 @@ from mito_overview.allele_counting import (
 from mito_overview.steps.mito_heteroplasmy import run_step
 
 from ._helpers import ReadSpec, metric_map, write_alignment, write_fasta
+
+
+def write_ordered_overlap_alignment(
+    path: Path,
+    records: list[tuple[int, str]],
+) -> Path:
+    """Write same-position paired records in the requested physical order."""
+
+    header = pysam.AlignmentHeader.from_references(["MT"], [1])
+    with pysam.AlignmentFile(path, "wb", header=header) as handle:
+        for flag, base in records:
+            segment = pysam.AlignedSegment(header)
+            segment.query_name = "paired"
+            segment.flag = flag
+            segment.reference_id = 0
+            segment.reference_start = 0
+            segment.mapping_quality = 60
+            segment.query_sequence = base
+            segment.cigarstring = "1M"
+            segment.query_qualities = [35]
+            handle.write(segment)
+    pysam.index(str(path))
+    return path
 
 
 @pytest.fixture(scope="module")
@@ -143,6 +167,82 @@ def test_cosegregation_preserves_accepted_overlaps_when_suppression_is_disabled(
     assert len(alternate[1]) == counts.base_counts[0]["C"] == 1
 
 
+def test_discordant_equal_quality_overlaps_are_excluded_independent_of_record_order(
+    tmp_path: Path,
+) -> None:
+    records = [(65, "A"), (129, "C")]
+    observed = []
+    for index, order in enumerate((records, list(reversed(records)))):
+        bam = write_ordered_overlap_alignment(tmp_path / f"discordant-{index}.bam", order)
+        counts = count_contig_alleles(
+            bam_path=bam,
+            contig="MT",
+            length=1,
+            policy=AlleleFilterPolicy(),
+        )
+        coverage, alternate, calls_stats = collect_site_read_calls(
+            bam_path=bam,
+            contig="MT",
+            sites={1: "C"},
+            policy=AlleleFilterPolicy(),
+        )
+        assert counts.base_counts[0] == {"A": 0, "C": 0, "G": 0, "T": 0}
+        assert coverage == {1: set()}
+        assert alternate == {1: set()}
+        for stats in (counts.stats, calls_stats):
+            assert stats.pileup_observations_seen == 2
+            assert stats.accepted_observations == 0
+            assert stats.excluded_observations == 2
+            assert stats.excluded_overlap == 2
+            assert stats.excluded_overlap_ambiguous == 2
+            assert stats.unique_reads_excluded_overlap_ambiguous == 1
+        observed.append((counts.base_counts, coverage, alternate))
+    assert observed[0] == observed[1]
+
+
+def test_concordant_equal_quality_overlap_ties_use_read1_as_fragment_representative(
+    tmp_path: Path,
+) -> None:
+    records = [(81, "A"), (129, "A")]
+    observed = []
+    for index, order in enumerate((records, list(reversed(records)))):
+        bam = write_ordered_overlap_alignment(tmp_path / f"concordant-{index}.bam", order)
+        result = count_contig_alleles(
+            bam_path=bam,
+            contig="MT",
+            length=1,
+            policy=AlleleFilterPolicy(),
+        )
+        assert result.base_counts[0]["A"] == 1
+        assert result.forward_counts[0]["A"] == 0
+        assert result.reverse_counts[0]["A"] == 1
+        assert result.stats.accepted_observations == 1
+        assert result.stats.excluded_overlap == 1
+        assert result.stats.excluded_overlap_ambiguous == 0
+        observed.append(
+            (result.base_counts, result.forward_counts, result.reverse_counts)
+        )
+    assert observed[0] == observed[1]
+
+
+def test_concordant_overlap_fragment_strand_tracks_read1_not_a_fixed_strand(
+    tmp_path: Path,
+) -> None:
+    bam = write_ordered_overlap_alignment(
+        tmp_path / "read1-forward.bam",
+        [(65, "A"), (145, "A")],
+    )
+    result = count_contig_alleles(
+        bam_path=bam,
+        contig="MT",
+        length=1,
+        policy=AlleleFilterPolicy(),
+    )
+    assert result.base_counts[0]["A"] == 1
+    assert result.forward_counts[0]["A"] == 1
+    assert result.reverse_counts[0]["A"] == 0
+
+
 def test_heteroplasmy_outputs_canonical_fraction_and_compatibility_alias(
     high_depth_case: tuple[Path, Path], tmp_path: Path
 ) -> None:
@@ -166,6 +266,13 @@ def test_heteroplasmy_outputs_canonical_fraction_and_compatibility_alias(
     assert row["alt_allele_fraction"] == pytest.approx(3001 / 8002, abs=5e-7)
     assert row["heteroplasmy_fraction"] == row["alt_allele_fraction"]
     summary = metric_map(outputs["summary_path"])
+    assert summary["allele_counting_method"] == "pysam_pileup_shared_filter_v2"
+    assert summary["allele_overlap_resolution"] == (
+        "highest_baseq_mapq_discordant_ties_excluded_concordant_read1_first"
+    )
+    assert summary["allele_overlap_strand_convention"] == (
+        "representative_fragment_read1_then_read2_then_alignment_key"
+    )
     assert summary["allele_max_depth"] == "0"
     assert summary["allele_exclude_flags"] == "3844"
     assert int(summary["accepted_observations"]) > 8000

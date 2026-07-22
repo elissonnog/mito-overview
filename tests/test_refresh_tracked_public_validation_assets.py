@@ -67,7 +67,7 @@ def write_heteroplasmy_summary(
         "status\tok\n"
         f"min_callable_depth\t{depth}\n"
         f"min_alt_allele_fraction\t{fraction}\n"
-        "allele_counting_method\tpysam_pileup_shared_filter_v1\n"
+        "allele_counting_method\tpysam_pileup_shared_filter_v2\n"
         f"unique_reads_seen\t{unique_reads}\n",
         encoding="utf-8",
     )

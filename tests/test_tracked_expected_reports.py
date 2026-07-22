@@ -53,7 +53,13 @@ def test_tracked_long_read_bundle_uses_v030_status_and_allele_contracts() -> Non
     assert numt_metrics["heuristic_numt_risk"] == "not_evaluable"
 
     allele_metrics = metric_map(root / "summary" / "mito_heteroplasmy_summary.tsv")
-    assert allele_metrics["allele_counting_method"] == "pysam_pileup_shared_filter_v1"
+    assert allele_metrics["allele_counting_method"] == "pysam_pileup_shared_filter_v2"
+    assert allele_metrics["allele_overlap_resolution"] == (
+        "highest_baseq_mapq_discordant_ties_excluded_concordant_read1_first"
+    )
+    assert allele_metrics["allele_overlap_strand_convention"] == (
+        "representative_fragment_read1_then_read2_then_alignment_key"
+    )
     assert allele_metrics["allele_max_depth"] == "0"
     candidates = pd.read_csv(root / "summary" / "mito_heteroplasmy_candidates.tsv", sep="\t")
     assert "alt_allele_fraction" in candidates.columns

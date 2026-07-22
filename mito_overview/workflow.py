@@ -205,13 +205,18 @@ STEP_STATUS_OUTPUTS: dict[str, dict[str, object]] = {
             "mito_methylation_track_rows.tsv": [
                 "track",
                 "position",
+                "modification_code",
+                "strand",
                 "valid_coverage",
                 "percent_modified",
                 "modified_count",
                 "canonical_count",
+                "other_modified_count",
             ],
             "mito_methylation_np_vs_proxy.tsv": [
                 "position",
+                "modification_code",
+                "strand",
                 "percent_modified_np",
                 "percent_modified_proxy",
                 "abs_difference",

@@ -12,6 +12,11 @@ import pysam
 
 CANONICAL_BASES = ("A", "C", "G", "T")
 UNLIMITED_PILEUP_DEPTH = 1_000_000_000
+ALLELE_COUNTING_METHOD = "pysam_pileup_shared_filter_v2"
+OVERLAP_RESOLUTION_METHOD = (
+    "highest_baseq_mapq_discordant_ties_excluded_concordant_read1_first"
+)
+OVERLAP_STRAND_CONVENTION = "representative_fragment_read1_then_read2_then_alignment_key"
 
 
 @dataclass(frozen=True)
@@ -42,6 +47,7 @@ class AlleleFilterStats:
     excluded_missing_base: int = 0
     excluded_noncanonical_base: int = 0
     excluded_overlap: int = 0
+    excluded_overlap_ambiguous: int = 0
     excluded_max_depth: int = 0
     unique_reads_seen: int = 0
     unique_reads_accepted: int = 0
@@ -55,6 +61,7 @@ class AlleleFilterStats:
     unique_reads_excluded_missing_base: int = 0
     unique_reads_excluded_noncanonical_base: int = 0
     unique_reads_excluded_overlap: int = 0
+    unique_reads_excluded_overlap_ambiguous: int = 0
     unique_reads_excluded_max_depth: int = 0
 
 
@@ -67,6 +74,7 @@ class AlleleObservation:
     base_quality: int
     mapping_quality: int
     is_reverse: bool
+    pair_order: int
     alignment_support_key: str
 
 
@@ -84,7 +92,9 @@ def policy_rows(policy: AlleleFilterPolicy, stats: AlleleFilterStats) -> list[di
     """Return metric/value rows suitable for a step summary table."""
 
     rows = [
-        {"metric": "allele_counting_method", "value": "pysam_pileup_shared_filter_v1"},
+        {"metric": "allele_counting_method", "value": ALLELE_COUNTING_METHOD},
+        {"metric": "allele_overlap_resolution", "value": OVERLAP_RESOLUTION_METHOD},
+        {"metric": "allele_overlap_strand_convention", "value": OVERLAP_STRAND_CONVENTION},
         {"metric": "allele_min_base_quality", "value": policy.min_base_quality},
         {"metric": "allele_min_mapping_quality", "value": policy.min_mapping_quality},
         {"metric": "allele_min_read_mean_quality", "value": policy.min_read_mean_quality},
@@ -118,6 +128,55 @@ def _alignment_support_key(alignment: pysam.AlignedSegment) -> str:
         alignment.cigarstring or "",
     )
     return "\x1f".join(str(value) for value in fields)
+
+
+def _resolve_overlapping_observations(
+    observations: list[AlleleObservation],
+    stats: AlleleFilterStats,
+    read_sets: dict[str, set[str]],
+) -> list[AlleleObservation]:
+    """Resolve same-query observations without depending on BAM record order."""
+
+    grouped: dict[str, list[AlleleObservation]] = {}
+    for observation in observations:
+        grouped.setdefault(observation.read_name, []).append(observation)
+
+    resolved: list[AlleleObservation] = []
+    for read_name in sorted(grouped):
+        group = grouped[read_name]
+        if len(group) == 1:
+            resolved.append(group[0])
+            continue
+
+        read_sets["overlap"].add(read_name)
+        best_score = max(
+            (observation.base_quality, observation.mapping_quality)
+            for observation in group
+        )
+        best = [
+            observation
+            for observation in group
+            if (observation.base_quality, observation.mapping_quality) == best_score
+        ]
+        if len({observation.base for observation in best}) > 1:
+            stats.excluded_overlap += len(group)
+            stats.excluded_overlap_ambiguous += len(group)
+            read_sets["overlap_ambiguous"].add(read_name)
+            continue
+
+        # A concordant quality tie cannot change the allele count. Represent a
+        # paired fragment by read 1 when available instead of favoring one
+        # genomic strand; use the stable alignment key for any remaining tie.
+        winner = min(
+            best,
+            key=lambda observation: (
+                observation.pair_order,
+                observation.alignment_support_key,
+            ),
+        )
+        resolved.append(winner)
+        stats.excluded_overlap += len(group) - 1
+    return resolved
 
 
 def _passing_observations(
@@ -183,30 +242,13 @@ def _passing_observations(
                 base_quality=base_quality,
                 mapping_quality=int(alignment.mapping_quality),
                 is_reverse=bool(alignment.is_reverse),
+                pair_order=0 if alignment.is_read1 else 1 if alignment.is_read2 else 2,
                 alignment_support_key=_alignment_support_key(alignment),
             )
         )
 
     if policy.ignore_overlaps:
-        best_by_read: dict[str, AlleleObservation] = {}
-        for observation in observations:
-            current = best_by_read.get(observation.read_name)
-            if current is None or (observation.base_quality, observation.mapping_quality) > (
-                current.base_quality,
-                current.mapping_quality,
-            ):
-                best_by_read[observation.read_name] = observation
-        stats.excluded_overlap += len(observations) - len(best_by_read)
-        if len(observations) != len(best_by_read):
-            seen_names: set[str] = set()
-            duplicated_names: set[str] = set()
-            for item in observations:
-                if item.read_name in seen_names:
-                    duplicated_names.add(item.read_name)
-                else:
-                    seen_names.add(item.read_name)
-            read_sets["overlap"].update(duplicated_names)
-        observations = list(best_by_read.values())
+        observations = _resolve_overlapping_observations(observations, stats, read_sets)
 
     if policy.max_depth > 0 and len(observations) > policy.max_depth:
         observations.sort(
@@ -271,6 +313,7 @@ def _finalize_stats(stats: AlleleFilterStats, read_sets: dict[str, set[str]]) ->
     stats.unique_reads_excluded_missing_base = len(read_sets["missing_base"])
     stats.unique_reads_excluded_noncanonical_base = len(read_sets["noncanonical_base"])
     stats.unique_reads_excluded_overlap = len(read_sets["overlap"])
+    stats.unique_reads_excluded_overlap_ambiguous = len(read_sets["overlap_ambiguous"])
     stats.unique_reads_excluded_max_depth = len(read_sets["max_depth"])
 
 
@@ -337,6 +380,7 @@ def _new_read_sets() -> dict[str, set[str]]:
             "missing_base",
             "noncanonical_base",
             "overlap",
+            "overlap_ambiguous",
             "max_depth",
         )
     }
