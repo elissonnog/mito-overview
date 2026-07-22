@@ -323,6 +323,95 @@ def test_no_position_meeting_minimum_depth_is_not_a_successful_zero_candidate_ru
     assert summary["reason_code"] == "no_positions_meet_min_callable_depth"
     assert summary["callable_positions"] == "4"
     assert summary["candidate_evaluable_positions"] == "0"
+    assert summary["candidate_non_evaluable_positions"] == "4"
+    assert summary["candidate_evaluable_fraction"] == "0.0"
+    assert summary["candidate_coverage_scope"] == "none"
+    assert (
+        summary["whole_mtdna_zero_candidate_interpretation_status"]
+        == "not_supported_no_evaluable_positions"
+    )
+
+
+def test_partial_candidate_coverage_limits_zero_candidate_interpretation_to_evaluable_positions(
+    tmp_path: Path,
+) -> None:
+    ref = write_fasta(tmp_path / "partial.fa", {"MT": "AAAA"})
+    bam = write_alignment(
+        tmp_path / "partial.bam",
+        {"MT": 4},
+        [ReadSpec("position-one-only", "MT", 0, "A")],
+    )
+    outputs = run_step(
+        bam=bam,
+        ref_fasta=ref,
+        summary_dir=tmp_path / "summary",
+        figure_dir=tmp_path / "figures",
+        report_dir=tmp_path / "report",
+        sample_id="PARTIAL-COVERAGE",
+        mt_contig="MT",
+        mt_length=4,
+        min_depth=1,
+        min_vaf=0.02,
+    )
+
+    candidates = pd.read_csv(outputs["candidate_path"], sep="\t")
+    summary = metric_map(outputs["summary_path"])
+    report = outputs["report_path"].read_text(encoding="utf-8")
+
+    assert outputs["status"] == "ok"
+    assert candidates.empty
+    assert summary["status"] == "ok"
+    assert summary["candidate_evaluable_positions"] == "1"
+    assert summary["candidate_non_evaluable_positions"] == "3"
+    assert summary["candidate_evaluable_fraction"] == "0.25"
+    assert summary["candidate_coverage_scope"] == "partial"
+    assert (
+        summary["whole_mtdna_zero_candidate_interpretation_status"]
+        == "not_supported_partial_candidate_coverage"
+    )
+    assert "No candidate sites were observed among the 1 of 4 positions" in report
+    assert "must not be interpreted as a whole-mtDNA absence of candidates" in report
+
+
+def test_complete_candidate_coverage_supports_threshold_specific_zero_candidate_interpretation(
+    tmp_path: Path,
+) -> None:
+    ref = write_fasta(tmp_path / "complete.fa", {"MT": "AAAA"})
+    bam = write_alignment(
+        tmp_path / "complete.bam",
+        {"MT": 4},
+        [ReadSpec("whole-reference", "MT", 0, "AAAA")],
+    )
+    outputs = run_step(
+        bam=bam,
+        ref_fasta=ref,
+        summary_dir=tmp_path / "summary",
+        figure_dir=tmp_path / "figures",
+        report_dir=tmp_path / "report",
+        sample_id="COMPLETE-COVERAGE",
+        mt_contig="MT",
+        mt_length=4,
+        min_depth=1,
+        min_vaf=0.02,
+    )
+
+    candidates = pd.read_csv(outputs["candidate_path"], sep="\t")
+    summary = metric_map(outputs["summary_path"])
+    report = outputs["report_path"].read_text(encoding="utf-8")
+
+    assert outputs["status"] == "ok"
+    assert candidates.empty
+    assert summary["status"] == "ok"
+    assert summary["candidate_evaluable_positions"] == "4"
+    assert summary["candidate_non_evaluable_positions"] == "0"
+    assert summary["candidate_evaluable_fraction"] == "1.0"
+    assert summary["candidate_coverage_scope"] == "complete"
+    assert (
+        summary["whole_mtdna_zero_candidate_interpretation_status"]
+        == "supported_at_configured_thresholds"
+    )
+    assert "above the configured thresholds across all 4 tested mtDNA positions" in report
+    assert "does not establish the biological absence of heteroplasmy" in report
 
 
 def test_equal_candidate_metrics_are_ordered_by_position(tmp_path: Path) -> None:

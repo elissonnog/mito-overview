@@ -204,6 +204,18 @@ def run_step(
             & (all_df["callable_depth"] >= min_depth)
         ).sum()
     )
+    candidate_non_evaluable_positions = int(
+        len(all_df) - candidate_evaluable_positions
+    )
+    candidate_evaluable_fraction = (
+        candidate_evaluable_positions / len(all_df) if len(all_df) else float("nan")
+    )
+    if candidate_evaluable_positions == 0:
+        candidate_coverage_scope = "none"
+    elif candidate_evaluable_positions == len(all_df):
+        candidate_coverage_scope = "complete"
+    else:
+        candidate_coverage_scope = "partial"
     observed_fractions = pd.to_numeric(
         all_df["alt_allele_fraction"], errors="coerce"
     ).dropna()
@@ -221,6 +233,16 @@ def run_step(
     else:
         module_status = "ok"
         module_reason = ""
+
+    if len(cand_df) > 0:
+        whole_mtdna_zero_candidate_status = "not_applicable_candidates_observed"
+    elif candidate_coverage_scope == "complete":
+        whole_mtdna_zero_candidate_status = "supported_at_configured_thresholds"
+    elif candidate_coverage_scope == "partial":
+        whole_mtdna_zero_candidate_status = "not_supported_partial_candidate_coverage"
+    else:
+        whole_mtdna_zero_candidate_status = "not_supported_no_evaluable_positions"
+
     summary_rows: list[dict[str, object]] = [
         {"metric": "status", "value": module_status},
         {"metric": "reason_code", "value": module_reason},
@@ -230,6 +252,19 @@ def run_step(
         {
             "metric": "candidate_evaluable_positions",
             "value": candidate_evaluable_positions,
+        },
+        {
+            "metric": "candidate_non_evaluable_positions",
+            "value": candidate_non_evaluable_positions,
+        },
+        {
+            "metric": "candidate_evaluable_fraction",
+            "value": round(candidate_evaluable_fraction, 6),
+        },
+        {"metric": "candidate_coverage_scope", "value": candidate_coverage_scope},
+        {
+            "metric": "whole_mtdna_zero_candidate_interpretation_status",
+            "value": whole_mtdna_zero_candidate_status,
         },
         {"metric": "candidate_sites", "value": len(cand_df)},
         {"metric": "min_callable_depth", "value": min_depth},
@@ -278,7 +313,11 @@ def run_step(
     metrics_html = "".join(
         [
             metric_card("Candidate sites", len(cand_df)),
-            metric_card("Candidate-evaluable positions", candidate_evaluable_positions),
+            metric_card(
+                "Candidate-evaluable positions",
+                f"{candidate_evaluable_positions}/{len(all_df)}",
+            ),
+            metric_card("Candidate coverage scope", candidate_coverage_scope),
             metric_card(
                 "Maximum alt fraction",
                 "NA" if pd.isna(max_alt_fraction) else round(max_alt_fraction, 4),
@@ -293,7 +332,27 @@ def run_step(
         "confirmed heteroplasmies or clinical variant calls.</p>"
         f"<div class='metrics-grid'>{metrics_html}</div>"
     )
-    if module_status != "ok":
+    if len(cand_df) > 0:
+        intro_html += (
+            "<p class='small-note'><strong>Zero-candidate interpretation:</strong> "
+            "Not applicable because one or more candidate sites were observed.</p>"
+        )
+    elif candidate_coverage_scope == "complete":
+        intro_html += (
+            "<p class='small-note'><strong>Zero-candidate interpretation:</strong> "
+            f"No candidate sites were observed above the configured thresholds across all "
+            f"{len(all_df)} tested mtDNA positions. This is a thresholded screening result "
+            "and does not establish the biological absence of heteroplasmy.</p>"
+        )
+    elif candidate_coverage_scope == "partial":
+        intro_html += (
+            "<p class='small-note'><strong>Zero-candidate interpretation:</strong> "
+            f"No candidate sites were observed among the {candidate_evaluable_positions} of "
+            f"{len(all_df)} positions that met the configured callable-depth threshold. "
+            f"The remaining {candidate_non_evaluable_positions} positions were not candidate-evaluable, "
+            "so this result must not be interpreted as a whole-mtDNA absence of candidates.</p>"
+        )
+    else:
         intro_html += (
             "<p class='small-note'><strong>Evaluation status:</strong> "
             f"{module_status} ({module_reason}). An empty candidate table under this status "
