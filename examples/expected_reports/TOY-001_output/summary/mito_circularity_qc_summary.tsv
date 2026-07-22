@@ -3,6 +3,12 @@ status	ok
 reason_code	
 edge_window_bp	6
 depth_positions_total	60
+depth_positions_expected	60
+depth_unique_positions_in_range	60
+depth_missing_positions	0
+depth_duplicate_rows	0
+depth_out_of_range_rows	0
+depth_profile_complete	1
 mean_depth_first_edge	10.0
 mean_depth_first_edge_denominator_positions	6
 mean_depth_first_edge_status	ok

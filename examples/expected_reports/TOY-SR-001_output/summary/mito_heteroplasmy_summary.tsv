@@ -1,6 +1,9 @@
 metric	value
 status	ok
+reason_code	
 positions_tested	60
+callable_positions	20
+uncallable_positions	40
 candidate_sites	1
 min_callable_depth	2
 min_alt_allele_fraction	0.2

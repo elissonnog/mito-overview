@@ -8,4 +8,6 @@ features_with_cosegregation_selected_sites	1
 candidate_site_rows	1
 selected_coseg_positions_loaded	1
 deletion_event_intervals_loaded	0
-deletion_cluster_intervals_loaded	0
+deletion_cluster_overlap_method	exact_member_event_intervals
+deletion_cluster_member_intervals_loaded	0
+deletion_clusters_evaluable	0
