@@ -5,7 +5,12 @@ from pathlib import Path
 import pandas as pd
 import pysam
 
-from mito_overview.steps.mito_identity_qc import FINGERPRINT_COLUMNS, run_step
+from mito_overview.steps.mito_identity_qc import (
+    FINGERPRINT_COLUMNS,
+    SNP_SELECTION_CONTRACT,
+    load_mt_variants,
+    run_step,
+)
 
 from ._helpers import metric_map
 
@@ -18,6 +23,174 @@ def write_vcf(path: Path, records: list[tuple[int, str, str]]) -> None:
     ]
     lines.extend(f"MT\t{pos}\t.\t{ref}\t{alt}\t60\tPASS\t." for pos, ref, alt in records)
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def write_mixed_sample_vcf(path: Path) -> None:
+    lines = [
+        "##fileformat=VCFv4.2",
+        "##contig=<ID=MT,length=60>",
+        "##contig=<ID=chr1,length=60>",
+        '##FILTER=<ID=LowQual,Description="Low quality">',
+        '##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">',
+        "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tS1\tS2",
+        "MT\t10\t.\tA\tC\t60\tPASS\t.\tGT\t0/1\t0/0",
+        "MT\t11\t.\tG\tA\t60\tLowQual\t.\tGT\t0/1\t0/0",
+        "MT\t12\t.\tT\tC\t60\tPASS\t.\tGT\t./.\t0/0",
+        "MT\t13\t.\tA\tAT\t60\tPASS\t.\tGT\t0/1\t0/0",
+        "MT\t14\t.\tN\tC\t60\tPASS\t.\tGT\t0/1\t0/0",
+        "MT\t15\t.\tA\t<DEL>\t60\tPASS\t.\tGT\t0/1\t0/0",
+        "MT\t16\t.\tA\tC,G\t60\tPASS\t.\tGT\t0/2\t0/0",
+        "MT\t17\t.\tC\tT,G\t60\t.\t.\tGT\t1/.\t0/0",
+        "MT\t18\t.\tG\tA,C\t60\tPASS\t.\tGT\t1/2\t0/0",
+        "MT\t19\t.\tA\tA\t60\tPASS\t.\tGT\t0/1\t0/0",
+        "MT\t20\t.\tAC\tGT\t60\tPASS\t.\tGT\t0/1\t0/0",
+        "MT\t21\t.\tA\t.\t60\tPASS\t.\tGT\t./.\t0/0",
+        "chr1\t10\t.\tA\tC\t60\tPASS\t.\tGT\t0/1\t0/0",
+    ]
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def write_mixed_site_only_vcf(path: Path) -> None:
+    lines = [
+        "##fileformat=VCFv4.2",
+        "##contig=<ID=MT,length=60>",
+        '##FILTER=<ID=LowQual,Description="Low quality">',
+        "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO",
+        "MT\t10\t.\tA\tC\t60\tPASS\t.",
+        "MT\t20\t.\tG\tT\t60\t.\t.",
+        "MT\t30\t.\tA\tAT\t60\tPASS\t.",
+        "MT\t40\t.\tC\tG\t60\tLowQual\t.",
+        "MT\t50\t.\tN\tA\t60\tPASS\t.",
+        "MT\t55\t.\tT\tA,C\t60\tPASS\t.",
+    ]
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def test_sample_vcf_retains_only_called_pass_canonical_snvs(tmp_path: Path) -> None:
+    vcf = tmp_path / "mixed_sample.vcf"
+    write_mixed_sample_vcf(vcf)
+
+    variants, status, reason, counts = load_mt_variants(vcf, "MT")
+
+    assert status == "ok"
+    assert reason == ""
+    assert variants.to_dict("records") == [
+        {"position": 10, "ref": "A", "alt": "C"},
+        {"position": 16, "ref": "A", "alt": "G"},
+        {"position": 17, "ref": "C", "alt": "T"},
+        {"position": 18, "ref": "G", "alt": "A"},
+        {"position": 18, "ref": "G", "alt": "C"},
+    ]
+    assert counts.mt_records_total == 12
+    assert counts.records_without_alt == 1
+    assert counts.sample_columns == 2
+    assert counts.alt_alleles_total == 14
+    assert counts.retained_alt_alleles == 5
+    assert counts.unique_retained_snvs == 5
+    assert counts.excluded_filtered_alt_alleles == 1
+    assert counts.excluded_non_snv_alt_alleles == 2
+    assert counts.excluded_noncanonical_alt_alleles == 2
+    assert counts.excluded_reference_equal_alt_alleles == 1
+    assert counts.excluded_uncalled_alt_alleles == 3
+    assert (
+        counts.retained_alt_alleles
+        + counts.excluded_filtered_alt_alleles
+        + counts.excluded_non_snv_alt_alleles
+        + counts.excluded_noncanonical_alt_alleles
+        + counts.excluded_reference_equal_alt_alleles
+        + counts.excluded_uncalled_alt_alleles
+        == counts.alt_alleles_total
+    )
+
+
+def test_site_only_vcf_retains_pass_canonical_snvs_without_genotypes(
+    tmp_path: Path,
+) -> None:
+    vcf = tmp_path / "mixed_site_only.vcf"
+    write_mixed_site_only_vcf(vcf)
+
+    variants, status, reason, counts = load_mt_variants(vcf, "MT")
+
+    assert status == "ok"
+    assert reason == ""
+    assert variants.to_dict("records") == [
+        {"position": 10, "ref": "A", "alt": "C"},
+        {"position": 20, "ref": "G", "alt": "T"},
+        {"position": 55, "ref": "T", "alt": "A"},
+        {"position": 55, "ref": "T", "alt": "C"},
+    ]
+    assert counts.mt_records_total == 6
+    assert counts.sample_columns == 0
+    assert counts.alt_alleles_total == 7
+    assert counts.retained_alt_alleles == 4
+    assert counts.unique_retained_snvs == 4
+    assert counts.excluded_filtered_alt_alleles == 1
+    assert counts.excluded_non_snv_alt_alleles == 1
+    assert counts.excluded_noncanonical_alt_alleles == 1
+    assert counts.excluded_uncalled_alt_alleles == 0
+
+
+def test_identity_summary_records_selection_counts_and_exact_retained_snv_overlap(
+    tmp_path: Path,
+) -> None:
+    phased = tmp_path / "phased_mixed.vcf"
+    unphased = tmp_path / "unphased_site_only.vcf"
+    write_mixed_sample_vcf(phased)
+    write_mixed_site_only_vcf(unphased)
+
+    outputs = run_step(
+        summary_dir=tmp_path / "summary",
+        figure_dir=tmp_path / "figures",
+        report_dir=tmp_path / "report",
+        sample_id="MIXED-VCF",
+        mt_contig="MT",
+        phased_snp_vcf=phased,
+        np_snp_vcf=unphased,
+    )
+    summary = metric_map(Path(outputs["summary_path"]))
+    comparison = pd.read_csv(outputs["compare_path"], sep="\t")
+    report = Path(outputs["report_path"]).read_text(encoding="utf-8")
+
+    expected_metrics = {
+        "variant_comparison_status": "ok",
+        "identity_snp_selection_contract": SNP_SELECTION_CONTRACT,
+        "phased_mt_vcf_records_total": "12",
+        "phased_mt_vcf_records_without_alt": "1",
+        "phased_mt_vcf_sample_columns": "2",
+        "phased_mt_vcf_alt_alleles_total": "14",
+        "phased_mt_vcf_alt_alleles_retained": "5",
+        "phased_mt_vcf_unique_retained_snvs": "5",
+        "phased_mt_vcf_alt_alleles_excluded_filtered": "1",
+        "phased_mt_vcf_alt_alleles_excluded_non_snv": "2",
+        "phased_mt_vcf_alt_alleles_excluded_noncanonical": "2",
+        "phased_mt_vcf_alt_alleles_excluded_reference_equal": "1",
+        "phased_mt_vcf_alt_alleles_excluded_uncalled": "3",
+        "unphased_mt_vcf_records_total": "6",
+        "unphased_mt_vcf_sample_columns": "0",
+        "unphased_mt_vcf_alt_alleles_total": "7",
+        "unphased_mt_vcf_alt_alleles_retained": "4",
+        "unphased_mt_vcf_unique_retained_snvs": "4",
+        "unphased_mt_vcf_alt_alleles_excluded_filtered": "1",
+        "unphased_mt_vcf_alt_alleles_excluded_non_snv": "1",
+        "unphased_mt_vcf_alt_alleles_excluded_noncanonical": "1",
+        "unphased_mt_vcf_alt_alleles_excluded_uncalled": "0",
+        "shared_retained_mt_snvs": "1",
+        "phased_only_retained_mt_snvs": "4",
+        "unphased_only_retained_mt_snvs": "3",
+    }
+    assert {key: summary[key] for key in expected_metrics} == expected_metrics
+    assert comparison.to_dict("records") == [
+        {"membership": "shared", "position": 10, "ref": "A", "alt": "C"},
+        {"membership": "phased_only", "position": 16, "ref": "A", "alt": "G"},
+        {"membership": "phased_only", "position": 17, "ref": "C", "alt": "T"},
+        {"membership": "phased_only", "position": 18, "ref": "G", "alt": "A"},
+        {"membership": "phased_only", "position": 18, "ref": "G", "alt": "C"},
+        {"membership": "unphased_only", "position": 20, "ref": "G", "alt": "T"},
+        {"membership": "unphased_only", "position": 55, "ref": "T", "alt": "A"},
+        {"membership": "unphased_only", "position": 55, "ref": "T", "alt": "C"},
+    ]
+    assert "exact overlap between retained canonical mtDNA SNVs" in report
+    assert "FILTER PASS or '.'" in report
 
 
 def test_populated_fingerprint_uses_the_same_canonical_schema_as_empty_states(
@@ -100,7 +273,7 @@ def test_identity_qc_without_any_evidence_is_not_evaluable(tmp_path: Path) -> No
     assert summary["variant_comparison_status"] == "not_configured"
     assert summary["formal_haplogroup_assignment_status"] == "not_configured"
     assert summary["major_fingerprint_sites"] == ""
-    assert summary["shared_mt_variant_records"] == ""
+    assert summary["shared_retained_mt_snvs"] == ""
 
 
 def test_identity_qc_header_only_input_without_summary_is_not_evaluable(
@@ -246,11 +419,11 @@ def test_identity_qc_unindexed_and_indexed_vcfs_have_the_same_known_answer(
 
     expected = {
         "variant_comparison_status": "ok",
-        "phased_mt_variant_records": "2",
-        "np_mt_variant_records": "2",
-        "shared_mt_variant_records": "1",
-        "phased_only_mt_variant_records": "1",
-        "np_only_mt_variant_records": "1",
+        "phased_mt_vcf_unique_retained_snvs": "2",
+        "unphased_mt_vcf_unique_retained_snvs": "2",
+        "shared_retained_mt_snvs": "1",
+        "phased_only_retained_mt_snvs": "1",
+        "unphased_only_retained_mt_snvs": "1",
     }
 
     plain = run_step(
@@ -306,8 +479,8 @@ def test_identity_qc_malformed_vcf_is_not_a_successful_zero_comparison(
     assert summary["variant_comparison_reason_code"].startswith(
         "paired_variant_vcf_unreadable[phased:variant_vcf_unreadable"
     )
-    assert summary["phased_mt_variant_records"] == ""
-    assert summary["shared_mt_variant_records"] == ""
+    assert summary["phased_mt_vcf_unique_retained_snvs"] == ""
+    assert summary["shared_retained_mt_snvs"] == ""
     stdout = capsys.readouterr().out
     assert "variant comparison unavailable status=not_evaluable" in stdout
     assert "vcf_overlap shared=0" not in stdout

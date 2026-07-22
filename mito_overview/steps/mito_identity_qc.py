@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Iterable
 
 import matplotlib
 
@@ -30,6 +32,28 @@ FINGERPRINT_COLUMNS = [
     "depth",
 ]
 COMPARE_COLUMNS = ["membership", "position", "ref", "alt"]
+CANONICAL_BASES = frozenset("ACGT")
+SNP_SELECTION_CONTRACT = (
+    "canonical_single_nucleotide_ref_alt;filter_pass_or_dot;"
+    "called_alt_if_samples_present;site_only_pass_snv_allowed"
+)
+
+
+@dataclass
+class VariantSelectionCounts:
+    """Auditable per-ALT accounting for one mitochondrial VCF input."""
+
+    mt_records_total: int = 0
+    records_without_alt: int = 0
+    sample_columns: int = 0
+    alt_alleles_total: int = 0
+    retained_alt_alleles: int = 0
+    unique_retained_snvs: int = 0
+    excluded_filtered_alt_alleles: int = 0
+    excluded_non_snv_alt_alleles: int = 0
+    excluded_noncanonical_alt_alleles: int = 0
+    excluded_reference_equal_alt_alleles: int = 0
+    excluded_uncalled_alt_alleles: int = 0
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -66,50 +90,125 @@ def load_heteroplasmy_status(path: Path) -> tuple[str, str]:
     return load_metric_module_state(path, module_name="heteroplasmy")
 
 
-def load_mt_variants(
-    vcf_path: str | Path | None, contig: str
-) -> tuple[pd.DataFrame, str, str]:
-    """Load unique mitochondrial records without requiring a regional index."""
+def _record_passes_filter(record: pysam.VariantRecord) -> bool:
+    """Accept only VCF FILTER values PASS or the unset `.` representation."""
 
-    empty = pd.DataFrame(columns=VARIANT_COLUMNS)
-    if not vcf_path:
-        return empty, "not_configured", "variant_vcf_not_configured"
-    path = Path(vcf_path)
-    if not path.is_file():
-        return empty, "not_configured", "variant_vcf_missing"
+    filter_keys = {str(value) for value in record.filter.keys()}
+    return not filter_keys or filter_keys.issubset({"PASS", "."})
+
+
+def _called_alt_indexes(record: pysam.VariantRecord) -> set[int]:
+    """Return 1-based ALT indexes explicitly called by at least one sample GT."""
+
+    called: set[int] = set()
+    for sample in record.samples.values():
+        try:
+            genotype = sample.get("GT")
+        except (KeyError, TypeError, ValueError):
+            genotype = None
+        if genotype is None:
+            continue
+        for allele_index in genotype:
+            if isinstance(allele_index, int) and allele_index > 0:
+                called.add(allele_index)
+    return called
+
+
+def _select_mt_snvs(
+    records: Iterable[pysam.VariantRecord],
+    *,
+    contig: str,
+    sample_columns: int,
+) -> tuple[list[dict[str, object]], VariantSelectionCounts]:
+    """Apply the identity-QC SNP contract and retain one row per called ALT."""
 
     rows: list[dict[str, object]] = []
+    counts = VariantSelectionCounts(sample_columns=sample_columns)
+    for record in records:
+        if record.contig != contig:
+            continue
+        counts.mt_records_total += 1
+        alts = tuple(record.alts or ())
+        if not alts:
+            counts.records_without_alt += 1
+            continue
+
+        record_passes_filter = _record_passes_filter(record)
+        called_alt_indexes = _called_alt_indexes(record) if sample_columns else set()
+        ref = "" if record.ref is None else str(record.ref).upper()
+
+        for alt_index, raw_alt in enumerate(alts, start=1):
+            counts.alt_alleles_total += 1
+            alt = "" if raw_alt is None else str(raw_alt).upper()
+
+            # Reasons are mutually exclusive and evaluated in this fixed order so
+            # retained + excluded counts equal the number of ALT alleles examined.
+            if not record_passes_filter:
+                counts.excluded_filtered_alt_alleles += 1
+                continue
+            if not ref or not alt or not set(ref + alt).issubset(CANONICAL_BASES):
+                counts.excluded_noncanonical_alt_alleles += 1
+                continue
+            if len(ref) != 1 or len(alt) != 1:
+                counts.excluded_non_snv_alt_alleles += 1
+                continue
+            if ref == alt:
+                counts.excluded_reference_equal_alt_alleles += 1
+                continue
+            if sample_columns and alt_index not in called_alt_indexes:
+                counts.excluded_uncalled_alt_alleles += 1
+                continue
+
+            counts.retained_alt_alleles += 1
+            rows.append({"position": int(record.pos), "ref": ref, "alt": alt})
+
+    return rows, counts
+
+
+def load_mt_variants(
+    vcf_path: str | Path | None, contig: str
+) -> tuple[pd.DataFrame, str, str, VariantSelectionCounts]:
+    """Load unique mtDNA SNVs under the explicit identity-QC selection contract."""
+
+    empty = pd.DataFrame(columns=VARIANT_COLUMNS)
+    empty_counts = VariantSelectionCounts()
+    if not vcf_path:
+        return empty, "not_configured", "variant_vcf_not_configured", empty_counts
+    path = Path(vcf_path)
+    if not path.is_file():
+        return empty, "not_configured", "variant_vcf_missing", empty_counts
+
     try:
         variant_file = pysam.VariantFile(str(path))
         try:
+            sample_columns = len(variant_file.header.samples)
             try:
-                for record in variant_file.fetch(contig):
-                    for alt in record.alts or []:
-                        rows.append(
-                            {"position": int(record.pos), "ref": record.ref, "alt": alt}
-                        )
+                rows, counts = _select_mt_snvs(
+                    variant_file.fetch(contig),
+                    contig=contig,
+                    sample_columns=sample_columns,
+                )
             except (OSError, ValueError):
                 # Generic standalone VCF inputs are allowed to be unindexed. Reopen the
                 # stream because a failed regional fetch may leave backend state unclear.
                 variant_file.close()
                 variant_file = pysam.VariantFile(str(path))
-                for record in variant_file:
-                    if record.contig != contig:
-                        continue
-                    for alt in record.alts or []:
-                        rows.append(
-                            {"position": int(record.pos), "ref": record.ref, "alt": alt}
-                        )
+                rows, counts = _select_mt_snvs(
+                    variant_file,
+                    contig=contig,
+                    sample_columns=len(variant_file.header.samples),
+                )
         finally:
             variant_file.close()
     except (OSError, TypeError, ValueError):
-        return empty, "not_evaluable", "variant_vcf_unreadable"
+        return empty, "not_evaluable", "variant_vcf_unreadable", empty_counts
 
     df = pd.DataFrame(rows, columns=VARIANT_COLUMNS)
     if df.empty:
-        return empty, "ok", ""
+        return empty, "ok", "", counts
     df = df.drop_duplicates().sort_values(["position", "ref", "alt"]).reset_index(drop=True)
-    return df, "ok", ""
+    counts.unique_retained_snvs = len(df)
+    return df, "ok", "", counts
 
 
 def run_step(
@@ -151,17 +250,48 @@ def run_step(
     heteroplasmy_status, heteroplasmy_reason = load_heteroplasmy_status(
         hetero_summary_path
     )
-    phased_df, phased_vcf_status, phased_vcf_reason = load_mt_variants(
+    phased_df, phased_vcf_status, phased_vcf_reason, phased_selection = load_mt_variants(
         phased_snp_vcf, mt_contig
     )
-    np_df, np_vcf_status, np_vcf_reason = load_mt_variants(np_snp_vcf, mt_contig)
+    np_df, np_vcf_status, np_vcf_reason, np_selection = load_mt_variants(
+        np_snp_vcf, mt_contig
+    )
     phymer_summary = load_table(phymer_path, columns=SUMMARY_COLUMNS)
     print(
         f"[identity_qc] loaded heteroplasmy_rows={len(hetero_df)} "
-        f"phased_rows={len(phased_df)} np_rows={len(np_df)} "
+        f"phased_retained_snvs={len(phased_df)} "
+        f"unphased_retained_snvs={len(np_df)} "
         f"phymer_rows={len(phymer_summary)}",
         flush=True,
     )
+    if phased_vcf_status == "ok":
+        print(
+            "[identity_qc] phased SNP selection "
+            f"records={phased_selection.mt_records_total} "
+            f"alt_alleles={phased_selection.alt_alleles_total} "
+            f"retained={phased_selection.retained_alt_alleles} "
+            f"unique={phased_selection.unique_retained_snvs} "
+            f"excluded_filtered={phased_selection.excluded_filtered_alt_alleles} "
+            f"excluded_non_snv={phased_selection.excluded_non_snv_alt_alleles} "
+            f"excluded_noncanonical={phased_selection.excluded_noncanonical_alt_alleles} "
+            f"excluded_reference_equal={phased_selection.excluded_reference_equal_alt_alleles} "
+            f"excluded_uncalled={phased_selection.excluded_uncalled_alt_alleles}",
+            flush=True,
+        )
+    if np_vcf_status == "ok":
+        print(
+            "[identity_qc] unphased SNP selection "
+            f"records={np_selection.mt_records_total} "
+            f"alt_alleles={np_selection.alt_alleles_total} "
+            f"retained={np_selection.retained_alt_alleles} "
+            f"unique={np_selection.unique_retained_snvs} "
+            f"excluded_filtered={np_selection.excluded_filtered_alt_alleles} "
+            f"excluded_non_snv={np_selection.excluded_non_snv_alt_alleles} "
+            f"excluded_noncanonical={np_selection.excluded_noncanonical_alt_alleles} "
+            f"excluded_reference_equal={np_selection.excluded_reference_equal_alt_alleles} "
+            f"excluded_uncalled={np_selection.excluded_uncalled_alt_alleles}",
+            flush=True,
+        )
 
     required_fingerprint = {"position", "ref_base", "alt_base", "alt_allele_fraction", "depth"}
     fingerprint_input_present = hetero_path.is_file()
@@ -235,7 +365,7 @@ def run_step(
     )
     shared_keys = phased_keys & np_keys
     phased_only_keys = phased_keys - np_keys
-    np_only_keys = np_keys - phased_keys
+    unphased_only_keys = np_keys - phased_keys
     if paired_variant_evidence_ok:
         comparison_status = "ok"
         comparison_reason = ""
@@ -255,7 +385,7 @@ def run_step(
     for label, keys in (
         ("shared", shared_keys),
         ("phased_only", phased_only_keys),
-        ("np_only", np_only_keys),
+        ("unphased_only", unphased_only_keys),
     ):
         for pos, ref, alt in sorted(keys):
             compare_rows.append({"membership": label, "position": pos, "ref": ref, "alt": alt})
@@ -264,7 +394,8 @@ def run_step(
     if comparison_status == "ok":
         print(
             f"[identity_qc] vcf_overlap shared={len(shared_keys)} "
-            f"phased_only={len(phased_only_keys)} np_only={len(np_only_keys)} "
+            f"phased_only={len(phased_only_keys)} "
+            f"unphased_only={len(unphased_only_keys)} "
             f"wrote={compare_path}",
             flush=True,
         )
@@ -309,11 +440,57 @@ def run_step(
         module_reason = "" if evaluable_sources == len(evidence_statuses) else "partial_identity_evidence"
 
     major_fingerprint_sites: int | object = len(major_df) if fingerprint_status == "ok" else pd.NA
-    phased_record_count: int | object = len(phased_df) if phased_vcf_status == "ok" else pd.NA
-    np_record_count: int | object = len(np_df) if np_vcf_status == "ok" else pd.NA
-    shared_record_count: int | object = len(shared_keys) if comparison_status == "ok" else pd.NA
-    phased_only_count: int | object = len(phased_only_keys) if comparison_status == "ok" else pd.NA
-    np_only_count: int | object = len(np_only_keys) if comparison_status == "ok" else pd.NA
+    shared_snv_count: int | object = len(shared_keys) if comparison_status == "ok" else pd.NA
+    phased_only_snv_count: int | object = (
+        len(phased_only_keys) if comparison_status == "ok" else pd.NA
+    )
+    unphased_only_snv_count: int | object = (
+        len(unphased_only_keys) if comparison_status == "ok" else pd.NA
+    )
+
+    def selection_value(
+        status: str, counts: VariantSelectionCounts, attribute: str
+    ) -> int | object:
+        return getattr(counts, attribute) if status == "ok" else pd.NA
+
+    def selection_summary_rows(
+        prefix: str, status: str, counts: VariantSelectionCounts
+    ) -> list[dict[str, object]]:
+        metric_attributes = (
+            ("mt_vcf_records_total", "mt_records_total"),
+            ("mt_vcf_records_without_alt", "records_without_alt"),
+            ("mt_vcf_sample_columns", "sample_columns"),
+            ("mt_vcf_alt_alleles_total", "alt_alleles_total"),
+            ("mt_vcf_alt_alleles_retained", "retained_alt_alleles"),
+            ("mt_vcf_unique_retained_snvs", "unique_retained_snvs"),
+            (
+                "mt_vcf_alt_alleles_excluded_filtered",
+                "excluded_filtered_alt_alleles",
+            ),
+            (
+                "mt_vcf_alt_alleles_excluded_non_snv",
+                "excluded_non_snv_alt_alleles",
+            ),
+            (
+                "mt_vcf_alt_alleles_excluded_noncanonical",
+                "excluded_noncanonical_alt_alleles",
+            ),
+            (
+                "mt_vcf_alt_alleles_excluded_reference_equal",
+                "excluded_reference_equal_alt_alleles",
+            ),
+            (
+                "mt_vcf_alt_alleles_excluded_uncalled",
+                "excluded_uncalled_alt_alleles",
+            ),
+        )
+        return [
+            {
+                "metric": f"{prefix}_{metric_suffix}",
+                "value": selection_value(status, counts, attribute),
+            }
+            for metric_suffix, attribute in metric_attributes
+        ]
 
     summary_df = pd.DataFrame(
         [
@@ -331,14 +508,18 @@ def run_step(
             },
             {"metric": "variant_comparison_status", "value": comparison_status},
             {"metric": "variant_comparison_reason_code", "value": comparison_reason},
+            {"metric": "identity_snp_selection_contract", "value": SNP_SELECTION_CONTRACT},
             {"metric": "phased_variant_vcf_present", "value": int(phased_vcf_present)},
             {"metric": "unphased_variant_vcf_present", "value": int(np_vcf_present)},
             {"metric": "major_fingerprint_sites", "value": major_fingerprint_sites},
-            {"metric": "phased_mt_variant_records", "value": phased_record_count},
-            {"metric": "np_mt_variant_records", "value": np_record_count},
-            {"metric": "shared_mt_variant_records", "value": shared_record_count},
-            {"metric": "phased_only_mt_variant_records", "value": phased_only_count},
-            {"metric": "np_only_mt_variant_records", "value": np_only_count},
+            *selection_summary_rows("phased", phased_vcf_status, phased_selection),
+            *selection_summary_rows("unphased", np_vcf_status, np_selection),
+            {"metric": "shared_retained_mt_snvs", "value": shared_snv_count},
+            {"metric": "phased_only_retained_mt_snvs", "value": phased_only_snv_count},
+            {
+                "metric": "unphased_only_retained_mt_snvs",
+                "value": unphased_only_snv_count,
+            },
             {"metric": "formal_haplogroup_assignment_status", "value": phymer_status},
             {"metric": "formal_haplogroup_reason_code", "value": phymer_reason},
             {"metric": "formal_haplogroup_best_match", "value": phymer_best},
@@ -351,8 +532,8 @@ def run_step(
 
     overlap_plot_df = pd.DataFrame(
         {
-            "class": ["shared", "phased_only", "np_only"],
-            "count": [len(shared_keys), len(phased_only_keys), len(np_only_keys)],
+            "class": ["shared", "phased only", "unphased only"],
+            "count": [len(shared_keys), len(phased_only_keys), len(unphased_only_keys)],
         }
     )
     plt.figure(figsize=(6, 4))
@@ -362,8 +543,8 @@ def run_step(
             overlap_plot_df["count"],
             color=["#0f766e", "#2563eb", "#f59e0b"],
         )
-        plt.ylabel("Variant records")
-        plt.title(f"{sample_id} phased vs NP mtDNA variant overlap")
+        plt.ylabel("Unique retained mtDNA SNVs")
+        plt.title(f"{sample_id} exact retained-SNV overlap")
     else:
         plt.axis("off")
         comparison_label = (
@@ -408,32 +589,43 @@ def run_step(
                 "NA" if pd.isna(major_fingerprint_sites) else major_fingerprint_sites,
             ),
             metric_card(
-                "Shared phased/NP calls",
-                "NA" if pd.isna(shared_record_count) else shared_record_count,
+                "Shared retained SNVs",
+                "NA" if pd.isna(shared_snv_count) else shared_snv_count,
             ),
             metric_card(
-                "Phased-only calls", "NA" if pd.isna(phased_only_count) else phased_only_count
+                "Phased-only retained SNVs",
+                "NA" if pd.isna(phased_only_snv_count) else phased_only_snv_count,
             ),
-            metric_card("NP-only calls", "NA" if pd.isna(np_only_count) else np_only_count),
+            metric_card(
+                "Unphased-only retained SNVs",
+                "NA" if pd.isna(unphased_only_snv_count) else unphased_only_snv_count,
+            ),
             metric_card("Best haplogroup", phymer_best),
         ]
     )
     intro_html = (
         '<p class="muted">This page summarizes sample-identity style mitochondrial QC using two '
         "complementary signals: a major-variant fingerprint derived from high alternate-allele-fraction mitochondrial "
-        "sites, and concordance between phased and no-phased mitochondrial SNP callsets. When "
+        "sites, and exact overlap between retained canonical mtDNA SNVs from phased and unphased "
+        "VCFs. Retained alleles require single-base A/C/G/T REF and ALT values plus FILTER PASS or '.'; "
+        "when sample columns exist, at least one sample GT must call that ALT allele. When "
         "available, the best haplogroup match from the dedicated Phy-Mer page is also reported here "
         "as a compact identity-style label.</p>"
         f"<div class='metrics-grid'>{metrics_html}</div>"
     )
     body_parts = [
         "<section><h2>Identity/QC summary</h2>"
-        + df_to_html_table(summary_df.fillna("NA"), max_rows=20)
+        + df_to_html_table(summary_df.fillna("NA"), max_rows=60)
         + "</section>",
-        "<section><h2>Phased vs no-phased variant overlap</h2>"
-        + figure_html(overlap_fig, "Concordance of mtDNA SNP records between phased and no-phased workflows")
+        "<section><h2>Exact phased vs unphased retained-SNV overlap</h2>"
+        + figure_html(
+            overlap_fig,
+            "Exact overlap of unique retained mtDNA SNVs between phased and unphased VCF inputs",
+        )
         + "</section>",
-        "<section><h2>Variant comparison table</h2>" + df_to_html_table(compare_df, max_rows=40) + "</section>",
+        "<section><h2>Retained-SNV comparison table</h2>"
+        + df_to_html_table(compare_df, max_rows=40)
+        + "</section>",
         "<section><h2>Major-variant fingerprint table</h2>" + df_to_html_table(major_df, max_rows=30) + "</section>",
     ]
     if fingerprint_fig:
