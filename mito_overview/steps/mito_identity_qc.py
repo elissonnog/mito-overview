@@ -236,6 +236,20 @@ def run_step(
     shared_keys = phased_keys & np_keys
     phased_only_keys = phased_keys - np_keys
     np_only_keys = np_keys - phased_keys
+    if paired_variant_evidence_ok:
+        comparison_status = "ok"
+        comparison_reason = ""
+    elif "not_evaluable" in (phased_vcf_status, np_vcf_status):
+        comparison_status = "not_evaluable"
+        failed_sources = []
+        if phased_vcf_status == "not_evaluable":
+            failed_sources.append(f"phased:{phased_vcf_reason}")
+        if np_vcf_status == "not_evaluable":
+            failed_sources.append(f"unphased:{np_vcf_reason}")
+        comparison_reason = "paired_variant_vcf_unreadable[" + ",".join(failed_sources) + "]"
+    else:
+        comparison_status = "not_configured"
+        comparison_reason = "paired_variant_vcfs_not_configured"
 
     compare_rows: list[dict[str, object]] = []
     for label, keys in (
@@ -247,11 +261,19 @@ def run_step(
             compare_rows.append({"membership": label, "position": pos, "ref": ref, "alt": alt})
     compare_df = pd.DataFrame(compare_rows, columns=COMPARE_COLUMNS)
     compare_df.to_csv(compare_path, sep="\t", index=False)
-    print(
-        f"[identity_qc] vcf_overlap shared={len(shared_keys)} phased_only={len(phased_only_keys)} "
-        f"np_only={len(np_only_keys)} wrote={compare_path}",
-        flush=True,
-    )
+    if comparison_status == "ok":
+        print(
+            f"[identity_qc] vcf_overlap shared={len(shared_keys)} "
+            f"phased_only={len(phased_only_keys)} np_only={len(np_only_keys)} "
+            f"wrote={compare_path}",
+            flush=True,
+        )
+    else:
+        print(
+            f"[identity_qc] variant comparison unavailable status={comparison_status} "
+            f"reason={comparison_reason} wrote={compare_path}",
+            flush=True,
+        )
 
     fingerprint_string = "NA"
     if not major_df.empty:
@@ -277,21 +299,6 @@ def run_step(
 
     phased_vcf_present = bool(phased_snp_vcf and Path(phased_snp_vcf).is_file())
     np_vcf_present = bool(np_snp_vcf and Path(np_snp_vcf).is_file())
-    if paired_variant_evidence_ok:
-        comparison_status = "ok"
-        comparison_reason = ""
-    elif "not_evaluable" in (phased_vcf_status, np_vcf_status):
-        comparison_status = "not_evaluable"
-        failed_sources = []
-        if phased_vcf_status == "not_evaluable":
-            failed_sources.append(f"phased:{phased_vcf_reason}")
-        if np_vcf_status == "not_evaluable":
-            failed_sources.append(f"unphased:{np_vcf_reason}")
-        comparison_reason = "paired_variant_vcf_unreadable[" + ",".join(failed_sources) + "]"
-    else:
-        comparison_status = "not_configured"
-        comparison_reason = "paired_variant_vcfs_not_configured"
-
     evidence_statuses = (fingerprint_status, comparison_status, phymer_status)
     evaluable_sources = sum(source_status == "ok" for source_status in evidence_statuses)
     if evaluable_sources == 0:
@@ -359,10 +366,15 @@ def run_step(
         plt.title(f"{sample_id} phased vs NP mtDNA variant overlap")
     else:
         plt.axis("off")
+        comparison_label = (
+            "Paired VCF comparison was not evaluable"
+            if comparison_status == "not_evaluable"
+            else "Paired phased and unphased VCFs were not configured"
+        )
         plt.text(
             0.5,
             0.5,
-            "Paired phased and unphased VCFs were not configured",
+            f"{comparison_label}\n{comparison_reason}",
             ha="center",
             va="center",
             wrap=True,

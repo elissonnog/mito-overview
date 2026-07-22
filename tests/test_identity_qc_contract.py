@@ -284,6 +284,7 @@ def test_identity_qc_unindexed_and_indexed_vcfs_have_the_same_known_answer(
 
 def test_identity_qc_malformed_vcf_is_not_a_successful_zero_comparison(
     tmp_path: Path,
+    capsys,
 ) -> None:
     malformed = tmp_path / "malformed.vcf"
     malformed.write_text("this is not a VCF\n", encoding="utf-8")
@@ -307,3 +308,6 @@ def test_identity_qc_malformed_vcf_is_not_a_successful_zero_comparison(
     )
     assert summary["phased_mt_variant_records"] == ""
     assert summary["shared_mt_variant_records"] == ""
+    stdout = capsys.readouterr().out
+    assert "variant comparison unavailable status=not_evaluable" in stdout
+    assert "vcf_overlap shared=0" not in stdout
