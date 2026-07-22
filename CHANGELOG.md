@@ -1,15 +1,15 @@
 # Changelog
 
-## Unreleased - v0.3.0 release candidate
+## v0.3.0
 - corrected allele-fraction reporting so candidate sites, strand counts, and co-segregation use one auditable callable-observation policy, canonical thresholds, and uncapped default depth
 - made mvTool access explicitly mode-gated and offline by default, with deterministic fixtures and non-fabricated unavailable states for requested network failures
 - defined a portable standalone BAM/CRAM input contract with explicit sidecars and preflight checks for references, indexes, contigs, lengths, CRAM reference availability, and conflicting format overrides
 - corrected the copy-number-named output to an unscaled within-sample mt:nuclear depth ratio, with missing or zero nuclear denominators reported as `not_evaluable` rather than zero
 - added explicit reference-scope handling that suppresses categorical NUMT interpretation for mt-only or custom references and emits exact zero-based, half-open mitochondrial BED intervals
-- bounded the supported claim to a reproducible, mode-gated mtDNA reporting workflow/resource; this release candidate does not establish clinical validity, analytical sensitivity, deletion truth, absolute copy number, formal NUMT classification, or long-read/short-read equivalence
+- bounded the supported claim to a reproducible, mode-gated mtDNA reporting workflow/resource; this version does not establish clinical validity, analytical sensitivity, deletion truth, absolute copy number, formal NUMT classification, or long-read/short-read equivalence
 - added tracked validation-provenance tooling, known-answer coverage for the five corrections, deterministic public-input provenance, and resource-limited public proof-of-principle reruns
 - replaced the lead workflow schematic with public ONT report-native views, tightened figure terminology and caveats, consolidated the figure set, and added a deterministic figure builder without repository-specific local paths
-- synchronized package and citation metadata for the unreleased version 0.3.0 release candidate, the public repository, and both Medical College of Wisconsin authors
+- synchronized package and citation metadata for version 0.3.0, the public repository, and both Medical College of Wisconsin authors
 
 ## v0.2.1 - 2026-07-07
 - synchronized release metadata across `pyproject.toml`, `CITATION.cff`, README, release checklist, and manuscript source

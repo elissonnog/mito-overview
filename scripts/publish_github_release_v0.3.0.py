@@ -20,8 +20,10 @@ from typing import Any, Protocol, Sequence
 
 EXPECTED_TAG = "v0.3.0"
 PUBLICATION_SCHEMA_VERSION = "1.0"
-TAG_VALIDATION_SCHEMA_VERSION = "1.0"
-TAG_VALIDATION_PROFILE = "fresh_public_tag_validation_v1"
+TAG_VALIDATION_SCHEMA_VERSION = "2.0"
+TAG_VALIDATION_PROFILE = "fresh_public_tag_validation_v2"
+TRUSTED_ASSET_MANIFEST_SCHEMA_VERSION = "1.0"
+TRUSTED_ASSET_MANIFEST_NAME = "trusted_release_assets.json"
 API_VERSION = "2026-03-10"
 ACCEPT_HEADER = "application/vnd.github+json"
 PHASES = ("create-draft", "upload-verify", "publish")
@@ -30,6 +32,7 @@ REPOSITORY_PATTERN = re.compile(
     r"[A-Za-z0-9](?:[A-Za-z0-9_.-]{0,98}[A-Za-z0-9])?$"
 )
 SHA_PATTERN = re.compile(r"^[0-9a-f]{40}$")
+DIGEST_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 ASSET_NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,254}$")
 CHECKSUM_LINE_PATTERN = re.compile(
     r"^(?P<digest>[0-9a-f]{64})  (?P<name>[A-Za-z0-9][A-Za-z0-9._+-]{0,254})$"
@@ -51,6 +54,7 @@ REQUIRED_TAG_VALIDATION_CASES = frozenset(
         "smoke_longread_nomethyl",
         "smoke_standalone",
         "example_builders",
+        "trusted_release_assets",
     }
 )
 CANONICAL_ASSET_NAMES = frozenset(
@@ -195,30 +199,24 @@ def _validate_config(config: PublicationConfig) -> PublicationConfig:
         raise PublicationError("Fresh public-tag validation receipt is required")
     tag_validation_receipt = tag_validation_receipt.resolve(strict=True)
 
-    asset_directory: Path | None = None
-    if config.phase == "create-draft":
-        if config.asset_directory is not None:
-            raise PublicationError("--create-draft does not accept an asset directory")
-    else:
-        if config.asset_directory is None:
-            raise PublicationError(f"--{config.phase} requires --asset-directory")
-        candidate = config.asset_directory.expanduser()
-        if candidate.is_symlink() or not candidate.is_dir():
-            raise PublicationError("Asset directory must be an existing non-symlink directory")
-        asset_directory = candidate.resolve(strict=True)
+    if config.asset_directory is None:
+        raise PublicationError("Every publication phase requires --asset-directory")
+    candidate = config.asset_directory.expanduser()
+    if candidate.is_symlink() or not candidate.is_dir():
+        raise PublicationError("Asset directory must be an existing non-symlink directory")
+    asset_directory = candidate.resolve(strict=True)
 
     output_directory = config.output_directory.expanduser()
     if output_directory.exists() and output_directory.is_symlink():
         raise PublicationError("Output directory cannot be a symlink")
     output_directory.mkdir(parents=True, exist_ok=True)
     output_directory = output_directory.resolve(strict=True)
-    if asset_directory is not None:
-        if output_directory == asset_directory:
-            raise PublicationError("Asset and output directories must be different")
-        if output_directory.is_relative_to(asset_directory):
-            raise PublicationError("Output directory cannot be inside the asset directory")
-        if asset_directory.is_relative_to(output_directory):
-            raise PublicationError("Asset directory cannot be inside the output directory")
+    if output_directory == asset_directory:
+        raise PublicationError("Asset and output directories must be different")
+    if output_directory.is_relative_to(asset_directory):
+        raise PublicationError("Output directory cannot be inside the asset directory")
+    if asset_directory.is_relative_to(output_directory):
+        raise PublicationError("Asset directory cannot be inside the output directory")
 
     return PublicationConfig(
         repository=config.repository,
@@ -838,6 +836,8 @@ def _validate_tag_validation_receipt(
         "environment_path": "environment.txt",
         "tag_identity_path": "tag_identity.json",
         "evidence_manifest_path": "evidence.sha256",
+        "trusted_asset_manifest_path": TRUSTED_ASSET_MANIFEST_NAME,
+        "trusted_asset_count": len(CANONICAL_ASSET_NAMES),
     }
     for field, value in expected.items():
         if payload.get(field) != value:
@@ -886,6 +886,65 @@ def _validate_tag_validation_receipt(
     manifest_sha = _sha256_file(manifest_path)
     if payload.get("evidence_manifest_sha256") != manifest_sha:
         raise PublicationError("Fresh public-tag evidence manifest digest differs")
+
+    trusted_path = root / TRUSTED_ASSET_MANIFEST_NAME
+    if trusted_path.is_symlink() or not trusted_path.is_file():
+        raise PublicationError("Trusted release-asset manifest is missing")
+    trusted_digest = _sha256_file(trusted_path)
+    if payload.get("trusted_asset_manifest_sha256") != trusted_digest:
+        raise PublicationError("Trusted release-asset manifest digest differs")
+    trusted = _load_json(trusted_path, "trusted release-asset manifest")
+    trusted_identity = {
+        "schema_version": TRUSTED_ASSET_MANIFEST_SCHEMA_VERSION,
+        "manifest_type": "trusted_release_asset_manifest",
+        "validation_profile": TAG_VALIDATION_PROFILE,
+        "repository": _repository_url(config),
+        "repository_slug": config.repository,
+        "release_tag": config.tag,
+        "git_commit": config.final_sha,
+        "checked_out_commit": config.final_sha,
+        "tag_object_sha": tag_object_sha,
+        "asset_count": len(CANONICAL_ASSET_NAMES),
+    }
+    for field, value in trusted_identity.items():
+        if trusted.get(field) != value:
+            raise PublicationError(
+                f"Trusted release-asset manifest mismatch for {field}: "
+                f"expected {value!r}, observed {trusted.get(field)!r}"
+            )
+    raw_assets = trusted.get("assets")
+    if not isinstance(raw_assets, list) or len(raw_assets) != len(CANONICAL_ASSET_NAMES):
+        raise PublicationError("Trusted release-asset manifest inventory is incomplete")
+    trusted_assets: list[dict[str, Any]] = []
+    seen_names: set[str] = set()
+    for item in raw_assets:
+        if not isinstance(item, dict) or set(item) != {"name", "size", "sha256"}:
+            raise PublicationError("Trusted release-asset manifest entry is malformed")
+        name = item.get("name")
+        size = item.get("size")
+        digest = item.get("sha256")
+        if (
+            not isinstance(name, str)
+            or name not in CANONICAL_ASSET_NAMES
+            or name in seen_names
+            or isinstance(size, bool)
+            or not isinstance(size, int)
+            or size < 0
+            or not isinstance(digest, str)
+            or DIGEST_PATTERN.fullmatch(digest) is None
+        ):
+            raise PublicationError("Trusted release-asset manifest entry is invalid")
+        seen_names.add(name)
+        trusted_assets.append({"name": name, "size": size, "sha256": digest})
+    if seen_names != set(CANONICAL_ASSET_NAMES):
+        raise PublicationError("Trusted release-asset manifest inventory differs")
+    if [item["name"] for item in trusted_assets] != sorted(CANONICAL_ASSET_NAMES):
+        raise PublicationError("Trusted release-asset manifest inventory is not canonical")
+    trusted_sha256sums = next(
+        item for item in trusted_assets if item["name"] == "SHA256SUMS"
+    )
+    if trusted.get("sha256sums_sha256") != trusted_sha256sums["sha256"]:
+        raise PublicationError("Trusted release-asset SHA256SUMS identity differs")
 
     cases_path = root / "cases.tsv"
     with cases_path.open(encoding="utf-8", newline="") as handle:
@@ -943,11 +1002,44 @@ def _validate_tag_validation_receipt(
         "validation_profile": TAG_VALIDATION_PROFILE,
         "receipt_sha256": _sha256_file(receipt_path),
         "evidence_manifest_sha256": manifest_sha,
+        "trusted_asset_manifest_sha256": trusted_digest,
+        "trusted_asset_manifest": {
+            "manifest_name": TRUSTED_ASSET_MANIFEST_NAME,
+            "sha256sums_sha256": trusted["sha256sums_sha256"],
+            "assets": trusted_assets,
+        },
         "tag_object_sha": tag_object_sha,
         "case_count": len(rows),
         "verdict": "PASS",
         "verified": True,
     }
+
+
+def _assert_inventory_matches_trusted_manifest(
+    inventory: AssetInventory, validation: dict[str, Any]
+) -> None:
+    """Require prepared bytes to equal the tag-bound fresh-validation inventory."""
+
+    trusted = validation.get("trusted_asset_manifest")
+    if not isinstance(trusted, dict) or not isinstance(trusted.get("assets"), list):
+        raise PublicationError("Fresh public-tag evidence has no trusted asset inventory")
+    expected = {
+        item["name"]: (item["size"], item["sha256"])
+        for item in trusted["assets"]
+    }
+    observed = {
+        asset.name: (asset.size, asset.sha256) for asset in inventory.assets
+    }
+    if set(expected) != set(observed):
+        raise PublicationError("Trusted release-asset inventory differs from prepared assets")
+    comparison_order = sorted(set(expected) - {"SHA256SUMS"}) + ["SHA256SUMS"]
+    for name in comparison_order:
+        if observed[name] != expected[name]:
+            raise PublicationError(
+                f"Trusted release-asset hash or size mismatch for {name}"
+            )
+    if inventory.sha256sums_sha256 != trusted.get("sha256sums_sha256"):
+        raise PublicationError("Trusted release-asset SHA256SUMS digest differs")
 
 
 def _validate_receipt_identity(record: dict[str, Any], config: PublicationConfig) -> None:
@@ -1076,12 +1168,17 @@ def _write_draft_receipt(
     return path
 
 
-def _create_draft_mode(runner: Runner, config: PublicationConfig) -> Path:
+def _create_draft_mode(
+    runner: Runner, config: PublicationConfig, inventory: AssetInventory
+) -> Path:
+    _assert_inventory_unchanged(inventory)
     final_path = config.output_directory / "github_publication.json"
     if final_path.exists() or final_path.is_symlink():
         record = _load_json(final_path, "github_publication.json")
         _validate_receipt_identity(record, config)
         if record.get("publication_state") == "published":
+            if record.get("local_asset_manifest") != _local_manifest_record(inventory):
+                raise PublicationError("Prepared assets differ from the published receipt")
             return final_path
         raise PublicationError("Existing final publication receipt is invalid")
 
@@ -1089,6 +1186,7 @@ def _create_draft_mode(runner: Runner, config: PublicationConfig) -> Path:
     ref_payload, tag_payload = _verify_tag(runner, config)
     tag_ref, tag_object = _tag_record(ref_payload, tag_payload)
     _assert_tag_matches_validation_receipt(config, tag_ref)
+    _assert_inventory_unchanged(inventory)
     hosting_state = _ensure_hosting_protection_state(runner, config)
     release = _find_release(runner, config)
     existing_draft_path = config.output_directory / "github_publication.draft.json"
@@ -1098,6 +1196,8 @@ def _create_draft_mode(runner: Runner, config: PublicationConfig) -> Path:
             raise PublicationError("The v0.3.0 release is already published")
         if existing_draft_path.exists():
             prior = _load_draft_record(config, require_uploaded_assets=False)
+            if prior.get("local_asset_manifest") != _local_manifest_record(inventory):
+                raise PublicationError("Prepared assets differ from the draft receipt")
             _assert_release_matches_receipt(prior, release)
             _assert_tag_matches_receipt(prior, ref_payload, tag_payload)
             if prior.get("verification_state") == "verified_draft_assets":
@@ -1107,6 +1207,7 @@ def _create_draft_mode(runner: Runner, config: PublicationConfig) -> Path:
                 "An existing draft has assets but no verified local upload receipt"
             )
     else:
+        _assert_inventory_unchanged(inventory)
         release = _create_draft_release(runner, config)
         # Persist the transition before any follow-up query can fail.
         _write_draft_receipt(
@@ -1119,6 +1220,7 @@ def _create_draft_mode(runner: Runner, config: PublicationConfig) -> Path:
             verification_state="draft_transition_recorded",
             verified=False,
             remote_assets=[],
+            inventory=inventory,
         )
 
     _require_release_identity(release, config, state="draft")
@@ -1147,6 +1249,7 @@ def _create_draft_mode(runner: Runner, config: PublicationConfig) -> Path:
         verification_state="verified_empty_draft",
         verified=True,
         remote_assets=[],
+        inventory=inventory,
     )
 
 
@@ -1413,12 +1516,13 @@ def publish_github_release(
     """Execute one resumable publication phase and return its JSON receipt."""
 
     validated = _validate_config(config)
-    _validate_tag_validation_receipt(validated)
-    command_runner = runner or SubprocessRunner()
-    if validated.phase == "create-draft":
-        return _create_draft_mode(command_runner, validated)
+    validation = _validate_tag_validation_receipt(validated)
     assert validated.asset_directory is not None
     inventory = inspect_asset_inventory(validated.asset_directory)
+    _assert_inventory_matches_trusted_manifest(inventory, validation)
+    command_runner = runner or SubprocessRunner()
+    if validated.phase == "create-draft":
+        return _create_draft_mode(command_runner, validated, inventory)
     if validated.phase == "upload-verify":
         return _upload_verify_mode(command_runner, validated, inventory)
     return _publish_mode(command_runner, validated, inventory)
@@ -1472,7 +1576,8 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--asset-directory",
         type=Path,
-        help="Flat canonical release asset directory; required after --create-draft",
+        required=True,
+        help="Flat tag-bound canonical release asset directory; required for every phase",
     )
     return parser
 

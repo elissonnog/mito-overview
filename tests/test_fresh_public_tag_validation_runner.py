@@ -17,6 +17,22 @@ import pytest
 ROOT = Path(__file__).parents[1]
 RUNNER = ROOT / "scripts" / "run_fresh_public_tag_validation_v0.3.0.sh"
 PUBLIC_FIXTURE_URL = "https://github.com/fixture/mito-overview"
+ASSET_SOURCE_NAMES = {
+    "mito-overview-v0.3.0-validation.zip",
+    "MitoOverview_v0.3.0_release_validation_report.md",
+    "MitoOverview_v0.3.0_release_validation_report.docx",
+    "MitoOverview_v0.3.0_release_validation_report.pdf",
+    "MitoOverview_v0.3.0_release_validation_report_assets.tar.gz",
+    "mito-overview-v0.3.0-verification.json",
+    "RELEASE_NOTES_v0.3.0.md",
+    "mito-overview-v0.3.0-environment.txt",
+    "mito-overview-v0.3.0-environment-locks.tar.gz",
+}
+CANONICAL_ASSET_NAMES = ASSET_SOURCE_NAMES | {
+    "mito_overview-0.3.0-py3-none-any.whl",
+    "mito_overview-0.3.0.tar.gz",
+    "SHA256SUMS",
+}
 
 
 def _write_executable(path: Path, text: str) -> None:
@@ -184,6 +200,14 @@ def _build_command_shims(root: Path, fixture_repository: Path) -> Path:
     return shim_root
 
 
+def _build_release_asset_source(root: Path) -> Path:
+    source = root / "release-asset-source"
+    source.mkdir()
+    for name in sorted(ASSET_SOURCE_NAMES):
+        (source / name).write_bytes(f"fixture:{name}\n".encode("ascii"))
+    return source
+
+
 def _execute_fixture_runner(
     tmp_path: Path, *, report_pages: int
 ) -> tuple[subprocess.CompletedProcess[str], Path, Path, str, str]:
@@ -191,6 +215,7 @@ def _execute_fixture_runner(
         tmp_path, report_pages=report_pages
     )
     shim_root = _build_command_shims(tmp_path, fixture)
+    asset_source = _build_release_asset_source(tmp_path)
     work_root = tmp_path / "release-work"
     evidence_root = tmp_path / "release-evidence"
     environment = os.environ.copy()
@@ -204,6 +229,7 @@ def _execute_fixture_runner(
             final_sha,
             str(work_root),
             str(evidence_root),
+            str(asset_source),
         ],
         env=environment,
         capture_output=True,
@@ -231,6 +257,7 @@ def test_runner_is_valid_shell_and_encodes_all_required_release_gates() -> None:
         "smoke_longread_nomethyl",
         "smoke_standalone",
         "example_builders",
+        "trusted_release_assets",
     }
     for case_id in required_cases:
         assert f"run_case {case_id} " in text
@@ -255,6 +282,8 @@ def test_runner_is_valid_shell_and_encodes_all_required_release_gates() -> None:
         "sanitize_validation_evidence.py",
         "evidence.sha256",
         "fresh_public_tag_validation.json",
+        "trusted_release_assets.json",
+        "RELEASE_ASSET_SOURCE",
     ):
         assert required in text
     assert "Zenodo" not in text
@@ -294,8 +323,8 @@ def test_runner_success_path_emits_hash_verified_tag_bound_evidence(tmp_path: Pa
 
     with (evidence_root / "cases.tsv").open(encoding="utf-8", newline="") as handle:
         rows = list(csv.DictReader(handle, delimiter="\t"))
-    assert len(rows) == 12
-    assert len({row["case_id"] for row in rows}) == 12
+    assert len(rows) == 13
+    assert len({row["case_id"] for row in rows}) == 13
     assert {row["verdict"] for row in rows} == {"PASS"}
 
     receipt = json.loads(
@@ -303,9 +332,10 @@ def test_runner_success_path_emits_hash_verified_tag_bound_evidence(tmp_path: Pa
     )
     assert receipt["verified"] is True
     assert receipt["verdict"] == "PASS"
-    assert receipt["case_count"] == 12
+    assert receipt["case_count"] == 13
     assert receipt["git_commit"] == final_sha
     assert receipt["tag_object_sha"] == tag_object_sha
+    assert receipt["trusted_asset_count"] == len(CANONICAL_ASSET_NAMES)
     environment_lines = (evidence_root / "environment.txt").read_text(
         encoding="utf-8"
     ).splitlines()
@@ -326,6 +356,24 @@ def test_runner_success_path_emits_hash_verified_tag_bound_evidence(tmp_path: Pa
             continue
         assert str(work_root) not in evidence_text
         assert str(evidence_root) not in evidence_text
+
+    trusted_path = evidence_root / "trusted_release_assets.json"
+    trusted = json.loads(trusted_path.read_text(encoding="utf-8"))
+    assert receipt["trusted_asset_manifest_sha256"] == hashlib.sha256(
+        trusted_path.read_bytes()
+    ).hexdigest()
+    assert trusted["git_commit"] == final_sha
+    assert trusted["tag_object_sha"] == tag_object_sha
+    assert trusted["asset_count"] == len(CANONICAL_ASSET_NAMES)
+    assert [item["name"] for item in trusted["assets"]] == sorted(
+        CANONICAL_ASSET_NAMES
+    )
+    release_assets = work_root / "release-assets"
+    assert {path.name for path in release_assets.iterdir()} == CANONICAL_ASSET_NAMES
+    for item in trusted["assets"]:
+        path = release_assets / item["name"]
+        assert path.stat().st_size == item["size"]
+        assert hashlib.sha256(path.read_bytes()).hexdigest() == item["sha256"]
 
 
 def test_runner_rejects_incomplete_example_inventory_without_pass_receipt(

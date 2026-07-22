@@ -2,7 +2,7 @@
 
 `mito-overview` is a Python-based workflow for mode-gated mitochondrial DNA (mtDNA) evidence reporting from aligned BAM or CRAM inputs. The current public implementation provides a long-read-oriented profile and a reduced short-read compatibility profile that preserves the analytical layers applicable without long molecules or ONT methylation tracks. The repository emphasizes synchronized HTML, TSV, and figure generation for mitochondrial QC, alternate-allele screening, structural screening, an experimental within-sample mt:nuclear depth ratio when nuclear context is evaluable, feature annotation, same-read co-occurrence, and warning-oriented QC.
 
-Version `0.3.0` is an unreleased workflow/resource release candidate. Its planned GitHub release protocol starts from seven identity-checked public FASTQs, reconstructs the pooled short-read or deterministic reduced long-read derivative and alignment on each validation platform, and then tests report execution, synchronized artifacts, mode/status gating, descriptive filter dependence, and fixed-input repeatability. The final GitHub release will bind its source, distributions, audit ZIP, macOS and Ubuntu reproduction evidence, and CI records to one immutable commit. Zenodo, an archival DOI, and bioRxiv submission are outside this GitHub release contract.
+Version `0.3.0` defines the workflow/resource release described here. Its GitHub release protocol starts from seven identity-checked public FASTQs, reconstructs the pooled short-read or deterministic reduced long-read derivative and alignment on each validation platform, and then tests report execution, synchronized artifacts, mode/status gating, descriptive filter dependence, and fixed-input repeatability. The release protocol binds its source, distributions, audit ZIP, macOS and Ubuntu reproduction evidence, and CI records to one immutable commit. Zenodo, an archival DOI, and bioRxiv submission are outside this GitHub release contract.
 
 ## Scope
 - aligned BAM or CRAM input
@@ -189,7 +189,7 @@ In long-read mode without ONT bedmethyl sidecars, page `12` is expected to be a 
 - `mito-overview` does not bundle external Phy-Mer code or mvTool data resources; see [`docs/license_notes.md`](docs/license_notes.md)
 
 ## Repository status
-- unreleased v0.3.0 release candidate with a functional core, tracked synthetic smoke-test assets, and an active software/resource preprint draft
+- version 0.3.0 with a functional core, tracked synthetic smoke-test assets, and an active software/resource preprint draft
 - current repository now includes a synthetic public example bundle generated from the public-core workflow
 - current repository now includes a short-read synthetic bundle plus bounded public long-read and short-read proof-of-principle asset packs
 - cite the software metadata in [`CITATION.cff`](CITATION.cff) and use tagged releases for archived versions
@@ -211,7 +211,7 @@ This example uses the public GM12878 targeted-mt ONT dataset reported by Vandive
 - [NCBI BioProject PRJNA809571](https://www.ncbi.nlm.nih.gov/bioproject/PRJNA809571)
 - [ENA run SRR18110025](https://www.ebi.ac.uk/ena/browser/view/SRR18110025)
 
-The release-candidate protocol selects exactly the `1,000` smallest seeded query-name hashes from `193,043` source FASTQ records, then aligns that reconstructed subset to `NC_012920.1` with minimap2 `2.31-r1302`. The expected mapped-only derivative has `728` mapped unique query names represented by `728` primary alignments and `543` supplementary records.
+The v0.3.0 release protocol selects exactly the `1,000` smallest seeded query-name hashes from `193,043` source FASTQ records, then aligns that reconstructed subset to `NC_012920.1` with minimap2 `2.31-r1302`. The expected mapped-only derivative has `728` mapped unique query names represented by `728` primary alignments and `543` supplementary records.
 
 With `MIN_CALLABLE_DEPTH=100`, `MIN_ALT_ALLELE_FRACTION=0.10`, and default BaseQ/MAPQ/readQ filters `13/20/10`, the v0.3.0 validation oracle expects `16` candidates, `7,143,152` accepted observations, and `2,047,476` excluded observations. The structural screen expects `13` singleton CIGAR-deletion bins, each supported by one query name; separately, `542` query names are expected to have a supplementary alignment or `SA` tag. Prescribed statuses are `not_applicable` for the within-sample mt:nuclear depth ratio and Phy-Mer, `not_configured` for mvTool and methylation, and `not_evaluable` for NUMT interpretation with `reference_scope_mt_only`. Final exact-commit observed values and commit-bound provenance will be distributed in the GitHub release validation packet; until that packet passes, these values remain frozen oracle expectations with local provisional supporting observations.
 

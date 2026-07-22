@@ -1,6 +1,6 @@
 cff-version: 1.2.0
 title: mito-overview
-message: Please cite this unreleased v0.3.0 release candidate using the metadata below.
+message: Please cite mito-overview version 0.3.0 using the metadata below.
 abstract: Mode-gated mitochondrial DNA evidence reporting workflow for aligned sequencing data.
 authors:
   - family-names: Lopes

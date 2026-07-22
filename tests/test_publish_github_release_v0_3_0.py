@@ -46,8 +46,24 @@ def _write_assets(root: Path) -> dict[str, bytes]:
     return {**payloads, "SHA256SUMS": manifest}
 
 
-def _write_tag_validation_evidence(root: Path) -> Path:
+def _rewrite_sha256sums(root: Path) -> bytes:
+    payloads = {
+        name: (root / name).read_bytes()
+        for name in publication.CANONICAL_ASSET_NAMES
+        if name != "SHA256SUMS"
+    }
+    manifest = "".join(
+        f"{_sha256(payloads[name])}  {name}\n" for name in sorted(payloads)
+    ).encode("ascii")
+    (root / "SHA256SUMS").write_bytes(manifest)
+    return manifest
+
+
+def _write_tag_validation_evidence(root: Path, asset_root: Path) -> Path:
     root.mkdir(parents=True, exist_ok=True)
+    receipt = root / "fresh_public_tag_validation.json"
+    if receipt.exists():
+        return receipt
     cases = root / "cases.tsv"
     cases.write_text(
         "case_id\tverdict\tdetail\n"
@@ -90,8 +106,40 @@ def _write_tag_validation_evidence(root: Path) -> Path:
     (root / "logs").mkdir(exist_ok=True)
     (root / "commands/run.sh").write_text("pytest -q\n", encoding="utf-8")
     (root / "logs/run.log").write_text("all checks passed\n", encoding="utf-8")
+    trusted_manifest = root / publication.TRUSTED_ASSET_MANIFEST_NAME
+    trusted_assets = []
+    for name in sorted(publication.CANONICAL_ASSET_NAMES):
+        path = asset_root / name
+        trusted_assets.append(
+            {"name": name, "sha256": _sha256(path.read_bytes()), "size": path.stat().st_size}
+        )
+    trusted_manifest.write_text(
+        json.dumps(
+            {
+                "schema_version": publication.TRUSTED_ASSET_MANIFEST_SCHEMA_VERSION,
+                "manifest_type": "trusted_release_asset_manifest",
+                "validation_profile": publication.TAG_VALIDATION_PROFILE,
+                "repository": f"https://github.com/{REPOSITORY}",
+                "repository_slug": REPOSITORY,
+                "release_tag": publication.EXPECTED_TAG,
+                "git_commit": FINAL_SHA,
+                "checked_out_commit": FINAL_SHA,
+                "tag_object_sha": TAG_OBJECT_SHA,
+                "asset_count": len(trusted_assets),
+                "sha256sums_sha256": next(
+                    item["sha256"]
+                    for item in trusted_assets
+                    if item["name"] == "SHA256SUMS"
+                ),
+                "assets": trusted_assets,
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
     manifest = root / "evidence.sha256"
-    receipt = root / "fresh_public_tag_validation.json"
     evidence_files = sorted(
         path
         for path in root.rglob("*")
@@ -127,6 +175,9 @@ def _write_tag_validation_evidence(root: Path) -> Path:
                 "tag_identity_path": "tag_identity.json",
                 "evidence_manifest_path": "evidence.sha256",
                 "evidence_manifest_sha256": _sha256(manifest.read_bytes()),
+                "trusted_asset_manifest_path": publication.TRUSTED_ASSET_MANIFEST_NAME,
+                "trusted_asset_manifest_sha256": _sha256(trusted_manifest.read_bytes()),
+                "trusted_asset_count": len(publication.CANONICAL_ASSET_NAMES),
             },
             indent=2,
             sort_keys=True,
@@ -135,6 +186,31 @@ def _write_tag_validation_evidence(root: Path) -> Path:
         encoding="utf-8",
     )
     return receipt
+
+
+def _reseal_tag_validation_evidence(receipt: Path) -> None:
+    root = receipt.parent
+    manifest = root / "evidence.sha256"
+    evidence_files = sorted(
+        path
+        for path in root.rglob("*")
+        if path.is_file() and path not in {manifest, receipt}
+    )
+    manifest.write_text(
+        "".join(
+            f"{_sha256(path.read_bytes())}  {path.relative_to(root).as_posix()}\n"
+            for path in evidence_files
+        ),
+        encoding="utf-8",
+    )
+    payload = json.loads(receipt.read_text(encoding="utf-8"))
+    payload["evidence_manifest_sha256"] = _sha256(manifest.read_bytes())
+    payload["trusted_asset_manifest_sha256"] = _sha256(
+        (root / publication.TRUSTED_ASSET_MANIFEST_NAME).read_bytes()
+    )
+    receipt.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
 
 
 class FakeGhRunner:
@@ -326,8 +402,11 @@ def _config(
     *,
     asset_dir: Path | None = None,
 ) -> Any:
+    selected_asset_dir = asset_dir or output_dir.parent / "assets"
+    if not selected_asset_dir.exists():
+        _write_assets(selected_asset_dir)
     tag_receipt = _write_tag_validation_evidence(
-        output_dir.parent / "fresh-tag-validation"
+        output_dir.parent / "fresh-tag-validation", selected_asset_dir
     )
     return publication.PublicationConfig(
         repository=REPOSITORY,
@@ -337,7 +416,7 @@ def _config(
         phase=phase,
         github_actions_run_id=RUN_ID,
         tag_validation_receipt=tag_receipt,
-        asset_directory=asset_dir,
+        asset_directory=selected_asset_dir,
     )
 
 
@@ -347,7 +426,9 @@ def _create_and_upload(
     asset_dir = tmp_path / "assets"
     payloads = _write_assets(asset_dir)
     output_dir = tmp_path / "publication"
-    publication.publish_github_release(_config(output_dir, "create-draft"), runner)
+    publication.publish_github_release(
+        _config(output_dir, "create-draft", asset_dir=asset_dir), runner
+    )
     publication.publish_github_release(
         _config(output_dir, "upload-verify", asset_dir=asset_dir), runner
     )
@@ -392,6 +473,10 @@ def test_create_draft_requires_existing_annotated_tag_and_records_report_identit
     assert record["fresh_public_tag_validation"]["case_count"] == len(
         publication.REQUIRED_TAG_VALIDATION_CASES
     )
+    assert record["fresh_public_tag_validation"]["trusted_asset_manifest"][
+        "manifest_name"
+    ] == publication.TRUSTED_ASSET_MANIFEST_NAME
+    assert record["local_asset_manifest"]["assets"]
     assert record["hosting_protection"] == {
         "supported": True,
         "enabled": True,
@@ -439,6 +524,30 @@ def test_remote_tag_object_must_match_fresh_tag_evidence_before_mutation(
             _config(tmp_path / "publication", "create-draft"), runner
         )
 
+    assert runner.mutations == []
+
+
+def test_trusted_manifest_is_bound_to_fresh_evidence_and_tag_object(
+    tmp_path: Path,
+) -> None:
+    runner = FakeGhRunner()
+    config = _config(tmp_path / "publication", "create-draft")
+    trusted_path = (
+        config.tag_validation_receipt.parent / publication.TRUSTED_ASSET_MANIFEST_NAME
+    )
+    trusted = json.loads(trusted_path.read_text(encoding="utf-8"))
+    trusted["tag_object_sha"] = OTHER_TAG_OBJECT_SHA
+    trusted_path.write_text(
+        json.dumps(trusted, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    _reseal_tag_validation_evidence(config.tag_validation_receipt)
+
+    with pytest.raises(
+        publication.PublicationError,
+        match="Trusted release-asset manifest mismatch for tag_object_sha",
+    ):
+        publication.publish_github_release(config, runner)
+    assert runner.calls == []
     assert runner.mutations == []
 
 
@@ -604,6 +713,9 @@ def test_canonical_asset_inventory_is_enforced_before_github_calls(
 ) -> None:
     asset_dir = tmp_path / "assets"
     payloads = _write_assets(asset_dir)
+    config = _config(
+        tmp_path / "publication", "upload-verify", asset_dir=asset_dir
+    )
     if inventory_problem == "missing":
         (asset_dir / "RELEASE_NOTES_v0.3.0.md").unlink()
     elif inventory_problem == "extra":
@@ -615,11 +727,37 @@ def test_canonical_asset_inventory_is_enforced_before_github_calls(
 
     with pytest.raises(publication.PublicationError, match="Canonical v0.3.0"):
         publication.publish_github_release(
-            _config(tmp_path / "publication", "upload-verify", asset_dir=asset_dir),
+            config,
             runner,
         )
     assert runner.calls == []
     assert set(payloads) == publication.CANONICAL_ASSET_NAMES
+
+
+@pytest.mark.parametrize(
+    "target",
+    sorted(publication.CANONICAL_ASSET_NAMES - {"SHA256SUMS"}),
+)
+def test_trusted_manifest_blocks_each_asset_substitution_before_github_calls(
+    tmp_path: Path, target: str
+) -> None:
+    asset_dir = tmp_path / "assets"
+    _write_assets(asset_dir)
+    config = _config(
+        tmp_path / "publication", "create-draft", asset_dir=asset_dir
+    )
+    path = asset_dir / target
+    path.write_bytes(path.read_bytes() + b"substituted\n")
+    _rewrite_sha256sums(asset_dir)
+    runner = FakeGhRunner()
+
+    with pytest.raises(
+        publication.PublicationError,
+        match=rf"Trusted release-asset hash or size mismatch for {target}",
+    ):
+        publication.publish_github_release(config, runner)
+    assert runner.calls == []
+    assert runner.mutations == []
 
 
 def test_exact_annotated_tag_object_is_bound_across_phases(tmp_path: Path) -> None:
@@ -775,7 +913,7 @@ def test_upload_after_publication_rejects_changed_local_bytes(tmp_path: Path) ->
     ).encode("ascii")
     (asset_dir / "SHA256SUMS").write_bytes(manifest)
 
-    with pytest.raises(publication.PublicationError, match="published receipt"):
+    with pytest.raises(publication.PublicationError, match="Trusted release-asset"):
         publication.publish_github_release(
             _config(output_dir, "upload-verify", asset_dir=asset_dir), runner
         )
@@ -821,13 +959,11 @@ def test_cli_requires_phase_assets_run_id_and_tag_validation_receipt() -> None:
         str(RUN_ID),
         "--tag-validation-receipt",
         "fresh-tag-validation/fresh_public_tag_validation.json",
+        "--asset-directory",
+        "assets",
     ]
     assert parser.parse_args([*common, "--create-draft"]).phase == "create-draft"
-    upload = parser.parse_args(
-        [*common, "--upload-verify", "--asset-directory", "assets"]
-    )
+    upload = parser.parse_args([*common, "--upload-verify"])
     assert upload.asset_directory == Path("assets")
-    publish = parser.parse_args(
-        [*common, "--publish", "--asset-directory", "assets"]
-    )
+    publish = parser.parse_args([*common, "--publish"])
     assert publish.phase == "publish"

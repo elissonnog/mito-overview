@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ $# -ne 4 ]]; then
-  echo "Usage: $0 GITHUB_HTTPS_URL FINAL_SHA WORK_ROOT EVIDENCE_ROOT" >&2
+if [[ $# -ne 5 ]]; then
+  echo "Usage: $0 GITHUB_HTTPS_URL FINAL_SHA WORK_ROOT EVIDENCE_ROOT RELEASE_ASSET_SOURCE" >&2
   exit 2
 fi
 
@@ -10,6 +10,7 @@ REPOSITORY_URL="${1%/}"
 FINAL_SHA="$2"
 WORK_ROOT="$3"
 EVIDENCE_ROOT="$4"
+ASSET_SOURCE_ROOT="$5"
 TAG="v0.3.0"
 PYTHON_BIN="${MITO_OVERVIEW_PYTHON:-python3}"
 THREADS=4
@@ -26,9 +27,49 @@ if [[ -e "${WORK_ROOT}" || -e "${EVIDENCE_ROOT}" ]]; then
   echo "WORK_ROOT and EVIDENCE_ROOT must not already exist" >&2
   exit 2
 fi
+if [[ -L "${ASSET_SOURCE_ROOT}" || ! -d "${ASSET_SOURCE_ROOT}" ]]; then
+  echo "RELEASE_ASSET_SOURCE must be an existing non-symlink directory" >&2
+  exit 2
+fi
+ASSET_SOURCE_ROOT="$(cd "${ASSET_SOURCE_ROOT}" && pwd -P)"
+
+"${PYTHON_BIN}" - "${ASSET_SOURCE_ROOT}" "${WORK_ROOT}" "${EVIDENCE_ROOT}" <<'PY'
+import sys
+from pathlib import Path
+
+source = Path(sys.argv[1]).resolve(strict=True)
+work = Path(sys.argv[2]).resolve(strict=False)
+evidence = Path(sys.argv[3]).resolve(strict=False)
+for other, label in ((work, "WORK_ROOT"), (evidence, "EVIDENCE_ROOT")):
+    if source == other or source.is_relative_to(other) or other.is_relative_to(source):
+        raise SystemExit(f"RELEASE_ASSET_SOURCE must be disjoint from {label}")
+
+expected = {
+    "mito-overview-v0.3.0-validation.zip",
+    "MitoOverview_v0.3.0_release_validation_report.md",
+    "MitoOverview_v0.3.0_release_validation_report.docx",
+    "MitoOverview_v0.3.0_release_validation_report.pdf",
+    "MitoOverview_v0.3.0_release_validation_report_assets.tar.gz",
+    "mito-overview-v0.3.0-verification.json",
+    "RELEASE_NOTES_v0.3.0.md",
+    "mito-overview-v0.3.0-environment.txt",
+    "mito-overview-v0.3.0-environment-locks.tar.gz",
+}
+entries = {path.name: path for path in source.iterdir()}
+if set(entries) != expected:
+    raise SystemExit(
+        "RELEASE_ASSET_SOURCE inventory mismatch; "
+        f"missing={sorted(expected - set(entries))!r}; "
+        f"unexpected={sorted(set(entries) - expected)!r}"
+    )
+for name, path in entries.items():
+    if path.is_symlink() or not path.is_file():
+        raise SystemExit(f"RELEASE_ASSET_SOURCE contains a non-regular file: {name}")
+PY
 
 CLONE_ROOT="${WORK_ROOT}/public-tag-clone"
 DIST_ROOT="${WORK_ROOT}/dist"
+RELEASE_ASSET_ROOT="${WORK_ROOT}/release-assets"
 SDIST_ROOT="${WORK_ROOT}/sdist"
 VENV_ROOT="${WORK_ROOT}/venv"
 PROBE_ROOT="${WORK_ROOT}/installed-probe"
@@ -41,7 +82,7 @@ LOG_ROOT="${EVIDENCE_ROOT}/logs"
 CASES_PATH="${EVIDENCE_ROOT}/cases.tsv"
 
 mkdir -p "${WORK_ROOT}" "${EVIDENCE_ROOT}" "${COMMAND_ROOT}" "${LOG_ROOT}" \
-  "${DIST_ROOT}" "${SDIST_ROOT}" "${PROBE_ROOT}" "${EXAMPLE_ROOT}" \
+  "${DIST_ROOT}" "${RELEASE_ASSET_ROOT}" "${SDIST_ROOT}" "${PROBE_ROOT}" "${EXAMPLE_ROOT}" \
   "${HOME_ROOT}" "${TMP_ROOT}" "${CACHE_ROOT}"
 printf 'case_id\tverdict\tdetail\n' > "${CASES_PATH}"
 
@@ -236,6 +277,107 @@ EOF
 run_case clean_tag_checkout "detached public-tag checkout remained clean"
 
 TAG_OBJECT_SHA="$(cat "${WORK_ROOT}/tag_object_sha.txt")"
+write_command trusted_release_assets <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+test -z "\$(find $(printf '%q' "${RELEASE_ASSET_ROOT}") -mindepth 1 -maxdepth 1 -print -quit)"
+for name in \
+  mito-overview-v0.3.0-validation.zip \
+  MitoOverview_v0.3.0_release_validation_report.md \
+  MitoOverview_v0.3.0_release_validation_report.docx \
+  MitoOverview_v0.3.0_release_validation_report.pdf \
+  MitoOverview_v0.3.0_release_validation_report_assets.tar.gz \
+  mito-overview-v0.3.0-verification.json \
+  RELEASE_NOTES_v0.3.0.md \
+  mito-overview-v0.3.0-environment.txt \
+  mito-overview-v0.3.0-environment-locks.tar.gz; do
+  test -f $(printf '%q' "${ASSET_SOURCE_ROOT}")/"\${name}"
+  test ! -L $(printf '%q' "${ASSET_SOURCE_ROOT}")/"\${name}"
+  cp $(printf '%q' "${ASSET_SOURCE_ROOT}")/"\${name}" $(printf '%q' "${RELEASE_ASSET_ROOT}")/"\${name}"
+done
+cp $(printf '%q' "${DIST_ROOT}/mito_overview-0.3.0-py3-none-any.whl") $(printf '%q' "${RELEASE_ASSET_ROOT}/mito_overview-0.3.0-py3-none-any.whl")
+cp $(printf '%q' "${DIST_ROOT}/mito_overview-0.3.0.tar.gz") $(printf '%q' "${RELEASE_ASSET_ROOT}/mito_overview-0.3.0.tar.gz")
+(
+  cd $(printf '%q' "${RELEASE_ASSET_ROOT}")
+  find . -maxdepth 1 -type f ! -name SHA256SUMS -print0 | sort -z | \
+    xargs -0 shasum -a 256 | sed 's#  \./#  #' > SHA256SUMS
+  shasum -a 256 -c SHA256SUMS
+)
+$(printf '%q' "${PYTHON_BIN}") - \
+  $(printf '%q' "${RELEASE_ASSET_ROOT}") \
+  $(printf '%q' "${EVIDENCE_ROOT}/trusted_release_assets.json") \
+  $(printf '%q' "${REPOSITORY_URL}") \
+  $(printf '%q' "${REPOSITORY_URL#https://github.com/}") \
+  $(printf '%q' "${FINAL_SHA}") \
+  $(printf '%q' "${TAG}") \
+  $(printf '%q' "${TAG_OBJECT_SHA}") <<'PY'
+import hashlib
+import json
+import re
+import sys
+from pathlib import Path
+
+asset_root = Path(sys.argv[1])
+output = Path(sys.argv[2])
+expected = {
+    "mito_overview-0.3.0-py3-none-any.whl",
+    "mito_overview-0.3.0.tar.gz",
+    "mito-overview-v0.3.0-validation.zip",
+    "MitoOverview_v0.3.0_release_validation_report.md",
+    "MitoOverview_v0.3.0_release_validation_report.docx",
+    "MitoOverview_v0.3.0_release_validation_report.pdf",
+    "MitoOverview_v0.3.0_release_validation_report_assets.tar.gz",
+    "mito-overview-v0.3.0-verification.json",
+    "RELEASE_NOTES_v0.3.0.md",
+    "mito-overview-v0.3.0-environment.txt",
+    "mito-overview-v0.3.0-environment-locks.tar.gz",
+    "SHA256SUMS",
+}
+paths = {path.name: path for path in asset_root.iterdir()}
+if set(paths) != expected:
+    raise SystemExit("canonical release-asset inventory differs")
+for name, path in paths.items():
+    if path.is_symlink() or not path.is_file():
+        raise SystemExit(f"canonical release asset is not a regular file: {name}")
+
+checksum_pattern = re.compile(r"^([0-9a-f]{64})  ([A-Za-z0-9][A-Za-z0-9._+-]*)$")
+listed = {}
+checksum_bytes = paths["SHA256SUMS"].read_bytes()
+for line in checksum_bytes.decode("ascii").splitlines():
+    match = checksum_pattern.fullmatch(line)
+    if match is None or match.group(2) in listed:
+        raise SystemExit("SHA256SUMS is malformed or contains a duplicate")
+    listed[match.group(2)] = match.group(1)
+if set(listed) != expected - {"SHA256SUMS"}:
+    raise SystemExit("SHA256SUMS inventory differs")
+
+assets = []
+for name in sorted(expected):
+    path = paths[name]
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    if name != "SHA256SUMS" and listed[name] != digest:
+        raise SystemExit(f"SHA256SUMS mismatch for {name}")
+    assets.append({"name": name, "sha256": digest, "size": path.stat().st_size})
+
+payload = {
+    "schema_version": "1.0",
+    "manifest_type": "trusted_release_asset_manifest",
+    "validation_profile": "fresh_public_tag_validation_v2",
+    "repository": sys.argv[3],
+    "repository_slug": sys.argv[4],
+    "release_tag": sys.argv[6],
+    "git_commit": sys.argv[5],
+    "checked_out_commit": sys.argv[5],
+    "tag_object_sha": sys.argv[7],
+    "asset_count": len(assets),
+    "sha256sums_sha256": hashlib.sha256(checksum_bytes).hexdigest(),
+    "assets": assets,
+}
+output.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+PY
+EOF
+run_case trusted_release_assets "canonical release assets were sealed to the annotated tag and FINAL_SHA"
+
 "${PYTHON_BIN}" - "${EVIDENCE_ROOT}/tag_identity.json" "${FINAL_SHA}" "${TAG}" "${TAG_OBJECT_SHA}" <<'PY'
 import json
 import sys
@@ -263,6 +405,7 @@ PY
   --replace "${CLONE_ROOT}=\${PUBLIC_TAG_CHECKOUT}" \
   --replace "${WORK_ROOT}=\${TAG_VALIDATION_WORK}" \
   --replace "${EVIDENCE_ROOT}=\${TAG_VALIDATION_EVIDENCE}" \
+  --replace "${ASSET_SOURCE_ROOT}=\${RELEASE_ASSET_SOURCE}" \
   --replace "${HOME_ROOT}=\${HOME}" \
   --replace "${TMP_ROOT}=\${TMPDIR}"
 
@@ -279,6 +422,7 @@ REPOSITORY_SLUG="${REPOSITORY_URL#https://github.com/}"
 "${PYTHON_BIN}" - \
   "${EVIDENCE_ROOT}/fresh_public_tag_validation.json" \
   "${EVIDENCE_ROOT}/evidence.sha256" \
+  "${EVIDENCE_ROOT}/trusted_release_assets.json" \
   "${REPOSITORY_URL}" "${REPOSITORY_SLUG}" "${FINAL_SHA}" "${TAG}" \
   "${TAG_OBJECT_SHA}" <<'PY'
 import csv
@@ -289,20 +433,39 @@ from pathlib import Path
 
 receipt = Path(sys.argv[1])
 manifest = Path(sys.argv[2])
+trusted_manifest = Path(sys.argv[3])
 with (receipt.parent / "cases.tsv").open(encoding="utf-8", newline="") as handle:
     rows = list(csv.DictReader(handle, delimiter="\t"))
 if not rows or any(row["verdict"] != "PASS" for row in rows):
     raise SystemExit("fresh public-tag validation contains a non-PASS case")
-payload = {
+trusted = json.loads(trusted_manifest.read_text(encoding="utf-8"))
+expected_trusted_identity = {
     "schema_version": "1.0",
-    "validation_profile": "fresh_public_tag_validation_v1",
+    "manifest_type": "trusted_release_asset_manifest",
+    "validation_profile": "fresh_public_tag_validation_v2",
+    "repository": sys.argv[4],
+    "repository_slug": sys.argv[5],
+    "release_tag": sys.argv[7],
+    "git_commit": sys.argv[6],
+    "checked_out_commit": sys.argv[6],
+    "tag_object_sha": sys.argv[8],
+}
+for field, expected in expected_trusted_identity.items():
+    if trusted.get(field) != expected:
+        raise SystemExit(f"trusted release-asset identity mismatch for {field}")
+if trusted.get("asset_count") != 12 or len(trusted.get("assets", [])) != 12:
+    raise SystemExit("trusted release-asset count differs")
+
+payload = {
+    "schema_version": "2.0",
+    "validation_profile": "fresh_public_tag_validation_v2",
     "evidence_type": "fresh_public_tag_validation",
-    "repository": sys.argv[3],
-    "repository_slug": sys.argv[4],
-    "release_tag": sys.argv[6],
-    "git_commit": sys.argv[5],
-    "checked_out_commit": sys.argv[5],
-    "tag_object_sha": sys.argv[7],
+    "repository": sys.argv[4],
+    "repository_slug": sys.argv[5],
+    "release_tag": sys.argv[7],
+    "git_commit": sys.argv[6],
+    "checked_out_commit": sys.argv[6],
+    "tag_object_sha": sys.argv[8],
     "public_https_clone": True,
     "detached_head": True,
     "clean_worktree": True,
@@ -314,6 +477,9 @@ payload = {
     "tag_identity_path": "tag_identity.json",
     "evidence_manifest_path": "evidence.sha256",
     "evidence_manifest_sha256": hashlib.sha256(manifest.read_bytes()).hexdigest(),
+    "trusted_asset_manifest_path": trusted_manifest.name,
+    "trusted_asset_manifest_sha256": hashlib.sha256(trusted_manifest.read_bytes()).hexdigest(),
+    "trusted_asset_count": trusted["asset_count"],
 }
 receipt.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 PY
