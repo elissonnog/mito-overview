@@ -64,19 +64,28 @@ def load_human_mt_features(gtf_path: str | Path, contig: str) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def classify_position(pos: int, features_df: pd.DataFrame) -> tuple[str, str]:
+def classify_position(pos: int, features_df: pd.DataFrame) -> list[tuple[str, str]]:
+    """Return every feature at a position in deterministic genomic order."""
+
     for start, end in DLOOP_INTERVALS:
         if start <= pos <= end:
-            return "control_region", "D-loop/control region"
+            return [("control_region", "D-loop/control region")]
     hits = features_df[(features_df["start"] <= pos) & (features_df["end"] >= pos)]
     if hits.empty:
-        return "intergenic", "intergenic"
-    cds_hits = hits[hits["feature_type"] == "CDS"]
-    if not cds_hits.empty:
-        row = cds_hits.iloc[0]
-        return str(row["gene_biotype"]), str(row["gene_name"])
-    row = hits.iloc[0]
-    return str(row["gene_biotype"]), str(row["gene_name"])
+        return [("intergenic", "intergenic")]
+    selected = hits.sort_values(
+        ["start", "end", "gene_name", "gene_biotype", "feature_type"],
+        kind="stable",
+    )
+
+    annotations: list[tuple[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for row in selected.itertuples(index=False):
+        annotation = (str(row.gene_biotype), str(row.gene_name))
+        if annotation not in seen:
+            annotations.append(annotation)
+            seen.add(annotation)
+    return annotations
 
 
 def _status_page(
@@ -193,19 +202,19 @@ def run_step(
     for idx, row in enumerate(candidates_df.itertuples(index=False), start=1):
         if idx % 50 == 0:
             print(f"[feature_annotation] annotated candidate sites={idx}")
-        biotype, label = classify_position(int(row.position), features_df)
-        overlap_rows.append(
-            {
-                "position": int(row.position),
-                "ref_base": row.ref_base,
-                "alt_base": row.alt_base,
-                "alt_allele_fraction": row.alt_allele_fraction,
-                "heteroplasmy_fraction": row.alt_allele_fraction,
-                "depth": row.depth,
-                "feature_class": biotype,
-                "feature_label": label,
-            }
-        )
+        for biotype, label in classify_position(int(row.position), features_df):
+            overlap_rows.append(
+                {
+                    "position": int(row.position),
+                    "ref_base": row.ref_base,
+                    "alt_base": row.alt_base,
+                    "alt_allele_fraction": row.alt_allele_fraction,
+                    "heteroplasmy_fraction": row.alt_allele_fraction,
+                    "depth": row.depth,
+                    "feature_class": biotype,
+                    "feature_label": label,
+                }
+            )
     overlap_df = pd.DataFrame(
         overlap_rows,
         columns=[

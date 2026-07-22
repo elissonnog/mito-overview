@@ -21,6 +21,11 @@ from mito_overview.steps.mito_variant_consequence import (
 from ._helpers import metric_map
 
 
+RESOURCE_DIR = Path(__file__).resolve().parents[1] / "resources" / "annotations"
+HUMAN_MT_FASTA = RESOURCE_DIR / "NC_012920.1.fa"
+HUMAN_MT_GTF = RESOURCE_DIR / "human_mt_reference.gtf"
+
+
 def write_consequence_fixture(tmp_path: Path, *, position: int = 1000) -> tuple[Path, Path]:
     summary_dir = tmp_path / "summary"
     summary_dir.mkdir(parents=True)
@@ -33,6 +38,53 @@ def write_consequence_fixture(tmp_path: Path, *, position: int = 1000) -> tuple[
     fasta.write_text(">MT\n" + "A" * 2000 + "\n", encoding="ascii")
     pysam.faidx(str(fasta))
     return summary_dir, fasta
+
+
+def run_canonical_consequence_fixture(
+    tmp_path: Path,
+    candidates: list[tuple[int, str, str]],
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    summary_dir = tmp_path / "canonical-summary"
+    summary_dir.mkdir(parents=True)
+    candidate_rows = [
+        "position\tref_base\talt_base\tdepth\talt_allele_fraction\theteroplasmy_fraction"
+    ]
+    candidate_rows.extend(
+        f"{position}\t{ref_base}\t{alt_base}\t100\t0.25\t0.25"
+        for position, ref_base, alt_base in candidates
+    )
+    (summary_dir / "mito_heteroplasmy_candidates.tsv").write_text(
+        "\n".join(candidate_rows) + "\n",
+        encoding="ascii",
+    )
+
+    fasta = tmp_path / "NC_012920.1.fa"
+    source_lines = HUMAN_MT_FASTA.read_text(encoding="ascii").splitlines()
+    fasta.write_text(">MT\n" + "\n".join(source_lines[1:]) + "\n", encoding="ascii")
+    pysam.faidx(str(fasta))
+    run_feature_annotation(
+        summary_dir=summary_dir,
+        figure_dir=tmp_path / "canonical-feature-figures",
+        report_dir=tmp_path / "canonical-feature-reports",
+        sample_id="CANONICAL-MT",
+        species="human",
+        build="hg38",
+        mt_contig="MT",
+        mt_length=16569,
+        human_mt_gtf=HUMAN_MT_GTF,
+    )
+    outputs = run_variant_consequence(
+        summary_dir=summary_dir,
+        figure_dir=tmp_path / "canonical-consequence-figures",
+        report_dir=tmp_path / "canonical-consequence-reports",
+        sample_id="CANONICAL-MT",
+        mt_contig="MT",
+        mt_length=16569,
+        ref_fasta=fasta,
+    )
+    overlaps = pd.read_csv(summary_dir / "mito_feature_overlap_candidates.tsv", sep="\t")
+    annotations = pd.read_csv(outputs["annot_path"], sep="\t", keep_default_na=False)
+    return overlaps, annotations
 
 
 def run_consequence(tmp_path: Path, summary_dir: Path, fasta: Path, **kwargs: str) -> dict[str, Path | str]:
@@ -83,27 +135,91 @@ def test_feature_annotation_inclusive_boundaries_and_control_region_precedence()
                 "end": 1002,
                 "strand": "+",
             },
+            {
+                "feature_type": "gene",
+                "gene_name": "MT-TY",
+                "gene_biotype": "Mt_tRNA",
+                "start": 1001,
+                "end": 1002,
+                "strand": "+",
+            },
         ]
     )
 
-    assert classify_position(1, features) == ("control_region", "D-loop/control region")
-    assert classify_position(576, features) == ("control_region", "D-loop/control region")
-    assert classify_position(577, features) == ("protein_coding", "MT-ND1")
-    assert classify_position(579, features) == ("protein_coding", "MT-ND1")
-    assert classify_position(580, features) == ("intergenic", "intergenic")
-    assert classify_position(999, features) == ("intergenic", "intergenic")
-    assert classify_position(1000, features) == ("Mt_tRNA", "MT-TX")
-    assert classify_position(1002, features) == ("Mt_tRNA", "MT-TX")
-    assert classify_position(1003, features) == ("intergenic", "intergenic")
-    assert classify_position(16023, features) == ("intergenic", "intergenic")
-    assert classify_position(16024, features) == ("control_region", "D-loop/control region")
-    assert classify_position(16569, features) == ("control_region", "D-loop/control region")
+    assert classify_position(1, features) == [("control_region", "D-loop/control region")]
+    assert classify_position(576, features) == [("control_region", "D-loop/control region")]
+    assert classify_position(577, features) == [("protein_coding", "MT-ND1")]
+    assert classify_position(579, features) == [("protein_coding", "MT-ND1")]
+    assert classify_position(580, features) == [("intergenic", "intergenic")]
+    assert classify_position(999, features) == [("intergenic", "intergenic")]
+    assert classify_position(1000, features) == [("Mt_tRNA", "MT-TX")]
+    assert classify_position(1002, features) == [("Mt_tRNA", "MT-TX"), ("Mt_tRNA", "MT-TY")]
+    assert classify_position(1003, features) == [("intergenic", "intergenic")]
+    assert classify_position(16023, features) == [("intergenic", "intergenic")]
+    assert classify_position(16024, features) == [("control_region", "D-loop/control region")]
+    assert classify_position(16569, features) == [("control_region", "D-loop/control region")]
+
+
+def test_overlapping_mitochondrial_cds_emit_one_stably_ordered_consequence_each(
+    tmp_path: Path,
+) -> None:
+    overlaps, annotations = run_canonical_consequence_fixture(
+        tmp_path,
+        [(8530, "A", "C"), (9207, "A", "C"), (10762, "G", "A")],
+    )
+    expected = [
+        (8530, "MT-ATP8"),
+        (8530, "MT-ATP6"),
+        (9207, "MT-ATP6"),
+        (9207, "MT-CO3"),
+        (10762, "MT-ND4L"),
+        (10762, "MT-ND4"),
+    ]
+
+    assert list(overlaps[["position", "feature_label"]].itertuples(index=False, name=None)) == expected
+    assert annotations[
+        [
+            "position",
+            "feature_label",
+            "feature_class",
+            "consequence_class",
+            "codon_ref",
+            "codon_alt",
+            "protein_change",
+        ]
+    ].values.tolist() == [
+        [8530, "MT-ATP8", "protein_coding", "missense_variant", "TGA", "TGC", "p.W55C"],
+        [8530, "MT-ATP6", "protein_coding", "missense_variant", "AAC", "CAC", "p.N2H"],
+        [9207, "MT-ATP6", "protein_coding", "stop_lost", "TAA", "TAC", "p.*227Y"],
+        [9207, "MT-CO3", "protein_coding", "start_lost", "ATG", "CTG", "p.M1?"],
+        [10762, "MT-ND4L", "protein_coding", "missense_variant", "TGC", "TAC", "p.C98Y"],
+        [10762, "MT-ND4", "protein_coding", "synonymous_variant", "ATG", "ATA", "p.M1M"],
+    ]
+
+
+def test_mt_nd2_m4471t_to_c_is_conservative_start_loss(tmp_path: Path) -> None:
+    _, annotations = run_canonical_consequence_fixture(tmp_path, [(4471, "T", "C")])
+
+    assert annotations[
+        [
+            "position",
+            "ref_base",
+            "alt_base",
+            "feature_label",
+            "consequence_class",
+            "codon_ref",
+            "codon_alt",
+            "protein_change",
+        ]
+    ].values.tolist() == [
+        [4471, "T", "C", "MT-ND2", "start_lost", "ATT", "ACT", "p.M1?"]
+    ]
 
 
 @pytest.mark.parametrize(
     ("position", "alternate", "expected"),
     [
-        (1, "G", ("missense_variant", "ATG", "GTG", "p.M1V")),
+        (1, "G", ("synonymous_variant", "ATG", "GTG", "p.M1M")),
         (3, "A", ("synonymous_variant", "ATG", "ATA", "p.M1M")),
         (4, "C", ("stop_lost", "TAA", "CAA", "p.*2Q")),
         (6, "G", ("synonymous_variant", "TAA", "TAG", "p.*2*")),
@@ -151,7 +267,7 @@ def test_mitochondrial_stop_gained_known_answer() -> None:
 @pytest.mark.parametrize(
     ("position", "genomic_alternate", "expected"),
     [
-        (6, "C", ("missense_variant", "ATG", "GTG", "p.M1V")),
+        (6, "C", ("synonymous_variant", "ATG", "GTG", "p.M1M")),
         (4, "T", ("synonymous_variant", "ATG", "ATA", "p.M1M")),
         (3, "G", ("stop_lost", "TAA", "CAA", "p.*2Q")),
         (1, "C", ("synonymous_variant", "TAA", "TAG", "p.*2*")),
@@ -175,6 +291,34 @@ def test_vertebrate_mitochondrial_codon_table_known_answers() -> None:
     assert translate_codon("AGA") == "*"
     assert translate_codon("AGG") == "*"
     assert translate_codon("ATA") == "M"
+
+
+@pytest.mark.parametrize(
+    ("reference_codon", "position", "alternate", "alternate_codon"),
+    [
+        ("ATT", 3, "C", "ATC"),
+        ("ATC", 3, "T", "ATT"),
+        ("ATA", 3, "G", "ATG"),
+        ("ATG", 1, "G", "GTG"),
+        ("GTG", 1, "A", "ATG"),
+    ],
+)
+def test_accepted_mitochondrial_initiators_encode_methionine_at_codon_one(
+    reference_codon: str,
+    position: int,
+    alternate: str,
+    alternate_codon: str,
+) -> None:
+    cds = pd.DataFrame(
+        [{"gene_name": "GENE", "start": 1, "end": 3, "strand": "+"}]
+    )
+
+    assert annotate_protein_change(position, alternate, "GENE", cds, reference_codon) == (
+        "synonymous_variant",
+        reference_codon,
+        alternate_codon,
+        "p.M1M",
+    )
 
 
 def test_feature_loader_preserves_gtf_phase(tmp_path) -> None:

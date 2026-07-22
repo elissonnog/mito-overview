@@ -115,6 +115,7 @@ MT_CODE = {
     "GGG": "G",
 }
 COMPLEMENT = str.maketrans("ACGTN", "TGCAN")
+MT_INITIATOR_CODONS = frozenset({"ATT", "ATC", "ATA", "ATG", "GTG"})
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -356,9 +357,16 @@ def annotate_protein_change(
     codon_alt = list(codon_ref)
     codon_alt[codon_offset] = alt_gene_base
     codon_alt_text = "".join(codon_alt)
-    aa_ref = translate_codon(codon_ref)
-    aa_alt = translate_codon(codon_alt_text)
     aa_position = codon_index + 1
+
+    if aa_position == 1 and codon_ref in MT_INITIATOR_CODONS:
+        if codon_alt_text not in MT_INITIATOR_CODONS:
+            return "start_lost", codon_ref, codon_alt_text, "p.M1?"
+        aa_ref = "M"
+        aa_alt = "M"
+    else:
+        aa_ref = translate_codon(codon_ref)
+        aa_alt = translate_codon(codon_alt_text)
     protein_change = f"p.{aa_ref}{aa_position}{aa_alt}"
 
     if aa_ref == aa_alt:
@@ -529,7 +537,11 @@ def run_step(
     overlap_lookup["alt_base"] = overlap_lookup["alt_base"].astype(str).str.upper()
     overlap_lookup = overlap_lookup.dropna(subset=["position"]).copy()
     overlap_lookup["position"] = overlap_lookup["position"].astype(int)
-    overlap_lookup = overlap_lookup.drop_duplicates(subset=["position", "ref_base", "alt_base"]).reset_index(drop=True)
+    overlap_lookup = overlap_lookup.drop_duplicates(subset=OVERLAP_COLUMNS).reset_index(drop=True)
+    overlap_lookup["_overlap_order"] = overlap_lookup.groupby(
+        ["position", "ref_base", "alt_base"],
+        sort=False,
+    ).cumcount()
 
     merged = filtered.merge(
         overlap_lookup,
@@ -612,10 +624,14 @@ def run_step(
             print(f"[variant_consequence] annotated candidates {idx}/{total}", flush=True)
 
     annot_df = pd.DataFrame(annot_rows, columns=ANNOTATION_COLUMNS)
+    annot_df["_overlap_order"] = (
+        pd.to_numeric(merged["_overlap_order"], errors="coerce").fillna(0).astype(int).to_numpy()
+    )
     annot_df = annot_df.sort_values(
-        ["alt_allele_fraction", "depth", "position"],
-        ascending=[False, False, True],
-    ).reset_index(drop=True)
+        ["alt_allele_fraction", "depth", "position", "_overlap_order", "feature_label"],
+        ascending=[False, False, True, True, True],
+        kind="stable",
+    ).drop(columns="_overlap_order").reset_index(drop=True)
     annot_df.to_csv(annot_path, sep="\t", index=False)
     print(f"[variant_consequence] wrote candidate annotations {annot_path}", flush=True)
 
