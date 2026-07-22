@@ -74,7 +74,7 @@ The module remains a configurable, lightweight within-sample ratio:
 
 `mt_to_nuclear_depth_ratio = mt_mean_depth / nuclear_mean_depth`
 
-It is not multiplied by two and is never labeled copies per diploid cell. A missing or zero nuclear denominator produces an empty/NA ratio with `status=not_evaluable` and `reason_code=no_valid_nuclear_windows`. Targeted-mt assays remain `not_applicable`. Outputs record requested and valid nuclear-window counts. A synthetic WGS known-answer case must verify `100 / 10 = 10.0`.
+It is not multiplied by two and is never labeled copies per diploid cell. A missing valid-window set produces an empty/NA ratio with `status=not_evaluable` and `reason_code=no_valid_nuclear_windows`; valid windows with a measured zero mean denominator use `reason_code=zero_nuclear_depth_denominator`. Targeted-mt assays remain `not_applicable`. Outputs record requested and valid nuclear-window counts. A synthetic WGS known-answer case must verify `100 / 10 = 10.0`.
 
 ## Correction 5: Reference Scope, NUMT, and BED
 
