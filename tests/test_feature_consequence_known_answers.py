@@ -3,7 +3,10 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from mito_overview.steps.mito_feature_annotation import classify_position
+from mito_overview.steps.mito_feature_annotation import (
+    classify_position,
+    load_human_mt_features,
+)
 from mito_overview.steps.mito_variant_consequence import (
     annotate_protein_change,
     translate_codon,
@@ -137,3 +140,46 @@ def test_vertebrate_mitochondrial_codon_table_known_answers() -> None:
     assert translate_codon("AGA") == "*"
     assert translate_codon("AGG") == "*"
     assert translate_codon("ATA") == "M"
+
+
+def test_feature_loader_preserves_gtf_phase(tmp_path) -> None:
+    gtf = tmp_path / "mt.gtf"
+    gtf.write_text(
+        'MT\ttest\tCDS\t1\t6\t.\t+\t2\tgene_id "G"; gene_name "G"; '
+        'gene_biotype "protein_coding";\n',
+        encoding="ascii",
+    )
+
+    observed = load_human_mt_features(gtf, "MT")
+
+    assert observed.iloc[0]["phase"] == "2"
+
+
+def test_multiple_cds_intervals_are_not_silently_collapsed() -> None:
+    cds = pd.DataFrame(
+        [
+            {"gene_name": "GENE", "start": 1, "end": 3, "strand": "+", "phase": "0"},
+            {"gene_name": "GENE", "start": 4, "end": 6, "strand": "+", "phase": "0"},
+        ]
+    )
+
+    assert annotate_protein_change(2, "G", "GENE", cds, "AAATTT") == (
+        "protein_coding_unspecified",
+        "NA",
+        "NA",
+        "NA",
+    )
+
+
+@pytest.mark.parametrize("phase", ["1", "2", "."])
+def test_nonzero_or_unknown_cds_phase_is_not_guessed(phase: str) -> None:
+    cds = pd.DataFrame(
+        [{"gene_name": "GENE", "start": 1, "end": 3, "strand": "+", "phase": phase}]
+    )
+
+    assert annotate_protein_change(2, "G", "GENE", cds, "AAA") == (
+        "protein_coding_unspecified",
+        "NA",
+        "NA",
+        "NA",
+    )

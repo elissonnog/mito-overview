@@ -46,7 +46,7 @@ def load_human_mt_features(gtf_path: str | Path, contig: str) -> pd.DataFrame:
             parts = line.rstrip("\n").split("\t")
             if len(parts) < 9:
                 continue
-            seqname, _, feature_type, start, end, _, strand, _, attrs = parts
+            seqname, _, feature_type, start, end, _, strand, phase, attrs = parts
             if seqname != contig or feature_type not in {"gene", "CDS"}:
                 continue
             attr_map = parse_attrs(attrs)
@@ -58,6 +58,7 @@ def load_human_mt_features(gtf_path: str | Path, contig: str) -> pd.DataFrame:
                     "start": int(start),
                     "end": int(end),
                     "strand": strand,
+                    "phase": phase,
                 }
             )
     return pd.DataFrame(rows)

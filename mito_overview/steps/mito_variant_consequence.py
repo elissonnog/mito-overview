@@ -283,11 +283,18 @@ def annotate_protein_change(
 ) -> tuple[str, str, str, str]:
     """Infer a local amino-acid consequence for a protein-coding mtDNA site."""
 
-    gene_hits = cds_rows[cds_rows["gene_name"].astype(str) == str(gene_name)].sort_values(["start", "end"]).head(1)
-    if gene_hits.empty:
+    gene_hits = cds_rows[
+        cds_rows["gene_name"].astype(str) == str(gene_name)
+    ].sort_values(["start", "end"])
+    # The local consequence model is deliberately limited to one contiguous,
+    # phase-zero mitochondrial CDS. Never guess across split/phase-shifted CDSs.
+    if len(gene_hits) != 1:
         return "protein_coding_unspecified", "NA", "NA", "NA"
 
     row = gene_hits.iloc[0]
+    phase = str(row.get("phase", "0"))
+    if phase not in {"0", "0.0"}:
+        return "protein_coding_unspecified", "NA", "NA", "NA"
     start = int(row["start"])
     end = int(row["end"])
     strand = str(row.get("strand", "+"))
