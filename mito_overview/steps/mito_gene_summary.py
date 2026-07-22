@@ -117,6 +117,48 @@ def _normalize_label(value, default: str = "NA") -> str:
     return text if text else default
 
 
+def _int_or_na(value: object) -> int | object:
+    number = pd.to_numeric(value, errors="coerce")
+    return pd.NA if pd.isna(number) else int(number)
+
+
+def _round_or_na(value: object, digits: int) -> float | object:
+    number = pd.to_numeric(value, errors="coerce")
+    return pd.NA if pd.isna(number) else round(float(number), digits)
+
+
+def _positive_count(frame: pd.DataFrame, column: str, *, evaluable: bool) -> int | object:
+    if not evaluable:
+        return pd.NA
+    values = pd.to_numeric(frame[column], errors="coerce").fillna(0)
+    return int((values > 0).sum())
+
+
+def _read_module_status(
+    path: Path,
+    *,
+    default_status: str,
+    default_reason: str,
+) -> tuple[str, str]:
+    if not path.exists():
+        return default_status, default_reason
+    try:
+        frame = pd.read_csv(path, sep="\t")
+    except pd.errors.EmptyDataError:
+        return "not_evaluable", "module_summary_empty"
+    if not {"metric", "value"}.issubset(frame.columns):
+        return default_status, default_reason
+    metrics = dict(zip(frame["metric"].astype(str), frame["value"]))
+    raw_status = str(metrics.get("status", default_status))
+    try:
+        status = validate_module_state(raw_status)
+    except ValueError:
+        return "not_evaluable", "module_summary_status_invalid"
+    raw_reason = metrics.get("reason_code", default_reason)
+    reason = default_reason if pd.isna(raw_reason) else str(raw_reason).strip()
+    return status, reason
+
+
 def _format_intervals(intervals: list[tuple[int, int]]) -> str:
     unique = sorted({(int(start), int(end)) for start, end in intervals})
     if not unique:
@@ -455,7 +497,7 @@ def run_step(
     sample_id: str,
     mt_contig: str,
     mt_length: int,
-) -> dict[str, Path]:
+) -> dict[str, Path | str]:
     """Summarize candidate burden across mitochondrial genes and features."""
 
     print(
@@ -508,7 +550,10 @@ def run_step(
             ),
         )
 
-    if overlap_path.exists():
+    candidate_evidence_available = overlap_path.exists()
+    candidate_evidence_status = "ok" if candidate_evidence_available else "not_evaluable"
+    candidate_evidence_reason = "" if candidate_evidence_available else "feature_overlap_candidates_missing"
+    if candidate_evidence_available:
         overlap_df = pd.read_csv(overlap_path, sep="\t")
     else:
         overlap_df = _empty_site_detail_df()
@@ -532,13 +577,17 @@ def run_step(
     if selected_sites_path is None:
         selected_df = pd.DataFrame()
         selected_positions: set[int] = set()
+        cosegregation_evidence_status = "not_configured"
+        cosegregation_evidence_reason = "cosegregation_selected_sites_missing"
         print(
-            "[gene_summary] no co-segregation selected-sites table found; continuing with zero selected-site counts",
+            "[gene_summary] no co-segregation selected-sites table found; selected-site counts are unavailable",
             flush=True,
         )
     else:
         selected_df = pd.read_csv(selected_sites_path, sep="\t")
         selected_positions = _extract_selected_positions(selected_df)
+        cosegregation_evidence_status = "ok"
+        cosegregation_evidence_reason = ""
         print(
             f"[gene_summary] loaded selected sites file={selected_sites_path.name} positions={len(selected_positions)}",
             flush=True,
@@ -546,6 +595,21 @@ def run_step(
 
     deletion_events_path = summary_dir / "mito_deletion_events.tsv"
     deletion_clusters_path = summary_dir / "mito_deletion_clusters.tsv"
+    if deletion_events_path.exists() and deletion_clusters_path.exists():
+        deletion_evidence_status = "ok"
+        deletion_evidence_reason = ""
+    elif deletion_events_path.exists() or deletion_clusters_path.exists():
+        deletion_evidence_status = "not_evaluable"
+        deletion_evidence_reason = "incomplete_deletion_outputs"
+    else:
+        deletion_evidence_status = "not_configured"
+        deletion_evidence_reason = "deletion_outputs_missing"
+    if deletion_events_path.exists() and deletion_clusters_path.exists():
+        deletion_evidence_status, deletion_evidence_reason = _read_module_status(
+            summary_dir / "mito_deletion_summary.tsv",
+            default_status=deletion_evidence_status,
+            default_reason=deletion_evidence_reason,
+        )
     deletion_events_df = pd.read_csv(deletion_events_path, sep="\t") if deletion_events_path.exists() else pd.DataFrame()
     deletion_clusters_df = (
         pd.read_csv(deletion_clusters_path, sep="\t") if deletion_clusters_path.exists() else pd.DataFrame()
@@ -563,6 +627,21 @@ def run_step(
         deletion_cluster_members[["cluster_bin_start", "cluster_bin_end"]]
         .drop_duplicates()
         .shape[0]
+    )
+    source_statuses = (
+        candidate_evidence_status,
+        cosegregation_evidence_status,
+        deletion_evidence_status,
+    )
+    evaluable_source_count = sum(status == "ok" for status in source_statuses)
+    if evaluable_source_count == 0:
+        module_status = "not_evaluable"
+        module_reason = "no_evaluable_gene_summary_evidence"
+    else:
+        module_status = "ok"
+        module_reason = "" if evaluable_source_count == len(source_statuses) else "partial_upstream_evidence"
+    selected_feature_mapping_evaluable = (
+        candidate_evidence_status == "ok" and cosegregation_evidence_status == "ok"
     )
     print(
         "[gene_summary] loaded "
@@ -583,48 +662,66 @@ def run_step(
         feature_label = str(spec["feature_label"])
         feature_class = str(spec["feature_class"])
         feature_intervals = list(spec["intervals"])
-        candidate_stat = candidate_stats.get(
-            feature_label,
-            {
+        if candidate_evidence_available:
+            candidate_default = {
                 "candidate_sites": 0,
                 "max_alt_allele_fraction": 0.0,
                 "mean_alt_allele_fraction": 0.0,
                 "median_depth": 0.0,
                 "top_site": "NA",
-            },
+            }
+        else:
+            candidate_default = {
+                "candidate_sites": pd.NA,
+                "max_alt_allele_fraction": pd.NA,
+                "mean_alt_allele_fraction": pd.NA,
+                "median_depth": pd.NA,
+                "top_site": "NA",
+            }
+        candidate_stat = candidate_stats.get(feature_label, candidate_default)
+        interval_text = (
+            "non-feature candidate positions"
+            if feature_label == "intergenic"
+            else _format_intervals(feature_intervals)
         )
-        if feature_label == "intergenic":
+        if deletion_evidence_status != "ok":
+            deletion_event_overlaps = pd.NA
+            deletion_cluster_overlaps = pd.NA
+            max_cluster_support = pd.NA
+        elif feature_label == "intergenic":
             deletion_event_overlaps = 0
             deletion_cluster_overlaps = 0
             max_cluster_support = 0.0
-            interval_text = "non-feature candidate positions"
         else:
             deletion_event_overlaps, _ = _count_overlapping_intervals(deletion_event_intervals, feature_intervals)
             deletion_cluster_overlaps, max_cluster_support = _count_overlapping_clusters(
                 deletion_cluster_members,
                 feature_intervals,
             )
-            interval_text = _format_intervals(feature_intervals)
 
         summary_rows.append(
             {
                 "feature_label": feature_label,
                 "feature_class": feature_class,
                 "feature_intervals": interval_text,
-                "candidate_sites": int(candidate_stat["candidate_sites"]),
-                "selected_coseg_sites": int(selected_counts.get(feature_label, 0)),
-                "max_alt_allele_fraction": round(
-                    float(candidate_stat["max_alt_allele_fraction"]), 6
+                "candidate_sites": _int_or_na(candidate_stat["candidate_sites"]),
+                "selected_coseg_sites": (
+                    int(selected_counts.get(feature_label, 0))
+                    if selected_feature_mapping_evaluable
+                    else pd.NA
                 ),
-                "mean_alt_allele_fraction": round(
-                    float(candidate_stat["mean_alt_allele_fraction"]), 6
+                "max_alt_allele_fraction": _round_or_na(
+                    candidate_stat["max_alt_allele_fraction"], 6
                 ),
-                "max_heteroplasmy": round(float(candidate_stat["max_alt_allele_fraction"]), 6),
-                "mean_heteroplasmy": round(float(candidate_stat["mean_alt_allele_fraction"]), 6),
-                "median_depth": round(float(candidate_stat["median_depth"]), 1),
-                "deletion_event_overlaps": int(deletion_event_overlaps),
-                "deletion_cluster_overlaps": int(deletion_cluster_overlaps),
-                "max_cluster_support_fraction_primary": round(float(max_cluster_support), 6),
+                "mean_alt_allele_fraction": _round_or_na(
+                    candidate_stat["mean_alt_allele_fraction"], 6
+                ),
+                "max_heteroplasmy": _round_or_na(candidate_stat["max_alt_allele_fraction"], 6),
+                "mean_heteroplasmy": _round_or_na(candidate_stat["mean_alt_allele_fraction"], 6),
+                "median_depth": _round_or_na(candidate_stat["median_depth"], 1),
+                "deletion_event_overlaps": _int_or_na(deletion_event_overlaps),
+                "deletion_cluster_overlaps": _int_or_na(deletion_cluster_overlaps),
+                "max_cluster_support_fraction_primary": _round_or_na(max_cluster_support, 6),
                 "top_site": str(candidate_stat["top_site"]),
             }
         )
@@ -644,37 +741,68 @@ def run_step(
     ).reset_index(drop=True)
 
     site_detail_df = _build_site_detail_df(overlap_df)
+    candidate_feature_count = _positive_count(
+        summary_df, "candidate_sites", evaluable=candidate_evidence_status == "ok"
+    )
+    selected_feature_count = _positive_count(
+        summary_df,
+        "selected_coseg_sites",
+        evaluable=selected_feature_mapping_evaluable,
+    )
+    deletion_feature_count = _positive_count(
+        summary_df,
+        "deletion_cluster_overlaps",
+        evaluable=deletion_evidence_status == "ok",
+    )
     run_summary_df = pd.DataFrame(
         [
-            {"metric": "status", "value": "ok"},
-            {"metric": "reason_code", "value": ""},
+            {"metric": "status", "value": module_status},
+            {"metric": "reason_code", "value": module_reason},
+            {"metric": "candidate_evidence_status", "value": candidate_evidence_status},
+            {"metric": "candidate_evidence_reason_code", "value": candidate_evidence_reason},
+            {"metric": "cosegregation_evidence_status", "value": cosegregation_evidence_status},
+            {
+                "metric": "cosegregation_evidence_reason_code",
+                "value": cosegregation_evidence_reason,
+            },
+            {"metric": "deletion_evidence_status", "value": deletion_evidence_status},
+            {"metric": "deletion_evidence_reason_code", "value": deletion_evidence_reason},
             {"metric": "features_summarized", "value": len(summary_df)},
             {
                 "metric": "features_with_candidate_sites",
-                "value": int((summary_df["candidate_sites"] > 0).sum()),
+                "value": candidate_feature_count,
             },
             {
                 "metric": "features_with_deletion_cluster_overlap",
-                "value": int((summary_df["deletion_cluster_overlaps"] > 0).sum()),
+                "value": deletion_feature_count,
             },
             {
                 "metric": "features_with_cosegregation_selected_sites",
-                "value": int((summary_df["selected_coseg_sites"] > 0).sum()),
+                "value": selected_feature_count,
             },
-            {"metric": "candidate_site_rows", "value": len(site_detail_df)},
-            {"metric": "selected_coseg_positions_loaded", "value": len(selected_positions)},
-            {"metric": "deletion_event_intervals_loaded", "value": len(deletion_event_intervals)},
+            {
+                "metric": "candidate_site_rows",
+                "value": len(site_detail_df) if candidate_evidence_status == "ok" else pd.NA,
+            },
+            {
+                "metric": "selected_coseg_positions_loaded",
+                "value": len(selected_positions) if cosegregation_evidence_status == "ok" else pd.NA,
+            },
+            {
+                "metric": "deletion_event_intervals_loaded",
+                "value": len(deletion_event_intervals) if deletion_evidence_status == "ok" else pd.NA,
+            },
             {
                 "metric": "deletion_cluster_overlap_method",
                 "value": "exact_member_event_intervals",
             },
             {
                 "metric": "deletion_cluster_member_intervals_loaded",
-                "value": len(deletion_cluster_members),
+                "value": len(deletion_cluster_members) if deletion_evidence_status == "ok" else pd.NA,
             },
             {
                 "metric": "deletion_clusters_evaluable",
-                "value": evaluable_deletion_clusters,
+                "value": evaluable_deletion_clusters if deletion_evidence_status == "ok" else pd.NA,
             },
         ]
     )
@@ -684,15 +812,14 @@ def run_step(
     run_summary_df.to_csv(run_summary_path, sep="\t", index=False)
 
     fig_path: Path | None = None
-    overview_df = summary_df[
-        (
-            (summary_df["candidate_sites"] > 0)
-            | (summary_df["selected_coseg_sites"] > 0)
-            | (summary_df["deletion_cluster_overlaps"] > 0)
-        )
-    ].head(20)
+    candidate_positive = pd.to_numeric(summary_df["candidate_sites"], errors="coerce").fillna(0) > 0
+    selected_positive = pd.to_numeric(summary_df["selected_coseg_sites"], errors="coerce").fillna(0) > 0
+    deletion_positive = pd.to_numeric(summary_df["deletion_cluster_overlaps"], errors="coerce").fillna(0) > 0
+    overview_df = summary_df[candidate_positive | selected_positive | deletion_positive].head(20)
     if not overview_df.empty:
         plot_df = overview_df.iloc[::-1].copy()
+        for column in ("candidate_sites", "selected_coseg_sites", "deletion_cluster_overlaps"):
+            plot_df[column] = pd.to_numeric(plot_df[column], errors="coerce").fillna(0)
         y_positions = list(range(len(plot_df)))
         fig_height = max(4.0, 0.38 * len(plot_df) + 1.8)
         plt.figure(figsize=(12, fig_height))
@@ -725,15 +852,19 @@ def run_step(
 
     metrics_html = "".join(
         [
+            metric_card("Evaluation status", module_status),
             metric_card("Features summarized", len(summary_df)),
-            metric_card("Features with candidate sites", int((summary_df["candidate_sites"] > 0).sum())),
+            metric_card(
+                "Features with candidate sites",
+                "NA" if pd.isna(candidate_feature_count) else candidate_feature_count,
+            ),
             metric_card(
                 "Features with deletion-cluster overlap",
-                int((summary_df["deletion_cluster_overlaps"] > 0).sum()),
+                "NA" if pd.isna(deletion_feature_count) else deletion_feature_count,
             ),
             metric_card(
                 "Features with co-segregation-selected sites",
-                int((summary_df["selected_coseg_sites"] > 0).sum()),
+                "NA" if pd.isna(selected_feature_count) else selected_feature_count,
             ),
         ]
     )
@@ -743,7 +874,8 @@ def run_step(
         "whether selected co-segregation sites cluster in the same features, and whether exact "
         "one-based deletion-event spans overlap those features. Cluster-level overlap is counted "
         "only when at least one exact member event overlaps; zero-based breakpoint-bin anchors are "
-        "not treated as biological deletion intervals.</p>"
+        "not treated as biological deletion intervals. Metrics whose upstream evidence is unavailable "
+        "are reported as NA rather than as observed zeros.</p>"
         f"<div class='metrics-grid'>{metrics_html}</div>"
     )
 
@@ -758,7 +890,9 @@ def run_step(
             + "</section>"
         )
     body_parts.append(
-        "<section><h2>Gene/feature summary</h2>" + df_to_html_table(summary_df, max_rows=30) + "</section>"
+        "<section><h2>Gene/feature summary</h2>"
+        + df_to_html_table(summary_df.fillna("NA"), max_rows=30)
+        + "</section>"
     )
     body_parts.append(
         "<section><h2>Site-level details by feature</h2>"
@@ -775,13 +909,12 @@ def run_step(
     )
     print(
         "[gene_summary] finished "
-        f"features={len(summary_df)} candidate_features={(summary_df['candidate_sites'] > 0).sum()} "
-        f"selected_features={(summary_df['selected_coseg_sites'] > 0).sum()} "
-        f"deletion_features={(summary_df['deletion_cluster_overlaps'] > 0).sum()}",
+        f"status={module_status} features={len(summary_df)} candidate_features={candidate_feature_count} "
+        f"selected_features={selected_feature_count} deletion_features={deletion_feature_count}",
         flush=True,
     )
     return {
-        "status": "ok",
+        "status": module_status,
         "summary_path": summary_path,
         "site_details_path": site_details_path,
         "run_summary_path": run_summary_path,

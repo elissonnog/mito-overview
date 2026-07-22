@@ -13,7 +13,7 @@ import pandas as pd
 import pysam
 
 from mito_overview.report_common import df_to_html_table, figure_html, metric_card, render_page
-from mito_overview.table_contracts import ensure_alt_fraction_columns
+from mito_overview.table_contracts import ensure_alt_fraction_columns, validate_module_state
 
 SUMMARY_COLUMNS = ["metric", "value"]
 VARIANT_COLUMNS = ["position", "ref", "alt"]
@@ -95,7 +95,7 @@ def run_step(
     np_snp_vcf: str | Path | None,
     fingerprint_depth: int = 100,
     major_vaf: float = 0.90,
-) -> dict[str, Path]:
+) -> dict[str, Path | str]:
     """Run the public mitochondrial identity-QC step."""
 
     print(
@@ -129,9 +129,20 @@ def run_step(
         flush=True,
     )
 
-    major_df = pd.DataFrame(columns=FINGERPRINT_COLUMNS)
     required_fingerprint = {"position", "ref_base", "alt_base", "alt_allele_fraction", "depth"}
-    if not hetero_df.empty and required_fingerprint.issubset(hetero_df.columns):
+    fingerprint_input_present = hetero_path.is_file()
+    fingerprint_input_usable = fingerprint_input_present and required_fingerprint.issubset(
+        hetero_df.columns
+    )
+    fingerprint_status = "ok" if fingerprint_input_usable else "not_evaluable"
+    fingerprint_reason = ""
+    if not fingerprint_input_present:
+        fingerprint_reason = "heteroplasmy_all_sites_missing"
+    elif not fingerprint_input_usable:
+        fingerprint_reason = "heteroplasmy_all_sites_unusable"
+
+    major_df = pd.DataFrame(columns=FINGERPRINT_COLUMNS)
+    if fingerprint_input_usable and not hetero_df.empty:
         major_df = hetero_df.copy()
         major_df["position"] = pd.to_numeric(major_df["position"], errors="coerce")
         major_df["depth"] = pd.to_numeric(major_df["depth"], errors="coerce")
@@ -149,7 +160,7 @@ def run_step(
         major_df["heteroplasmy_fraction"] = major_df["alt_allele_fraction"]
         major_df["position"] = major_df["position"].astype(int)
         major_df = major_df.loc[:, FINGERPRINT_COLUMNS]
-    elif hetero_path.exists():
+    elif fingerprint_input_present and not fingerprint_input_usable:
         print(
             "[identity_qc] heteroplasmy table did not include the expected fingerprint columns; "
             "writing an empty fingerprint table",
@@ -191,28 +202,58 @@ def run_step(
 
     phymer_best = "NA"
     phymer_status = "not_configured"
+    phymer_reason = "phymer_summary_missing"
     if not phymer_summary.empty and {"metric", "value"}.issubset(phymer_summary.columns):
         metric_map = dict(zip(phymer_summary["metric"], phymer_summary["value"]))
         phymer_best = str(metric_map.get("best_haplogroup", "NA"))
-        phymer_status = str(metric_map.get("status", "not_configured"))
+        raw_phymer_status = str(metric_map.get("status", "not_configured"))
+        try:
+            phymer_status = validate_module_state(raw_phymer_status)
+            raw_phymer_reason = metric_map.get("reason_code", "")
+            phymer_reason = "" if pd.isna(raw_phymer_reason) else str(raw_phymer_reason).strip()
+        except ValueError:
+            phymer_status = "not_evaluable"
+            phymer_reason = "phymer_summary_status_invalid"
 
     phased_vcf_present = bool(phased_snp_vcf and Path(phased_snp_vcf).is_file())
     np_vcf_present = bool(np_snp_vcf and Path(np_snp_vcf).is_file())
     comparison_status = "ok" if phased_vcf_present and np_vcf_present else "not_configured"
+    comparison_reason = "" if comparison_status == "ok" else "paired_variant_vcfs_not_configured"
+
+    evidence_statuses = (fingerprint_status, comparison_status, phymer_status)
+    evaluable_sources = sum(source_status == "ok" for source_status in evidence_statuses)
+    if evaluable_sources == 0:
+        module_status = "not_evaluable"
+        module_reason = "no_evaluable_identity_evidence"
+    else:
+        module_status = "ok"
+        module_reason = "" if evaluable_sources == len(evidence_statuses) else "partial_identity_evidence"
+
+    major_fingerprint_sites: int | object = len(major_df) if fingerprint_status == "ok" else pd.NA
+    phased_record_count: int | object = len(phased_df) if phased_vcf_present else pd.NA
+    np_record_count: int | object = len(np_df) if np_vcf_present else pd.NA
+    shared_record_count: int | object = len(shared_keys) if comparison_status == "ok" else pd.NA
+    phased_only_count: int | object = len(phased_only_keys) if comparison_status == "ok" else pd.NA
+    np_only_count: int | object = len(np_only_keys) if comparison_status == "ok" else pd.NA
 
     summary_df = pd.DataFrame(
         [
-            {"metric": "status", "value": "ok"},
+            {"metric": "status", "value": module_status},
+            {"metric": "reason_code", "value": module_reason},
+            {"metric": "fingerprint_status", "value": fingerprint_status},
+            {"metric": "fingerprint_reason_code", "value": fingerprint_reason},
             {"metric": "variant_comparison_status", "value": comparison_status},
+            {"metric": "variant_comparison_reason_code", "value": comparison_reason},
             {"metric": "phased_variant_vcf_present", "value": int(phased_vcf_present)},
             {"metric": "unphased_variant_vcf_present", "value": int(np_vcf_present)},
-            {"metric": "major_fingerprint_sites", "value": int(len(major_df))},
-            {"metric": "phased_mt_variant_records", "value": int(len(phased_df))},
-            {"metric": "np_mt_variant_records", "value": int(len(np_df))},
-            {"metric": "shared_mt_variant_records", "value": int(len(shared_keys))},
-            {"metric": "phased_only_mt_variant_records", "value": int(len(phased_only_keys))},
-            {"metric": "np_only_mt_variant_records", "value": int(len(np_only_keys))},
+            {"metric": "major_fingerprint_sites", "value": major_fingerprint_sites},
+            {"metric": "phased_mt_variant_records", "value": phased_record_count},
+            {"metric": "np_mt_variant_records", "value": np_record_count},
+            {"metric": "shared_mt_variant_records", "value": shared_record_count},
+            {"metric": "phased_only_mt_variant_records", "value": phased_only_count},
+            {"metric": "np_only_mt_variant_records", "value": np_only_count},
             {"metric": "formal_haplogroup_assignment_status", "value": phymer_status},
+            {"metric": "formal_haplogroup_reason_code", "value": phymer_reason},
             {"metric": "formal_haplogroup_best_match", "value": phymer_best},
             {"metric": "major_variant_fingerprint", "value": fingerprint_string},
         ],
@@ -228,9 +269,24 @@ def run_step(
         }
     )
     plt.figure(figsize=(6, 4))
-    plt.bar(overlap_plot_df["class"], overlap_plot_df["count"], color=["#0f766e", "#2563eb", "#f59e0b"])
-    plt.ylabel("Variant records")
-    plt.title(f"{sample_id} phased vs NP mtDNA variant overlap")
+    if comparison_status == "ok":
+        plt.bar(
+            overlap_plot_df["class"],
+            overlap_plot_df["count"],
+            color=["#0f766e", "#2563eb", "#f59e0b"],
+        )
+        plt.ylabel("Variant records")
+        plt.title(f"{sample_id} phased vs NP mtDNA variant overlap")
+    else:
+        plt.axis("off")
+        plt.text(
+            0.5,
+            0.5,
+            "Paired phased and unphased VCFs were not configured",
+            ha="center",
+            va="center",
+            wrap=True,
+        )
     plt.tight_layout()
     plt.savefig(overlap_fig, dpi=150)
     plt.close()
@@ -254,10 +310,19 @@ def run_step(
 
     metrics_html = "".join(
         [
-            metric_card("Major fingerprint sites", int(len(major_df))),
-            metric_card("Shared phased/NP calls", int(len(shared_keys))),
-            metric_card("Phased-only calls", int(len(phased_only_keys))),
-            metric_card("NP-only calls", int(len(np_only_keys))),
+            metric_card("Evaluation status", module_status),
+            metric_card(
+                "Major fingerprint sites",
+                "NA" if pd.isna(major_fingerprint_sites) else major_fingerprint_sites,
+            ),
+            metric_card(
+                "Shared phased/NP calls",
+                "NA" if pd.isna(shared_record_count) else shared_record_count,
+            ),
+            metric_card(
+                "Phased-only calls", "NA" if pd.isna(phased_only_count) else phased_only_count
+            ),
+            metric_card("NP-only calls", "NA" if pd.isna(np_only_count) else np_only_count),
             metric_card("Best haplogroup", phymer_best),
         ]
     )
@@ -270,7 +335,9 @@ def run_step(
         f"<div class='metrics-grid'>{metrics_html}</div>"
     )
     body_parts = [
-        "<section><h2>Identity/QC summary</h2>" + df_to_html_table(summary_df, max_rows=20) + "</section>",
+        "<section><h2>Identity/QC summary</h2>"
+        + df_to_html_table(summary_df.fillna("NA"), max_rows=20)
+        + "</section>",
         "<section><h2>Phased vs no-phased variant overlap</h2>"
         + figure_html(overlap_fig, "Concordance of mtDNA SNP records between phased and no-phased workflows")
         + "</section>",
@@ -296,6 +363,7 @@ def run_step(
     print(f"[identity_qc] wrote report {report_path}", flush=True)
 
     outputs = {
+        "status": module_status,
         "fingerprint_path": fingerprint_path,
         "compare_path": compare_path,
         "summary_path": summary_path,

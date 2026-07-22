@@ -45,7 +45,7 @@ def run_step(
     assay_type: str = "wgs",
     mt_contig: str,
     mt_length: int,
-) -> dict[str, Path]:
+) -> dict[str, Path | str]:
     """Run the public mitochondrial QC step."""
 
     summary_dir = Path(summary_dir)
@@ -120,10 +120,16 @@ def run_step(
     median_depth = round(statistics.median(depth), 3) if depth else 0.0
     breadth_1x = round(sum(d >= 1 for d in depth) / len(depth), 4) if depth else 0.0
     breadth_10x = round(sum(d >= 10 for d in depth) / len(depth), 4) if depth else 0.0
-    full_length_fraction = round(full_length / mapped, 4) if mapped else 0.0
-    high_alignment_fraction = round(high_alignment_fraction_reads / mapped, 4) if mapped else 0.0
+    module_status = "ok" if mapped else "not_evaluable"
+    module_reason = "" if mapped else "no_mapped_reads"
+    full_length_fraction: float | object = round(full_length / mapped, 4) if mapped else pd.NA
+    high_alignment_fraction: float | object = (
+        round(high_alignment_fraction_reads / mapped, 4) if mapped else pd.NA
+    )
 
     summary_rows = [
+        {"metric": "status", "value": module_status},
+        {"metric": "reason_code", "value": module_reason},
         {"metric": "mapped_reads", "value": mapped},
         {"metric": "primary_reads", "value": primary},
         {"metric": "supplementary_reads", "value": supplementary},
@@ -173,8 +179,10 @@ def run_step(
 
     span_metric_label = "Full-length fraction" if read_mode == "long" else "High query-alignment fraction"
     span_metric_value = full_length_fraction if read_mode == "long" else high_alignment_fraction
+    span_metric_display = "NA" if pd.isna(span_metric_value) else span_metric_value
     metrics_html = "".join(
         [
+            metric_card("Evaluation status", module_status),
             metric_card("Species", species),
             metric_card("Build", build),
             metric_card("Read mode", read_mode),
@@ -182,7 +190,7 @@ def run_step(
             metric_card("Mito contig", mt_contig),
             metric_card("Mapped reads", mapped),
             metric_card("Mean depth", mean_depth),
-            metric_card(span_metric_label, span_metric_value),
+            metric_card(span_metric_label, span_metric_display),
         ]
     )
     structure_phrase = (
@@ -207,7 +215,11 @@ def run_step(
             + figure_html(readlen_fig, "Distribution of mitochondrial read lengths")
             + "</section>"
         )
-    body_parts.append("<section><h2>QC metrics table</h2>" + df_to_html_table(summary_df, max_rows=20) + "</section>")
+    body_parts.append(
+        "<section><h2>QC metrics table</h2>"
+        + df_to_html_table(summary_df.fillna("NA"), max_rows=20)
+        + "</section>"
+    )
     body_parts.append("<section><h2>Read-level table</h2>" + df_to_html_table(reads_df, max_rows=20) + "</section>")
 
     render_page(
@@ -219,6 +231,7 @@ def run_step(
         "".join(body_parts),
     )
     return {
+        "status": module_status,
         "summary_path": summary_path,
         "depth_path": depth_path,
         "reads_path": reads_path,

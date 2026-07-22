@@ -700,8 +700,10 @@ def _run_mito_qc(config: PipelineConfig, paths: RunPaths, strict_files: bool) ->
         mt_contig=config.mt_contig,
         mt_length=config.mt_length,
     )
-    (paths.log_dir / "mito_qc.done").write_text("ok\n", encoding="utf-8")
-    return StepResult("mito_qc", "ok", f"Wrote {outputs['report_path']}")
+    status = str(outputs.get("status", "ok"))
+    status_suffix = "done" if status == "ok" else status
+    (paths.log_dir / f"mito_qc.{status_suffix}").write_text(status + "\n", encoding="utf-8")
+    return StepResult("mito_qc", status, f"Wrote {outputs['report_path']}")
 
 
 def _run_heteroplasmy(config: PipelineConfig, paths: RunPaths, strict_files: bool) -> StepResult:
@@ -761,8 +763,10 @@ def _run_deletions(config: PipelineConfig, paths: RunPaths, strict_files: bool) 
         mt_length=config.mt_length,
         min_deletion_size=config.deletion_min_size,
     )
-    (paths.log_dir / "deletions.done").write_text("ok\n", encoding="utf-8")
-    return StepResult("deletions", "ok", f"Wrote {outputs['report_path']}")
+    status = str(outputs.get("status", "ok"))
+    status_suffix = "done" if status == "ok" else status
+    (paths.log_dir / f"deletions.{status_suffix}").write_text(status + "\n", encoding="utf-8")
+    return StepResult("deletions", status, f"Wrote {outputs['report_path']}")
 
 
 def _run_copy_number(config: PipelineConfig, paths: RunPaths, strict_files: bool) -> StepResult:
@@ -923,8 +927,10 @@ def _run_identity_qc(config: PipelineConfig, paths: RunPaths, strict_files: bool
         phased_snp_vcf=paths.phased_snp_vcf,
         np_snp_vcf=paths.np_snp_vcf,
     )
-    (paths.log_dir / "identity_qc.done").write_text("ok\n", encoding="utf-8")
-    return StepResult("identity_qc", "ok", f"Wrote {outputs['report_path']}")
+    status = str(outputs.get("status", "ok"))
+    status_suffix = "done" if status == "ok" else status
+    (paths.log_dir / f"identity_qc.{status_suffix}").write_text(status + "\n", encoding="utf-8")
+    return StepResult("identity_qc", status, f"Wrote {outputs['report_path']}")
 
 
 def _run_variant_consequence(config: PipelineConfig, paths: RunPaths, strict_files: bool) -> StepResult:

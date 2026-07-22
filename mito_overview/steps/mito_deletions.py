@@ -75,7 +75,7 @@ def run_step(
     mt_contig: str,
     mt_length: int,
     min_deletion_size: int,
-) -> dict[str, Path]:
+) -> dict[str, Path | str]:
     """Run the public mitochondrial deletion screen."""
 
     print(
@@ -152,6 +152,8 @@ def run_step(
     reads_with_large_deletion = len(read_names_with_large_deletion)
     reads_with_supplementary = len(read_names_with_supplementary_or_sa)
     print(f"[deletions] finished scanning primary_reads={primary_reads} candidate_events={len(event_rows)}")
+    module_status = "ok" if primary_reads else "not_evaluable"
+    module_reason = "" if primary_reads else "no_primary_reads"
 
     event_df = pd.DataFrame(event_rows, columns=EVENT_COLUMNS)
     read_df = pd.DataFrame(read_rows, columns=READ_COLUMNS)
@@ -177,7 +179,7 @@ def run_step(
         cluster_keys = pd.MultiIndex.from_frame(cluster_df[["event_bin_start", "event_bin_end"]])
         primary_support_counts = supporting_primary_reads.reindex(cluster_keys, fill_value=0).to_numpy()
         cluster_df["support_fraction_primary"] = [
-            round(int(count) / primary_reads, 6) if primary_reads else 0.0
+            round(int(count) / primary_reads, 6) if primary_reads else pd.NA
             for count in primary_support_counts
         ]
     else:
@@ -185,6 +187,8 @@ def run_step(
 
     summary_df = pd.DataFrame(
         [
+            {"metric": "status", "value": module_status},
+            {"metric": "reason_code", "value": module_reason},
             {"metric": "primary_reads", "value": primary_reads},
             {"metric": "reads_with_large_deletion", "value": reads_with_large_deletion},
             {"metric": "reads_with_supplementary_or_SA", "value": reads_with_supplementary},
@@ -195,7 +199,11 @@ def run_step(
             },
             {
                 "metric": "max_support_fraction_primary",
-                "value": float(cluster_df["support_fraction_primary"].max()) if not cluster_df.empty else 0,
+                "value": (
+                    float(cluster_df["support_fraction_primary"].max())
+                    if primary_reads and not cluster_df.empty
+                    else (0.0 if primary_reads else pd.NA)
+                ),
             },
         ]
     )
@@ -225,6 +233,7 @@ def run_step(
 
     metrics_html = "".join(
         [
+            metric_card("Evaluation status", module_status),
             metric_card("Primary reads", primary_reads),
             metric_card("Reads with qualifying CIGAR deletion", reads_with_large_deletion),
             metric_card("CIGAR-deletion bins", len(cluster_df)),
@@ -248,9 +257,11 @@ def run_step(
         f"<div class='metrics-grid'>{metrics_html}</div>"
     )
     body_parts = [
-        "<section><h2>Deletion summary</h2>" + df_to_html_table(summary_df, max_rows=20) + "</section>",
+        "<section><h2>Deletion summary</h2>"
+        + df_to_html_table(summary_df.fillna("NA"), max_rows=20)
+        + "</section>",
         "<section><h2>Qualifying CIGAR-deletion bins</h2>"
-        + df_to_html_table(cluster_df, max_rows=25)
+        + df_to_html_table(cluster_df.fillna("NA"), max_rows=25)
         + "</section>",
         "<section><h2>Qualifying CIGAR-deletion events</h2>"
         + df_to_html_table(event_df, max_rows=30)
@@ -274,6 +285,7 @@ def run_step(
         "".join(body_parts),
     )
     return {
+        "status": module_status,
         "summary_path": summary_path,
         "events_path": events_path,
         "clusters_path": clusters_path,

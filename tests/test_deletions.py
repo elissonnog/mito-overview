@@ -25,6 +25,12 @@ def run_deletion_fixture(tmp_path: Path, reads: list[ReadSpec]) -> dict[str, Pat
 
 def test_empty_alignment_preserves_all_deletion_table_schemas(tmp_path: Path) -> None:
     outputs = run_deletion_fixture(tmp_path, [])
+    summary = metric_map(outputs["summary_path"])
+
+    assert outputs["status"] == "not_evaluable"
+    assert summary["status"] == "not_evaluable"
+    assert summary["reason_code"] == "no_primary_reads"
+    assert summary["max_support_fraction_primary"] == ""
 
     expected_columns = {
         "events_path": (
@@ -83,6 +89,8 @@ def test_split_alignment_summary_counts_unique_read_names(tmp_path: Path) -> Non
     assert int(float(summary["reads_with_supplementary_or_SA"])) == 1
     assert int(float(summary["reads_with_large_deletion"])) == 0
     assert int(float(summary["candidate_deletion_clusters"])) == 0
+    assert summary["status"] == "ok"
+    assert float(summary["max_support_fraction_primary"]) == 0.0
     assert pd.read_csv(outputs["events_path"], sep="\t").empty
     read_flags = pd.read_csv(outputs["reads_path"], sep="\t")
     assert tuple(read_flags.columns) == (
@@ -207,3 +215,29 @@ def test_primary_support_fraction_excludes_supplementary_only_read_names(tmp_pat
     assert float(summary["max_support_fraction_primary"]) == 1.0
     assert "supplementary-only records remain in the event evidence" in report
     assert "cannot make this fraction exceed one" in report
+
+
+def test_supplementary_only_deletion_has_no_primary_support_denominator(
+    tmp_path: Path,
+) -> None:
+    outputs = run_deletion_fixture(
+        tmp_path,
+        [
+            ReadSpec(
+                "supplementary-only",
+                "MT",
+                0,
+                "A" * 10,
+                flag=2048,
+                cigar=((0, 5), (2, 100), (0, 5)),
+            )
+        ],
+    )
+    summary = metric_map(outputs["summary_path"])
+    clusters = pd.read_csv(outputs["clusters_path"], sep="\t")
+
+    assert outputs["status"] == "not_evaluable"
+    assert summary["status"] == "not_evaluable"
+    assert summary["reason_code"] == "no_primary_reads"
+    assert summary["max_support_fraction_primary"] == ""
+    assert clusters["support_fraction_primary"].isna().all()
