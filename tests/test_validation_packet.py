@@ -193,6 +193,32 @@ def write_distribution_artifacts(dist_root: Path, version: str = "0.3.0") -> Non
         archive.addfile(member, io.BytesIO(payload))
 
 
+def replace_distribution_with_same_identity(path: Path) -> None:
+    """Replace archive bytes while preserving package name and version metadata."""
+
+    if path.name.endswith(".whl"):
+        with zipfile.ZipFile(path, "a", compression=zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr("replacement-marker.txt", "different wheel bytes\n")
+        return
+    if path.name.endswith(".tar.gz"):
+        with tarfile.open(path, "r:gz") as archive:
+            pkg_info = next(
+                member for member in archive.getmembers() if member.name.endswith("/PKG-INFO")
+            )
+            handle = archive.extractfile(pkg_info)
+            assert handle is not None
+            metadata = handle.read()
+        with tarfile.open(path, "w:gz") as archive:
+            pkg_info.size = len(metadata)
+            archive.addfile(pkg_info, io.BytesIO(metadata))
+            payload = b"different sdist bytes\n"
+            marker = tarfile.TarInfo("mito_overview-0.3.0/replacement-marker.txt")
+            marker.size = len(payload)
+            archive.addfile(marker, io.BytesIO(payload))
+        return
+    raise AssertionError(f"Unsupported distribution fixture: {path}")
+
+
 def provenance_record(name: str, content: bytes | None = None) -> dict[str, object]:
     payload = content if content is not None else name.encode()
     return {
@@ -480,6 +506,13 @@ def write_acceptance_evidence(
         "html_url": REPOSITORY,
         "url": repository_api,
     }
+    distributions: list[dict[str, object]] = []
+    if (root / "dist").is_dir():
+        distributions = packet_builder.validate_distributions(
+            root / "dist", "mito-overview", "0.3.0"
+        )
+        for artifact in distributions:
+            artifact["direct_url_archive_sha256"] = artifact["sha256"]
 
     fresh_case = packet_builder.FRESH_CLONE_CASE_ID
     (root / "commands" / f"{fresh_case}.sh").write_text(
@@ -514,6 +547,7 @@ def write_acceptance_evidence(
                 "installed_sdist": True,
                 "separate_distribution_environments": True,
                 "executed_outside_checkout": True,
+                "distributions": distributions,
                 "command_path": f"commands/{fresh_case}.sh",
                 "log_path": f"logs/{fresh_case}.log",
             },
@@ -980,6 +1014,11 @@ def write_tsv(path: Path, header: tuple[str, ...], rows: list[list[str]]) -> Non
         writer = csv.writer(handle, delimiter="\t", lineterminator="\n")
         writer.writerow(header)
         writer.writerows(rows)
+
+
+def read_tsv(path: Path) -> list[dict[str, str]]:
+    with path.open(encoding="utf-8", newline="") as handle:
+        return [dict(row) for row in csv.DictReader(handle, delimiter="\t")]
 
 
 def frozen_oracle_rows() -> list[dict[str, str]]:
@@ -1669,6 +1708,21 @@ def mutate_tsv_value(
         writer.writerows(rows)
 
 
+def rebind_inventory_provenance(root: Path, inventory: Path) -> None:
+    public_root = root / "public"
+    if inventory.is_relative_to(public_root):
+        packet_path = inventory.relative_to(public_root).as_posix()
+    else:
+        packet_path = inventory.relative_to(root).as_posix()
+    mutate_tsv_value(
+        root / "table_provenance.tsv",
+        "packet_path",
+        packet_path,
+        "sha256",
+        hashlib.sha256(inventory.read_bytes()).hexdigest(),
+    )
+
+
 def verify_packet(packet: Path) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [str(packet / "verify_bundle.sh")],
@@ -1719,12 +1773,49 @@ def test_release_case_gate_requires_complete_passing_set(tmp_path: Path) -> None
     assert verdicts["PASS"] == len(rows)
 
     write_cases(cases, rows[1:])
-    with pytest.raises(ValueError, match="Required release cases are missing"):
+    with pytest.raises(ValueError, match="do not exactly match"):
         packet_builder.validate_cases(cases)
 
     rows[0]["verdict"] = "FAIL"
     write_cases(cases, rows)
     with pytest.raises(ValueError, match="Required release cases did not pass"):
+        packet_builder.validate_cases(cases)
+
+    rows[0]["verdict"] = "PASS"
+    rows.append(
+        {
+            "case_id": "unexpected_case",
+            "category": "test",
+            "input_available": "1",
+            "expected_available": "1",
+            "verdict": "PASS",
+            "detail": "must be rejected",
+        }
+    )
+    write_cases(cases, rows)
+    with pytest.raises(ValueError, match="unexpected=.*unexpected_case"):
+        packet_builder.validate_cases(cases)
+
+
+@pytest.mark.parametrize(
+    "case_id",
+    ("public_oracle", "raw_cache_seal", "project_network_entrypoints"),
+)
+def test_release_case_gate_makes_integrity_cases_mandatory(
+    tmp_path: Path, case_id: str
+) -> None:
+    rows = required_pass_rows()
+    assert case_id in packet_builder.REQUIRED_PASS_CASES
+    missing = [row for row in rows if row["case_id"] != case_id]
+    cases = tmp_path / f"{case_id}.tsv"
+    write_cases(cases, missing)
+    with pytest.raises(ValueError, match=case_id):
+        packet_builder.validate_cases(cases)
+
+    target = next(row for row in rows if row["case_id"] == case_id)
+    target["verdict"] = "SKIP"
+    write_cases(cases, rows)
+    with pytest.raises(ValueError, match="did not pass"):
         packet_builder.validate_cases(cases)
 
 
@@ -1761,6 +1852,15 @@ def test_github_only_packet_builds_and_verifies_from_fresh_extraction(
         == PUBLIC_VALIDATION_RUN_ID
     )
     assert identity["git_commit"] == commit
+    assert identity["dist_artifacts"] == read_json(
+        packet / "acceptance/fresh_clone.json"
+    )["distributions"]
+    assert {row["kind"] for row in identity["dist_artifacts"]} == {"wheel", "sdist"}
+    for row in identity["dist_artifacts"]:
+        artifact = packet / row["path"]
+        assert row["bytes"] == artifact.stat().st_size
+        assert row["sha256"] == hashlib.sha256(artifact.read_bytes()).hexdigest()
+        assert row["direct_url_archive_sha256"] == row["sha256"]
     assert identity["github_actions"]["head_sha"] == commit
     assert [
         item["platform_id"] for item in identity["resolved_ci_environments"]
@@ -1809,6 +1909,24 @@ def test_github_only_packet_builds_and_verifies_from_fresh_extraction(
         packet_builder.REQUIRED_ACCEPTANCE_FILES
     )
     assert not any("paper" in path.parts for path in packet.rglob("*"))
+    macos_outputs = packet / packet_builder.MACOS_REPORT_OUTPUTS_PACKET_PATH
+    inventories = sorted((packet / "observed_normalized").rglob("visual_artifact_inventory.tsv"))
+    assert {path.name for path in macos_outputs.iterdir()} == {
+        inventory.parent.name for inventory in inventories
+    }
+    for inventory in inventories:
+        rows = read_tsv(inventory)
+        case_root = macos_outputs / inventory.parent.name
+        expected = {row["relative_path"] for row in rows}
+        actual = {
+            path.relative_to(case_root).as_posix()
+            for path in case_root.rglob("*")
+            if path.is_file()
+        }
+        assert actual == expected
+        for row in rows:
+            artifact = case_root / row["relative_path"]
+            assert hashlib.sha256(artifact.read_bytes()).hexdigest() == row["sha256"]
 
     root_check = subprocess.run(
         [str(packet / "verify_bundle.sh")], capture_output=True, text=True, check=False
@@ -2143,6 +2261,114 @@ def test_packet_accepts_platform_specific_png_bytes_at_same_dimensions(
     assert verify_packet(output / "packet").returncode == 0
 
 
+def test_packet_rejects_private_path_in_bound_macos_html_without_sanitizing_it(
+    tmp_path: Path,
+) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    inventory = next(
+        (validation / "public/observed_normalized").rglob(
+            "visual_artifact_inventory.tsv"
+        )
+    )
+    rows = read_tsv(inventory)
+    row = next(item for item in rows if item["artifact_type"] == "html")
+    artifact = validation / "public/outputs" / inventory.parent.name / row["relative_path"]
+    artifact.write_text(
+        "<html><body>source=/Users/private/reports/input.bam</body></html>\n",
+        encoding="utf-8",
+    )
+    mutate_tsv_value(
+        inventory, "relative_path", row["relative_path"], "bytes", str(artifact.stat().st_size)
+    )
+    mutate_tsv_value(
+        inventory,
+        "relative_path",
+        row["relative_path"],
+        "sha256",
+        hashlib.sha256(artifact.read_bytes()).hexdigest(),
+    )
+    rebind_inventory_provenance(validation, inventory)
+
+    with pytest.raises(ValueError, match="absolute user path"):
+        packet_builder.build_packet(packet_args(validation, repo, tmp_path / "output"))
+
+
+def test_extracted_verifier_rejects_resealed_fictitious_macos_html_inventory(
+    tmp_path: Path,
+) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    output = tmp_path / "output"
+    packet_builder.build_packet(packet_args(validation, repo, output))
+    packet = output / "packet"
+    inventory = next(
+        (packet / "observed_normalized").rglob("visual_artifact_inventory.tsv")
+    )
+    row = next(item for item in read_tsv(inventory) if item["artifact_type"] == "html")
+    mutate_tsv_value(
+        inventory, "relative_path", row["relative_path"], "bytes", "999"
+    )
+    mutate_tsv_value(
+        inventory, "relative_path", row["relative_path"], "sha256", "f" * 64
+    )
+    rebind_inventory_provenance(packet, inventory)
+    rewrite_manifest(packet)
+
+    checked = verify_packet(packet)
+    assert checked.returncode != 0
+    assert "visual artifact byte count mismatch" in checked.stderr
+
+
+@pytest.mark.parametrize("mutation", ("missing", "unlisted", "undecodable"))
+def test_extracted_verifier_rejects_resealed_invalid_macos_report_collection(
+    tmp_path: Path, mutation: str
+) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    output = tmp_path / "output"
+    packet_builder.build_packet(packet_args(validation, repo, output))
+    packet = output / "packet"
+    inventory = next(
+        (packet / "observed_normalized").rglob("visual_artifact_inventory.tsv")
+    )
+    rows = read_tsv(inventory)
+    case_root = (
+        packet / packet_builder.MACOS_REPORT_OUTPUTS_PACKET_PATH / inventory.parent.name
+    )
+    if mutation == "missing":
+        row = next(item for item in rows if item["artifact_type"] == "html")
+        (case_root / row["relative_path"]).unlink()
+    elif mutation == "unlisted":
+        (case_root / "report/unlisted.html").write_text(
+            "<html><body>unlisted</body></html>\n", encoding="utf-8"
+        )
+    else:
+        row = next(item for item in rows if item["artifact_type"] == "png")
+        artifact = case_root / row["relative_path"]
+        artifact.write_bytes(b"\x89PNG\r\n\x1a\ntruncated")
+        mutate_tsv_value(
+            inventory,
+            "relative_path",
+            row["relative_path"],
+            "bytes",
+            str(artifact.stat().st_size),
+        )
+        mutate_tsv_value(
+            inventory,
+            "relative_path",
+            row["relative_path"],
+            "sha256",
+            hashlib.sha256(artifact.read_bytes()).hexdigest(),
+        )
+        rebind_inventory_provenance(packet, inventory)
+    rewrite_manifest(packet)
+
+    checked = verify_packet(packet)
+    assert checked.returncode != 0
+    assert "visual artifact" in checked.stderr or "PNG" in checked.stderr
+
+
 def test_extracted_verifier_rejects_resealed_ubuntu_visual_hash_drift(
     tmp_path: Path,
 ) -> None:
@@ -2220,6 +2446,111 @@ def test_extracted_verifier_rejects_resealed_public_main_drift(tmp_path: Path) -
     checked = verify_packet(packet)
     assert checked.returncode != 0
     assert "fresh-clone acceptance mismatch" in checked.stderr
+
+
+@pytest.mark.parametrize(
+    ("mutation", "expected_error"),
+    (
+        ("missing", "do not exactly match"),
+        ("nonpass", "did not pass"),
+        ("unexpected", "do not exactly match"),
+    ),
+)
+def test_extracted_verifier_enforces_exact_passing_case_inventory(
+    tmp_path: Path, mutation: str, expected_error: str
+) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    output = tmp_path / "output"
+    packet_builder.build_packet(packet_args(validation, repo, output))
+    packet = output / "packet"
+    cases_path = packet / "cases.tsv"
+    rows = read_tsv(cases_path)
+    if mutation == "missing":
+        rows = [row for row in rows if row["case_id"] != "public_oracle"]
+    elif mutation == "nonpass":
+        next(row for row in rows if row["case_id"] == "raw_cache_seal")[
+            "verdict"
+        ] = "SKIP"
+    else:
+        rows.append(
+            {
+                "case_id": "unexpected_case",
+                "category": "test",
+                "input_available": "1",
+                "expected_available": "1",
+                "verdict": "PASS",
+                "detail": "resealed unexpected row",
+            }
+        )
+    write_cases(cases_path, rows)
+    run_path = packet / "run.json"
+    run_record = read_json(run_path)
+    assert isinstance(run_record, dict)
+    run_record["case_count"] = len(rows)
+    run_record["verdict_counts"] = {
+        verdict: sum(row["verdict"] == verdict for row in rows)
+        for verdict in {"PASS", "FAIL", "XFAIL", "SKIP", "BLOCKED"}
+    }
+    write_json(run_path, run_record)
+    rewrite_manifest(packet)
+
+    checked = verify_packet(packet)
+    assert checked.returncode != 0
+    assert expected_error in checked.stderr
+
+
+@pytest.mark.parametrize("kind", ("wheel", "sdist"))
+def test_packet_rejects_replaced_same_identity_distribution_after_fresh_install(
+    tmp_path: Path, kind: str
+) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    fresh_path = validation / "acceptance/fresh_clone.json"
+    fresh = read_json(fresh_path)
+    assert isinstance(fresh, dict)
+    row = next(item for item in fresh["distributions"] if item["kind"] == kind)
+    artifact = validation / row["path"]
+    replace_distribution_with_same_identity(artifact)
+    row["bytes"] = artifact.stat().st_size
+    row["sha256"] = hashlib.sha256(artifact.read_bytes()).hexdigest()
+    write_json(fresh_path, fresh)
+
+    with pytest.raises(ValueError, match="PEP 610 archive hash"):
+        packet_builder.build_packet(packet_args(validation, repo, tmp_path / "output"))
+
+
+@pytest.mark.parametrize("kind", ("wheel", "sdist"))
+def test_extracted_verifier_rejects_resealed_same_identity_distribution(
+    tmp_path: Path, kind: str
+) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    output = tmp_path / "output"
+    packet_builder.build_packet(packet_args(validation, repo, output))
+    packet = output / "packet"
+    identity_path = packet / "release_identity.json"
+    fresh_path = packet / "acceptance/fresh_clone.json"
+    identity = read_json(identity_path)
+    fresh = read_json(fresh_path)
+    assert isinstance(identity, dict) and isinstance(fresh, dict)
+    identity_row = next(
+        item for item in identity["dist_artifacts"] if item["kind"] == kind
+    )
+    fresh_row = next(item for item in fresh["distributions"] if item["kind"] == kind)
+    artifact = packet / identity_row["path"]
+    replace_distribution_with_same_identity(artifact)
+    replacement_hash = hashlib.sha256(artifact.read_bytes()).hexdigest()
+    for row in (identity_row, fresh_row):
+        row["bytes"] = artifact.stat().st_size
+        row["sha256"] = replacement_hash
+    write_json(identity_path, identity)
+    write_json(fresh_path, fresh)
+    rewrite_manifest(packet)
+
+    checked = verify_packet(packet)
+    assert checked.returncode != 0
+    assert "distribution identity mismatch" in checked.stderr
 
 
 def test_packet_requires_all_resolved_ci_platforms(tmp_path: Path) -> None:

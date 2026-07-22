@@ -30,6 +30,10 @@ release date.
   x86-64, macOS x86-64, and macOS arm64.
 - [ ] Wheel and sdist build successfully and are installed into separate clean
   environments outside the repository.
+- [ ] Fresh-clone evidence records each installed wheel/sdist relative path,
+  kind, byte count, SHA-256, and PEP 610 `direct_url` archive SHA-256. Those
+  values exactly match `release_identity.json` and the packet `dist/` bytes
+  before and after tests and after fresh ZIP extraction.
 - [ ] The installed module and schema resolve inside the environment rather
   than through checkout `PYTHONPATH` shadowing.
 - [ ] CLI listing, strict dry-run, unit tests, four smoke workflows, and both
@@ -48,6 +52,8 @@ release date.
 - [ ] The six public filter profiles, two default repeats per dataset, exact
   scientific oracle, module statuses, and output inventories pass.
 - [ ] Offline execution records zero network-canary events.
+- [ ] `public_oracle`, `raw_cache_seal`, and
+  `project_network_entrypoints` are present and `PASS`.
 
 ## Evidence gate
 
@@ -57,7 +63,12 @@ release date.
   outputs, module statuses, figure/table provenance, claim evidence,
   limitations, public sources, and manuscript handoff values are complete.
 - [ ] Every required case is `PASS`; no required case is missing, `SKIP`,
-  `BLOCKED`, or `XFAIL`.
+  `BLOCKED`, or `XFAIL`, and `cases.tsv` contains no unexpected case IDs.
+- [ ] Every macOS visual-inventory row is bound to an actual packaged UTF-8
+  HTML or decodable PNG under `report_artifacts/macos/outputs`; the collection
+  has no missing, unlisted, unsupported, raw/alignment, or symlink entries.
+- [ ] Bound macOS report bytes contain no private absolute paths. Sanitization
+  must fail rather than rewrite those bytes and invalidate their inventory.
 - [ ] `verify_bundle.sh` passes in the packet root and after safe extraction of
   `mito-overview-v0.3.0-validation.zip`.
 - [ ] The ZIP SHA-256 and verification JSON are recorded outside the ZIP.

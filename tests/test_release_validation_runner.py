@@ -740,6 +740,12 @@ def test_public_matrix_is_bound_to_public_clone_and_force_installed_wheel() -> N
     assert "--evidence" in text
     assert "network_isolation_verdict" in text
     assert "offline_isolation" in text
+    assert "direct_url.json" in text
+    assert "direct_url_archive_sha256" in text
+    assert "PEP 610 archive hash does not match post-test" in text
+    assert 'artifact.relative_to(validation_root).as_posix()' in text
+    assert "WHEEL_SHA256_BEFORE_TESTS" in text
+    assert "SDIST_SHA256_BEFORE_TESTS" in text
 
 
 def test_runner_binds_ci_evidence_and_receipt_to_all_explicit_ids() -> None:

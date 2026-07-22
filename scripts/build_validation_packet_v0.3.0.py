@@ -31,6 +31,7 @@ PACKET_SCHEMA_VERSION = "2.0"
 VALIDATION_PROFILE = "github_release_validation_v1"
 PUBLIC_ENVIRONMENT_PACKET_PATH = "public_environment"
 PUBLIC_MATRIX_CASES_PACKET_PATH = "public_matrix_cases.tsv"
+MACOS_REPORT_OUTPUTS_PACKET_PATH = "report_artifacts/macos/outputs"
 RESOLVED_CI_ENVIRONMENTS_RELATIVE = "acceptance/resolved_ci_environments"
 RESOLVED_CI_PLATFORMS = ("linux-64", "osx-64", "osx-arm64")
 EXPECTED_PYTHON_VERSION = "3.12.13"
@@ -662,7 +663,10 @@ REQUIRED_PASS_CASES = {
     "gm11906_visual_integrity",
     "gm12878_visual_integrity",
     "filter_profiles",
+    "public_oracle",
+    "raw_cache_seal",
     "offline_isolation",
+    "project_network_entrypoints",
     "public_cache_prepare",
     "cross_platform_public_reproduction",
 } | ACCEPTANCE_CASE_IDS
@@ -945,6 +949,55 @@ def visual_inventory_case_id(root: Path, path: Path) -> str:
     if not re.fullmatch(r"[a-z0-9][a-z0-9_.-]*", case_id):
         raise ValueError(f"Unsafe visual inventory case ID: {case_id!r}")
     return case_id
+
+
+def bind_visual_collection(inventory_root: Path, outputs_root: Path) -> set[str]:
+    """Require one exact report-artifact case directory per visual inventory."""
+
+    inventories = public_visual_paths(inventory_root)
+    expected_cases: set[str] = set()
+    for relative in inventories:
+        inventory = inventory_root / Path(*relative.parts)
+        case_id = visual_inventory_case_id(inventory_root, inventory)
+        if case_id in expected_cases:
+            raise ValueError(f"Duplicate visual inventory case ID: {case_id}")
+        expected_cases.add(case_id)
+        bind_visual_inventory(inventory, outputs_root / case_id)
+    if outputs_root.is_symlink() or not outputs_root.is_dir():
+        raise ValueError(f"Report artifact outputs directory is missing: {outputs_root}")
+    observed_cases: set[str] = set()
+    for entry in outputs_root.iterdir():
+        if entry.is_symlink() or not entry.is_dir():
+            raise ValueError("Report artifact collection contains a non-directory entry")
+        observed_cases.add(entry.name)
+    if observed_cases != expected_cases:
+        raise ValueError(
+            "Report artifact case inventory mismatch: "
+            f"missing={sorted(expected_cases - observed_cases)}; "
+            f"unexpected={sorted(observed_cases - expected_cases)}"
+        )
+    return expected_cases
+
+
+def stage_macos_visual_artifacts(public_root: Path, destination: Path) -> None:
+    """Copy only inventory-bound macOS HTML/PNG artifacts into the packet."""
+
+    inventories = sorted(public_visual_paths(public_root), key=lambda item: item.as_posix())
+    for relative in inventories:
+        inventory = public_root / Path(*relative.parts)
+        case_id = visual_inventory_case_id(public_root, inventory)
+        source_case = public_root / "outputs" / case_id
+        bind_visual_inventory(inventory, source_case)
+        rows = parse_visual_inventory(inventory)
+        for row in rows:
+            artifact_relative = safe_posix_relative_path(
+                row["relative_path"], "visual artifact path"
+            )
+            source = source_case / Path(*artifact_relative.parts)
+            target = destination / case_id / Path(*artifact_relative.parts)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            copy_regular_file(source, target, source_root=source_case)
+    bind_visual_collection(public_root, destination)
 
 
 def validate_downloaded_public_artifact_identity(
@@ -1653,14 +1706,14 @@ def validate_distributions(
     dist_root: Path,
     expected_name: str,
     expected_version: str,
-) -> list[dict[str, str]]:
+) -> list[dict[str, object]]:
     if not dist_root.is_dir():
         raise FileNotFoundError(f"Required distribution directory not found: {dist_root}")
     files = sorted(path for path in dist_root.rglob("*") if path.is_file())
     if not files:
         raise ValueError(f"Distribution directory contains no artifacts: {dist_root}")
 
-    artifacts: list[dict[str, str]] = []
+    artifacts: list[dict[str, object]] = []
     kinds: set[str] = set()
     for path in files:
         if path.stat().st_size == 0:
@@ -1679,6 +1732,7 @@ def validate_distributions(
                 "kind": kind,
                 "name": name,
                 "version": version,
+                "bytes": path.stat().st_size,
                 "sha256": sha256(path),
             }
         )
@@ -1686,6 +1740,48 @@ def validate_distributions(
     if missing_kinds:
         raise ValueError(f"Distribution evidence is missing: {', '.join(missing_kinds)}")
     return artifacts
+
+
+def validate_fresh_clone_distribution_inventory(
+    value: object,
+    actual_artifacts: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    """Bind fresh-clone PEP 610 installation evidence to exact dist bytes."""
+
+    if not isinstance(value, list) or not all(isinstance(row, dict) for row in value):
+        raise ValueError("Fresh-clone distribution inventory is malformed")
+    expected_fields = {
+        "path",
+        "kind",
+        "name",
+        "version",
+        "bytes",
+        "sha256",
+        "direct_url_archive_sha256",
+    }
+    expected_by_path = {str(row["path"]): row for row in actual_artifacts}
+    observed_by_path: dict[str, dict[str, object]] = {}
+    for row in value:
+        if set(row) != expected_fields:
+            raise ValueError("Fresh-clone distribution inventory fields do not match schema")
+        path = row.get("path")
+        if not isinstance(path, str) or path in observed_by_path:
+            raise ValueError("Fresh-clone distribution path is missing or duplicated")
+        observed_by_path[path] = row
+    if set(observed_by_path) != set(expected_by_path):
+        raise ValueError("Fresh-clone distribution path inventory does not match dist bytes")
+    for path, actual in expected_by_path.items():
+        observed = observed_by_path[path]
+        for field, expected in actual.items():
+            if observed.get(field) != expected:
+                raise ValueError(
+                    f"Fresh-clone distribution evidence mismatch for {path} field {field}"
+                )
+        if observed.get("direct_url_archive_sha256") != actual["sha256"]:
+            raise ValueError(
+                f"Fresh-clone PEP 610 archive hash does not bind installed bytes: {path}"
+            )
+    return [dict(observed_by_path[str(row["path"])]) for row in actual_artifacts]
 
 
 def validate_hash_manifest(path: Path, label: str) -> None:
@@ -3475,6 +3571,15 @@ def validate_fresh_clone_evidence(
             f"{fresh.get('source_remote')!r} != {expected_remote!r}"
         )
 
+    actual_distributions = validate_distributions(
+        validation_root / "dist",
+        EXPECTED_PACKAGE_NAME,
+        EXPECTED_RELEASE_VERSION.removeprefix("v"),
+    )
+    validate_fresh_clone_distribution_inventory(
+        fresh.get("distributions"), actual_distributions
+    )
+
     require_nonempty_evidence(validation_root, expected_fields["command_path"])
     require_nonempty_evidence(validation_root, expected_fields["log_path"])
     return {
@@ -4315,8 +4420,12 @@ def validate_cases(
             raise ValueError(f"PASS case lacks input or expected evidence: {row.get('case_id')}")
         counts[verdict] += 1
     missing_required = sorted(REQUIRED_PASS_CASES - case_ids)
-    if missing_required:
-        raise ValueError(f"Required release cases are missing: {', '.join(missing_required)}")
+    unexpected = sorted(case_ids - REQUIRED_PASS_CASES)
+    if missing_required or unexpected:
+        raise ValueError(
+            "Validation case IDs do not exactly match the required release set: "
+            f"missing={missing_required}; unexpected={unexpected}"
+        )
     nonpassing_required = sorted(
         row["case_id"] for row in rows if row["case_id"] in REQUIRED_PASS_CASES and row["verdict"] != "PASS"
     )
@@ -7012,16 +7121,24 @@ expected_visual_cases = {
     )
     for relative in ubuntu_visuals
 }
+macos_report_outputs = root / "report_artifacts/macos/outputs"
 ubuntu_report_outputs = ubuntu_public_root / "report_artifacts" / "outputs"
+if macos_report_outputs.is_symlink() or not macos_report_outputs.is_dir():
+    raise SystemExit("macOS report_artifacts/outputs evidence is missing")
 if ubuntu_report_outputs.is_symlink() or not ubuntu_report_outputs.is_dir():
     raise SystemExit("Ubuntu report_artifacts/outputs evidence is missing")
-observed_visual_cases = set()
-for entry in ubuntu_report_outputs.iterdir():
-    if entry.is_symlink() or not entry.is_dir():
-        raise SystemExit("Ubuntu report artifact collection has a non-directory entry")
-    observed_visual_cases.add(entry.name)
-if observed_visual_cases != expected_visual_cases:
-    raise SystemExit("Ubuntu report artifact case inventory mismatch")
+for platform_label, report_outputs in (
+    ("macOS", macos_report_outputs), ("Ubuntu", ubuntu_report_outputs),
+):
+    observed_visual_cases = set()
+    for entry in report_outputs.iterdir():
+        if entry.is_symlink() or not entry.is_dir():
+            raise SystemExit(
+                f"{platform_label} report artifact collection has a non-directory entry"
+            )
+        observed_visual_cases.add(entry.name)
+    if observed_visual_cases != expected_visual_cases:
+        raise SystemExit(f"{platform_label} report artifact case inventory mismatch")
 
 cross_reproduction = json.loads(
     (root / "acceptance/cross_platform_public_reproduction.json").read_text(
@@ -7101,7 +7218,9 @@ for row in comparison_rows:
         ubuntu_case_id = visual_inventory_case_id(ubuntu_public_root, ubuntu_inventory)
         if macos_case_id != ubuntu_case_id:
             raise SystemExit("cross-platform visual inventory case IDs differ")
-        macos_structure = visual_structure(macos_inventory)
+        macos_structure = bind_visual_inventory(
+            macos_inventory, macos_report_outputs / macos_case_id
+        )
         ubuntu_structure = bind_visual_inventory(
             ubuntu_inventory, ubuntu_report_outputs / ubuntu_case_id
         )
@@ -7453,7 +7572,9 @@ required_pass = {
     "gm12878_default_run1", "gm12878_default_run2", "gm12878_lenient",
     "gm12878_strict", "gm11906_repeatability", "gm12878_repeatability",
     "gm11906_visual_integrity", "gm12878_visual_integrity", "filter_profiles",
-    "offline_isolation", "public_cache_prepare", "cross_platform_public_reproduction",
+    "public_oracle", "raw_cache_seal", "offline_isolation",
+    "project_network_entrypoints", "public_cache_prepare",
+    "cross_platform_public_reproduction",
     "fresh_clone_candidate_commit", "github_actions_linux_candidate_commit",
     "github_actions_macos_candidate_commit",
     "github_actions_macos_arm64_candidate_commit",
@@ -7483,8 +7604,12 @@ blockers = sorted(
 )
 if blockers:
     raise SystemExit(f"release-blocking validation verdicts: {blockers}")
-if required_pass - case_ids:
-    raise SystemExit(f"missing required release cases: {sorted(required_pass - case_ids)}")
+if case_ids != required_pass:
+    raise SystemExit(
+        "validation case IDs do not exactly match the required release set: "
+        f"missing={sorted(required_pass - case_ids)}; "
+        f"unexpected={sorted(case_ids - required_pass)}"
+    )
 nonpassing = sorted(
     case["case_id"]
     for case in cases
@@ -7547,6 +7672,16 @@ def inspect_dist(path):
 
 dist_files = sorted(candidate for candidate in (root / "dist").rglob("*") if candidate.is_file())
 declared_dist = identity.get("dist_artifacts", [])
+if fresh.get("distributions") != declared_dist:
+    raise SystemExit("fresh-clone and release-identity distribution inventories differ")
+dist_fields = {
+    "path", "kind", "name", "version", "bytes", "sha256",
+    "direct_url_archive_sha256",
+}
+if not isinstance(declared_dist, list) or not all(
+    isinstance(entry, dict) and set(entry) == dist_fields for entry in declared_dist
+):
+    raise SystemExit("distribution inventory fields do not match schema")
 declared_paths = {entry.get("path") for entry in declared_dist}
 actual_dist_paths = {candidate.relative_to(root).as_posix() for candidate in dist_files}
 if declared_paths != actual_dist_paths or len(declared_paths) != len(declared_dist):
@@ -7561,7 +7696,9 @@ for entry in declared_dist:
         or entry.get("name") != name
         or version != "0.3.0"
         or entry.get("version") != version
+        or entry.get("bytes") != dist_path.stat().st_size
         or entry.get("sha256") != digest(dist_path)
+        or entry.get("direct_url_archive_sha256") != digest(dist_path)
     ):
         raise SystemExit(f"distribution identity mismatch: {entry.get('path')}")
     dist_kinds.add(kind)
@@ -7721,10 +7858,17 @@ def build_packet(args: argparse.Namespace) -> Path:
         args.validation_root,
         public_root,
     )
-    dist_artifacts = validate_distributions(
+    actual_dist_artifacts = validate_distributions(
         args.validation_root / "dist",
         str(release_identity["package_name"]),
         str(release_identity["package_version"]),
+    )
+    fresh_clone = load_json_object(
+        args.validation_root / "acceptance/fresh_clone.json",
+        "fresh-clone evidence",
+    )
+    dist_artifacts = validate_fresh_clone_distribution_inventory(
+        fresh_clone.get("distributions"), actual_dist_artifacts
     )
     for source in (
         args.validation_root / "commands",
@@ -7775,6 +7919,8 @@ def build_packet(args: argparse.Namespace) -> Path:
         public_root / "observed_normalized",
         args.packet_root / "observed_normalized",
     )
+    packaged_macos_reports = args.packet_root / MACOS_REPORT_OUTPUTS_PACKET_PATH
+    stage_macos_visual_artifacts(public_root, packaged_macos_reports)
     copy_tree(
         public_root / "environment",
         args.packet_root / PUBLIC_ENVIRONMENT_PACKET_PATH,
@@ -7899,7 +8045,7 @@ def build_packet(args: argparse.Namespace) -> Path:
     sanitize_packet_paths(
         args.packet_root,
         replacements,
-        immutable_roots=(packaged_public_artifact,),
+        immutable_roots=(packaged_public_artifact, packaged_macos_reports),
     )
     rebind_packaged_resource_evidence(
         args.packet_root,
@@ -7910,6 +8056,21 @@ def build_packet(args: argparse.Namespace) -> Path:
         str(release_identity["git_commit"]),
         int(public_validation_identity["run_id"]),
     )
+    bind_visual_collection(args.packet_root, packaged_macos_reports)
+    packaged_dist_artifacts = validate_distributions(
+        args.packet_root / "dist",
+        str(release_identity["package_name"]),
+        str(release_identity["package_version"]),
+    )
+    packaged_fresh = load_json_object(
+        args.packet_root / "acceptance/fresh_clone.json",
+        "packaged fresh-clone evidence",
+    )
+    packaged_dist_inventory = validate_fresh_clone_distribution_inventory(
+        packaged_fresh.get("distributions"), packaged_dist_artifacts
+    )
+    if packaged_dist_inventory != dist_artifacts:
+        raise ValueError("Packaged distribution bytes changed after fresh-clone validation")
 
     packaged_environment = validate_public_environment(
         args.packet_root / PUBLIC_ENVIRONMENT_PACKET_PATH
@@ -7926,6 +8087,10 @@ def build_packet(args: argparse.Namespace) -> Path:
     ]
     identity_path = args.packet_root / "release_identity.json"
     packaged_identity = json.loads(identity_path.read_text(encoding="utf-8"))
+    if packaged_identity.get("dist_artifacts") != packaged_dist_inventory:
+        raise ValueError(
+            "Release identity distribution inventory does not match installed packet bytes"
+        )
     packaged_identity["public_environment"] = packaged_environment
     identity_path.write_text(
         json.dumps(packaged_identity, indent=2) + "\n",

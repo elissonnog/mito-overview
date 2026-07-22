@@ -980,6 +980,12 @@ run_clean "\${SDIST_PYTHON}" -m pip install --force-reinstall \
   pip==26.1.2 build==1.5.0 setuptools==82.0.1 wheel==0.47.0 \
   pytest==9.1.1 python-docx==1.2.0
 run_clean "\${SDIST_PYTHON}" -m pip install --force-reinstall --no-build-isolation "\${SDIST}"
+WHEEL_SHA256_BEFORE_TESTS="\$(run_clean $(printf '%q' "${PYTHON_BIN}") -c \
+  'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())' \
+  "\${WHEEL}")"
+SDIST_SHA256_BEFORE_TESTS="\$(run_clean $(printf '%q' "${PYTHON_BIN}") -c \
+  'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())' \
+  "\${SDIST}")"
 cd $(printf '%q' "${sdist_probe_root}")
 run_clean "\${SDIST_PYTHON}" -I -c \
   'from importlib.metadata import version; from pathlib import Path; import mito_overview; p=Path(mito_overview.__file__).resolve(); assert version("mito-overview") == "0.3.0"; assert "site-packages" in p.parts; print(p)'
@@ -990,6 +996,12 @@ run_clean env MITO_OVERVIEW_PYTHON="\${FRESH_PYTHON}" MITO_OVERVIEW_REQUIRE_INST
 run_clean env MITO_OVERVIEW_PYTHON="\${FRESH_PYTHON}" MITO_OVERVIEW_REQUIRE_INSTALLED=1 ./tests/smoke_public_pipeline_shortread.sh
 run_clean env MITO_OVERVIEW_PYTHON="\${FRESH_PYTHON}" MITO_OVERVIEW_REQUIRE_INSTALLED=1 ./tests/smoke_public_pipeline_longread_nomethyl.sh
 run_clean env MITO_OVERVIEW_PYTHON="\${FRESH_PYTHON}" MITO_OVERVIEW_REQUIRE_INSTALLED=1 ./tests/smoke_standalone_minimal.sh
+test "\$(run_clean $(printf '%q' "${PYTHON_BIN}") -c \
+  'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())' \
+  "\${WHEEL}")" = "\${WHEEL_SHA256_BEFORE_TESTS}"
+test "\$(run_clean $(printf '%q' "${PYTHON_BIN}") -c \
+  'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())' \
+  "\${SDIST}")" = "\${SDIST_SHA256_BEFORE_TESTS}"
 test -z "\$(run_clean git -C $(printf '%q' "${clone_root}") status --porcelain --untracked-files=all)"
 echo fresh_clone_validation=PASS
 EOF
@@ -998,23 +1010,88 @@ EOF
   export -f measure_command
   export PYTHON_BIN VALIDATION_ROOT REPO_ROOT CACHE_ROOT CANDIDATE_COMMIT
   if measure_command "${FRESH_CLONE_CASE_ID}" "${log_file}" mixed bash "${command_file}"; then
-    "${PYTHON_BIN}" -       "${VALIDATION_ROOT}/acceptance/fresh_clone.json"       "${CANDIDATE_COMMIT}" "${REPOSITORY}" "${PUBLIC_REMOTE}" <<'PY'
+    "${PYTHON_BIN}" - \
+      "${VALIDATION_ROOT}/acceptance/fresh_clone.json" \
+      "${VALIDATION_ROOT}" "${FRESH_PYTHON}" \
+      "${FRESH_SDIST_VENV_ROOT}/bin/python" \
+      "${CANDIDATE_COMMIT}" "${REPOSITORY}" "${PUBLIC_REMOTE}" <<'PY'
+import hashlib
 import json
+import subprocess
 import sys
 from pathlib import Path
+from urllib.parse import unquote, urlsplit
+from urllib.request import url2pathname
 
 path = Path(sys.argv[1])
+validation_root = Path(sys.argv[2])
+interpreters = {
+    "wheel": Path(sys.argv[3]),
+    "sdist": Path(sys.argv[4]),
+}
+artifacts = {
+    "wheel": sorted((validation_root / "dist").glob("*.whl")),
+    "sdist": sorted((validation_root / "dist").glob("*.tar.gz")),
+}
+if any(len(paths) != 1 for paths in artifacts.values()):
+    raise SystemExit("Fresh-clone dist inventory must contain exactly one wheel and sdist")
+
+distribution_rows = []
+direct_url_probe = (
+    "from importlib.metadata import distribution; "
+    "value=distribution('mito-overview').read_text('direct_url.json'); "
+    "assert value; print(value)"
+)
+for kind in ("wheel", "sdist"):
+    artifact = artifacts[kind][0]
+    payload = artifact.read_bytes()
+    digest = hashlib.sha256(payload).hexdigest()
+    completed = subprocess.run(
+        [str(interpreters[kind]), "-I", "-c", direct_url_probe],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    direct_url = json.loads(completed.stdout)
+    parsed = urlsplit(direct_url.get("url", ""))
+    installed_path = Path(url2pathname(unquote(parsed.path))).resolve()
+    if parsed.scheme != "file" or installed_path != artifact.resolve():
+        raise SystemExit(f"PEP 610 URL does not identify installed {kind} bytes")
+    archive_info = direct_url.get("archive_info")
+    if not isinstance(archive_info, dict):
+        raise SystemExit(f"PEP 610 archive_info is missing for {kind}")
+    hashes = archive_info.get("hashes")
+    direct_hash = hashes.get("sha256") if isinstance(hashes, dict) else None
+    if direct_hash is None:
+        legacy_hash = archive_info.get("hash")
+        prefix = "sha256="
+        if isinstance(legacy_hash, str) and legacy_hash.startswith(prefix):
+            direct_hash = legacy_hash[len(prefix):]
+    if direct_hash != digest:
+        raise SystemExit(f"PEP 610 archive hash does not match post-test {kind} bytes")
+    distribution_rows.append(
+        {
+            "path": artifact.relative_to(validation_root).as_posix(),
+            "kind": kind,
+            "name": "mito-overview",
+            "version": "0.3.0",
+            "bytes": len(payload),
+            "sha256": digest,
+            "direct_url_archive_sha256": direct_hash,
+        }
+    )
+
 evidence = {
     "schema_version": "2.0",
     "validation_profile": "github_release_validation_v1",
     "evidence_type": "fresh_clone_validation",
     "case_id": "fresh_clone_candidate_commit",
     "verdict": "PASS",
-    "repository": sys.argv[3],
-    "source_remote": sys.argv[4],
-    "candidate_commit": sys.argv[2],
-    "checked_out_commit": sys.argv[2],
-    "public_main_commit": sys.argv[2],
+    "repository": sys.argv[6],
+    "source_remote": sys.argv[7],
+    "candidate_commit": sys.argv[5],
+    "checked_out_commit": sys.argv[5],
+    "public_main_commit": sys.argv[5],
     "detached_head": True,
     "clone_worktree_clean": True,
     "public_https_clone": True,
@@ -1026,6 +1103,7 @@ evidence = {
     "installed_sdist": True,
     "separate_distribution_environments": True,
     "executed_outside_checkout": True,
+    "distributions": distribution_rows,
     "command_path": "commands/fresh_clone_candidate_commit.sh",
     "log_path": "logs/fresh_clone_candidate_commit.log",
 }

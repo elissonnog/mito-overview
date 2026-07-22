@@ -267,6 +267,8 @@ These differences describe filter dependence. They are not sensitivity, specific
 
 Module states are restricted to `ok`, `not_configured`, `not_applicable`, `not_evaluable`, `unavailable`, and `failed`. Validation verdicts are restricted to `PASS`, `FAIL`, `XFAIL`, `SKIP`, and `BLOCKED`. A case cannot be marked `PASS` when its input or expected evidence is unavailable.
 
+The final packet applies a closed case inventory: every required case ID must be present exactly once, no additional case IDs are accepted, and all rows must be `PASS`. The mandatory set explicitly includes `public_oracle`, `raw_cache_seal`, and `project_network_entrypoints`. Fresh-clone package evidence binds the exercised wheel and sdist bytes to their PEP 610 archive hashes, packet distribution inventory, and extracted verifier. Every macOS visual row is likewise bound to packaged HTML/PNG bytes; private paths, missing or unlisted files, unsupported types, symlinks, and undecodable PNGs fail verification rather than being sanitized into different evidence.
+
 - `not_configured`: an optional resource or integration was not supplied.
 - `not_applicable`: the assay/read-mode contract excludes the module.
 - `not_evaluable`: the module ran, but the available reference or denominator cannot support interpretation.
