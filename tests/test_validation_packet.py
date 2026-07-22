@@ -1198,7 +1198,7 @@ def write_normalized_case(
     add_metric(
         "mito_heteroplasmy_summary.tsv",
         [
-            ("status", "ok"),
+            ("status", oracle["heteroplasmy_module_status"]),
             ("allele_min_base_quality", oracle["min_base_quality"]),
             ("allele_min_mapping_quality", oracle["min_mapping_quality"]),
             ("allele_min_read_mean_quality", oracle["min_read_mean_quality"]),
@@ -1243,26 +1243,33 @@ def write_normalized_case(
     scientific.append(consequence)
 
     status_values = {
-        "mito_copy_number_summary.tsv": oracle["copy_number_status"] or "not_applicable",
-        "mito_phymer_haplogroup_summary.tsv": oracle["phymer_status"] or "not_configured",
-        "mito_methylation_exploratory_summary.tsv": oracle["methylation_status"] or "not_configured",
-        "mito_mvtool_annotation_summary.tsv": oracle["mvtool_status"] or "not_configured",
+        "mito_copy_number_summary.tsv": oracle["copy_number_module_status"],
+        "mito_feature_annotation_summary.tsv": oracle["feature_annotation_module_status"],
+        "mito_gene_summary_run_summary.tsv": oracle["gene_summary_module_status"],
+        "mito_identity_qc_summary.tsv": oracle["identity_qc_module_status"],
+        "mito_variant_consequence_summary.tsv": oracle["variant_consequence_module_status"],
+        "mito_circularity_qc_summary.tsv": oracle["circularity_qc_module_status"],
+        "mito_methylation_exploratory_summary.tsv": oracle[
+            "methylation_exploratory_module_status"
+        ],
+        "mito_phymer_haplogroup_summary.tsv": oracle["phymer_haplogroup_module_status"],
+        "mito_mvtool_annotation_summary.tsv": oracle["mvtool_annotation_module_status"],
     }
     for filename, status in status_values.items():
         add_metric(filename, [("status", status), ("reason_code", "")])
-    numt_rows = [("status", oracle["numt_module_status"] or "not_applicable")]
+    numt_rows = [("status", oracle["numt_qc_module_status"])]
     if oracle["numt_interpretation_status"]:
         numt_rows.extend(
             [
                 ("numt_interpretation_status", oracle["numt_interpretation_status"]),
-                ("reason_code", oracle["numt_reason_code"]),
+                ("reason_code", oracle["numt_interpretation_reason_code"]),
             ]
         )
     else:
         numt_rows.append(("reason_code", ""))
     add_metric("mito_numt_qc_summary.tsv", numt_rows)
 
-    qc_rows = [("status", "ok")]
+    qc_rows = [("status", oracle["mito_qc_module_status"])]
     if dataset == "GM12878":
         qc_rows.extend(
             (metric, oracle[field])
@@ -1277,12 +1284,15 @@ def write_normalized_case(
     add_metric("mito_qc_summary.tsv", qc_rows)
     add_metric(
         "mito_cosegregation_summary.tsv",
-        [("status", "ok"), ("selected_sites", oracle["selected_cosegregation_sites"] or "0")],
+        [
+            ("status", oracle["cosegregation_module_status"]),
+            ("selected_sites", oracle["selected_cosegregation_sites"] or "0"),
+        ],
     )
     add_metric(
         "mito_deletion_summary.tsv",
         [
-            ("status", "ok"),
+            ("status", oracle["deletions_module_status"]),
             ("candidate_deletion_clusters", oracle["deletion_clusters"] or "0"),
             ("reads_with_large_deletion", oracle["deletion_query_names"] or "0"),
             (

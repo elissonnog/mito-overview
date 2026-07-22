@@ -375,7 +375,7 @@ FROZEN_ORACLE_REPOSITORY_PATH = Path(
     "examples/public_validation/public_validation_oracle_v0.3.0.tsv"
 )
 FROZEN_ORACLE_PACKET_PATH = "public_validation_oracle_v0.3.0.tsv"
-FROZEN_ORACLE_SHA256 = "dac769dcbac622f8a2df1363c08a926b0130082208d16b77a57d581cb7ccf76e"
+FROZEN_ORACLE_SHA256 = "1087bd2d0b6145dd06c75d184e1b93d8eb91e7068ad928e284524f011d5e75f4"
 FROZEN_RAW_INPUT_MANIFEST_SHA256 = (
     "188d9e493c7cc43dc63c6bfe972914af5ae42cadb6cb2f59092cb13452adf756"
 )
@@ -390,6 +390,37 @@ PUBLIC_ORACLE_CASES = {
     ("GM12878", "default"): ("gm12878_default_run1", "gm12878_default_run2"),
     ("GM12878", "strict"): ("gm12878_strict",),
 }
+PUBLIC_ORACLE_MODULE_STATUS_SPECS = (
+    ("mito_qc_module_status", "mito_qc_summary.tsv"),
+    ("heteroplasmy_module_status", "mito_heteroplasmy_summary.tsv"),
+    ("deletions_module_status", "mito_deletion_summary.tsv"),
+    ("copy_number_module_status", "mito_copy_number_summary.tsv"),
+    ("feature_annotation_module_status", "mito_feature_annotation_summary.tsv"),
+    ("cosegregation_module_status", "mito_cosegregation_summary.tsv"),
+    ("gene_summary_module_status", "mito_gene_summary_run_summary.tsv"),
+    ("numt_qc_module_status", "mito_numt_qc_summary.tsv"),
+    ("identity_qc_module_status", "mito_identity_qc_summary.tsv"),
+    ("variant_consequence_module_status", "mito_variant_consequence_summary.tsv"),
+    ("circularity_qc_module_status", "mito_circularity_qc_summary.tsv"),
+    (
+        "methylation_exploratory_module_status",
+        "mito_methylation_exploratory_summary.tsv",
+    ),
+    ("phymer_haplogroup_module_status", "mito_phymer_haplogroup_summary.tsv"),
+    ("mvtool_annotation_module_status", "mito_mvtool_annotation_summary.tsv"),
+)
+PUBLIC_ORACLE_INTERPRETATION_SPECS = (
+    (
+        "numt_interpretation_status",
+        "mito_numt_qc_summary.tsv",
+        "numt_interpretation_status",
+    ),
+    (
+        "numt_interpretation_reason_code",
+        "mito_numt_qc_summary.tsv",
+        "reason_code",
+    ),
+)
 
 REQUIRED_TOP_LEVEL = (
     "run.json",
@@ -2135,14 +2166,8 @@ def expected_oracle_assertions(
         "excluded_observations",
     )
     inventory_fields = ("summary_tsv_count", "html_count", "png_count")
-    status_fields = (
-        "copy_number_status",
-        "phymer_status",
-        "methylation_status",
-        "mvtool_status",
-        "numt_module_status",
-        "numt_interpretation_status",
-        "numt_reason_code",
+    status_fields = tuple(field for field, _ in PUBLIC_ORACLE_MODULE_STATUS_SPECS) + tuple(
+        field for field, _, _ in PUBLIC_ORACLE_INTERPRETATION_SPECS
     )
     longread_fields = (
         "mapped_reads",
@@ -2427,19 +2452,10 @@ def validate_normalized_repeatability(
                 if not semantically_equal(row.get(table_field), default_oracle[oracle_field]):
                     raise ValueError(f"Normalized m.8344A>G mismatch for {oracle_field}")
 
-        status_specs = (
-            ("copy_number_status", "mito_copy_number_summary.tsv", "status"),
-            ("phymer_status", "mito_phymer_haplogroup_summary.tsv", "status"),
-            ("methylation_status", "mito_methylation_exploratory_summary.tsv", "status"),
-            ("mvtool_status", "mito_mvtool_annotation_summary.tsv", "status"),
-            ("numt_module_status", "mito_numt_qc_summary.tsv", "status"),
-            (
-                "numt_interpretation_status",
-                "mito_numt_qc_summary.tsv",
-                "numt_interpretation_status",
-            ),
-            ("numt_reason_code", "mito_numt_qc_summary.tsv", "reason_code"),
-        )
+        status_specs = tuple(
+            (field, filename, "status")
+            for field, filename in PUBLIC_ORACLE_MODULE_STATUS_SPECS
+        ) + PUBLIC_ORACLE_INTERPRETATION_SPECS
         loaded: dict[str, dict[str, str]] = {}
         for oracle_field, filename, metric in status_specs:
             expected_value = default_oracle[oracle_field]
@@ -5883,7 +5899,7 @@ if any(
 ):
     raise SystemExit("raw_inputs.tsv identity or FASTQ-record evidence mismatch")
 
-frozen_oracle_sha256 = "dac769dcbac622f8a2df1363c08a926b0130082208d16b77a57d581cb7ccf76e"
+frozen_oracle_sha256 = "1087bd2d0b6145dd06c75d184e1b93d8eb91e7068ad928e284524f011d5e75f4"
 oracle_path = root / "public_validation_oracle_v0.3.0.tsv"
 if digest(oracle_path) != frozen_oracle_sha256:
     raise SystemExit("public-validation oracle is not the frozen v0.3.0 table")
@@ -5931,9 +5947,14 @@ def expected_assertions():
         "candidate_sites", "accepted_observations", "excluded_observations",
     )
     statuses = (
-        "copy_number_status", "phymer_status", "methylation_status",
-        "mvtool_status", "numt_module_status", "numt_interpretation_status",
-        "numt_reason_code",
+        "mito_qc_module_status", "heteroplasmy_module_status",
+        "deletions_module_status", "copy_number_module_status",
+        "feature_annotation_module_status", "cosegregation_module_status",
+        "gene_summary_module_status", "numt_qc_module_status",
+        "identity_qc_module_status", "variant_consequence_module_status",
+        "circularity_qc_module_status", "methylation_exploratory_module_status",
+        "phymer_haplogroup_module_status", "mvtool_annotation_module_status",
+        "numt_interpretation_status", "numt_interpretation_reason_code",
     )
     long_fields = (
         "mapped_reads", "primary_reads", "supplementary_reads", "mean_depth",
@@ -6341,13 +6362,22 @@ for dataset_key, dataset_name in (("gm11906", "GM11906"), ("gm12878", "GM12878")
             if not semantic_equal(marker[0].get(table_field), default_oracle[oracle_field]):
                 raise SystemExit(f"normalized marker oracle mismatch: {oracle_field}")
     status_specs = (
-        ("copy_number_status", "mito_copy_number_summary.tsv", "status"),
-        ("phymer_status", "mito_phymer_haplogroup_summary.tsv", "status"),
-        ("methylation_status", "mito_methylation_exploratory_summary.tsv", "status"),
-        ("mvtool_status", "mito_mvtool_annotation_summary.tsv", "status"),
-        ("numt_module_status", "mito_numt_qc_summary.tsv", "status"),
+        ("mito_qc_module_status", "mito_qc_summary.tsv", "status"),
+        ("heteroplasmy_module_status", "mito_heteroplasmy_summary.tsv", "status"),
+        ("deletions_module_status", "mito_deletion_summary.tsv", "status"),
+        ("copy_number_module_status", "mito_copy_number_summary.tsv", "status"),
+        ("feature_annotation_module_status", "mito_feature_annotation_summary.tsv", "status"),
+        ("cosegregation_module_status", "mito_cosegregation_summary.tsv", "status"),
+        ("gene_summary_module_status", "mito_gene_summary_run_summary.tsv", "status"),
+        ("numt_qc_module_status", "mito_numt_qc_summary.tsv", "status"),
+        ("identity_qc_module_status", "mito_identity_qc_summary.tsv", "status"),
+        ("variant_consequence_module_status", "mito_variant_consequence_summary.tsv", "status"),
+        ("circularity_qc_module_status", "mito_circularity_qc_summary.tsv", "status"),
+        ("methylation_exploratory_module_status", "mito_methylation_exploratory_summary.tsv", "status"),
+        ("phymer_haplogroup_module_status", "mito_phymer_haplogroup_summary.tsv", "status"),
+        ("mvtool_annotation_module_status", "mito_mvtool_annotation_summary.tsv", "status"),
         ("numt_interpretation_status", "mito_numt_qc_summary.tsv", "numt_interpretation_status"),
-        ("numt_reason_code", "mito_numt_qc_summary.tsv", "reason_code"),
+        ("numt_interpretation_reason_code", "mito_numt_qc_summary.tsv", "reason_code"),
     )
     loaded = {}
     for oracle_field, filename, metric in status_specs:
