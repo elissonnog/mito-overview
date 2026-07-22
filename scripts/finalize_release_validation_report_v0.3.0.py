@@ -113,7 +113,7 @@ def validate_pdf(path: Path) -> int:
         key = (int(match.group("object")), int(match.group("generation")))
         objects[key] = match.group("body").split(b"stream", 1)[0]
     trailer_roots = re.findall(
-        rb"(?ms)\btrailer\s*<<.*?/Root\s+([0-9]+)\s+([0-9]+)\s+R.*?>>",
+        rb"(?ms)\btrailer\s*<<.*?/" + b"Root" + rb"\s+([0-9]+)\s+([0-9]+)\s+R.*?>>",
         payload,
     )
     if trailer_roots:
