@@ -104,7 +104,7 @@ def test_track_summary_marks_zero_denominators_not_evaluable() -> None:
     assert pd.isna(observed["count_weighted_percent_modified"])
     assert observed["count_weighted_denominator_calls"] == 0.0
     assert observed["count_weighted_status"] == "not_evaluable"
-    assert observed["count_weighted_reason_code"] == "zero_modified_plus_canonical_count"
+    assert observed["count_weighted_reason_code"] == "zero_valid_coverage"
 
 
 def test_proxy_marks_zero_call_position_undefined() -> None:
@@ -126,6 +126,43 @@ def test_proxy_marks_zero_call_position_undefined() -> None:
     assert len(proxy) == 1
     assert proxy.iloc[0]["track"] == "Phased_proxy_all_reads"
     assert pd.isna(proxy.iloc[0]["percent_modified"])
+
+
+def test_proxy_sums_all_modkit_denominator_components() -> None:
+    rows = methylation_rows(
+        [
+            {
+                "track": "HP1",
+                "position": 7,
+                "modification_code": "m",
+                "strand": "+",
+                "valid_coverage": 10.0,
+                "percent_modified": 99.0,
+                "modified_count": 2.0,
+                "canonical_count": 6.0,
+                "other_modified_count": 2.0,
+            },
+            {
+                "track": "HP2",
+                "position": 7,
+                "modification_code": "m",
+                "strand": "+",
+                "valid_coverage": 5.0,
+                "percent_modified": -1.0,
+                "modified_count": 1.0,
+                "canonical_count": 3.0,
+                "other_modified_count": 1.0,
+            },
+        ]
+    )
+
+    observed = build_proxy(rows).iloc[0]
+
+    assert observed["modified_count"] == 3.0
+    assert observed["canonical_count"] == 9.0
+    assert observed["other_modified_count"] == 3.0
+    assert observed["valid_coverage"] == 15.0
+    assert observed["percent_modified"] == 20.0
 
 
 def test_np_proxy_summary_no_shared_positions_is_not_evaluable() -> None:
@@ -236,13 +273,14 @@ def write_bedmethyl(
     percent: float,
     modified: int,
     canonical: int,
+    other_modified: int = 0,
     modification_code: str = "m",
     strand: str = "+",
 ) -> None:
     path.write_text(
         f"MT\t{start}\t{start + 1}\t{modification_code}\t0\t{strand}\t"
         f"{start}\t{start + 1}\t0,0,0\t"
-        f"{coverage}\t{percent}\t{modified}\t{canonical}\n",
+        f"{coverage}\t{percent}\t{modified}\t{canonical}\t{other_modified}\t0\t0\t0\t0\n",
         encoding="ascii",
     )
 
@@ -254,14 +292,118 @@ def bedmethyl_line(
     percent: float,
     modified: int,
     canonical: int,
+    other_modified: int = 0,
     modification_code: str = "m",
     strand: str = "+",
 ) -> str:
     return (
         f"MT\t{start}\t{start + 1}\t{modification_code}\t0\t{strand}\t"
         f"{start}\t{start + 1}\t0,0,0\t"
-        f"{coverage}\t{percent}\t{modified}\t{canonical}\n"
+        f"{coverage}\t{percent}\t{modified}\t{canonical}\t{other_modified}\t0\t0\t0\t0\n"
     )
+
+
+def test_modkit_other_modified_count_uses_valid_coverage_denominator(tmp_path: Path) -> None:
+    path = tmp_path / "multi-modification.bed"
+    path.write_text(
+        bedmethyl_line(
+            start=0,
+            coverage=10,
+            percent=25.0,
+            modified=2,
+            canonical=6,
+            other_modified=2,
+        ),
+        encoding="ascii",
+    )
+
+    observed = load_bedmethyl_table(path, "NP_real_all_reads").iloc[0]
+
+    assert observed["modified_count"] == 2.0
+    assert observed["other_modified_count"] == 2.0
+    assert observed["canonical_count"] == 6.0
+    assert observed["valid_coverage"] == 10.0
+    assert observed["percent_modified"] == 20.0
+
+
+def test_modkit_denominator_components_are_summed_when_rows_are_pooled(tmp_path: Path) -> None:
+    path = tmp_path / "multi-modification-duplicates.bed"
+    path.write_text(
+        bedmethyl_line(
+            start=0,
+            coverage=10,
+            percent=999.0,
+            modified=2,
+            canonical=6,
+            other_modified=2,
+        )
+        + bedmethyl_line(
+            start=0,
+            coverage=5,
+            percent=-1.0,
+            modified=1,
+            canonical=3,
+            other_modified=1,
+        ),
+        encoding="ascii",
+    )
+
+    observed = load_bedmethyl_table(path, "NP_real_all_reads").iloc[0]
+
+    assert observed["modified_count"] == 3.0
+    assert observed["other_modified_count"] == 3.0
+    assert observed["canonical_count"] == 9.0
+    assert observed["valid_coverage"] == 15.0
+    assert observed["percent_modified"] == 20.0
+
+
+def test_modkit_zero_component_denominator_is_not_evaluable(tmp_path: Path) -> None:
+    path = tmp_path / "zero-valid-coverage.bed"
+    path.write_text(
+        bedmethyl_line(
+            start=0,
+            coverage=0,
+            percent=75.0,
+            modified=0,
+            canonical=0,
+            other_modified=0,
+        ),
+        encoding="ascii",
+    )
+
+    observed = load_bedmethyl_table(path, "NP_real_all_reads").iloc[0]
+
+    assert observed["valid_coverage"] == 0.0
+    assert pd.isna(observed["percent_modified"])
+
+
+def test_legacy_thirteen_column_row_derives_nonnegative_other_modified_residual(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "legacy-thirteen-column.bed"
+    path.write_text(
+        "MT\t0\t1\tm\t0\t+\t0\t1\t0,0,0\t10\t25\t2\t6\n",
+        encoding="ascii",
+    )
+
+    observed = load_bedmethyl_table(path, "NP_real_all_reads").iloc[0]
+
+    assert observed["other_modified_count"] == 2.0
+    assert observed["valid_coverage"] == 10.0
+    assert observed["percent_modified"] == 20.0
+
+
+def test_legacy_thirteen_column_row_rejects_impossible_count_residual(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "legacy-invalid-counts.bed"
+    path.write_text(
+        "MT\t0\t1\tm\t0\t+\t0\t1\t0,0,0\t5\t50\t3\t3\n",
+        encoding="ascii",
+    )
+
+    with pytest.raises(ValueError, match="Cannot infer N_other_mod"):
+        load_bedmethyl_table(path, "NP_real_all_reads")
 
 
 def test_duplicate_track_coordinates_are_pooled_once_by_counts(tmp_path: Path) -> None:

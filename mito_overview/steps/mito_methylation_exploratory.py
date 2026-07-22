@@ -23,6 +23,7 @@ ROW_COLUMNS = [
     "percent_modified",
     "modified_count",
     "canonical_count",
+    "other_modified_count",
 ]
 IDENTITY_COLUMNS = ["modification_code", "strand"]
 COMPARISON_COLUMNS = [
@@ -76,12 +77,66 @@ def normalize_modification_identity(df: pd.DataFrame) -> pd.DataFrame:
     return normalized
 
 
+def normalize_modkit_counts(df: pd.DataFrame) -> pd.DataFrame:
+    """Recalculate valid coverage and percentages from modkit count columns."""
+
+    normalized = normalize_modification_identity(df)
+    if normalized.empty:
+        return normalized.reindex(columns=ROW_COLUMNS)
+
+    required = ["valid_coverage", "modified_count", "canonical_count"]
+    missing = [column for column in required if column not in normalized.columns]
+    if missing:
+        raise ValueError("Missing bedMethyl count column(s): " + ",".join(missing))
+    for column in required:
+        normalized[column] = pd.to_numeric(normalized[column], errors="raise")
+
+    if "other_modified_count" not in normalized.columns:
+        normalized["other_modified_count"] = np.nan
+    normalized["other_modified_count"] = pd.to_numeric(
+        normalized["other_modified_count"], errors="raise"
+    )
+
+    # Legacy 13-column subsets omitted N_other_mod. Its only safe reconstruction
+    # is the nonnegative residual of modkit's declared valid coverage.
+    other_missing = normalized["other_modified_count"].isna()
+    residual = (
+        normalized["valid_coverage"]
+        - normalized["modified_count"]
+        - normalized["canonical_count"]
+    )
+    invalid_residual = other_missing & (residual < -1e-9)
+    if invalid_residual.any():
+        raise ValueError(
+            "Cannot infer N_other_mod: modified plus canonical counts exceed valid coverage"
+        )
+    normalized.loc[other_missing, "other_modified_count"] = residual.loc[
+        other_missing
+    ].clip(lower=0.0)
+
+    count_columns = ["modified_count", "canonical_count", "other_modified_count"]
+    if (normalized[count_columns] < 0).any(axis=None):
+        raise ValueError("bedMethyl count columns must be nonnegative")
+
+    normalized["valid_coverage"] = normalized[count_columns].sum(axis=1)
+    normalized["percent_modified"] = pd.Series(
+        np.nan, index=normalized.index, dtype=float
+    )
+    evaluable = normalized["valid_coverage"] > 0
+    normalized.loc[evaluable, "percent_modified"] = (
+        100.0
+        * normalized.loc[evaluable, "modified_count"]
+        / normalized.loc[evaluable, "valid_coverage"]
+    ).to_numpy(dtype=float)
+    return normalized
+
+
 def collapse_track_positions(df: pd.DataFrame) -> pd.DataFrame:
     """Pool only duplicate bedMethyl rows with identical modification identity."""
 
     if df.empty:
         return empty_rows_df()
-    df = normalize_modification_identity(df)
+    df = normalize_modkit_counts(df)
     pooled = (
         df.groupby(
             ["track", "position", "modification_code", "strand"],
@@ -92,17 +147,11 @@ def collapse_track_positions(df: pd.DataFrame) -> pd.DataFrame:
             valid_coverage=("valid_coverage", "sum"),
             modified_count=("modified_count", "sum"),
             canonical_count=("canonical_count", "sum"),
+            other_modified_count=("other_modified_count", "sum"),
         )
         .reset_index(drop=True)
     )
-    total_calls = pooled["modified_count"] + pooled["canonical_count"]
-    pooled["percent_modified"] = pd.Series(np.nan, index=pooled.index, dtype=float)
-    evaluable = total_calls > 0
-    pooled.loc[evaluable, "percent_modified"] = (
-        100.0
-        * pooled.loc[evaluable, "modified_count"]
-        / total_calls.loc[evaluable]
-    ).to_numpy(dtype=float)
+    pooled = normalize_modkit_counts(pooled)
     return pooled[ROW_COLUMNS]
 
 
@@ -138,6 +187,9 @@ def load_bedmethyl_table(path: str | Path | None, track_label: str) -> pd.DataFr
                         "percent_modified": float(parts[10]),
                         "modified_count": float(parts[11]),
                         "canonical_count": float(parts[12]),
+                        "other_modified_count": float(parts[13])
+                        if len(parts) >= 14
+                        else np.nan,
                     }
                 )
             except ValueError:
@@ -148,7 +200,7 @@ def load_bedmethyl_table(path: str | Path | None, track_label: str) -> pd.DataFr
 
 
 def track_summary(df: pd.DataFrame) -> pd.DataFrame:
-    df = normalize_modification_identity(df)
+    df = normalize_modkit_counts(df)
     rows: list[dict[str, object]] = []
     for (track, modification_code, strand), sub in df.groupby(
         ["track", "modification_code", "strand"],
@@ -158,7 +210,7 @@ def track_summary(df: pd.DataFrame) -> pd.DataFrame:
         valid_coverage = pd.to_numeric(sub["valid_coverage"], errors="coerce")
         coverage_evaluable_rows = percent_modified.notna() & valid_coverage.notna() & (valid_coverage > 0)
         total_cov = float(valid_coverage.loc[coverage_evaluable_rows].sum())
-        total_calls = float((sub["modified_count"] + sub["canonical_count"]).sum())
+        total_calls = float(valid_coverage.sum())
         coverage_evaluable = total_cov > 0
         calls_evaluable = total_calls > 0
         rows.append(
@@ -192,7 +244,7 @@ def track_summary(df: pd.DataFrame) -> pd.DataFrame:
                 else np.nan,
                 "count_weighted_denominator_calls": round(total_calls, 6),
                 "count_weighted_status": "ok" if calls_evaluable else "not_evaluable",
-                "count_weighted_reason_code": "" if calls_evaluable else "zero_modified_plus_canonical_count",
+                "count_weighted_reason_code": "" if calls_evaluable else "zero_valid_coverage",
                 "mean_valid_coverage": round(float(valid_coverage.mean()), 6),
                 "median_valid_coverage": round(float(valid_coverage.median()), 6),
             }
@@ -201,7 +253,7 @@ def track_summary(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def build_proxy(df: pd.DataFrame) -> pd.DataFrame:
-    df = normalize_modification_identity(df)
+    df = normalize_modkit_counts(df)
     phased = df[df["track"].isin(PROXY_TRACKS)].copy()
     if phased.empty:
         return empty_rows_df()
@@ -214,15 +266,9 @@ def build_proxy(df: pd.DataFrame) -> pd.DataFrame:
         valid_coverage=("valid_coverage", "sum"),
         modified_count=("modified_count", "sum"),
         canonical_count=("canonical_count", "sum"),
+        other_modified_count=("other_modified_count", "sum"),
     )
-    modified_count = pd.to_numeric(proxy["modified_count"], errors="coerce")
-    canonical_count = pd.to_numeric(proxy["canonical_count"], errors="coerce")
-    total_calls = modified_count + canonical_count
-    proxy["percent_modified"] = pd.Series(np.nan, index=proxy.index, dtype=float)
-    evaluable = total_calls > 0
-    proxy.loc[evaluable, "percent_modified"] = (
-        100.0 * modified_count.loc[evaluable] / total_calls.loc[evaluable]
-    ).to_numpy(dtype=float)
+    proxy = normalize_modkit_counts(proxy)
     proxy["track"] = "Phased_proxy_all_reads"
     return proxy[ROW_COLUMNS]
 
