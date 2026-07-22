@@ -3,10 +3,21 @@ from __future__ import annotations
 from pathlib import Path
 
 import pandas as pd
+import pysam
 
 from mito_overview.steps.mito_identity_qc import FINGERPRINT_COLUMNS, run_step
 
 from ._helpers import metric_map
+
+
+def write_vcf(path: Path, records: list[tuple[int, str, str]]) -> None:
+    lines = [
+        "##fileformat=VCFv4.2",
+        "##contig=<ID=MT,length=60>",
+        "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO",
+    ]
+    lines.extend(f"MT\t{pos}\t.\t{ref}\t{alt}\t60\tPASS\t." for pos, ref, alt in records)
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def test_populated_fingerprint_uses_the_same_canonical_schema_as_empty_states(
@@ -223,3 +234,76 @@ def test_identity_qc_rejects_ok_summary_without_measured_observations(
         == "heteroplasmy_all_sites_no_measured_observations"
     )
     assert summary["major_fingerprint_sites"] == ""
+
+
+def test_identity_qc_unindexed_and_indexed_vcfs_have_the_same_known_answer(
+    tmp_path: Path,
+) -> None:
+    phased_plain = tmp_path / "phased.vcf"
+    unphased_plain = tmp_path / "unphased.vcf"
+    write_vcf(phased_plain, [(10, "A", "C"), (20, "G", "A")])
+    write_vcf(unphased_plain, [(10, "A", "C"), (30, "T", "G")])
+
+    expected = {
+        "variant_comparison_status": "ok",
+        "phased_mt_variant_records": "2",
+        "np_mt_variant_records": "2",
+        "shared_mt_variant_records": "1",
+        "phased_only_mt_variant_records": "1",
+        "np_only_mt_variant_records": "1",
+    }
+
+    plain = run_step(
+        summary_dir=tmp_path / "plain" / "summary",
+        figure_dir=tmp_path / "plain" / "figures",
+        report_dir=tmp_path / "plain" / "report",
+        sample_id="UNINDEXED-VCF",
+        mt_contig="MT",
+        phased_snp_vcf=phased_plain,
+        np_snp_vcf=unphased_plain,
+    )
+    assert {key: metric_map(Path(plain["summary_path"]))[key] for key in expected} == expected
+
+    phased_indexed = Path(
+        pysam.tabix_index(str(phased_plain), preset="vcf", force=True, keep_original=True)
+    )
+    unphased_indexed = Path(
+        pysam.tabix_index(str(unphased_plain), preset="vcf", force=True, keep_original=True)
+    )
+    indexed = run_step(
+        summary_dir=tmp_path / "indexed" / "summary",
+        figure_dir=tmp_path / "indexed" / "figures",
+        report_dir=tmp_path / "indexed" / "report",
+        sample_id="INDEXED-VCF",
+        mt_contig="MT",
+        phased_snp_vcf=phased_indexed,
+        np_snp_vcf=unphased_indexed,
+    )
+    assert {key: metric_map(Path(indexed["summary_path"]))[key] for key in expected} == expected
+
+
+def test_identity_qc_malformed_vcf_is_not_a_successful_zero_comparison(
+    tmp_path: Path,
+) -> None:
+    malformed = tmp_path / "malformed.vcf"
+    malformed.write_text("this is not a VCF\n", encoding="utf-8")
+    valid = tmp_path / "valid.vcf"
+    write_vcf(valid, [(10, "A", "C")])
+
+    outputs = run_step(
+        summary_dir=tmp_path / "summary",
+        figure_dir=tmp_path / "figures",
+        report_dir=tmp_path / "report",
+        sample_id="MALFORMED-VCF",
+        mt_contig="MT",
+        phased_snp_vcf=malformed,
+        np_snp_vcf=valid,
+    )
+    summary = metric_map(Path(outputs["summary_path"]))
+
+    assert summary["variant_comparison_status"] == "not_evaluable"
+    assert summary["variant_comparison_reason_code"].startswith(
+        "paired_variant_vcf_unreadable[phased:variant_vcf_unreadable"
+    )
+    assert summary["phased_mt_variant_records"] == ""
+    assert summary["shared_mt_variant_records"] == ""

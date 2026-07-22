@@ -66,32 +66,50 @@ def load_heteroplasmy_status(path: Path) -> tuple[str, str]:
     return load_metric_module_state(path, module_name="heteroplasmy")
 
 
-def load_mt_variants(vcf_path: str | Path | None, contig: str) -> pd.DataFrame:
-    """Load unique mitochondrial variant records from a VCF/BCF."""
+def load_mt_variants(
+    vcf_path: str | Path | None, contig: str
+) -> tuple[pd.DataFrame, str, str]:
+    """Load unique mitochondrial records without requiring a regional index."""
 
+    empty = pd.DataFrame(columns=VARIANT_COLUMNS)
     if not vcf_path:
-        return pd.DataFrame(columns=VARIANT_COLUMNS)
+        return empty, "not_configured", "variant_vcf_not_configured"
     path = Path(vcf_path)
     if not path.is_file():
-        return pd.DataFrame(columns=VARIANT_COLUMNS)
+        return empty, "not_configured", "variant_vcf_missing"
 
     rows: list[dict[str, object]] = []
-    variant_file = pysam.VariantFile(str(path))
     try:
+        variant_file = pysam.VariantFile(str(path))
         try:
-            iterator = variant_file.fetch(contig)
-        except ValueError:
-            iterator = []
-        for record in iterator:
-            for alt in record.alts or []:
-                rows.append({"position": int(record.pos), "ref": record.ref, "alt": alt})
-    finally:
-        variant_file.close()
+            try:
+                for record in variant_file.fetch(contig):
+                    for alt in record.alts or []:
+                        rows.append(
+                            {"position": int(record.pos), "ref": record.ref, "alt": alt}
+                        )
+            except (OSError, ValueError):
+                # Generic standalone VCF inputs are allowed to be unindexed. Reopen the
+                # stream because a failed regional fetch may leave backend state unclear.
+                variant_file.close()
+                variant_file = pysam.VariantFile(str(path))
+                for record in variant_file:
+                    if record.contig != contig:
+                        continue
+                    for alt in record.alts or []:
+                        rows.append(
+                            {"position": int(record.pos), "ref": record.ref, "alt": alt}
+                        )
+        finally:
+            variant_file.close()
+    except (OSError, TypeError, ValueError):
+        return empty, "not_evaluable", "variant_vcf_unreadable"
 
     df = pd.DataFrame(rows, columns=VARIANT_COLUMNS)
     if df.empty:
-        return pd.DataFrame(columns=VARIANT_COLUMNS)
-    return df.drop_duplicates().sort_values(["position", "ref", "alt"]).reset_index(drop=True)
+        return empty, "ok", ""
+    df = df.drop_duplicates().sort_values(["position", "ref", "alt"]).reset_index(drop=True)
+    return df, "ok", ""
 
 
 def run_step(
@@ -133,8 +151,10 @@ def run_step(
     heteroplasmy_status, heteroplasmy_reason = load_heteroplasmy_status(
         hetero_summary_path
     )
-    phased_df = load_mt_variants(phased_snp_vcf, mt_contig)
-    np_df = load_mt_variants(np_snp_vcf, mt_contig)
+    phased_df, phased_vcf_status, phased_vcf_reason = load_mt_variants(
+        phased_snp_vcf, mt_contig
+    )
+    np_df, np_vcf_status, np_vcf_reason = load_mt_variants(np_snp_vcf, mt_contig)
     phymer_summary = load_table(phymer_path, columns=SUMMARY_COLUMNS)
     print(
         f"[identity_qc] loaded heteroplasmy_rows={len(hetero_df)} "
@@ -202,8 +222,17 @@ def run_step(
     major_df.to_csv(fingerprint_path, sep="\t", index=False)
     print(f"[identity_qc] fingerprint sites={len(major_df)} wrote={fingerprint_path}", flush=True)
 
-    phased_keys = set(map(tuple, phased_df[VARIANT_COLUMNS].itertuples(index=False, name=None))) if not phased_df.empty else set()
-    np_keys = set(map(tuple, np_df[VARIANT_COLUMNS].itertuples(index=False, name=None))) if not np_df.empty else set()
+    paired_variant_evidence_ok = phased_vcf_status == "ok" and np_vcf_status == "ok"
+    phased_keys = (
+        set(map(tuple, phased_df[VARIANT_COLUMNS].itertuples(index=False, name=None)))
+        if paired_variant_evidence_ok and not phased_df.empty
+        else set()
+    )
+    np_keys = (
+        set(map(tuple, np_df[VARIANT_COLUMNS].itertuples(index=False, name=None)))
+        if paired_variant_evidence_ok and not np_df.empty
+        else set()
+    )
     shared_keys = phased_keys & np_keys
     phased_only_keys = phased_keys - np_keys
     np_only_keys = np_keys - phased_keys
@@ -248,8 +277,20 @@ def run_step(
 
     phased_vcf_present = bool(phased_snp_vcf and Path(phased_snp_vcf).is_file())
     np_vcf_present = bool(np_snp_vcf and Path(np_snp_vcf).is_file())
-    comparison_status = "ok" if phased_vcf_present and np_vcf_present else "not_configured"
-    comparison_reason = "" if comparison_status == "ok" else "paired_variant_vcfs_not_configured"
+    if paired_variant_evidence_ok:
+        comparison_status = "ok"
+        comparison_reason = ""
+    elif "not_evaluable" in (phased_vcf_status, np_vcf_status):
+        comparison_status = "not_evaluable"
+        failed_sources = []
+        if phased_vcf_status == "not_evaluable":
+            failed_sources.append(f"phased:{phased_vcf_reason}")
+        if np_vcf_status == "not_evaluable":
+            failed_sources.append(f"unphased:{np_vcf_reason}")
+        comparison_reason = "paired_variant_vcf_unreadable[" + ",".join(failed_sources) + "]"
+    else:
+        comparison_status = "not_configured"
+        comparison_reason = "paired_variant_vcfs_not_configured"
 
     evidence_statuses = (fingerprint_status, comparison_status, phymer_status)
     evaluable_sources = sum(source_status == "ok" for source_status in evidence_statuses)
@@ -261,8 +302,8 @@ def run_step(
         module_reason = "" if evaluable_sources == len(evidence_statuses) else "partial_identity_evidence"
 
     major_fingerprint_sites: int | object = len(major_df) if fingerprint_status == "ok" else pd.NA
-    phased_record_count: int | object = len(phased_df) if phased_vcf_present else pd.NA
-    np_record_count: int | object = len(np_df) if np_vcf_present else pd.NA
+    phased_record_count: int | object = len(phased_df) if phased_vcf_status == "ok" else pd.NA
+    np_record_count: int | object = len(np_df) if np_vcf_status == "ok" else pd.NA
     shared_record_count: int | object = len(shared_keys) if comparison_status == "ok" else pd.NA
     phased_only_count: int | object = len(phased_only_keys) if comparison_status == "ok" else pd.NA
     np_only_count: int | object = len(np_only_keys) if comparison_status == "ok" else pd.NA
