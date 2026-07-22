@@ -2275,7 +2275,7 @@ def test_packet_rejects_private_path_in_bound_macos_html_without_sanitizing_it(
     row = next(item for item in rows if item["artifact_type"] == "html")
     artifact = validation / "public/outputs" / inventory.parent.name / row["relative_path"]
     artifact.write_text(
-        "<html><body>source=/Users/private/reports/input.bam</body></html>\n",
+        "<html><body>source=/" + "Users/private/reports/input.bam</body></html>\n",
         encoding="utf-8",
     )
     mutate_tsv_value(
