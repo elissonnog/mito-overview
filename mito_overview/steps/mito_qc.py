@@ -123,11 +123,20 @@ def run_step(
     breadth_10x = round(sum(d >= 10 for d in depth) / len(depth), 4) if depth else 0.0
     module_status = "ok" if mapped else "not_evaluable"
     module_reason = "" if mapped else "no_mapped_reads"
-    primary_full_length_fraction: float | object = (
-        round(primary_full_length / primary, 4) if primary else pd.NA
-    )
-    primary_full_length_status = "ok" if primary else "not_evaluable"
-    primary_full_length_reason = "" if primary else "no_primary_reads"
+    if read_mode == "long":
+        primary_full_length_reads: int | object = primary_full_length
+        primary_full_length_fraction: float | object = (
+            round(primary_full_length / primary, 4) if primary else pd.NA
+        )
+        primary_full_length_status = "ok" if primary else "not_evaluable"
+        primary_full_length_reason = "" if primary else "no_primary_reads"
+        primary_full_length_denominator: str | object = "primary_alignment_records"
+    else:
+        primary_full_length_reads = pd.NA
+        primary_full_length_fraction = pd.NA
+        primary_full_length_status = "not_applicable"
+        primary_full_length_reason = "read_mode_short"
+        primary_full_length_denominator = pd.NA
     high_alignment_fraction: float | object = (
         round(high_alignment_fraction_reads / mapped, 4) if mapped else pd.NA
     )
@@ -137,7 +146,7 @@ def run_step(
         {"metric": "reason_code", "value": module_reason},
         {"metric": "mapped_reads", "value": mapped},
         {"metric": "primary_reads", "value": primary},
-        {"metric": "primary_full_length_reads", "value": primary_full_length},
+        {"metric": "primary_full_length_reads", "value": primary_full_length_reads},
         {
             "metric": "primary_full_length_fraction",
             "value": primary_full_length_fraction,
@@ -152,7 +161,7 @@ def run_step(
         },
         {
             "metric": "primary_full_length_fraction_denominator",
-            "value": "primary_alignment_records",
+            "value": primary_full_length_denominator,
         },
         {
             "metric": "full_length_fraction",

@@ -7,7 +7,13 @@ from mito_overview.steps.mito_qc import run_step
 from ._helpers import ReadSpec, metric_map, write_alignment
 
 
-def run_qc_fixture(tmp_path: Path, reads: list[ReadSpec]) -> dict[str, Path | str]:
+def run_qc_fixture(
+    tmp_path: Path,
+    reads: list[ReadSpec],
+    *,
+    read_mode: str = "long",
+    assay_type: str = "wgs",
+) -> dict[str, Path | str]:
     bam = write_alignment(tmp_path / "qc.bam", {"MT": 100}, reads)
     return run_step(
         bam=bam,
@@ -17,8 +23,8 @@ def run_qc_fixture(tmp_path: Path, reads: list[ReadSpec]) -> dict[str, Path | st
         sample_id="TOY-QC",
         species="human",
         build="hg38",
-        read_mode="long",
-        assay_type="wgs",
+        read_mode=read_mode,
+        assay_type=assay_type,
         mt_contig="MT",
         mt_length=100,
     )
@@ -92,3 +98,22 @@ def test_supplementary_only_qc_keeps_primary_fraction_unavailable(
     assert summary["full_length_fraction"] == ""
     assert summary["primary_full_length_fraction_status"] == "not_evaluable"
     assert summary["primary_full_length_fraction_reason_code"] == "no_primary_reads"
+
+
+def test_short_read_full_length_metric_is_not_applicable(tmp_path: Path) -> None:
+    outputs = run_qc_fixture(
+        tmp_path,
+        [ReadSpec("short-read", "MT", 0, "A" * 50)],
+        read_mode="short",
+        assay_type="targeted_mt",
+    )
+    summary = metric_map(Path(outputs["summary_path"]))
+
+    assert outputs["status"] == "ok"
+    assert summary["primary_full_length_reads"] == ""
+    assert summary["primary_full_length_fraction"] == ""
+    assert summary["primary_full_length_fraction_status"] == "not_applicable"
+    assert summary["primary_full_length_fraction_reason_code"] == "read_mode_short"
+    assert summary["primary_full_length_fraction_denominator"] == ""
+    assert summary["full_length_fraction"] == ""
+    assert float(summary["high_query_alignment_fraction"]) == 1.0
