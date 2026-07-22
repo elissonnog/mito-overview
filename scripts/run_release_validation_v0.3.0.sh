@@ -197,6 +197,7 @@ mkdir -p "$(dirname "${AUDIT_ZIP}")"
 FRESH_CLONE_ROOT="${VALIDATION_ROOT}/work/fresh_clone"
 FRESH_ENV_ROOT="${VALIDATION_ROOT}/work/fresh_environment"
 FRESH_VENV_ROOT="${FRESH_ENV_ROOT}/venv"
+FRESH_SDIST_VENV_ROOT="${FRESH_ENV_ROOT}/sdist-venv"
 FRESH_PYTHON="${FRESH_VENV_ROOT}/bin/python"
 
 CASES_TSV="${VALIDATION_ROOT}/cases.tsv"
@@ -210,7 +211,9 @@ measure_command() {
   local case_id="$1"
   local log_file="$2"
   shift 2
-  "${PYTHON_BIN}" -     "${VALIDATION_ROOT}/resources/${case_id}.json" "${log_file}" "$@" <<'PY'
+  "${PYTHON_BIN}" - \
+    "${VALIDATION_ROOT}/resources/${case_id}.json" "${log_file}" \
+    "${REPO_ROOT}" "${CACHE_ROOT}" "${VALIDATION_ROOT}" "$@" <<'PY'
 import json
 import os
 import platform
@@ -222,13 +225,51 @@ from pathlib import Path
 
 resource_path = Path(sys.argv[1])
 log_path = Path(sys.argv[2])
-command = sys.argv[3:]
+input_roots = [Path(value) for value in sys.argv[3:6]]
+output_root = Path(sys.argv[5])
+command = sys.argv[6:]
+
+EXCLUDED_NAMES = {".git", ".pytest_cache", "__pycache__"}
+
+
+def file_inventory(roots):
+    records = {}
+    seen = set()
+    for root in roots:
+        if not root.exists() or root.is_symlink():
+            continue
+        candidates = [root] if root.is_file() else root.rglob("*")
+        for path in candidates:
+            if any(part in EXCLUDED_NAMES for part in path.parts):
+                continue
+            try:
+                if path.is_symlink() or not path.is_file():
+                    continue
+                stat = path.stat()
+            except OSError:
+                continue
+            identity = (stat.st_dev, stat.st_ino)
+            if identity in seen:
+                continue
+            seen.add(identity)
+            records[str(path.resolve())] = (stat.st_size, stat.st_mtime_ns)
+    return records
+
+
+input_inventory = file_inventory(input_roots)
+output_before = file_inventory([output_root])
 before = resource.getrusage(resource.RUSAGE_CHILDREN)
 started = time.monotonic()
 with log_path.open("wb") as log:
     completed = subprocess.run(command, stdout=log, stderr=subprocess.STDOUT, check=False)
 elapsed = time.monotonic() - started
 after = resource.getrusage(resource.RUSAGE_CHILDREN)
+output_after = file_inventory([output_root])
+output_bytes = sum(
+    size
+    for path, (size, mtime_ns) in output_after.items()
+    if output_before.get(path) != (size, mtime_ns)
+)
 max_rss = after.ru_maxrss
 if sys.platform == "darwin":
     max_rss = max_rss / 1024.0
@@ -239,6 +280,9 @@ record = {
     "user_cpu_seconds": round(after.ru_utime - before.ru_utime, 6),
     "system_cpu_seconds": round(after.ru_stime - before.ru_stime, 6),
     "max_rss_kb": round(max_rss, 3),
+    "input_bytes": sum(size for size, _ in input_inventory.values()),
+    "output_bytes": output_bytes,
+    "io_measurement_method": "declared_input_inventory_and_validation_output_delta_v1",
     "threads": os.environ.get("THREADS", "4"),
     "platform": platform.platform(),
     "measurement_status": "measured",
@@ -779,11 +823,14 @@ run_fresh_clone_validation() {
   local tmp_root="${FRESH_ENV_ROOT}/tmp"
   local cache_root="${FRESH_ENV_ROOT}/cache"
   local venv_root="${FRESH_VENV_ROOT}"
+  local sdist_venv_root="${FRESH_SDIST_VENV_ROOT}"
   local probe_root="${VALIDATION_ROOT}/work/installed_probe"
+  local sdist_probe_root="${VALIDATION_ROOT}/work/installed_sdist_probe"
   local command_file="${VALIDATION_ROOT}/commands/${FRESH_CLONE_CASE_ID}.sh"
   local log_file="${VALIDATION_ROOT}/logs/${FRESH_CLONE_CASE_ID}.log"
 
   mkdir -p "${home_root}" "${tmp_root}" "${cache_root}" "${probe_root}" \
+    "${sdist_probe_root}" \
     "${VALIDATION_ROOT}/acceptance/fresh_clone_environment"
   cat > "${command_file}" <<EOF
 #!/usr/bin/env bash
@@ -833,6 +880,16 @@ cd $(printf '%q' "${probe_root}")
 run_clean "\${FRESH_PYTHON}" -I -c \
   'from pathlib import Path; import mito_overview; p=Path(mito_overview.__file__).resolve(); assert "site-packages" in p.parts; print(p)'
 run_clean "\${FRESH_PYTHON}" -I -m mito_overview.cli --list-steps
+run_clean $(printf '%q' "${PYTHON_BIN}") -m venv $(printf '%q' "${sdist_venv_root}")
+SDIST_PYTHON=$(printf '%q' "${sdist_venv_root}/bin/python")
+run_clean "\${SDIST_PYTHON}" -m pip install --force-reinstall \
+  pip==26.1.2 build==1.5.0 setuptools==82.0.1 wheel==0.47.0 \
+  pytest==9.1.1 python-docx==1.2.0
+run_clean "\${SDIST_PYTHON}" -m pip install --force-reinstall --no-build-isolation "\${SDIST}"
+cd $(printf '%q' "${sdist_probe_root}")
+run_clean "\${SDIST_PYTHON}" -I -c \
+  'from importlib.metadata import version; from pathlib import Path; import mito_overview; p=Path(mito_overview.__file__).resolve(); assert version("mito-overview") == "0.3.0"; assert "site-packages" in p.parts; print(p)'
+run_clean "\${SDIST_PYTHON}" -I -m mito_overview.cli --list-steps
 cd $(printf '%q' "${clone_root}")
 run_clean "\${FRESH_PYTHON}" -m pytest -q
 run_clean env MITO_OVERVIEW_PYTHON="\${FRESH_PYTHON}" MITO_OVERVIEW_REQUIRE_INSTALLED=1 ./tests/smoke_public_pipeline.sh
@@ -870,6 +927,8 @@ evidence = {
     "built_wheel": True,
     "built_sdist": True,
     "installed_wheel": True,
+    "installed_sdist": True,
+    "separate_distribution_environments": True,
     "executed_outside_checkout": True,
     "command_path": "commands/fresh_clone_candidate_commit.sh",
     "log_path": "logs/fresh_clone_candidate_commit.log",
@@ -1393,7 +1452,8 @@ for resource_path in sorted((validation_root / "resources").glob("*.json")):
             key: value.get(key, "")
             for key in (
                 "case_id", "wall_seconds", "user_cpu_seconds", "system_cpu_seconds",
-                "max_rss_kb", "threads", "platform", "measurement_status", "reason",
+                "max_rss_kb", "input_bytes", "output_bytes", "io_measurement_method",
+                "threads", "platform", "measurement_status", "reason",
             )
         }
     )
@@ -1401,7 +1461,8 @@ write_table(
     "resource_usage.tsv",
     [
         "case_id", "wall_seconds", "user_cpu_seconds", "system_cpu_seconds",
-        "max_rss_kb", "threads", "platform", "measurement_status", "reason",
+        "max_rss_kb", "input_bytes", "output_bytes", "io_measurement_method",
+        "threads", "platform", "measurement_status", "reason",
     ],
     resource_rows,
 )

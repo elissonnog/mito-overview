@@ -28,6 +28,9 @@ ZIP_NAME = "mito-overview-v0.3.0-validation.zip"
 PAGE_RE = re.compile(r"^page-(?P<number>[1-9][0-9]*)\.png$")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
+PDF_OBJECT_RE = re.compile(
+    rb"(?ms)^\s*(?P<object>[0-9]+)\s+(?P<generation>[0-9]+)\s+obj\b(?P<body>.*?)\bendobj\b"
+)
 
 
 class FinalizationError(ValueError):
@@ -97,14 +100,56 @@ def validate_record(record: Any, path: Path, label: str) -> None:
         raise FinalizationError(f"{label} SHA-256 changed after provenance capture")
 
 
-def validate_pdf(path: Path) -> None:
+def validate_pdf(path: Path) -> int:
     path = require_plain_file(path, "rendered PDF")
-    with path.open("rb") as handle:
-        header = handle.read(8)
-        handle.seek(max(0, path.stat().st_size - 1024))
-        trailer = handle.read()
-    if not header.startswith(b"%PDF-") or b"%%EOF" not in trailer:
+    payload = path.read_bytes()
+    if not payload.startswith(b"%PDF-") or b"%%EOF" not in payload[-1024:]:
         raise FinalizationError("rendered PDF lacks a complete PDF header/trailer")
+    if b"startxref" not in payload[-4096:]:
+        raise FinalizationError("rendered PDF lacks a startxref marker")
+
+    objects: dict[tuple[int, int], bytes] = {}
+    for match in PDF_OBJECT_RE.finditer(payload):
+        key = (int(match.group("object")), int(match.group("generation")))
+        objects[key] = match.group("body").split(b"stream", 1)[0]
+    trailer_roots = re.findall(
+        rb"(?ms)\btrailer\s*<<.*?/Root\s+([0-9]+)\s+([0-9]+)\s+R.*?>>",
+        payload,
+    )
+    if trailer_roots:
+        root_key = tuple(int(value) for value in trailer_roots[-1])
+        catalog = objects.get(root_key)
+    else:
+        catalogs = [
+            body
+            for body in objects.values()
+            if re.search(rb"/Type\s*/Catalog\b", body)
+        ]
+        catalog = catalogs[-1] if len(catalogs) == 1 else None
+    if catalog is None:
+        raise FinalizationError("rendered PDF catalog cannot be resolved")
+    pages_ref = re.search(rb"/Pages\s+([0-9]+)\s+([0-9]+)\s+R", catalog)
+    if pages_ref is None:
+        raise FinalizationError("rendered PDF catalog lacks a Pages reference")
+    pages_key = (int(pages_ref.group(1)), int(pages_ref.group(2)))
+    pages_root = objects.get(pages_key)
+    if pages_root is None or re.search(rb"/Type\s*/Pages\b", pages_root) is None:
+        raise FinalizationError("rendered PDF page tree cannot be resolved")
+    count_match = re.search(rb"/Count\s+([0-9]+)\b", pages_root)
+    if count_match is None or int(count_match.group(1)) < 1:
+        raise FinalizationError("rendered PDF page tree lacks a positive page count")
+    declared_count = int(count_match.group(1))
+    page_object_count = sum(
+        1
+        for body in objects.values()
+        if re.search(rb"/Type\s*/Page(?!s)\b", body)
+    )
+    if page_object_count != declared_count:
+        raise FinalizationError(
+            "rendered PDF page tree count does not match its page objects: "
+            f"{declared_count} != {page_object_count}"
+        )
+    return declared_count
 
 
 def validate_pages(root: Path) -> list[dict[str, object]]:
@@ -319,8 +364,13 @@ def finalize(
         raise FinalizationError("visual-reviewer identifier must not be empty")
     report_root = require_plain_directory(report_root, "report root")
     rendered_pdf = require_plain_file(rendered_pdf, "rendered PDF")
-    validate_pdf(rendered_pdf)
+    pdf_page_count = validate_pdf(rendered_pdf)
     page_rows = validate_pages(rendered_pages)
+    if len(page_rows) != pdf_page_count:
+        raise FinalizationError(
+            "rendered PNG page count does not match the PDF page count: "
+            f"{len(page_rows)} != {pdf_page_count}"
+        )
     build, build_path, assets, report_md, report_docx = validate_build_provenance(
         report_root, final_sha
     )
@@ -372,6 +422,8 @@ def finalize(
             "all_pages_inspected": True,
             "reviewer": reviewer.strip(),
             "page_count": len(page_rows),
+            "pdf_page_count": pdf_page_count,
+            "page_count_matches_pdf": True,
             "source_docx_sha256": report_outputs["docx"]["sha256"],
             "rendered_pdf_sha256": pdf_record["sha256"],
             "pages": page_rows,

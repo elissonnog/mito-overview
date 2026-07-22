@@ -212,8 +212,18 @@ def make_packet(tmp_path: Path) -> tuple[Path, Path, list[Path]]:
         packet / "resource_usage.tsv",
         report_builder.EVIDENCE_COLUMNS["resource_usage.tsv"],
         [
-            ["gm11906_default_run1", "12.4", "10.0", "1.2", "204800", "4", "osx-arm64", "measured", ""],
-            ["gm12878_default_run1", "31.8", "28.0", "2.0", "307200", "4", "linux-64", "measured", ""],
+            [
+                "gm11906_default_run1", "12.4", "10.0", "1.2", "204800",
+                "59499334", "1048576",
+                "declared_input_inventory_and_validation_output_delta_v1",
+                "4", "osx-arm64", "measured", "",
+            ],
+            [
+                "gm12878_default_run1", "31.8", "28.0", "2.0", "307200",
+                "2033558460", "2097152",
+                "declared_input_inventory_and_validation_output_delta_v1",
+                "4", "linux-64", "measured", "",
+            ],
         ],
     )
     sha_short = hashlib.sha256(b"short-input").hexdigest()

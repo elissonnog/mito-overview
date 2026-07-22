@@ -52,7 +52,8 @@ release date.
 ## Evidence gate
 
 - [ ] `run.json`, `cases.tsv`, commands, logs, environment records, resource
-  usage, input/output hashes, expected-versus-observed results, normalized
+  usage (including declared-input inventory bytes and validation-output delta
+  bytes), input/output hashes, expected-versus-observed results, normalized
   outputs, module statuses, figure/table provenance, claim evidence,
   limitations, public sources, and manuscript handoff values are complete.
 - [ ] Every required case is `PASS`; no required case is missing, `SKIP`,
@@ -80,8 +81,9 @@ release date.
 - [ ] Annotated tag `v0.3.0` peels to `FINAL_SHA` and is never rewritten.
 - [ ] `scripts/run_fresh_public_tag_validation_v0.3.0.sh` clones the public
   annotated tag through HTTPS, verifies its peeled `FINAL_SHA`, and records
-  `PASS` for its pinned environment, wheel/sdist, installed CLI, complete unit
-  suite, four smoke workflows, and both example builders.
+  `PASS` for its pinned environment, wheel and sdist installed in separate
+  environments, both installed CLIs, complete unit suite, four smoke workflows,
+  and both example builders.
 - [ ] The fresh-tag evidence manifest verifies, contains no local absolute
   path, and its receipt is supplied to every publisher phase with
   `--tag-validation-receipt` except the earlier read-only prepublication phase.
@@ -102,7 +104,8 @@ release date.
   page directory are passed to
   `scripts/finalize_release_validation_report_v0.3.0.py` with an explicit PASS
   review; the resulting `report_provenance.json` binds the final PDF and every
-  reviewed page to the source DOCX and validation ZIP.
+  reviewed page to the source DOCX and validation ZIP. The PDF page-tree count
+  must equal both the contiguous PNG inventory and its recorded QA count.
 - [ ] `scripts/assemble_release_assets_v0.3.0.py` creates the exact nine-file
   prebuilt asset source atomically, executes the packet verifier, confirms the
   Markdown/DOCX/PDF/figure/page provenance, release-note/environment

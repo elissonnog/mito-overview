@@ -30,6 +30,25 @@ def _write_png(path: Path, size: tuple[int, int]) -> None:
     Image.new("RGB", size, "white").save(path)
 
 
+def _write_pdf(path: Path, pages: int) -> None:
+    kids = " ".join(f"{number} 0 R" for number in range(3, 3 + pages))
+    objects = [
+        "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n",
+        f"2 0 obj\n<< /Type /Pages /Kids [{kids}] /Count {pages} >>\nendobj\n",
+    ]
+    objects.extend(
+        f"{number} 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>\nendobj\n"
+        for number in range(3, 3 + pages)
+    )
+    path.write_bytes(
+        (
+            "%PDF-1.4\n"
+            + "".join(objects)
+            + "trailer\n<< /Root 1 0 R >>\nstartxref\n0\n%%EOF\n"
+        ).encode("ascii")
+    )
+
+
 def _write_fixture(root: Path) -> dict[str, Path]:
     packet = root / "packet"
     packet.mkdir(parents=True)
@@ -149,9 +168,7 @@ def _write_fixture(root: Path) -> dict[str, Path]:
     rendered = root / "rendered"
     rendered.mkdir()
     rendered_pdf = rendered / f"{REPORT_STEM}.pdf"
-    rendered_pdf.write_bytes(
-        b"%PDF-1.4\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF\n"
-    )
+    _write_pdf(rendered_pdf, 1)
     _write_png(rendered / "page-1.png", (1275, 1650))
     return {
         "packet": packet,
@@ -207,6 +224,8 @@ def test_finalizer_binds_packet_report_pdf_and_pages(tmp_path: Path) -> None:
     )
     assert receipt["rendered_page_qa"]["status"] == "PASS"
     assert receipt["rendered_page_qa"]["page_count"] == 1
+    assert receipt["rendered_page_qa"]["pdf_page_count"] == 1
+    assert receipt["rendered_page_qa"]["page_count_matches_pdf"] is True
     assert (inputs["assets"] / "rendered_pages" / "page-1.png").is_file()
 
 
@@ -266,3 +285,12 @@ def test_finalizer_rejects_noncontiguous_rendered_pages(tmp_path: Path) -> None:
 
     assert completed.returncode != 0
     assert "not contiguous" in completed.stderr
+
+
+def test_finalizer_rejects_missing_rendered_page_for_multipage_pdf(tmp_path: Path) -> None:
+    inputs = _write_fixture(tmp_path)
+    _write_pdf(inputs["rendered_pdf"], 2)
+    completed = _run(inputs, "--visual-review-pass")
+
+    assert completed.returncode != 0
+    assert "PNG page count does not match the PDF page count" in completed.stderr

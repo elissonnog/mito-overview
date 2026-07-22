@@ -220,6 +220,8 @@ def _write_inputs(root: Path) -> dict[str, Path]:
             "all_pages_inspected": True,
             "reviewer": "test-reviewer",
             "page_count": 1,
+            "pdf_page_count": 1,
+            "page_count_matches_pdf": True,
             "source_docx_sha256": _sha256(report_docx),
             "rendered_pdf_sha256": _sha256(report_pdf),
             "pages": [page_row],

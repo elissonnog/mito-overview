@@ -5,6 +5,7 @@ import gzip
 import json
 import os
 import platform
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -501,6 +502,71 @@ def test_prepare_corrupt_partial_cannot_be_promoted_or_sealed(tmp_path: Path) ->
     assert not (cache / "SRR10804585_1.fastq.gz").exists()
     assert not (cache / "raw_inputs.tsv").exists()
     assert not (cache / "CACHE_SEAL.sha256").exists()
+
+
+def test_prepare_completes_interrupted_manifest_to_seal_without_network(
+    tmp_path: Path,
+) -> None:
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    script = PREPARE.read_text(encoding="utf-8")
+    match = re.search(
+        r"cat > \"\$\{SPEC_PATH\}\" <<'EOF'\n(?P<spec>.*?)\nEOF\n",
+        script,
+        re.DOTALL,
+    )
+    assert match is not None
+    spec_rows = list(csv.DictReader(match.group("spec").splitlines(), delimiter="\t"))
+    assert len(spec_rows) == 7
+    for row in spec_rows:
+        (cache / row["filename"]).write_bytes(b"fixture-fastq\n")
+
+    fields = [
+        "schema_version", "dataset_id", "run_accession", "sample_accession",
+        "sample_alias", "sample_title", "source_sample_id", "library_strategy",
+        "library_unit", "source_record_url", "filename", "bytes", "md5",
+        "sha256", "fastq_records", "url",
+    ]
+    with (cache / "raw_inputs.tsv").open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fields, delimiter="\t", lineterminator="\n")
+        writer.writeheader()
+        for row in spec_rows:
+            writer.writerow({"schema_version": "1.0", **row, "fastq_records": "1"})
+
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    (fake_bin / "gzip").write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    (fake_bin / "gzip").chmod(0o755)
+    marker = tmp_path / "curl-called.txt"
+    write_fake_curl(fake_bin, marker)
+    fake_python = fake_bin / "fixture-python"
+    fake_python.write_text(
+        f"#!{sys.executable}\n"
+        "import hashlib, sys\n"
+        "source = sys.stdin.read()\n"
+        "if 'print(digest.hexdigest())' in source:\n"
+        "    print(hashlib.sha256(open(sys.argv[2], 'rb').read()).hexdigest())\n"
+        "elif 'expected_bytes, expected_md5, expected_sha256' in source:\n"
+        "    print('1')\n",
+        encoding="utf-8",
+    )
+    fake_python.chmod(0o755)
+
+    result = subprocess.run(
+        [str(PREPARE), "--cache", str(cache)],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "PATH": f"{fake_bin}:{os.environ['PATH']}",
+            "MITO_OVERVIEW_PYTHON": str(fake_python),
+        },
+    )
+    assert result.returncode == 0, result.stderr
+    assert "completed interrupted cache finalization" in result.stdout
+    assert (cache / "CACHE_SEAL.sha256").is_file()
+    assert not marker.exists()
 
 
 def test_matrix_rejects_symlinked_cache_root_before_execution(tmp_path: Path) -> None:

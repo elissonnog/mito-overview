@@ -156,8 +156,8 @@ complete rerun from a new final commit.
    ```
 
    The finalizer verifies the packet ZIP and embedded verifier, the report
-   builder receipt, exact packet-native figure hashes, the final PDF, and a
-   contiguous PASS-reviewed page inventory. It writes
+   builder receipt, exact packet-native figure hashes, the final PDF page tree,
+   and a contiguous PASS-reviewed page inventory whose count equals the PDF. It writes
    `report_provenance.json` beside the figure manifest. Then assemble the
    remaining non-distribution assets with the fail-closed command below. The
    assembler requires an absent output directory, rechecks the complete
@@ -177,7 +177,8 @@ complete rerun from a new final commit.
    ```
 8. Run `scripts/run_fresh_public_tag_validation_v0.3.0.sh` from absent work and
    evidence roots with the assembled asset source. The runner clones the public
-   tag, builds wheel/sdist, verifies all package and synthetic gates, and seals
+   tag, builds wheel/sdist, installs each distribution in a separate environment,
+   verifies all package and synthetic gates, and seals
    all 12 canonical assets into a tag/`FINAL_SHA`-bound trusted manifest.
 9. Supply that exact PASS receipt and asset directory to every mutation phase.
    The publisher verifies all trusted hashes before enabling immutable releases

@@ -144,6 +144,9 @@ EVIDENCE_COLUMNS = {
         "user_cpu_seconds",
         "system_cpu_seconds",
         "max_rss_kb",
+        "input_bytes",
+        "output_bytes",
+        "io_measurement_method",
         "threads",
         "platform",
         "measurement_status",
@@ -1053,6 +1056,8 @@ def validate_resource_usage(rows: list[dict[str, str]]) -> None:
         "user_cpu_seconds",
         "system_cpu_seconds",
         "max_rss_kb",
+        "input_bytes",
+        "output_bytes",
         "threads",
     )
     for row in rows:
@@ -1076,6 +1081,13 @@ def validate_resource_usage(rows: list[dict[str, str]]) -> None:
         if any(value < 0 for value in values) or values[-1] <= 0:
             raise ReportValidationError(
                 f"Out-of-range resource measurement for {row['case_id']}"
+            )
+        if (
+            row["io_measurement_method"]
+            != "declared_input_inventory_and_validation_output_delta_v1"
+        ):
+            raise ReportValidationError(
+                f"Invalid resource I/O measurement method for {row['case_id']}"
             )
 
 
@@ -1682,6 +1694,8 @@ def build_report_blocks(
                 ("user_cpu_seconds", "User CPU s"),
                 ("system_cpu_seconds", "System CPU s"),
                 ("max_rss_kb", "Peak RSS KB"),
+                ("input_bytes", "Input bytes"),
+                ("output_bytes", "Output bytes"),
                 ("threads", "Threads"),
                 ("platform", "Platform"),
                 ("measurement_status", "Status"),

@@ -329,10 +329,43 @@ if [[ "${MODE}" == verify ]]; then
   exit 0
 fi
 
-if [[ -e "${SEAL_PATH}" || -e "${MANIFEST_PATH}" ]]; then
+if [[ -e "${SEAL_PATH}" ]]; then
   verify_sealed_cache
   echo "[public-cache] cache was already sealed; no download performed"
   exit 0
+fi
+
+# A complete manifest without its seal is the only valid interrupted-finalization
+# state. Recreate the seal atomically, then run the complete sealed-cache check.
+if [[ -e "${MANIFEST_PATH}" ]]; then
+  [[ -f "${MANIFEST_PATH}" && ! -L "${MANIFEST_PATH}" ]] || {
+    echo "Interrupted cache manifest is not a regular file: ${MANIFEST_PATH}" >&2
+    exit 1
+  }
+  unexpected="$(
+    find "${CACHE_ROOT}" -mindepth 1 -maxdepth 1 \
+      ! -name "${MANIFEST_NAME}" \
+      ! -name '*.fastq.gz' \
+      -print -quit
+  )"
+  [[ -z "${unexpected}" ]] || {
+    echo "Interrupted cache contains an unexpected path: ${unexpected}" >&2
+    exit 1
+  }
+  SEAL_PARTIAL="${SEAL_PATH}.partial"
+  [[ ! -e "${SEAL_PARTIAL}" ]] || {
+    echo "Interrupted cache contains a stale seal partial: ${SEAL_PARTIAL}" >&2
+    exit 1
+  }
+  printf '%s  %s\n' "$(sha256_file "${MANIFEST_PATH}")" "${MANIFEST_NAME}" > "${SEAL_PARTIAL}"
+  mv "${SEAL_PARTIAL}" "${SEAL_PATH}"
+  if (verify_sealed_cache); then
+    echo "[public-cache] completed interrupted cache finalization"
+    exit 0
+  fi
+  rm -f "${SEAL_PATH}"
+  echo "Interrupted cache manifest or FASTQ inventory failed verification" >&2
+  exit 1
 fi
 assert_allowed_unsealed_contents
 

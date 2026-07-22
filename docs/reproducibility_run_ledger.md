@@ -40,7 +40,8 @@ The GM12878 exercise uses a deterministic 1,000-query-name reduced ONT input and
 | --- | --- | --- |
 | package and known answers | complete `pytest`, CLI step list, strict generic dry-run | provisional local pass; final exact-commit rerun pending |
 | synthetic workflows | standard long read, reduced short read, long read without methylation, standalone minimal | provisional local pass; final exact-commit rerun pending |
-| package isolation | build wheel and sdist; install and execute outside checkout with empty `PYTHONPATH` | pending final runner |
+| package isolation | build wheel and sdist; install each in a separate environment and execute outside checkout with empty `PYTHONPATH` | pending final runner |
+| I/O volume provenance | inventory declared input bytes before each measured command and changed/new validation-output bytes afterward | pending final runner |
 | sealed public cache | exactly seven raw FASTQs plus manifest/seal; hashes, gzip, FASTQ structure, pairing, and metadata identity pass | pending clean-room download |
 | GM11906 public matrix | three filter profiles plus exact default repeat, marker/inventory/status oracles | pending exact-final-commit rerun |
 | GM12878 public matrix | deterministic subset/alignment rebuild, three profiles, exact default repeat, inventory/status oracles | pending exact-final-commit rerun |

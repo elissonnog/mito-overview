@@ -413,6 +413,36 @@ def test_consequence_propagates_missing_gtf_not_configured(tmp_path: Path) -> No
     assert metrics["reason_code"] == "human_mt_gtf_not_configured"
 
 
+def test_missing_candidate_table_is_not_reported_as_observed_zero(tmp_path: Path) -> None:
+    summary_dir = tmp_path / "summary"
+    summary_dir.mkdir()
+    fasta = tmp_path / "mt.fa"
+    fasta.write_text(">MT\n" + "A" * 2000 + "\n", encoding="ascii")
+    pysam.faidx(str(fasta))
+
+    feature_outputs = run_feature_annotation(
+        summary_dir=summary_dir,
+        figure_dir=tmp_path / "feature-figures",
+        report_dir=tmp_path / "feature-reports",
+        sample_id="NO-CANDIDATE-EVIDENCE",
+        species="human",
+        build="hg38",
+        mt_contig="MT",
+        mt_length=2000,
+        human_mt_gtf=HUMAN_MT_GTF,
+    )
+    feature_metrics = metric_map(Path(feature_outputs["summary_path"]))
+    overlaps = pd.read_csv(feature_outputs["overlap_path"], sep="\t")
+    consequence_outputs = run_consequence(tmp_path, summary_dir, fasta)
+    consequence_metrics = metric_map(Path(consequence_outputs["summary_path"]))
+
+    assert feature_outputs["status"] == "not_evaluable"
+    assert feature_metrics["reason_code"] == "heteroplasmy_candidates_missing"
+    assert overlaps.empty
+    assert consequence_outputs["status"] == "not_evaluable"
+    assert consequence_metrics["reason_code"] == "heteroplasmy_candidates_missing"
+
+
 def test_consequence_propagates_explicit_feature_not_evaluable(tmp_path: Path) -> None:
     summary_dir, fasta = write_consequence_fixture(tmp_path)
 

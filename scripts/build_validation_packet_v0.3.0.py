@@ -397,6 +397,9 @@ EVIDENCE_TABLES = {
         "user_cpu_seconds",
         "system_cpu_seconds",
         "max_rss_kb",
+        "input_bytes",
+        "output_bytes",
+        "io_measurement_method",
         "threads",
         "platform",
         "measurement_status",
@@ -3042,6 +3045,8 @@ def validate_fresh_clone_evidence(
         "built_wheel",
         "built_sdist",
         "installed_wheel",
+        "installed_sdist",
+        "separate_distribution_environments",
         "executed_outside_checkout",
     )
     missing_truths = [field for field in required_truths if fresh.get(field) is not True]
@@ -3804,6 +3809,8 @@ def validate_evidence_tables(validation_root: Path) -> None:
                         "user_cpu_seconds",
                         "system_cpu_seconds",
                         "max_rss_kb",
+                        "input_bytes",
+                        "output_bytes",
                     ):
                         try:
                             if float(row[field]) < 0:
@@ -3812,6 +3819,14 @@ def validate_evidence_tables(validation_root: Path) -> None:
                             raise ValueError(
                                 f"Invalid measured resource value {field}={row[field]!r}"
                             ) from error
+                    if (
+                        row["io_measurement_method"]
+                        != "declared_input_inventory_and_validation_output_delta_v1"
+                    ):
+                        raise ValueError(
+                            "Invalid resource I/O measurement method: "
+                            + row["io_measurement_method"]
+                        )
         elif name in {"figure_provenance.tsv", "table_provenance.tsv"}:
             for row in rows:
                 relative = Path(row["packet_path"])
@@ -4670,7 +4685,8 @@ table_headers = {
     ),
     "resource_usage.tsv": (
         "case_id", "wall_seconds", "user_cpu_seconds", "system_cpu_seconds",
-        "max_rss_kb", "threads", "platform", "measurement_status", "reason",
+        "max_rss_kb", "input_bytes", "output_bytes", "io_measurement_method",
+        "threads", "platform", "measurement_status", "reason",
     ),
     "figure_provenance.tsv": (
         "figure_id", "dataset", "case_id", "packet_path", "sha256", "bytes",
@@ -5035,12 +5051,18 @@ for row in evidence_rows["resource_usage.tsv"]:
     if status == "measured":
         for field in (
             "wall_seconds", "user_cpu_seconds", "system_cpu_seconds", "max_rss_kb",
+            "input_bytes", "output_bytes",
         ):
             try:
                 if float(row[field]) < 0:
                     raise ValueError
             except ValueError as error:
                 raise SystemExit(f"invalid resource measurement {field}") from error
+        if (
+            row["io_measurement_method"]
+            != "declared_input_inventory_and_validation_output_delta_v1"
+        ):
+            raise SystemExit("invalid resource I/O measurement method")
 
 for name in ("figure_provenance.tsv", "table_provenance.tsv"):
     for row in evidence_rows[name]:
@@ -5188,7 +5210,8 @@ if not isinstance(scientific_oracle, dict) or scientific_oracle != {
 fresh = json.loads((root / "acceptance/fresh_clone.json").read_text(encoding="utf-8"))
 fresh_truths = (
     "public_https_clone", "isolated_home", "isolated_tmpdir", "built_wheel",
-    "built_sdist", "installed_wheel", "executed_outside_checkout",
+    "built_sdist", "installed_wheel", "installed_sdist",
+    "separate_distribution_environments", "executed_outside_checkout",
 )
 if (
     fresh.get("schema_version") != schema

@@ -73,7 +73,9 @@ RELEASE_ASSET_ROOT="${WORK_ROOT}/release-assets"
 PACKET_SEMANTIC_ROOT="${WORK_ROOT}/release-packet-verify"
 SDIST_ROOT="${WORK_ROOT}/sdist"
 VENV_ROOT="${WORK_ROOT}/venv"
+SDIST_VENV_ROOT="${WORK_ROOT}/sdist-venv"
 PROBE_ROOT="${WORK_ROOT}/installed-probe"
+SDIST_PROBE_ROOT="${WORK_ROOT}/installed-sdist-probe"
 EXAMPLE_ROOT="${WORK_ROOT}/examples"
 HOME_ROOT="${WORK_ROOT}/home"
 TMP_ROOT="${WORK_ROOT}/tmp"
@@ -84,6 +86,7 @@ CASES_PATH="${EVIDENCE_ROOT}/cases.tsv"
 
 mkdir -p "${WORK_ROOT}" "${EVIDENCE_ROOT}" "${COMMAND_ROOT}" "${LOG_ROOT}" \
   "${DIST_ROOT}" "${RELEASE_ASSET_ROOT}" "${SDIST_ROOT}" "${PROBE_ROOT}" "${EXAMPLE_ROOT}" \
+  "${SDIST_PROBE_ROOT}" \
   "${HOME_ROOT}" "${TMP_ROOT}" "${CACHE_ROOT}"
 printf 'case_id\tverdict\tdetail\n' > "${CASES_PATH}"
 
@@ -202,6 +205,18 @@ MITO_OVERVIEW_PYTHON=$(printf '%q' "${VENV_ROOT}/bin/python") MITO_OVERVIEW_REQU
 diff -u installed_steps.tsv launcher_steps.tsv
 EOF
 run_case installed_cli "installed wheel executed outside the source checkout"
+
+write_command installed_sdist_cli <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+$(printf '%q' "${PYTHON_BIN}") -m venv --system-site-packages $(printf '%q' "${SDIST_VENV_ROOT}")
+$(printf '%q' "${SDIST_VENV_ROOT}/bin/python") -m pip install --no-deps --no-build-isolation --force-reinstall $(printf '%q' "${DIST_ROOT}/mito_overview-0.3.0.tar.gz")
+cd $(printf '%q' "${SDIST_PROBE_ROOT}")
+$(printf '%q' "${SDIST_VENV_ROOT}/bin/python") -I -c 'from importlib.metadata import version; from pathlib import Path; import mito_overview; p=Path(mito_overview.__file__).resolve(); assert version("mito-overview") == "0.3.0"; assert "site-packages" in p.parts; print(p)'
+$(printf '%q' "${SDIST_VENV_ROOT}/bin/python") -I -m mito_overview.cli --list-steps > installed_sdist_steps.tsv
+diff -u $(printf '%q' "${PROBE_ROOT}/installed_steps.tsv") installed_sdist_steps.tsv
+EOF
+run_case installed_sdist_cli "installed source distribution executed from a separate environment outside the checkout"
 
 write_command unit_tests <<EOF
 #!/usr/bin/env bash

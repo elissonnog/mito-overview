@@ -32,6 +32,7 @@ FRESH_TAG_RUNNER_CASE_CONTRACT = (
     "locked_environment",
     "wheel_sdist_build",
     "installed_cli",
+    "installed_sdist_cli",
     "unit_tests",
     "smoke_longread",
     "smoke_shortread",
@@ -617,8 +618,8 @@ def test_missing_or_tampered_fresh_tag_evidence_blocks_before_github_mutation(
 
 
 def test_publisher_case_contract_matches_fresh_tag_runner_inventory() -> None:
-    assert len(FRESH_TAG_RUNNER_CASE_CONTRACT) == 14
-    assert len(set(FRESH_TAG_RUNNER_CASE_CONTRACT)) == 14
+    assert len(FRESH_TAG_RUNNER_CASE_CONTRACT) == 15
+    assert len(set(FRESH_TAG_RUNNER_CASE_CONTRACT)) == 15
     runner_cases = tuple(
         re.findall(
             r"^run_case ([A-Za-z0-9_]+) ",

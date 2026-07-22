@@ -422,6 +422,8 @@ def _build_release_asset_source(
             "all_pages_inspected": True,
             "reviewer": "fixture-reviewer",
             "page_count": 1,
+            "pdf_page_count": 1,
+            "page_count_matches_pdf": True,
             "source_docx_sha256": report_outputs["docx"]["sha256"],
             "rendered_pdf_sha256": report_outputs["pdf"]["sha256"],
             "pages": [page_row],
@@ -551,6 +553,7 @@ def test_runner_is_valid_shell_and_encodes_all_required_release_gates() -> None:
         "locked_environment",
         "wheel_sdist_build",
         "installed_cli",
+        "installed_sdist_cli",
         "unit_tests",
         "smoke_longread",
         "smoke_shortread",
@@ -627,8 +630,8 @@ def test_runner_success_path_emits_hash_verified_tag_bound_evidence(tmp_path: Pa
 
     with (evidence_root / "cases.tsv").open(encoding="utf-8", newline="") as handle:
         rows = list(csv.DictReader(handle, delimiter="\t"))
-    assert len(rows) == 14
-    assert len({row["case_id"] for row in rows}) == 14
+    assert len(rows) == 15
+    assert len({row["case_id"] for row in rows}) == 15
     assert {row["verdict"] for row in rows} == {"PASS"}
 
     receipt = json.loads(
@@ -636,7 +639,7 @@ def test_runner_success_path_emits_hash_verified_tag_bound_evidence(tmp_path: Pa
     )
     assert receipt["verified"] is True
     assert receipt["verdict"] == "PASS"
-    assert receipt["case_count"] == 14
+    assert receipt["case_count"] == 15
     assert receipt["git_commit"] == final_sha
     assert receipt["tag_object_sha"] == tag_object_sha
     assert receipt["trusted_asset_count"] == len(CANONICAL_ASSET_NAMES)

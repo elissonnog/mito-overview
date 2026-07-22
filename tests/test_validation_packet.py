@@ -403,6 +403,8 @@ def write_acceptance_evidence(
                 "built_wheel": True,
                 "built_sdist": True,
                 "installed_wheel": True,
+                "installed_sdist": True,
+                "separate_distribution_environments": True,
                 "executed_outside_checkout": True,
                 "command_path": f"commands/{fresh_case}.sh",
                 "log_path": f"logs/{fresh_case}.log",
@@ -1284,7 +1286,12 @@ def write_evidence_tables(root: Path) -> None:
         ],
         "module_status_matrix.tsv": module_rows,
         "resource_usage.tsv": [
-            ["unit_known_answer", "1.0", "0.5", "0.1", "1024", "4", "test", "measured", ""]
+            [
+                "unit_known_answer", "1.0", "0.5", "0.1", "1024",
+                "2048", "4096",
+                "declared_input_inventory_and_validation_output_delta_v1",
+                "4", "test", "measured", "",
+            ]
         ],
         "figure_provenance.tsv": figure_rows,
         "table_provenance.tsv": table_rows,

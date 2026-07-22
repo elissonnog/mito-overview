@@ -284,6 +284,11 @@ def verify_report_provenance(
     pages = page_qa.get("pages")
     if not isinstance(pages, list) or len(pages) != binding.get("rendered_page_count"):
         raise IdentityError("report provenance rendered-page inventory is incomplete")
+    if (
+        page_qa.get("pdf_page_count") != len(pages)
+        or page_qa.get("page_count_matches_pdf") is not True
+    ):
+        raise IdentityError("report provenance does not prove complete PDF page rendering")
     if page_qa.get("source_docx_sha256") != outputs["docx"]["sha256"]:
         raise IdentityError("rendered pages are bound to another DOCX")
     if page_qa.get("rendered_pdf_sha256") != outputs["pdf"]["sha256"]:

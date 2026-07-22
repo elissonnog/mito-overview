@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -538,8 +539,15 @@ def test_runner_declares_public_clone_and_isolated_installed_probe() -> None:
     assert "python -m venv" not in text  # executable is shell-expanded, not ambient.
     assert "-m venv" in text
     assert "-m build --no-isolation" in text
+    assert "SDIST_PYTHON" in text
+    assert "pip install --force-reinstall --no-build-isolation" in text
+    assert '"installed_sdist": True' in text
+    assert '"separate_distribution_environments": True' in text
     assert "-I -m mito_overview.cli --list-steps" in text
     assert "executed_outside_checkout" in text
+    assert '"input_bytes"' in text
+    assert '"output_bytes"' in text
+    assert "declared_input_inventory_and_validation_output_delta_v1" in text
     assert "--zenodo-reservation-evidence" not in text
     assert "--doi" not in text
 
@@ -626,7 +634,8 @@ def test_raw_cache_is_created_only_after_all_github_preflights() -> None:
     validate = text.index("\nvalidate_github_preflight_evidence\n", public)
     create = text.index('\nmkdir "${CACHE_ROOT}"', validate)
     assert push < pull < public < validate < create
-    assert '"${CACHE_ROOT}"' not in text[text.index("mkdir -p   "):push]
+    preflight_prefix = text[text.index("mkdir -p   "):push]
+    assert re.search(r"mkdir(?: -p)?[^\n]*\$\{CACHE_ROOT\}", preflight_prefix) is None
 
 
 def test_raw_cache_is_rechecked_immediately_before_download() -> None:

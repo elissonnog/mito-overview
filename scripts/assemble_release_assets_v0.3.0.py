@@ -310,6 +310,11 @@ def validate_report_provenance(
     pages = page_qa.get("pages")
     if not isinstance(pages, list) or not pages or page_qa.get("page_count") != len(pages):
         raise AssemblyError("final report rendered-page inventory is incomplete")
+    if (
+        page_qa.get("pdf_page_count") != len(pages)
+        or page_qa.get("page_count_matches_pdf") is not True
+    ):
+        raise AssemblyError("final report rendered pages are not proven complete for the PDF")
     if page_qa.get("source_docx_sha256") != outputs["docx"]["sha256"]:
         raise AssemblyError("rendered-page QA is bound to a different DOCX")
     if page_qa.get("rendered_pdf_sha256") != outputs["pdf"]["sha256"]:

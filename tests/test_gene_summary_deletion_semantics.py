@@ -101,6 +101,33 @@ def test_gene_summary_without_any_analytical_evidence_is_not_evaluable(
     assert summary["deletion_event_overlaps"].isna().all()
 
 
+def test_gene_summary_propagates_non_evaluable_feature_annotation(tmp_path: Path) -> None:
+    summary_dir = tmp_path / "summary"
+    summary_dir.mkdir()
+    write_minimal_feature_inputs(summary_dir)
+    pd.DataFrame(
+        [
+            {"metric": "status", "value": "not_evaluable"},
+            {"metric": "reason_code", "value": "heteroplasmy_candidates_missing"},
+        ]
+    ).to_csv(summary_dir / "mito_feature_annotation_summary.tsv", sep="\t", index=False)
+
+    outputs = run_step(
+        summary_dir=summary_dir,
+        figure_dir=tmp_path / "figures",
+        report_dir=tmp_path / "reports",
+        sample_id="FEATURE-NO-EVIDENCE",
+        mt_contig="MT",
+        mt_length=200,
+    )
+    summary = pd.read_csv(outputs["summary_path"], sep="\t")
+    run_summary = metric_map(Path(outputs["run_summary_path"]))
+
+    assert run_summary["candidate_evidence_status"] == "not_evaluable"
+    assert run_summary["candidate_evidence_reason_code"] == "heteroplasmy_candidates_missing"
+    assert summary["candidate_sites"].isna().all()
+
+
 def test_gene_summary_propagates_non_evaluable_deletion_denominator(
     tmp_path: Path,
 ) -> None:

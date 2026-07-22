@@ -48,6 +48,7 @@ REQUIRED_TAG_VALIDATION_CASES = frozenset(
         "locked_environment",
         "wheel_sdist_build",
         "installed_cli",
+        "installed_sdist_cli",
         "unit_tests",
         "smoke_longread",
         "smoke_shortread",

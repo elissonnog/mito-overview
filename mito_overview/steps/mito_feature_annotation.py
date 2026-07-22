@@ -17,6 +17,16 @@ from mito_overview.table_contracts import ensure_alt_fraction_columns, validate_
 
 DLOOP_INTERVALS = [(1, 576), (16024, 16569)]
 ATTR_RE = re.compile(r'(\w+) "([^"]+)"')
+OVERLAP_COLUMNS = [
+    "position",
+    "ref_base",
+    "alt_base",
+    "alt_allele_fraction",
+    "heteroplasmy_fraction",
+    "depth",
+    "feature_class",
+    "feature_label",
+]
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -175,21 +185,6 @@ def run_step(
     if features_df.empty:
         raise RuntimeError(f"No mitochondrial features found in {human_mt_gtf} for contig {mt_contig}")
 
-    candidates_path = summary_dir / "mito_heteroplasmy_candidates.tsv"
-    if candidates_path.exists():
-        candidates_df = ensure_alt_fraction_columns(pd.read_csv(candidates_path, sep="\t"))
-    else:
-        candidates_df = pd.DataFrame(
-            columns=[
-                "position",
-                "ref_base",
-                "alt_base",
-                "alt_allele_fraction",
-                "heteroplasmy_fraction",
-                "depth",
-            ]
-        )
-
     feature_catalog = (
         features_df.drop_duplicates(["gene_name", "feature_type", "start", "end"])
         .sort_values(["start", "end", "gene_name"])
@@ -197,6 +192,41 @@ def run_step(
     )
     catalog_path = summary_dir / "mito_feature_catalog.tsv"
     feature_catalog.to_csv(catalog_path, sep="\t", index=False)
+    overlap_path = summary_dir / "mito_feature_overlap_candidates.tsv"
+
+    candidates_path = summary_dir / "mito_heteroplasmy_candidates.tsv"
+    if not candidates_path.is_file():
+        pd.DataFrame(columns=OVERLAP_COLUMNS).to_csv(overlap_path, sep="\t", index=False)
+        outputs = _status_page(
+            report_dir=report_dir,
+            summary_dir=summary_dir,
+            sample_id=sample_id,
+            mt_contig=mt_contig,
+            mt_length=mt_length,
+            status="not_evaluable",
+            reason_code="heteroplasmy_candidates_missing",
+            message="Feature annotation could not be evaluated because the candidate-site table is missing.",
+        )
+        return {**outputs, "catalog_path": catalog_path, "overlap_path": overlap_path}
+    try:
+        candidates_df = ensure_alt_fraction_columns(pd.read_csv(candidates_path, sep="\t"))
+        required = {"position", "ref_base", "alt_base", "alt_allele_fraction", "depth"}
+        if not required.issubset(candidates_df.columns):
+            raise ValueError("candidate table lacks required columns")
+    except (OSError, ValueError, pd.errors.EmptyDataError, pd.errors.ParserError) as error:
+        print(f"[feature_annotation] candidate table is unusable: {error}", flush=True)
+        pd.DataFrame(columns=OVERLAP_COLUMNS).to_csv(overlap_path, sep="\t", index=False)
+        outputs = _status_page(
+            report_dir=report_dir,
+            summary_dir=summary_dir,
+            sample_id=sample_id,
+            mt_contig=mt_contig,
+            mt_length=mt_length,
+            status="not_evaluable",
+            reason_code="heteroplasmy_candidates_unusable",
+            message="Feature annotation could not be evaluated because the candidate-site table is unusable.",
+        )
+        return {**outputs, "catalog_path": catalog_path, "overlap_path": overlap_path}
 
     overlap_rows: list[dict[str, object]] = []
     for idx, row in enumerate(candidates_df.itertuples(index=False), start=1):
@@ -217,18 +247,8 @@ def run_step(
             )
     overlap_df = pd.DataFrame(
         overlap_rows,
-        columns=[
-            "position",
-            "ref_base",
-            "alt_base",
-            "alt_allele_fraction",
-            "heteroplasmy_fraction",
-            "depth",
-            "feature_class",
-            "feature_label",
-        ],
+        columns=OVERLAP_COLUMNS,
     )
-    overlap_path = summary_dir / "mito_feature_overlap_candidates.tsv"
     overlap_df.to_csv(overlap_path, sep="\t", index=False)
 
     if not overlap_df.empty:

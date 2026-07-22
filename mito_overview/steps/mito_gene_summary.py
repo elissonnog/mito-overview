@@ -550,10 +550,20 @@ def run_step(
             ),
         )
 
-    candidate_evidence_available = overlap_path.exists()
-    candidate_evidence_status = "ok" if candidate_evidence_available else "not_evaluable"
-    candidate_evidence_reason = "" if candidate_evidence_available else "feature_overlap_candidates_missing"
-    if candidate_evidence_available:
+    candidate_output_present = overlap_path.exists()
+    if candidate_output_present:
+        candidate_evidence_status, candidate_evidence_reason = _read_module_status(
+            summary_dir / "mito_feature_annotation_summary.tsv",
+            default_status="ok",
+            default_reason="",
+        )
+    else:
+        candidate_evidence_status = "not_evaluable"
+        candidate_evidence_reason = "feature_overlap_candidates_missing"
+    candidate_evidence_evaluable = (
+        candidate_output_present and candidate_evidence_status == "ok"
+    )
+    if candidate_output_present:
         overlap_df = pd.read_csv(overlap_path, sep="\t")
     else:
         overlap_df = _empty_site_detail_df()
@@ -586,8 +596,11 @@ def run_step(
     else:
         selected_df = pd.read_csv(selected_sites_path, sep="\t")
         selected_positions = _extract_selected_positions(selected_df)
-        cosegregation_evidence_status = "ok"
-        cosegregation_evidence_reason = ""
+        cosegregation_evidence_status, cosegregation_evidence_reason = _read_module_status(
+            summary_dir / "mito_cosegregation_summary.tsv",
+            default_status="ok",
+            default_reason="",
+        )
         print(
             f"[gene_summary] loaded selected sites file={selected_sites_path.name} positions={len(selected_positions)}",
             flush=True,
@@ -641,7 +654,7 @@ def run_step(
         module_status = "ok"
         module_reason = "" if evaluable_source_count == len(source_statuses) else "partial_upstream_evidence"
     selected_feature_mapping_evaluable = (
-        candidate_evidence_status == "ok" and cosegregation_evidence_status == "ok"
+        candidate_evidence_evaluable and cosegregation_evidence_status == "ok"
     )
     print(
         "[gene_summary] loaded "
@@ -662,7 +675,7 @@ def run_step(
         feature_label = str(spec["feature_label"])
         feature_class = str(spec["feature_class"])
         feature_intervals = list(spec["intervals"])
-        if candidate_evidence_available:
+        if candidate_evidence_evaluable:
             candidate_default = {
                 "candidate_sites": 0,
                 "max_alt_allele_fraction": 0.0,
@@ -742,7 +755,7 @@ def run_step(
 
     site_detail_df = _build_site_detail_df(overlap_df)
     candidate_feature_count = _positive_count(
-        summary_df, "candidate_sites", evaluable=candidate_evidence_status == "ok"
+        summary_df, "candidate_sites", evaluable=candidate_evidence_evaluable
     )
     selected_feature_count = _positive_count(
         summary_df,
@@ -782,7 +795,7 @@ def run_step(
             },
             {
                 "metric": "candidate_site_rows",
-                "value": len(site_detail_df) if candidate_evidence_status == "ok" else pd.NA,
+                "value": len(site_detail_df) if candidate_evidence_evaluable else pd.NA,
             },
             {
                 "metric": "selected_coseg_positions_loaded",
