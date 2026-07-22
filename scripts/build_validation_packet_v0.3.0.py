@@ -32,6 +32,13 @@ PACKET_SCHEMA_VERSION = "2.0"
 VALIDATION_PROFILE = "github_release_validation_v1"
 PUBLIC_ENVIRONMENT_PACKET_PATH = "public_environment"
 PUBLIC_MATRIX_CASES_PACKET_PATH = "public_matrix_cases.tsv"
+PUBLIC_CONTRACTS_PACKET_PATH = "observed_contracts"
+FINGERPRINT_FIELDS = (
+    "candidate_table_sha256",
+    "summary_inventory_sha256",
+    "summary_schema_sha256",
+)
+SUMMARY_SCHEMA_MANIFEST_NAME = "summary_schema_manifest.tsv"
 MACOS_REPORT_OUTPUTS_PACKET_PATH = "report_artifacts/macos/outputs"
 RESOLVED_CI_ENVIRONMENTS_RELATIVE = "acceptance/resolved_ci_environments"
 RESOLVED_CI_PLATFORMS = ("linux-64", "osx-64", "osx-arm64")
@@ -442,6 +449,7 @@ REQUIRED_TOP_LEVEL = (
     "dist",
     "expected",
     "observed_normalized",
+    PUBLIC_CONTRACTS_PACKET_PATH,
     "public_provenance",
     PUBLIC_ENVIRONMENT_PACKET_PATH,
     "figures",
@@ -819,6 +827,14 @@ def public_scientific_paths(root: Path) -> set[PurePosixPath]:
         and path.is_file()
         and not path.is_symlink()
     }
+    contracts_root = root / PUBLIC_CONTRACTS_PACKET_PATH
+    if contracts_root.is_symlink() or not contracts_root.is_dir():
+        raise ValueError("Cross-platform observed_contracts directory is missing")
+    paths.update(
+        PurePosixPath(path.relative_to(root).as_posix())
+        for path in contracts_root.rglob("*.tsv")
+        if path.is_file() and not path.is_symlink()
+    )
     for name in CROSS_PLATFORM_SCIENTIFIC_TOP_LEVEL:
         path = root / name
         if path.is_symlink() or not path.is_file():
@@ -2172,11 +2188,7 @@ def expected_oracle_assertions(
     interpretation_status_fields = tuple(
         field for field, _, _ in PUBLIC_ORACLE_INTERPRETATION_SPECS
     )
-    fingerprint_fields = (
-        "candidate_table_sha256",
-        "summary_inventory_sha256",
-        "summary_schema_sha256",
-    )
+    fingerprint_fields = FINGERPRINT_FIELDS
     longread_fields = (
         "mapped_reads",
         "primary_reads",
@@ -2209,13 +2221,16 @@ def expected_oracle_assertions(
             for field in interpretation_status_fields:
                 if row[field]:
                     expected[f"{case_id}.interpretation_status.{field}"] = row[field]
+            if row["m8344_alt_fraction"]:
+                expected[f"{case_id}.m8344_alt_fraction"] = row[
+                    "m8344_alt_fraction"
+                ]
             if row["m8344_alt_count"]:
                 for field in (
                     "m8344_callable_depth",
                     "m8344_alt_count",
                     "m8344_alt_forward",
                     "m8344_alt_reverse",
-                    "m8344_alt_fraction",
                     "m8344_feature_label",
                     "m8344_feature_class",
                     "m8344_consequence_class",
@@ -2273,6 +2288,11 @@ def validate_oracle_assertions(
     missing = sorted(set(required) - set(by_id))
     if missing:
         raise ValueError(f"Public-oracle assertion report is incomplete: {missing}")
+    unexpected = sorted(set(by_id) - set(required))
+    if unexpected:
+        raise ValueError(
+            f"Public-oracle assertion report contains unexpected rows: {unexpected}"
+        )
     for assertion_id, expected in required.items():
         row = by_id[assertion_id]
         if not semantically_equal(row["expected"], expected):
@@ -2540,6 +2560,69 @@ def validate_module_status_evidence(
         raise ValueError("module_status_matrix.tsv does not exactly inventory default module states")
 
 
+def validate_public_contract_evidence(
+    public_root: Path,
+    oracle_rows: list[dict[str, str]],
+) -> dict[str, int]:
+    """Rebind every frozen fingerprint to compact evidence carried in the packet."""
+
+    try:
+        from validation_fingerprints_v0_3_0 import (
+            compact_summary_contract_fingerprints,
+            read_summary_schema_manifest,
+        )
+    except ModuleNotFoundError:  # Imported as scripts.* by the test suite.
+        from scripts.validation_fingerprints_v0_3_0 import (
+            compact_summary_contract_fingerprints,
+            read_summary_schema_manifest,
+        )
+
+    contracts_root = public_root / PUBLIC_CONTRACTS_PACKET_PATH
+    if contracts_root.is_symlink() or not contracts_root.is_dir():
+        raise ValueError("Public compact-contract evidence is missing or unsafe")
+    entries = list(contracts_root.iterdir())
+    if any(entry.is_symlink() or not entry.is_dir() for entry in entries):
+        raise ValueError("Public compact-contract root contains an unsafe entry")
+
+    oracle = {(row["dataset"], row["profile"]): row for row in oracle_rows}
+    expected_by_case = {
+        case_id: oracle[key]
+        for key, case_ids in PUBLIC_ORACLE_CASES.items()
+        for case_id in case_ids
+    }
+    observed_cases = {entry.name for entry in entries}
+    expected_cases = set(expected_by_case)
+    if observed_cases != expected_cases:
+        raise ValueError(
+            "Public compact-contract case inventory mismatch: "
+            f"missing={sorted(expected_cases - observed_cases)}; "
+            f"unexpected={sorted(observed_cases - expected_cases)}"
+        )
+
+    for case_id, oracle_row in expected_by_case.items():
+        contract_dir = contracts_root / case_id
+        observed = compact_summary_contract_fingerprints(contract_dir)
+        expected = {field: oracle_row[field] for field in FINGERPRINT_FIELDS}
+        if observed != expected:
+            mismatches = {
+                field: {"expected": expected[field], "observed": observed[field]}
+                for field in FINGERPRINT_FIELDS
+                if observed[field] != expected[field]
+            }
+            raise ValueError(
+                f"Public compact-contract fingerprint mismatch for {case_id}: "
+                f"{mismatches}"
+            )
+        manifest_rows = read_summary_schema_manifest(
+            contract_dir / SUMMARY_SCHEMA_MANIFEST_NAME
+        )
+        if len(manifest_rows) != int(oracle_row["summary_tsv_count"]):
+            raise ValueError(
+                f"Public compact-contract summary count mismatch for {case_id}"
+            )
+    return {"contract_case_count": len(expected_cases)}
+
+
 def validate_scientific_evidence(
     repo_root: Path,
     validation_root: Path,
@@ -2553,6 +2636,7 @@ def validate_scientific_evidence(
     )
     validate_filter_profiles(public_root / "filter_profile_results.tsv", oracle_rows)
     validate_normalized_repeatability(public_root / "observed_normalized", oracle_rows)
+    contract_summary = validate_public_contract_evidence(public_root, oracle_rows)
     validate_module_status_evidence(
         validation_root / "module_status_matrix.tsv",
         public_root / "observed_normalized",
@@ -2560,6 +2644,7 @@ def validate_scientific_evidence(
     return {
         "oracle_sha256": FROZEN_ORACLE_SHA256,
         **assertion_summary,
+        **contract_summary,
     }
 
 
@@ -5162,7 +5247,8 @@ required_top_level = {
     "resource_usage.tsv", "figure_provenance.tsv", "table_provenance.tsv",
     "public_data_sources.tsv", "manuscript_handoff.tsv", "limitations.tsv",
     "environment.txt", "commands", "logs", "dist", "expected",
-    "observed_normalized", "public_provenance", "public_environment", "figures",
+    "observed_normalized", "observed_contracts", "public_provenance",
+    "public_environment", "figures",
     "figures_repeat2", "decoded_pixel_hashes",
     "filter_profile_results.tsv", "inputs.sha256", "raw_inputs.tsv",
     "CACHE_SEAL.sha256", "public_validation_oracle_v0.3.0.tsv",
@@ -5175,7 +5261,8 @@ if missing:
 
 for relative in (
     "acceptance", "commands", "commands/public", "logs", "logs/public",
-    "dist", "expected", "observed_normalized", "public_provenance",
+    "dist", "expected", "observed_normalized", "observed_contracts",
+    "public_provenance",
     "public_environment", "figures", "figures_repeat2", "decoded_pixel_hashes",
 ):
     evidence_root = root / relative
@@ -5422,6 +5509,14 @@ def public_scientific_paths(public_root, cases_override=None):
         if path.name != "visual_artifact_inventory.tsv"
         and path.is_file() and not path.is_symlink()
     }
+    contracts = public_root / "observed_contracts"
+    if contracts.is_symlink() or not contracts.is_dir():
+        raise SystemExit("cross-platform observed_contracts directory is missing")
+    paths.update(
+        PurePosixPath(path.relative_to(public_root).as_posix())
+        for path in contracts.rglob("*.tsv")
+        if path.is_file() and not path.is_symlink()
+    )
     for name in scientific_top_level:
         path = cases_override if name == "cases.tsv" and cases_override else public_root / name
         if path.is_symlink() or not path.is_file():
@@ -5943,6 +6038,149 @@ def semantic_equal(left, right):
     except InvalidOperation:
         return False
 
+def contract_add_text(hasher, value):
+    encoded = value.encode("utf-8")
+    hasher.update(len(encoded).to_bytes(8, "big"))
+    hasher.update(encoded)
+
+def contract_tsv_header(path):
+    try:
+        with path.open(encoding="utf-8", newline="") as handle:
+            header = tuple(next(csv.reader(handle, delimiter="\t")))
+    except StopIteration as error:
+        raise SystemExit(f"compact-contract TSV has no header: {path}") from error
+    if not header or any(not field for field in header) or len(header) != len(set(header)):
+        raise SystemExit(f"compact-contract TSV has an invalid header: {path}")
+    return header
+
+def candidate_contract_fingerprint(path):
+    with path.open(encoding="utf-8", newline="") as handle:
+        reader = csv.reader(handle, delimiter="\t")
+        try:
+            header = tuple(next(reader))
+        except StopIteration as error:
+            raise SystemExit("compact candidate table has no header") from error
+        rows = [tuple(row) for row in reader]
+    if (
+        not header
+        or any(not field for field in header)
+        or len(header) != len(set(header))
+        or any(len(row) != len(header) for row in rows)
+    ):
+        raise SystemExit("compact candidate table is malformed")
+    hasher = hashlib.sha256(b"mito-overview:candidate-table:v1\0")
+    contract_add_text(hasher, path.name)
+    hasher.update(len(header).to_bytes(8, "big"))
+    for field in header:
+        contract_add_text(hasher, field)
+    ordered = sorted(rows)
+    hasher.update(len(ordered).to_bytes(8, "big"))
+    for row in ordered:
+        for value in row:
+            contract_add_text(hasher, value)
+    return hasher.hexdigest()
+
+def read_contract_schema_manifest(path):
+    if path.is_symlink() or not path.is_file():
+        raise SystemExit("compact summary-schema manifest is missing or unsafe")
+    with path.open(encoding="utf-8", newline="") as handle:
+        reader = csv.DictReader(handle, delimiter="\t")
+        if tuple(reader.fieldnames or ()) != ("relative_path", "header_json"):
+            raise SystemExit("compact summary-schema manifest header mismatch")
+        rows = list(reader)
+    if not rows:
+        raise SystemExit("compact summary-schema manifest is empty")
+    entries = []
+    seen = set()
+    for row in rows:
+        raw = row["relative_path"]
+        relative = PurePosixPath(raw)
+        if (
+            not raw
+            or relative.is_absolute()
+            or relative.as_posix() != raw
+            or any(part in ("", ".", "..") for part in relative.parts)
+            or relative.suffix != ".tsv"
+            or raw in seen
+        ):
+            raise SystemExit("compact summary-schema manifest path is invalid")
+        seen.add(raw)
+        try:
+            header = json.loads(row["header_json"])
+        except json.JSONDecodeError as error:
+            raise SystemExit("compact summary-schema header JSON is invalid") from error
+        if (
+            not isinstance(header, list)
+            or not header
+            or any(not isinstance(field, str) or not field for field in header)
+            or len(header) != len(set(header))
+        ):
+            raise SystemExit("compact summary-schema TSV header is invalid")
+        entries.append((raw, tuple(header)))
+    if [relative for relative, _ in entries] != sorted(seen):
+        raise SystemExit("compact summary-schema paths are not sorted")
+    return entries
+
+def compact_contract_fingerprints(case_root):
+    if case_root.is_symlink() or not case_root.is_dir():
+        raise SystemExit("compact-contract case directory is missing or unsafe")
+    entries = list(case_root.iterdir())
+    expected_names = {
+        "mito_heteroplasmy_candidates.tsv", "summary_schema_manifest.tsv",
+    }
+    if (
+        {entry.name for entry in entries} != expected_names
+        or any(entry.is_symlink() or not entry.is_file() for entry in entries)
+    ):
+        raise SystemExit("compact-contract case inventory mismatch")
+    candidate = case_root / "mito_heteroplasmy_candidates.tsv"
+    schemas = read_contract_schema_manifest(case_root / "summary_schema_manifest.tsv")
+    schema_by_path = dict(schemas)
+    if schema_by_path.get(candidate.name) != contract_tsv_header(candidate):
+        raise SystemExit("compact candidate header disagrees with schema manifest")
+    inventory = hashlib.sha256(b"mito-overview:summary-inventory:v1\0")
+    schema_hasher = hashlib.sha256(b"mito-overview:summary-schemas:v1\0")
+    for relative, header in schemas:
+        contract_add_text(inventory, relative)
+        contract_add_text(schema_hasher, relative)
+        schema_hasher.update(len(header).to_bytes(8, "big"))
+        for field in header:
+            contract_add_text(schema_hasher, field)
+    return {
+        "candidate_table_sha256": candidate_contract_fingerprint(candidate),
+        "summary_inventory_sha256": inventory.hexdigest(),
+        "summary_schema_sha256": schema_hasher.hexdigest(),
+    }, len(schemas)
+
+def validate_compact_contracts(contracts_root, oracle_rows):
+    if contracts_root.is_symlink() or not contracts_root.is_dir():
+        raise SystemExit("observed_contracts evidence is missing or unsafe")
+    expected_by_case = {
+        case_id: oracle_rows[key]
+        for key, case_ids in oracle_cases.items()
+        for case_id in case_ids
+    }
+    entries = list(contracts_root.iterdir())
+    if any(entry.is_symlink() or not entry.is_dir() for entry in entries):
+        raise SystemExit("observed_contracts contains an unsafe entry")
+    observed_cases = {entry.name for entry in entries}
+    if observed_cases != set(expected_by_case):
+        raise SystemExit("observed_contracts case inventory mismatch")
+    for case_id, expected in expected_by_case.items():
+        observed, table_count = compact_contract_fingerprints(
+            contracts_root / case_id
+        )
+        for field in (
+            "candidate_table_sha256", "summary_inventory_sha256",
+            "summary_schema_sha256",
+        ):
+            if observed[field] != expected[field]:
+                raise SystemExit(
+                    f"compact-contract fingerprint mismatch for {case_id}.{field}"
+                )
+        if table_count != int(expected["summary_tsv_count"]):
+            raise SystemExit(f"compact-contract summary count mismatch for {case_id}")
+
 def expected_assertions():
     output_names = sorted(name for names in oracle_cases.values() for name in names)
     required = {
@@ -6000,10 +6238,14 @@ def expected_assertions():
             for field in interpretation_statuses:
                 if row[field]:
                     required[f"{case_id}.interpretation_status.{field}"] = row[field]
+            if row["m8344_alt_fraction"]:
+                required[f"{case_id}.m8344_alt_fraction"] = row[
+                    "m8344_alt_fraction"
+                ]
             if row["m8344_alt_count"]:
                 for field in (
                     "m8344_callable_depth", "m8344_alt_count", "m8344_alt_forward",
-                    "m8344_alt_reverse", "m8344_alt_fraction", "m8344_feature_label",
+                    "m8344_alt_reverse", "m8344_feature_label",
                     "m8344_feature_class", "m8344_consequence_class",
                 ):
                     required[f"{case_id}.{field}"] = row[field]
@@ -6048,9 +6290,16 @@ required_assertions = expected_assertions()
 missing_assertions = sorted(set(required_assertions) - set(assertions))
 if missing_assertions:
     raise SystemExit(f"oracle assertion report is incomplete: {missing_assertions}")
+unexpected_assertions = sorted(set(assertions) - set(required_assertions))
+if unexpected_assertions:
+    raise SystemExit(
+        f"oracle assertion report contains unexpected rows: {unexpected_assertions}"
+    )
 for assertion_id, expected in required_assertions.items():
     if not semantic_equal(assertions[assertion_id]["expected"], expected):
         raise SystemExit(f"oracle assertion value drift: {assertion_id}")
+
+validate_compact_contracts(root / "observed_contracts", oracle)
 
 profile_header = (
     "case_id", "dataset", "profile", "min_base_quality", "min_mapping_quality",
@@ -7022,6 +7271,10 @@ if not isinstance(scientific_oracle, dict) or scientific_oracle != {
     "assertions_path": "oracle_assertions.tsv",
     "assertion_count": len(assertion_rows),
     "required_assertion_count": len(required_assertions),
+    "contracts_path": "observed_contracts",
+    "contract_case_count": len(
+        {case_id for case_ids in oracle_cases.values() for case_id in case_ids}
+    ),
 }:
     raise SystemExit("release identity scientific-oracle evidence mismatch")
 
@@ -8008,6 +8261,7 @@ def build_packet(args: argparse.Namespace) -> Path:
         public_root / "logs",
         args.validation_root / "expected",
         public_root / "observed_normalized",
+        public_root / PUBLIC_CONTRACTS_PACKET_PATH,
         args.validation_root / "figures",
     ):
         if not source.is_dir() or not any(candidate.is_file() for candidate in source.rglob("*")):
@@ -8049,6 +8303,10 @@ def build_packet(args: argparse.Namespace) -> Path:
     copy_tree(
         public_root / "observed_normalized",
         args.packet_root / "observed_normalized",
+    )
+    copy_tree(
+        public_root / PUBLIC_CONTRACTS_PACKET_PATH,
+        args.packet_root / PUBLIC_CONTRACTS_PACKET_PATH,
     )
     packaged_macos_reports = args.packet_root / MACOS_REPORT_OUTPUTS_PACKET_PATH
     stage_macos_visual_artifacts(public_root, packaged_macos_reports)
@@ -8131,6 +8389,8 @@ def build_packet(args: argparse.Namespace) -> Path:
         "assertions_path": ORACLE_ASSERTIONS_PACKET_PATH,
         "assertion_count": scientific_evidence["assertion_count"],
         "required_assertion_count": scientific_evidence["required_assertion_count"],
+        "contracts_path": PUBLIC_CONTRACTS_PACKET_PATH,
+        "contract_case_count": scientific_evidence["contract_case_count"],
     }
     release_identity["decoded_pixel_evidence"] = decoded_pixel_evidence
     (args.packet_root / "release_identity.json").write_text(

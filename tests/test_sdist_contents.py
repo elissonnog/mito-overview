@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+import subprocess
+import sys
 import tarfile
 from pathlib import Path, PurePosixPath
 
@@ -22,6 +24,7 @@ REQUIRED_SDIST_PATHS = {
     "resources/schemas/mito_overview_config.schema.yaml",
     "resources/zenodo/mito_overview_v0.3.0_draft.json",
     "scripts/build_validation_packet_v0.3.0.py",
+    "scripts/export_public_validation_contracts_v0_3_0.py",
     "scripts/assemble_release_assets_v0.3.0.py",
     "scripts/build_release_validation_report_v0.3.0.py",
     "scripts/capture_zenodo_reservation.py",
@@ -43,6 +46,7 @@ REQUIRED_SDIST_PATHS = {
     "tests/fixtures/mock_mvtool_annotations.json",
     "tests/fixtures/mock_phymer_vendor/Phy-Mer.py",
     "tests/fixtures/mock_phymer_vendor/resources/Build_16_-_rCRS-based_haplogroup_motifs.csv",
+    "tests/fixtures/public_validation_contracts_v0.3.0/gm12878_strict/summary_schema_manifest.tsv",
     "tests/smoke_public_pipeline.sh",
     "tests/test_validation_packet.py",
     "tests/test_sanitize_validation_evidence.py",
@@ -87,3 +91,32 @@ def test_sdist_contains_runnable_release_tests_and_only_public_expected_bundles(
     }
     assert expected_bundles == {"TOY-001_output", "TOY-SR-001_output"}
     assert not any("__pycache__" in path or path.endswith((".pyc", ".pyo")) for path in payload)
+
+
+def test_extracted_sdist_runs_the_standalone_oracle_checker_in_isolated_mode(
+    tmp_path: Path,
+) -> None:
+    build_root = tmp_path / "build"
+    build_root.mkdir()
+    sdist = _build_sdist(Path(__file__).parents[1], build_root)
+    extracted = tmp_path / "extracted"
+    extracted.mkdir()
+    with tarfile.open(sdist, "r:gz") as archive:
+        archive.extractall(extracted, filter="data")
+    source_root = next(extracted.iterdir())
+    checker = source_root / "scripts/assert_public_validation_oracle_v0.3.0.py"
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    environment = dict(os.environ)
+    environment["PYTHONPATH"] = "/forbidden-checkout-path"
+
+    completed = subprocess.run(
+        [sys.executable, "-I", str(checker), "--help"],
+        cwd=outside,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert "Assert the frozen v0.3.0 public-validation" in completed.stdout

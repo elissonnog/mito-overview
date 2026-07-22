@@ -1206,11 +1206,18 @@ def digest(path: Path) -> str:
     return value.hexdigest()
 
 def scientific_paths(root: Path) -> set[Path]:
+    contracts = root / "observed_contracts"
+    if contracts.is_symlink() or not contracts.is_dir():
+        raise SystemExit("Cross-platform observed_contracts directory is missing")
     paths = {
         path.relative_to(root)
         for path in (root / "observed_normalized").rglob("*.tsv")
         if path.name != "visual_artifact_inventory.tsv"
     }
+    paths.update(
+        path.relative_to(root)
+        for path in contracts.rglob("*.tsv")
+    )
     for name in (
         "cases.tsv",
         "filter_profile_results.tsv",

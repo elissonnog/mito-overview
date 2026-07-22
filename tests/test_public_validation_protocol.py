@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import gzip
 import hashlib
+import importlib.util
 import json
 import os
 import platform
@@ -16,11 +17,21 @@ import pytest
 
 from scripts.validation_fingerprints_v0_3_0 import (
     FINGERPRINT_FIELDS,
+    compact_summary_contract_fingerprints,
     summary_contract_fingerprints,
+    write_compact_summary_contract,
 )
 
 
 REPO_ROOT = Path(__file__).parents[1]
+PACKET_BUILDER_PATH = REPO_ROOT / "scripts/build_validation_packet_v0.3.0.py"
+PACKET_BUILDER_SPEC = importlib.util.spec_from_file_location(
+    "public_protocol_packet_builder_v030",
+    PACKET_BUILDER_PATH,
+)
+assert PACKET_BUILDER_SPEC is not None and PACKET_BUILDER_SPEC.loader is not None
+packet_builder = importlib.util.module_from_spec(PACKET_BUILDER_SPEC)
+PACKET_BUILDER_SPEC.loader.exec_module(packet_builder)
 PREPARE = REPO_ROOT / "scripts" / "prepare_public_validation_cache_v0.3.0.sh"
 MATRIX = REPO_ROOT / "scripts" / "run_public_validation_matrix_v0.3.0.sh"
 ISOLATION_WRAPPER = REPO_ROOT / "scripts" / "run_network_isolated_v0.3.0.sh"
@@ -581,6 +592,24 @@ def test_oracle_accepts_exact_six_profile_fixture(tmp_path: Path) -> None:
     assert {row["verdict"] for row in assertions} == {"PASS"}
 
 
+def test_real_checker_output_matches_the_packet_assertion_contract(
+    tmp_path: Path,
+) -> None:
+    matrix_root = tmp_path / "matrix"
+    build_matrix_fixture(matrix_root)
+    report = tmp_path / "oracle_assertions.tsv"
+    result = run_oracle(matrix_root, report)
+    assert result.returncode == 0, result.stderr
+
+    oracle_rows = read_tsv(matrix_root / FIXTURE_ORACLE_NAME)
+    summary = packet_builder.validate_oracle_assertions(report, oracle_rows)
+    assertion_count = len(read_tsv(report))
+    assert summary == {
+        "assertion_count": assertion_count,
+        "required_assertion_count": assertion_count,
+    }
+
+
 def test_oracle_rejects_deterministic_candidate_regression(tmp_path: Path) -> None:
     matrix_root = tmp_path / "matrix"
     build_matrix_fixture(matrix_root)
@@ -648,6 +677,48 @@ def test_oracle_rejects_same_count_summary_inventory_substitution(
     result = run_oracle(matrix_root, tmp_path / "oracle_assertions.tsv")
     assert result.returncode != 0
     assert "gm12878_default_run1.summary_inventory_sha256" in result.stderr
+
+
+def test_compact_contract_recomputes_all_full_summary_fingerprints(
+    tmp_path: Path,
+) -> None:
+    matrix_root = tmp_path / "matrix"
+    build_matrix_fixture(matrix_root)
+    summary = matrix_root / "outputs/gm12878_strict/summary"
+    contract = tmp_path / "contract"
+
+    written = write_compact_summary_contract(summary, contract)
+
+    assert written == summary_contract_fingerprints(summary)
+    assert compact_summary_contract_fingerprints(contract) == written
+
+
+def test_compact_contract_detects_candidate_and_schema_mutations(
+    tmp_path: Path,
+) -> None:
+    matrix_root = tmp_path / "matrix"
+    build_matrix_fixture(matrix_root)
+    summary = matrix_root / "outputs/gm11906_default_run1/summary"
+    contract = tmp_path / "contract"
+    expected = write_compact_summary_contract(summary, contract)
+
+    candidate = contract / "mito_heteroplasmy_candidates.tsv"
+    rows = read_tsv(candidate)
+    rows[0]["alt_count"] = str(int(rows[0]["alt_count"]) + 1)
+    write_oracle_fixture(candidate, rows, list(rows[0]))
+    assert compact_summary_contract_fingerprints(contract) != expected
+
+    shutil.copy2(
+        summary / "mito_heteroplasmy_candidates.tsv",
+        candidate,
+    )
+    manifest = contract / "summary_schema_manifest.tsv"
+    manifest_rows = read_tsv(manifest)
+    header = json.loads(manifest_rows[0]["header_json"])
+    header[0] = f"{header[0]}_changed"
+    manifest_rows[0]["header_json"] = json.dumps(header, separators=(",", ":"))
+    write_oracle_fixture(manifest, manifest_rows, list(manifest_rows[0]))
+    assert compact_summary_contract_fingerprints(contract) != expected
 
 
 @pytest.mark.parametrize(

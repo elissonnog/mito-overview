@@ -237,7 +237,7 @@ class Auditor:
 
 def exact_metric(
     audit: Auditor,
-    prefix: str,
+    assertion_id: str,
     metrics: dict[str, str],
     metric: str,
     expected: str,
@@ -247,7 +247,7 @@ def exact_metric(
     if not expected:
         return
     audit.assert_value(
-        f"{prefix}.{metric}",
+        assertion_id,
         expected,
         metrics.get(metric),
         numeric=numeric,
@@ -310,10 +310,15 @@ def assert_marker(audit: Auditor, case_id: str, output: Path, oracle: dict[str, 
                 row.get(table_field),
                 numeric=True,
             )
-    if all(row.get(field) for field in ("alt_count", "alt_forward", "alt_reverse")):
+    if oracle["m8344_alt_count"] and all(
+        row.get(field) for field in ("alt_count", "alt_forward", "alt_reverse")
+    ):
         strand_sum = int(row["alt_forward"]) + int(row["alt_reverse"])
         audit.assert_value(
-            f"{case_id}.m8344_strand_sum", row["alt_count"], strand_sum, numeric=True
+            f"{case_id}.m8344_strand_sum",
+            oracle["m8344_alt_count"],
+            strand_sum,
+            numeric=True,
         )
 
     if oracle["m8344_consequence_class"]:
@@ -453,7 +458,14 @@ def assert_longread_metrics(
             True,
         ),
     ):
-        exact_metric(audit, case_id, values, metric, oracle[field], numeric=numeric)
+        exact_metric(
+            audit,
+            f"{case_id}.{field}",
+            values,
+            metric,
+            oracle[field],
+            numeric=numeric,
+        )
 
     provenance_path = (
         output

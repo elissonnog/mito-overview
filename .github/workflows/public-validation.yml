@@ -155,7 +155,7 @@ jobs:
               [[ -f "$RESULTS_ROOT/$relative" ]] \
                 && cp "$RESULTS_ROOT/$relative" "$ARTIFACT_ROOT/results/"
             done
-            for directory in commands logs observed_normalized environment; do
+            for directory in commands logs observed_normalized observed_contracts environment; do
               [[ -d "$RESULTS_ROOT/$directory" ]] \
                 && cp -R "$RESULTS_ROOT/$directory" "$ARTIFACT_ROOT/results/"
             done

@@ -570,6 +570,15 @@ env -i "${common_environment[@]}" \
   "gm12878_lenient=GM12878:lenient:${OUTPUT_ROOT}/outputs/gm12878_lenient" \
   "gm12878_strict=GM12878:strict:${OUTPUT_ROOT}/outputs/gm12878_strict"
 
+# Preserve only the exact candidate table plus each summary table's ordered
+# header. This compact evidence reproduces all frozen row/inventory/schema
+# fingerprints without copying large per-base depth tables into the packet.
+env -i "${common_environment[@]}" \
+  "${PYTHON_BIN}" "${REPO_ROOT}/scripts/export_public_validation_contracts_v0_3_0.py" \
+  --matrix-root "${OUTPUT_ROOT}" \
+  --output "${OUTPUT_ROOT}/observed_contracts" \
+  > "${OUTPUT_ROOT}/logs/public_contract_export.log" 2>&1
+
 # The cache must remain byte-identical and raw-only after all runners finish.
 env -i "${common_environment[@]}" \
   "${SCRIPT_DIR}/prepare_public_validation_cache_v0.3.0.sh" \

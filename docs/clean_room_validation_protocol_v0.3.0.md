@@ -112,6 +112,16 @@ row-level changes that preserve aggregate counts, schema drift, and same-count
 file substitutions. Default repeats and macOS/Ubuntu comparisons additionally
 gate all 44 normalized scientific TSVs byte-for-byte.
 
+The matrix exports an `observed_contracts/<case_id>/` directory for all eight
+public runs. Each directory contains the exact candidate TSV and a canonical
+manifest of every summary TSV path and ordered JSON-encoded header. Packet
+construction and the standalone verifier independently recompute all three
+fingerprints from these files and compare them with the frozen oracle. Missing
+or additional cases/files, candidate-cell changes, and manifest path/header
+changes fail even if the packet's ordinary SHA-256 manifest is rewritten. This
+keeps lenient and strict evidence independently auditable without packaging the
+large per-base depth tables.
+
 Expected module states may be part of a passing case. In particular, targeted-
 mt copy number is `not_applicable`; absent mvTool or methylation inputs are
 `not_configured`; and mt-only NUMT interpretation is `not_evaluable` with

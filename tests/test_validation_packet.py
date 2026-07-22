@@ -831,6 +831,10 @@ def write_acceptance_evidence(
         root / "public" / "observed_normalized",
         ubuntu_results / "observed_normalized",
     )
+    shutil.copytree(
+        root / "public" / packet_builder.PUBLIC_CONTRACTS_PACKET_PATH,
+        ubuntu_results / packet_builder.PUBLIC_CONTRACTS_PACKET_PATH,
+    )
     staged_outputs = ubuntu_results / "report_artifacts" / "outputs"
     for inventory in sorted(
         (root / "public" / "observed_normalized").rglob(
@@ -1375,6 +1379,10 @@ def write_evidence_tables(root: Path) -> None:
                 dataset,
                 oracle[(dataset, "default")],
             )
+    shutil.copytree(
+        ROOT / "tests/fixtures/public_validation_contracts_v0.3.0",
+        root / "public" / packet_builder.PUBLIC_CONTRACTS_PACKET_PATH,
+    )
 
     figure_rows = []
     for dataset_key, dataset in (("gm11906", "GM11906"), ("gm12878", "GM12878")):
@@ -3914,6 +3922,96 @@ def test_packet_rejects_oracle_assertion_value_mutation(tmp_path: Path) -> None:
         packet_builder.build_packet(packet_args(validation, repo, tmp_path / "output"))
 
 
+def test_packet_validator_rejects_unexpected_oracle_assertion(
+    tmp_path: Path,
+) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    assertions = validation / "public" / packet_builder.ORACLE_ASSERTIONS_PACKET_PATH
+    with assertions.open("a", encoding="utf-8") as handle:
+        handle.write("invented.assertion\tPASS\tx\tx\tunexpected fixture row\n")
+    oracle_rows = packet_builder.read_frozen_oracle(
+        repo / packet_builder.FROZEN_ORACLE_REPOSITORY_PATH
+    )
+
+    with pytest.raises(ValueError, match="contains unexpected rows"):
+        packet_builder.validate_oracle_assertions(assertions, oracle_rows)
+
+
+def test_packet_recomputes_compact_candidate_fingerprint(
+    tmp_path: Path,
+) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    candidate = (
+        validation
+        / "public/observed_contracts/gm12878_lenient/mito_heteroplasmy_candidates.tsv"
+    )
+    rows = read_tsv(candidate)
+    rows[0]["alt_count"] = str(int(rows[0]["alt_count"]) + 1)
+    write_tsv(candidate, tuple(rows[0]), [list(row.values()) for row in rows])
+
+    with pytest.raises(ValueError, match="compact-contract fingerprint mismatch"):
+        packet_builder.validate_public_contract_evidence(
+            validation / "public",
+            frozen_oracle_rows(),
+        )
+
+
+def test_packet_recomputes_compact_schema_fingerprint(
+    tmp_path: Path,
+) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    manifest = (
+        validation
+        / "public/observed_contracts/gm11906_strict/summary_schema_manifest.tsv"
+    )
+    rows = read_tsv(manifest)
+    header = json.loads(rows[0]["header_json"])
+    header[0] = f"{header[0]}_changed"
+    rows[0]["header_json"] = json.dumps(header, separators=(",", ":"))
+    write_tsv(manifest, tuple(rows[0]), [list(row.values()) for row in rows])
+
+    with pytest.raises(ValueError, match="compact-contract fingerprint mismatch"):
+        packet_builder.validate_public_contract_evidence(
+            validation / "public",
+            frozen_oracle_rows(),
+        )
+
+
+@pytest.mark.parametrize(
+    "case_id",
+    ("gm11906_lenient", "gm12878_strict"),
+)
+def test_packet_requires_lenient_and_strict_compact_evidence(
+    tmp_path: Path,
+    case_id: str,
+) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    shutil.rmtree(validation / "public/observed_contracts" / case_id)
+
+    with pytest.raises(ValueError, match="compact-contract case inventory mismatch"):
+        packet_builder.validate_public_contract_evidence(
+            validation / "public",
+            frozen_oracle_rows(),
+        )
+
+
+def test_packet_rejects_extra_compact_evidence_file(tmp_path: Path) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    case_root = validation / "public/observed_contracts/gm11906_default_run1"
+    (case_root / "unbound.tsv").write_text("field\nvalue\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="contract directory inventory is invalid"):
+        packet_builder.validate_public_contract_evidence(
+            validation / "public",
+            frozen_oracle_rows(),
+        )
+
+
 def test_packet_rejects_filter_profile_oracle_mutation(tmp_path: Path) -> None:
     repo, commit = create_release_repo(tmp_path)
     validation = create_validation_root(tmp_path, repo, commit)
@@ -4012,6 +4110,60 @@ def test_extracted_verifier_rejects_rehashed_scientific_oracle_mutation(
     checked = verify_packet(packet)
     assert checked.returncode != 0
     assert "oracle assertion value drift" in checked.stderr
+
+
+def test_extracted_verifier_rejects_unexpected_oracle_assertion(
+    tmp_path: Path,
+) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    output = tmp_path / "output"
+    packet_builder.build_packet(packet_args(validation, repo, output))
+    packet = output / "packet"
+    assertions = packet / packet_builder.ORACLE_ASSERTIONS_PACKET_PATH
+    with assertions.open("a", encoding="utf-8") as handle:
+        handle.write("invented.assertion\tPASS\tx\tx\tunexpected fixture row\n")
+    rewrite_manifest(packet)
+
+    checked = verify_packet(packet)
+    assert checked.returncode != 0
+    assert "oracle assertion report contains unexpected rows" in checked.stderr
+
+
+@pytest.mark.parametrize("mutation", ("candidate", "schema", "missing_strict"))
+def test_extracted_verifier_recomputes_compact_public_contracts(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    output = tmp_path / "output"
+    packet_builder.build_packet(packet_args(validation, repo, output))
+    packet = output / "packet"
+    contracts = packet / packet_builder.PUBLIC_CONTRACTS_PACKET_PATH
+
+    if mutation == "candidate":
+        candidate = (
+            contracts
+            / "gm12878_lenient/mito_heteroplasmy_candidates.tsv"
+        )
+        rows = read_tsv(candidate)
+        rows[0]["alt_count"] = str(int(rows[0]["alt_count"]) + 1)
+        write_tsv(candidate, tuple(rows[0]), [list(row.values()) for row in rows])
+    elif mutation == "schema":
+        manifest = contracts / "gm11906_strict/summary_schema_manifest.tsv"
+        rows = read_tsv(manifest)
+        header = json.loads(rows[0]["header_json"])
+        header[0] = f"{header[0]}_changed"
+        rows[0]["header_json"] = json.dumps(header, separators=(",", ":"))
+        write_tsv(manifest, tuple(rows[0]), [list(row.values()) for row in rows])
+    else:
+        shutil.rmtree(contracts / "gm12878_strict")
+
+    rewrite_manifest(packet)
+    checked = verify_packet(packet)
+    assert checked.returncode != 0
+    assert "compact-contract" in checked.stderr or "observed_contracts" in checked.stderr
 
 
 def test_extracted_verifier_rejects_rehashed_shortread_provenance_mutation(
