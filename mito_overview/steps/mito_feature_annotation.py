@@ -13,7 +13,11 @@ import matplotlib.pyplot as plt
 import pandas as pd
 
 from mito_overview.report_common import df_to_html_table, figure_html, metric_card, render_page
-from mito_overview.table_contracts import ensure_alt_fraction_columns, validate_module_state
+from mito_overview.table_contracts import (
+    ensure_alt_fraction_columns,
+    load_metric_module_state,
+    validate_module_state,
+)
 
 DLOOP_INTERVALS = [(1, 576), (16024, 16569)]
 ATTR_RE = re.compile(r'(\w+) "([^"]+)"')
@@ -193,6 +197,28 @@ def run_step(
     catalog_path = summary_dir / "mito_feature_catalog.tsv"
     feature_catalog.to_csv(catalog_path, sep="\t", index=False)
     overlap_path = summary_dir / "mito_feature_overlap_candidates.tsv"
+
+    heteroplasmy_status, heteroplasmy_reason = load_metric_module_state(
+        summary_dir / "mito_heteroplasmy_summary.tsv",
+        module_name="heteroplasmy",
+    )
+    if heteroplasmy_status != "ok":
+        pd.DataFrame(columns=OVERLAP_COLUMNS).to_csv(overlap_path, sep="\t", index=False)
+        outputs = _status_page(
+            report_dir=report_dir,
+            summary_dir=summary_dir,
+            sample_id=sample_id,
+            mt_contig=mt_contig,
+            mt_length=mt_length,
+            status=heteroplasmy_status,
+            reason_code=heteroplasmy_reason,
+            message=(
+                "Feature annotation could not be evaluated because upstream alternate-allele "
+                f"counting reported status={heteroplasmy_status} "
+                f"(reason={heteroplasmy_reason})."
+            ),
+        )
+        return {**outputs, "catalog_path": catalog_path, "overlap_path": overlap_path}
 
     candidates_path = summary_dir / "mito_heteroplasmy_candidates.tsv"
     if not candidates_path.is_file():

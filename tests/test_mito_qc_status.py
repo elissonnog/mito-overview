@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pandas as pd
+
 from mito_overview.steps.mito_qc import run_step
 
 from ._helpers import ReadSpec, metric_map, write_alignment
@@ -80,6 +82,31 @@ def test_full_length_fraction_excludes_supplementary_alignment_records(
     assert summary["primary_full_length_reads"] == "0"
     assert float(summary["primary_full_length_fraction"]) == 0.0
     assert float(summary["full_length_fraction"]) == 0.0
+
+
+def test_full_length_fraction_excludes_cigar_deletion_bases(tmp_path: Path) -> None:
+    outputs = run_qc_fixture(
+        tmp_path,
+        [
+            ReadSpec(
+                "deletion-spanning",
+                "MT",
+                0,
+                "A" * 20,
+                cigar=((0, 10), (2, 80), (0, 10)),
+            )
+        ],
+    )
+    summary = metric_map(Path(outputs["summary_path"]))
+    reads = pd.read_csv(outputs["reads_path"], sep="\t")
+
+    assert summary["primary_full_length_reads"] == "0"
+    assert float(summary["primary_full_length_fraction"]) == 0.0
+    assert summary["primary_full_length_fraction_basis"] == "aligned_reference_bases_excluding_cigar_D_N"
+    assert reads.loc[0, "reference_span"] == 100
+    assert reads.loc[0, "aligned_reference_bases"] == 20
+    assert reads.loc[0, "aligned_span"] == 20
+    assert reads.loc[0, "aligned_fraction_mt"] == 0.2
 
 
 def test_supplementary_only_qc_keeps_primary_fraction_unavailable(

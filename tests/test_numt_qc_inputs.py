@@ -16,6 +16,8 @@ READ_ROWS = [
         "query_length": 8000,
         "read_start": 1,
         "read_end": 7000,
+        "reference_span": 7000,
+        "aligned_reference_bases": 7000,
         "aligned_span": 7000,
         "aligned_fraction_mt": 0.4,
         "softclip_bases": 2000,
@@ -32,6 +34,8 @@ READ_ROWS = [
         "query_length": 8000,
         "read_start": 8001,
         "read_end": 15000,
+        "reference_span": 7000,
+        "aligned_reference_bases": 7000,
         "aligned_span": 7000,
         "aligned_fraction_mt": 0.95,
         "softclip_bases": 0,
@@ -98,6 +102,7 @@ def test_whole_genome_numt_risk_uses_complete_inputs(tmp_path: Path) -> None:
     assert metrics["primary_full_length_fraction"] == "0.0"
     assert metrics["primary_full_length_fraction_denominator"] == "primary_alignment_records"
     assert metrics["primary_full_length_fraction_source"] == "mito_read_stats_primary_alignment_records"
+    assert metrics["primary_full_length_fraction_basis"] == "aligned_reference_bases_excluding_cigar_D_N"
     assert metrics["primary_full_length_qc_crosscheck_status"] == "ok"
     assert metrics["full_length_fraction"] == "0.0"
     assert metrics["full_length_fraction_compatibility_alias_of"] == "primary_full_length_fraction"

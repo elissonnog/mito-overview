@@ -27,6 +27,15 @@ def write_minimal_feature_inputs(summary_dir: Path, *, include_overlap: bool = T
         pd.DataFrame(columns=SITE_DETAIL_COLUMNS).to_csv(
             summary_dir / "mito_feature_overlap_candidates.tsv", sep="\t", index=False
         )
+    pd.DataFrame(
+        columns=[
+            "feature_class",
+            "feature_label",
+            "candidate_sites",
+            "mean_alt_allele_fraction",
+            "mean_heteroplasmy",
+        ]
+    ).to_csv(summary_dir / "mito_feature_annotation_summary.tsv", sep="\t", index=False)
 
 
 def test_missing_cosegregation_is_na_but_header_only_table_is_observed_zero(
@@ -99,6 +108,31 @@ def test_gene_summary_without_any_analytical_evidence_is_not_evaluable(
     assert summary["candidate_sites"].isna().all()
     assert summary["selected_coseg_sites"].isna().all()
     assert summary["deletion_event_overlaps"].isna().all()
+
+
+def test_gene_summary_does_not_infer_zero_candidates_without_feature_summary(
+    tmp_path: Path,
+) -> None:
+    summary_dir = tmp_path / "summary"
+    summary_dir.mkdir()
+    write_minimal_feature_inputs(summary_dir)
+    (summary_dir / "mito_feature_annotation_summary.tsv").unlink()
+
+    outputs = run_step(
+        summary_dir=summary_dir,
+        figure_dir=tmp_path / "figures",
+        report_dir=tmp_path / "reports",
+        sample_id="GENE-MISSING-FEATURE-STATE",
+        mt_contig="MT",
+        mt_length=200,
+    )
+    summary = pd.read_csv(outputs["summary_path"], sep="\t")
+    run_summary = metric_map(Path(outputs["run_summary_path"]))
+
+    assert outputs["status"] == "not_evaluable"
+    assert run_summary["candidate_evidence_status"] == "not_evaluable"
+    assert run_summary["candidate_evidence_reason_code"] == "feature_annotation_summary_missing"
+    assert summary["candidate_sites"].isna().all()
 
 
 def test_gene_summary_propagates_non_evaluable_feature_annotation(tmp_path: Path) -> None:

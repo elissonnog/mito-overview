@@ -25,7 +25,7 @@ secondary_alignment_records	0
 allele_engine_unique_query_names_seen	728
 mean_depth	545.484
 median_depth	544
-full_length_fraction	0.6497
+full_length_fraction	0.0343
 candidate_site_count	16
 selected_cosegregation_sites	8
 candidate_deletion_clusters	13

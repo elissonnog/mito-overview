@@ -51,7 +51,15 @@ For the GM11906 pseudo-bulk formed from three single-cell ATAC-seq libraries, ca
 For the GM12878 targeted-mt input, the within-sample mt:nuclear depth ratio and Phy-Mer are `not_applicable`, mvTool and methylation are `not_configured`, and NUMT interpretation is `not_evaluable` with reason `reference_scope_mt_only`.
 
 ## Reference and NUMT interpretation gates
-Automatic whole-genome scope requires exact and concordant GRCh37, GRCh38, GRCm38, or GRCm39 chromosome-length profiles in both the FASTA index and alignment header, including the assembly-specific mitochondrial length and no extra contigs. Reduced, scaled, hybrid, augmented, discordant, or modified profiles resolve conservatively and cannot enable categorical NUMT interpretation; mt-only references resolve to `mt_only`. CRAM preflight compares mitochondrial sequence-dictionary MD5 metadata with the supplied reference sequence even when the CRAM contains no mitochondrial records. Categorical NUMT-warning output is additionally withheld if required read-stat columns, valid primary-alignment indicators, at least one primary alignment, or the full-length QC metric are unavailable. Raw computable alignment metrics remain reported, and unavailable values are represented as `NA` rather than zero.
+Automatic whole-genome scope requires exact and concordant GRCh37, GRCh38, GRCm38, or GRCm39 chromosome-length profiles in both the FASTA index and alignment header, including the assembly-specific mitochondrial length and no extra contigs. Reduced, scaled, hybrid, augmented, discordant, or modified profiles resolve conservatively and cannot enable categorical NUMT interpretation; mt-only references resolve to `mt_only`. CRAM preflight compares mitochondrial sequence-dictionary MD5 metadata with the supplied reference sequence even when the CRAM contains no mitochondrial records. Categorical NUMT-warning output is additionally withheld if required read-stat columns, valid primary-alignment indicators, at least one primary alignment, or the near-complete aligned-reference QC metric are unavailable. Raw computable alignment metrics remain reported, and unavailable values are represented as `NA` rather than zero.
+
+For long-read QC, let \(L_{mt}\) be mitochondrial reference length and \(A_i\) the sum of CIGAR `M`, `=`, and `X` lengths for primary alignment record \(i\). CIGAR `D` and `N` operations are excluded. The compatibility field `primary_full_length_fraction` is
+
+\[
+F_{near-complete} = \frac{\sum_i I(A_i/L_{mt} \ge 0.90)}{N_{primary}}.
+\]
+
+The report labels this quantity the primary near-complete aligned-reference fraction. It is an alignment-completeness descriptor, not a direct measurement of intact molecule length.
 
 ## Optional mvTool response integrity
 mvTool is disabled by default. Fixture or explicitly requested network output is accepted as successful only when every submitted unique candidate has exactly one matching returned input identifier and the response contains no unexpected or duplicate identifiers. Timeout, malformed content, or identity/cardinality mismatch produces `status=unavailable` with a reason code and never fabricates a successful annotation set.

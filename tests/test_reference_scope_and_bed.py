@@ -337,6 +337,8 @@ def write_numt_inputs(summary_dir: Path) -> None:
                 "query_length": 16000,
                 "read_start": 1,
                 "read_end": 16000,
+                "reference_span": 16000,
+                "aligned_reference_bases": 16000,
                 "aligned_span": 16000,
                 "aligned_fraction_mt": 0.966,
                 "softclip_bases": 0,

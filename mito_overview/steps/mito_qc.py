@@ -77,16 +77,20 @@ def run_step(
         read_len = read.query_length or 0
         ref_start = read.reference_start + 1
         ref_end = read.reference_end or ref_start
-        aligned_span = max(0, ref_end - ref_start + 1)
-        aligned_fraction = (aligned_span / mt_length) if mt_length else 0.0
-        query_aligned_fraction = (aligned_span / read_len) if read_len else 0.0
+        reference_span = max(0, ref_end - ref_start + 1)
+        aligned_reference_bases = sum(
+            length for op, length in (read.cigartuples or []) if op in (0, 7, 8)
+        )
+        query_aligned_bases = read.query_alignment_length or 0
+        aligned_fraction = (aligned_reference_bases / mt_length) if mt_length else 0.0
+        query_aligned_fraction = (query_aligned_bases / read_len) if read_len else 0.0
         softclip_bases = 0
         if read.cigartuples:
             for op, length in read.cigartuples:
                 if op == 4:
                     softclip_bases += length
         softclip_fraction = (softclip_bases / read_len) if read_len else 0.0
-        if is_primary and aligned_span >= 0.9 * mt_length:
+        if is_primary and aligned_reference_bases >= 0.9 * mt_length:
             primary_full_length += 1
         if query_aligned_fraction >= 0.9:
             high_alignment_fraction_reads += 1
@@ -97,8 +101,11 @@ def run_step(
                 "query_length": read_len,
                 "read_start": ref_start,
                 "read_end": ref_end,
-                "aligned_span": aligned_span,
+                "reference_span": reference_span,
+                "aligned_reference_bases": aligned_reference_bases,
+                "aligned_span": aligned_reference_bases,
                 "aligned_fraction_mt": round(aligned_fraction, 6),
+                "query_aligned_bases": query_aligned_bases,
                 "query_aligned_fraction": round(query_aligned_fraction, 6),
                 "softclip_bases": softclip_bases,
                 "softclip_fraction": round(softclip_fraction, 6),
@@ -164,6 +171,10 @@ def run_step(
             "value": primary_full_length_denominator,
         },
         {
+            "metric": "primary_full_length_fraction_basis",
+            "value": "aligned_reference_bases_excluding_cigar_D_N",
+        },
+        {
             "metric": "full_length_fraction",
             "value": primary_full_length_fraction,
         },
@@ -217,7 +228,11 @@ def run_step(
         plt.savefig(readlen_fig, dpi=150)
         plt.close()
 
-    span_metric_label = "Full-length fraction" if read_mode == "long" else "High query-alignment fraction"
+    span_metric_label = (
+        "Primary near-complete aligned-reference fraction"
+        if read_mode == "long"
+        else "High query-alignment fraction"
+    )
     span_metric_value = (
         primary_full_length_fraction if read_mode == "long" else high_alignment_fraction
     )
@@ -236,7 +251,7 @@ def run_step(
         ]
     )
     structure_phrase = (
-        "whole-molecule length structure and alignment quality"
+        "near-complete aligned-reference coverage and alignment quality"
         if read_mode == "long"
         else "fragment coverage, read-level alignment completeness, and alignment quality"
     )

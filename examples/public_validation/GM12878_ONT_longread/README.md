@@ -35,7 +35,7 @@ Observed packaged key values:
 - mapped reads: `1271`
 - mean depth: `545.484`
 - median depth: `544`
-- full-length fraction: `0.6497`
+- full-length fraction: `0.0343`
 - alternate-allele candidate sites: `16`
 - selected co-segregation sites: `8`
 - top consequence class: `synonymous_variant` (`6` sites)

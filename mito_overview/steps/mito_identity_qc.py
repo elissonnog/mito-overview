@@ -13,7 +13,11 @@ import pandas as pd
 import pysam
 
 from mito_overview.report_common import df_to_html_table, figure_html, metric_card, render_page
-from mito_overview.table_contracts import ensure_alt_fraction_columns, validate_module_state
+from mito_overview.table_contracts import (
+    ensure_alt_fraction_columns,
+    load_metric_module_state,
+    validate_module_state,
+)
 
 SUMMARY_COLUMNS = ["metric", "value"]
 VARIANT_COLUMNS = ["position", "ref", "alt"]
@@ -56,28 +60,10 @@ def load_table(path: Path, columns: list[str] | None = None) -> pd.DataFrame:
     return df
 
 
-def load_heteroplasmy_status(path: Path) -> tuple[str | None, str]:
+def load_heteroplasmy_status(path: Path) -> tuple[str, str]:
     """Load the upstream heteroplasmy state without inventing callable evidence."""
 
-    if not path.exists():
-        return None, "heteroplasmy_summary_missing"
-    frame = load_table(path, columns=SUMMARY_COLUMNS)
-    if frame.empty or not {"metric", "value"}.issubset(frame.columns):
-        return "not_evaluable", "heteroplasmy_summary_unusable"
-    status_values = frame.loc[frame["metric"].astype(str) == "status", "value"]
-    if len(status_values) != 1 or pd.isna(status_values.iloc[0]):
-        return "not_evaluable", "heteroplasmy_summary_status_invalid"
-    try:
-        status = validate_module_state(str(status_values.iloc[0]).strip())
-    except ValueError:
-        return "not_evaluable", "heteroplasmy_summary_status_invalid"
-    reason_values = frame.loc[frame["metric"].astype(str) == "reason_code", "value"]
-    reason = ""
-    if len(reason_values) == 1 and not pd.isna(reason_values.iloc[0]):
-        reason = str(reason_values.iloc[0]).strip()
-    if status != "ok" and not reason:
-        reason = f"heteroplasmy_status_{status}"
-    return status, reason
+    return load_metric_module_state(path, module_name="heteroplasmy")
 
 
 def load_mt_variants(vcf_path: str | Path | None, contig: str) -> pd.DataFrame:
@@ -164,7 +150,7 @@ def run_step(
     )
     fingerprint_status = "ok"
     fingerprint_reason = ""
-    if heteroplasmy_status is not None and heteroplasmy_status != "ok":
+    if heteroplasmy_status != "ok":
         fingerprint_status = heteroplasmy_status
         fingerprint_reason = heteroplasmy_reason
     elif not fingerprint_input_present:
@@ -173,7 +159,7 @@ def run_step(
     elif not fingerprint_input_usable:
         fingerprint_status = "not_evaluable"
         fingerprint_reason = "heteroplasmy_all_sites_unusable"
-    elif heteroplasmy_status == "ok" and hetero_df.empty:
+    elif hetero_df.empty:
         fingerprint_status = "not_evaluable"
         fingerprint_reason = "heteroplasmy_all_sites_no_measured_observations"
 
@@ -289,7 +275,7 @@ def run_step(
             {"metric": "fingerprint_reason_code", "value": fingerprint_reason},
             {
                 "metric": "heteroplasmy_summary_status",
-                "value": heteroplasmy_status or "not_configured",
+                "value": heteroplasmy_status,
             },
             {
                 "metric": "heteroplasmy_summary_reason_code",

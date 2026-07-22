@@ -20,6 +20,8 @@ READ_TABLE_COLUMNS = [
     "query_length",
     "read_start",
     "read_end",
+    "reference_span",
+    "aligned_reference_bases",
     "aligned_span",
     "aligned_fraction_mt",
     "softclip_bases",
@@ -35,6 +37,7 @@ REQUIRED_NUMT_READ_COLUMNS = frozenset(
     {
         "mapq",
         "aligned_fraction_mt",
+        "aligned_reference_bases",
         "softclip_fraction",
         "has_sa_tag",
         "is_primary",
@@ -349,7 +352,8 @@ def run_step(
         f"short_span={display_metric(short_span_fraction)} "
         f"heavy_softclip={display_metric(heavy_softclip_fraction)} "
         f"sa={display_metric(sa_fraction)} supplementary={display_metric(supplementary_fraction)} "
-        f"primary_full_length={display_metric(primary_full_length_fraction)} risk={reported_risk} "
+        f"primary_near_complete_alignment={display_metric(primary_full_length_fraction)} "
+        f"risk={reported_risk} "
         f"score={reported_risk_score} "
         f"missing_read_columns={','.join(missing_read_columns) or 'none'} "
         f"missing_summary_metrics={','.join(missing_summary_metrics) or 'none'}",
@@ -398,6 +402,10 @@ def run_step(
             {
                 "metric": "primary_full_length_fraction_source",
                 "value": "mito_read_stats_primary_alignment_records",
+            },
+            {
+                "metric": "primary_full_length_fraction_basis",
+                "value": "aligned_reference_bases_excluding_cigar_D_N",
             },
             {
                 "metric": "primary_full_length_qc_crosscheck_status",
@@ -462,16 +470,20 @@ def run_step(
             )
             plt.axvline(0.50, color="#dc2626", linestyle="--", linewidth=1)
             plt.axhline(20, color="#dc2626", linestyle="--", linewidth=1)
-            plt.xlabel("Aligned fraction of mitochondrial contig")
+            plt.xlabel("Aligned reference bases / mitochondrial length")
             plt.ylabel("MAPQ")
-            plt.title(f"{sample_id} mito alignment span vs MAPQ")
+            plt.title(f"{sample_id} aligned-reference fraction vs MAPQ")
             plt.tight_layout()
             plt.savefig(scatter_fig, dpi=150)
             plt.close()
             scatter_fig_created = True
             print(f"[numt_qc] wrote scatter figure {scatter_fig}", flush=True)
     else:
-        print("[numt_qc] skipped scatter figure because aligned span or MAPQ columns were unavailable", flush=True)
+        print(
+            "[numt_qc] skipped scatter figure because aligned-reference fraction or MAPQ "
+            "columns were unavailable",
+            flush=True,
+        )
 
     metrics_fig_created = False
     if not metric_plot_df.empty:
@@ -496,7 +508,7 @@ def run_step(
             metric_card("Short-span fraction", display_metric(short_span_fraction)),
             metric_card("Heavy soft-clip fraction", display_metric(heavy_softclip_fraction)),
             metric_card(
-                "Primary full-length fraction",
+                "Primary near-complete aligned-reference fraction",
                 display_metric(primary_full_length_fraction),
             ),
         ]
@@ -505,9 +517,11 @@ def run_step(
         '<p class="muted">This page reports mitochondrial alignment-structure and ambiguity metrics. '
         "A categorical NUMT warning is shown only when reads were aligned against a recognized whole-genome reference. "
         "The summary is based on read-level alignment structure, including MAPQ, mitochondrial "
-        "span coverage, soft clipping, supplementary alignments, and SA-tag frequency. "
-        "The full-length metric uses primary alignment records as its denominator; "
-        "supplementary and secondary records do not contribute to that fraction. "
+        "aligned-reference coverage, soft clipping, supplementary alignments, and SA-tag frequency. "
+        "The compatibility field primary_full_length_fraction is a near-complete alignment metric: "
+        "its numerator contains primary records with M, =, and X CIGAR bases covering at least 90% of the "
+        "mitochondrial reference length, while D and N bases are excluded. Supplementary and secondary "
+        "records do not contribute. It is not a direct measure of intact molecule length. "
         f"The resolved reference scope is {reference_scope}; NUMT interpretation status is {interpretation_status}. "
         "This remains QC context rather than a formal NUMT classifier.</p>"
         f"<div class='metrics-grid'>{metrics_html}</div>"

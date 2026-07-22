@@ -3947,6 +3947,7 @@ def validate_evidence_tables(validation_root: Path) -> None:
         "not_applicable",
         "not_evaluable",
         "unavailable",
+        "failed",
     }
     for name, expected_header in EVIDENCE_TABLES.items():
         path = validation_root / name
@@ -5018,7 +5019,7 @@ for name, expected_header in table_headers.items():
         raise SystemExit(f"evidence table is empty or has missing identities: {name}")
     evidence_rows[name] = rows
 
-states = {"ok", "not_configured", "not_applicable", "not_evaluable", "unavailable"}
+states = {"ok", "not_configured", "not_applicable", "not_evaluable", "unavailable", "failed"}
 invalid_states = sorted(
     {
         row["status"]

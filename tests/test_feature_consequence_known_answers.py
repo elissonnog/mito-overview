@@ -26,6 +26,20 @@ HUMAN_MT_FASTA = RESOURCE_DIR / "NC_012920.1.fa"
 HUMAN_MT_GTF = RESOURCE_DIR / "human_mt_reference.gtf"
 
 
+def write_heteroplasmy_status(
+    summary_dir: Path,
+    *,
+    status: str = "ok",
+    reason_code: str = "",
+) -> None:
+    pd.DataFrame(
+        [
+            {"metric": "status", "value": status},
+            {"metric": "reason_code", "value": reason_code},
+        ]
+    ).to_csv(summary_dir / "mito_heteroplasmy_summary.tsv", sep="\t", index=False)
+
+
 def write_consequence_fixture(tmp_path: Path, *, position: int = 1000) -> tuple[Path, Path]:
     summary_dir = tmp_path / "summary"
     summary_dir.mkdir(parents=True)
@@ -34,6 +48,7 @@ def write_consequence_fixture(tmp_path: Path, *, position: int = 1000) -> tuple[
         f"{position}\tA\tC\t100\t0.25\t0.25\n",
         encoding="ascii",
     )
+    write_heteroplasmy_status(summary_dir)
     fasta = tmp_path / "mt.fa"
     fasta.write_text(">MT\n" + "A" * 2000 + "\n", encoding="ascii")
     pysam.faidx(str(fasta))
@@ -57,6 +72,7 @@ def run_canonical_consequence_fixture(
         "\n".join(candidate_rows) + "\n",
         encoding="ascii",
     )
+    write_heteroplasmy_status(summary_dir)
 
     fasta = tmp_path / "NC_012920.1.fa"
     source_lines = HUMAN_MT_FASTA.read_text(encoding="ascii").splitlines()
@@ -416,6 +432,7 @@ def test_consequence_propagates_missing_gtf_not_configured(tmp_path: Path) -> No
 def test_missing_candidate_table_is_not_reported_as_observed_zero(tmp_path: Path) -> None:
     summary_dir = tmp_path / "summary"
     summary_dir.mkdir()
+    write_heteroplasmy_status(summary_dir)
     fasta = tmp_path / "mt.fa"
     fasta.write_text(">MT\n" + "A" * 2000 + "\n", encoding="ascii")
     pysam.faidx(str(fasta))
@@ -441,6 +458,45 @@ def test_missing_candidate_table_is_not_reported_as_observed_zero(tmp_path: Path
     assert overlaps.empty
     assert consequence_outputs["status"] == "not_evaluable"
     assert consequence_metrics["reason_code"] == "heteroplasmy_candidates_missing"
+
+
+def test_no_callable_positions_propagates_through_feature_and_consequence(
+    tmp_path: Path,
+) -> None:
+    summary_dir, fasta = write_consequence_fixture(tmp_path)
+    pd.DataFrame(
+        columns=[
+            "position",
+            "ref_base",
+            "alt_base",
+            "depth",
+            "alt_allele_fraction",
+            "heteroplasmy_fraction",
+        ]
+    ).to_csv(summary_dir / "mito_heteroplasmy_candidates.tsv", sep="\t", index=False)
+    write_heteroplasmy_status(
+        summary_dir,
+        status="not_evaluable",
+        reason_code="no_callable_positions",
+    )
+
+    feature_outputs = run_feature_annotation(
+        summary_dir=summary_dir,
+        figure_dir=tmp_path / "feature-figures",
+        report_dir=tmp_path / "feature-reports",
+        sample_id="NO-CALLABLE",
+        species="human",
+        build="hg38",
+        mt_contig="MT",
+        mt_length=2000,
+        human_mt_gtf=HUMAN_MT_GTF,
+    )
+    consequence_outputs = run_consequence(tmp_path, summary_dir, fasta)
+
+    assert feature_outputs["status"] == "not_evaluable"
+    assert metric_map(Path(feature_outputs["summary_path"]))["reason_code"] == "no_callable_positions"
+    assert consequence_outputs["status"] == "not_evaluable"
+    assert metric_map(Path(consequence_outputs["summary_path"]))["reason_code"] == "no_callable_positions"
 
 
 def test_consequence_propagates_explicit_feature_not_evaluable(tmp_path: Path) -> None:
@@ -492,3 +548,28 @@ def test_successful_feature_annotation_preserves_genuine_intergenic_result(tmp_p
     assert annotations[["position", "feature_class", "feature_label", "consequence_class"]].values.tolist() == [
         [1000, "intergenic", "intergenic", "intergenic_variant"]
     ]
+
+
+def test_consequence_rejects_candidate_without_explicit_feature_overlap(tmp_path: Path) -> None:
+    summary_dir, fasta = write_consequence_fixture(tmp_path, position=1000)
+    run_feature_annotation(
+        summary_dir=summary_dir,
+        figure_dir=tmp_path / "feature-figures",
+        report_dir=tmp_path / "feature-reports",
+        sample_id="MISSING-OVERLAP",
+        species="human",
+        build="hg38",
+        mt_contig="MT",
+        mt_length=2000,
+        human_mt_gtf=HUMAN_MT_GTF,
+    )
+    overlap_path = summary_dir / "mito_feature_overlap_candidates.tsv"
+    pd.read_csv(overlap_path, sep="\t").iloc[0:0].to_csv(overlap_path, sep="\t", index=False)
+
+    outputs = run_consequence(tmp_path, summary_dir, fasta)
+    metrics = metric_map(Path(outputs["summary_path"]))
+    annotations = pd.read_csv(outputs["annot_path"], sep="\t")
+
+    assert outputs["status"] == "not_evaluable"
+    assert metrics["reason_code"] == "feature_overlap_candidate_key_mismatch"
+    assert annotations.empty

@@ -92,7 +92,7 @@ def test_identity_qc_without_any_evidence_is_not_evaluable(tmp_path: Path) -> No
     assert summary["shared_mt_variant_records"] == ""
 
 
-def test_identity_qc_header_only_legacy_input_without_summary_is_observed_zero(
+def test_identity_qc_header_only_input_without_summary_is_not_evaluable(
     tmp_path: Path,
 ) -> None:
     summary_dir = tmp_path / "summary"
@@ -112,11 +112,12 @@ def test_identity_qc_header_only_legacy_input_without_summary_is_observed_zero(
     )
     summary = metric_map(Path(outputs["summary_path"]))
 
-    assert outputs["status"] == "ok"
-    assert summary["status"] == "ok"
-    assert summary["fingerprint_status"] == "ok"
-    assert summary["major_fingerprint_sites"] == "0"
-    assert summary["heteroplasmy_summary_status"] == "not_configured"
+    assert outputs["status"] == "not_evaluable"
+    assert summary["status"] == "not_evaluable"
+    assert summary["fingerprint_status"] == "not_evaluable"
+    assert summary["fingerprint_reason_code"] == "heteroplasmy_summary_missing"
+    assert summary["major_fingerprint_sites"] == ""
+    assert summary["heteroplasmy_summary_status"] == "not_evaluable"
     assert summary["heteroplasmy_summary_reason_code"] == "heteroplasmy_summary_missing"
 
 

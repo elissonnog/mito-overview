@@ -6,6 +6,7 @@ import pytest
 from mito_overview.table_contracts import (
     MODULE_STATES,
     ensure_alt_fraction_columns,
+    load_metric_module_state,
     validate_module_state,
 )
 
@@ -41,3 +42,25 @@ def test_module_state_vocabulary_is_closed() -> None:
         assert validate_module_state(state) == state
     with pytest.raises(ValueError, match="Unsupported module state"):
         validate_module_state("pending")
+
+
+def test_metric_module_state_fails_closed_when_summary_is_missing(tmp_path) -> None:
+    assert load_metric_module_state(
+        tmp_path / "missing.tsv",
+        module_name="heteroplasmy",
+    ) == ("not_evaluable", "heteroplasmy_summary_missing")
+
+
+def test_metric_module_state_preserves_explicit_status_and_reason(tmp_path) -> None:
+    path = tmp_path / "summary.tsv"
+    pd.DataFrame(
+        [
+            {"metric": "status", "value": "failed"},
+            {"metric": "reason_code", "value": "upstream_failed"},
+        ]
+    ).to_csv(path, sep="\t", index=False)
+
+    assert load_metric_module_state(path, module_name="heteroplasmy") == (
+        "failed",
+        "upstream_failed",
+    )

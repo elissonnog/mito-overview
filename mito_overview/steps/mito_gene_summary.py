@@ -159,6 +159,32 @@ def _read_module_status(
     return status, reason
 
 
+def _read_feature_annotation_status(path: Path) -> tuple[str, str]:
+    """Resolve feature evidence while distinguishing a missing summary from zero sites."""
+
+    if not path.is_file():
+        return "not_evaluable", "feature_annotation_summary_missing"
+    try:
+        frame = pd.read_csv(path, sep="\t")
+    except (OSError, pd.errors.EmptyDataError, pd.errors.ParserError):
+        return "not_evaluable", "feature_annotation_summary_unusable"
+    if {"metric", "value"}.issubset(frame.columns):
+        return _read_module_status(
+            path,
+            default_status="not_evaluable",
+            default_reason="feature_annotation_summary_unusable",
+        )
+    successful_columns = {
+        "feature_class",
+        "feature_label",
+        "candidate_sites",
+        "mean_alt_allele_fraction",
+    }
+    if successful_columns.issubset(frame.columns):
+        return "ok", ""
+    return "not_evaluable", "feature_annotation_summary_unusable"
+
+
 def _format_intervals(intervals: list[tuple[int, int]]) -> str:
     unique = sorted({(int(start), int(end)) for start, end in intervals})
     if not unique:
@@ -599,10 +625,8 @@ def run_step(
 
     candidate_output_present = overlap_path.exists()
     if candidate_output_present:
-        candidate_evidence_status, candidate_evidence_reason = _read_module_status(
-            summary_dir / "mito_feature_annotation_summary.tsv",
-            default_status="ok",
-            default_reason="",
+        candidate_evidence_status, candidate_evidence_reason = _read_feature_annotation_status(
+            summary_dir / "mito_feature_annotation_summary.tsv"
         )
     else:
         candidate_evidence_status = "not_evaluable"

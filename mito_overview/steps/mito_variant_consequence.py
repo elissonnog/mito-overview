@@ -538,6 +538,53 @@ def run_step(
     overlap_lookup = overlap_lookup.dropna(subset=["position"]).copy()
     overlap_lookup["position"] = overlap_lookup["position"].astype(int)
     overlap_lookup = overlap_lookup.drop_duplicates(subset=OVERLAP_COLUMNS).reset_index(drop=True)
+    invalid_feature_rows = (
+        overlap_lookup["feature_class"].isna()
+        | overlap_lookup["feature_label"].isna()
+        | overlap_lookup["feature_class"].astype(str).str.strip().isin({"", "NA", "nan"})
+        | overlap_lookup["feature_label"].astype(str).str.strip().isin({"", "NA", "nan"})
+    )
+    if invalid_feature_rows.any():
+        message = (
+            "The upstream feature-overlap table contains candidate rows without explicit feature "
+            "annotations; no consequence interpretation was assigned."
+        )
+        print(f"[variant_consequence] {message}", flush=True)
+        return status_page(
+            summary_dir=summary_dir,
+            report_dir=report_dir,
+            sample_id=sample_id,
+            mt_contig=mt_contig,
+            mt_length=resolved_mt_length,
+            status="not_evaluable",
+            reason_code="feature_overlap_annotations_missing",
+            message=message,
+        )
+
+    key_columns = ["position", "ref_base", "alt_base"]
+    candidate_keys = set(filtered[key_columns].itertuples(index=False, name=None))
+    overlap_keys = set(overlap_lookup[key_columns].itertuples(index=False, name=None))
+    if candidate_keys != overlap_keys:
+        message = (
+            "Candidate and feature-overlap variant keys are inconsistent; no consequence "
+            "interpretation was assigned."
+        )
+        print(
+            f"[variant_consequence] {message} missing_overlap_keys={len(candidate_keys - overlap_keys)} "
+            f"unexpected_overlap_keys={len(overlap_keys - candidate_keys)}",
+            flush=True,
+        )
+        return status_page(
+            summary_dir=summary_dir,
+            report_dir=report_dir,
+            sample_id=sample_id,
+            mt_contig=mt_contig,
+            mt_length=resolved_mt_length,
+            status="not_evaluable",
+            reason_code="feature_overlap_candidate_key_mismatch",
+            message=message,
+        )
+
     overlap_lookup["_overlap_order"] = overlap_lookup.groupby(
         ["position", "ref_base", "alt_base"],
         sort=False,
@@ -546,22 +593,10 @@ def run_step(
     merged = filtered.merge(
         overlap_lookup,
         on=["position", "ref_base", "alt_base"],
-        how="left",
+        how="inner",
     )
-    merged["feature_class"] = (
-        merged["feature_class"]
-        .fillna("intergenic")
-        .astype(str)
-        .str.strip()
-        .replace({"": "intergenic", "NA": "intergenic", "nan": "intergenic"})
-    )
-    merged["feature_label"] = (
-        merged["feature_label"]
-        .fillna("intergenic")
-        .astype(str)
-        .str.strip()
-        .replace({"": "intergenic", "NA": "intergenic", "nan": "intergenic"})
-    )
+    merged["feature_class"] = merged["feature_class"].astype(str).str.strip()
+    merged["feature_label"] = merged["feature_label"].astype(str).str.strip()
 
     if {"feature_type", "gene_name", "start", "end"}.issubset(feature_catalog.columns):
         cds_rows = feature_catalog[feature_catalog["feature_type"] == "CDS"].copy()

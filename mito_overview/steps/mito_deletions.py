@@ -185,6 +185,16 @@ def run_step(
     else:
         cluster_df = pd.DataFrame(columns=CLUSTER_COLUMNS)
 
+    if not cluster_df.empty:
+        cluster_metric_status = "ok"
+        cluster_metric_reason = ""
+    elif primary_reads:
+        cluster_metric_status = "not_applicable"
+        cluster_metric_reason = "no_candidate_deletion_clusters"
+    else:
+        cluster_metric_status = "not_evaluable"
+        cluster_metric_reason = "no_primary_reads"
+
     summary_df = pd.DataFrame(
         [
             {"metric": "status", "value": module_status},
@@ -195,16 +205,24 @@ def run_step(
             {"metric": "candidate_deletion_clusters", "value": len(cluster_df)},
             {
                 "metric": "largest_median_deletion",
-                "value": float(cluster_df["median_deletion_size"].max()) if not cluster_df.empty else 0,
+                "value": (
+                    float(cluster_df["median_deletion_size"].max())
+                    if not cluster_df.empty
+                    else pd.NA
+                ),
             },
+            {"metric": "largest_median_deletion_status", "value": cluster_metric_status},
+            {"metric": "largest_median_deletion_reason_code", "value": cluster_metric_reason},
             {
                 "metric": "max_support_fraction_primary",
                 "value": (
                     float(cluster_df["support_fraction_primary"].max())
                     if primary_reads and not cluster_df.empty
-                    else (0.0 if primary_reads else pd.NA)
+                    else pd.NA
                 ),
             },
+            {"metric": "max_support_fraction_primary_status", "value": cluster_metric_status},
+            {"metric": "max_support_fraction_primary_reason_code", "value": cluster_metric_reason},
         ]
     )
 

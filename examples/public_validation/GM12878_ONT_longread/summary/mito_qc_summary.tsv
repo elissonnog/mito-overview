@@ -3,12 +3,13 @@ status	ok
 reason_code	
 mapped_reads	1271
 primary_reads	728
-primary_full_length_reads	473
-primary_full_length_fraction	0.6497
+primary_full_length_reads	25
+primary_full_length_fraction	0.0343
 primary_full_length_fraction_status	ok
 primary_full_length_fraction_reason_code	
 primary_full_length_fraction_denominator	primary_alignment_records
-full_length_fraction	0.6497
+primary_full_length_fraction_basis	aligned_reference_bases_excluding_cigar_D_N
+full_length_fraction	0.0343
 full_length_fraction_compatibility_alias_of	primary_full_length_fraction
 supplementary_reads	543
 secondary_reads	0

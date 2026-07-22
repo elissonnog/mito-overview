@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pandas as pd
 
 
@@ -50,3 +52,39 @@ def validate_module_state(status: str) -> str:
         allowed = ", ".join(sorted(MODULE_STATES))
         raise ValueError(f"Unsupported module state {status!r}; expected one of: {allowed}")
     return status
+
+
+def load_metric_module_state(
+    path: str | Path,
+    *,
+    module_name: str,
+    missing_status: str = "not_evaluable",
+) -> tuple[str, str]:
+    """Read one metric/value module summary without inventing evidence."""
+
+    path = Path(path)
+    missing_status = validate_module_state(missing_status)
+    if not path.is_file():
+        return missing_status, f"{module_name}_summary_missing"
+    try:
+        frame = pd.read_csv(path, sep="\t")
+    except (OSError, pd.errors.EmptyDataError, pd.errors.ParserError):
+        return "not_evaluable", f"{module_name}_summary_unusable"
+    if frame.empty or not {"metric", "value"}.issubset(frame.columns):
+        return "not_evaluable", f"{module_name}_summary_unusable"
+
+    status_values = frame.loc[frame["metric"].astype(str) == "status", "value"]
+    if len(status_values) != 1 or pd.isna(status_values.iloc[0]):
+        return "not_evaluable", f"{module_name}_summary_status_invalid"
+    try:
+        status = validate_module_state(str(status_values.iloc[0]).strip())
+    except ValueError:
+        return "not_evaluable", f"{module_name}_summary_status_invalid"
+
+    reason_values = frame.loc[frame["metric"].astype(str) == "reason_code", "value"]
+    reason = ""
+    if len(reason_values) == 1 and not pd.isna(reason_values.iloc[0]):
+        reason = str(reason_values.iloc[0]).strip()
+    if status != "ok" and not reason:
+        reason = f"{module_name}_status_{status}"
+    return status, reason

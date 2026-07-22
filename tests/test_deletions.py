@@ -30,6 +30,9 @@ def test_empty_alignment_preserves_all_deletion_table_schemas(tmp_path: Path) ->
     assert outputs["status"] == "not_evaluable"
     assert summary["status"] == "not_evaluable"
     assert summary["reason_code"] == "no_primary_reads"
+    assert summary["largest_median_deletion"] == ""
+    assert summary["largest_median_deletion_status"] == "not_evaluable"
+    assert summary["largest_median_deletion_reason_code"] == "no_primary_reads"
     assert summary["max_support_fraction_primary"] == ""
 
     expected_columns = {
@@ -90,7 +93,11 @@ def test_split_alignment_summary_counts_unique_read_names(tmp_path: Path) -> Non
     assert int(float(summary["reads_with_large_deletion"])) == 0
     assert int(float(summary["candidate_deletion_clusters"])) == 0
     assert summary["status"] == "ok"
-    assert float(summary["max_support_fraction_primary"]) == 0.0
+    assert summary["largest_median_deletion"] == ""
+    assert summary["largest_median_deletion_status"] == "not_applicable"
+    assert summary["largest_median_deletion_reason_code"] == "no_candidate_deletion_clusters"
+    assert summary["max_support_fraction_primary"] == ""
+    assert summary["max_support_fraction_primary_status"] == "not_applicable"
     assert pd.read_csv(outputs["events_path"], sep="\t").empty
     read_flags = pd.read_csv(outputs["reads_path"], sep="\t")
     assert tuple(read_flags.columns) == (
