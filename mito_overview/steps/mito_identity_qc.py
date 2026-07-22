@@ -56,6 +56,30 @@ def load_table(path: Path, columns: list[str] | None = None) -> pd.DataFrame:
     return df
 
 
+def load_heteroplasmy_status(path: Path) -> tuple[str | None, str]:
+    """Load the upstream heteroplasmy state without inventing callable evidence."""
+
+    if not path.exists():
+        return None, "heteroplasmy_summary_missing"
+    frame = load_table(path, columns=SUMMARY_COLUMNS)
+    if frame.empty or not {"metric", "value"}.issubset(frame.columns):
+        return "not_evaluable", "heteroplasmy_summary_unusable"
+    status_values = frame.loc[frame["metric"].astype(str) == "status", "value"]
+    if len(status_values) != 1 or pd.isna(status_values.iloc[0]):
+        return "not_evaluable", "heteroplasmy_summary_status_invalid"
+    try:
+        status = validate_module_state(str(status_values.iloc[0]).strip())
+    except ValueError:
+        return "not_evaluable", "heteroplasmy_summary_status_invalid"
+    reason_values = frame.loc[frame["metric"].astype(str) == "reason_code", "value"]
+    reason = ""
+    if len(reason_values) == 1 and not pd.isna(reason_values.iloc[0]):
+        reason = str(reason_values.iloc[0]).strip()
+    if status != "ok" and not reason:
+        reason = f"heteroplasmy_status_{status}"
+    return status, reason
+
+
 def load_mt_variants(vcf_path: str | Path | None, contig: str) -> pd.DataFrame:
     """Load unique mitochondrial variant records from a VCF/BCF."""
 
@@ -111,6 +135,7 @@ def run_step(
     report_dir.mkdir(parents=True, exist_ok=True)
 
     hetero_path = summary_dir / "mito_heteroplasmy_all_sites.tsv"
+    hetero_summary_path = summary_dir / "mito_heteroplasmy_summary.tsv"
     phymer_path = summary_dir / "mito_phymer_haplogroup_summary.tsv"
     fingerprint_path = summary_dir / "mito_identity_major_variant_fingerprint.tsv"
     compare_path = summary_dir / "mito_identity_vcf_comparison.tsv"
@@ -119,6 +144,9 @@ def run_step(
     report_path = report_dir / "09_mito_identity_qc.html"
 
     hetero_df = ensure_alt_fraction_columns(load_table(hetero_path, columns=FINGERPRINT_COLUMNS))
+    heteroplasmy_status, heteroplasmy_reason = load_heteroplasmy_status(
+        hetero_summary_path
+    )
     phased_df = load_mt_variants(phased_snp_vcf, mt_contig)
     np_df = load_mt_variants(np_snp_vcf, mt_contig)
     phymer_summary = load_table(phymer_path, columns=SUMMARY_COLUMNS)
@@ -134,15 +162,23 @@ def run_step(
     fingerprint_input_usable = fingerprint_input_present and required_fingerprint.issubset(
         hetero_df.columns
     )
-    fingerprint_status = "ok" if fingerprint_input_usable else "not_evaluable"
+    fingerprint_status = "ok"
     fingerprint_reason = ""
-    if not fingerprint_input_present:
+    if heteroplasmy_status is not None and heteroplasmy_status != "ok":
+        fingerprint_status = heteroplasmy_status
+        fingerprint_reason = heteroplasmy_reason
+    elif not fingerprint_input_present:
+        fingerprint_status = "not_evaluable"
         fingerprint_reason = "heteroplasmy_all_sites_missing"
     elif not fingerprint_input_usable:
+        fingerprint_status = "not_evaluable"
         fingerprint_reason = "heteroplasmy_all_sites_unusable"
+    elif heteroplasmy_status == "ok" and hetero_df.empty:
+        fingerprint_status = "not_evaluable"
+        fingerprint_reason = "heteroplasmy_all_sites_no_measured_observations"
 
     major_df = pd.DataFrame(columns=FINGERPRINT_COLUMNS)
-    if fingerprint_input_usable and not hetero_df.empty:
+    if fingerprint_status == "ok" and fingerprint_input_usable and not hetero_df.empty:
         major_df = hetero_df.copy()
         major_df["position"] = pd.to_numeric(major_df["position"], errors="coerce")
         major_df["depth"] = pd.to_numeric(major_df["depth"], errors="coerce")
@@ -150,6 +186,9 @@ def run_step(
             major_df["alt_allele_fraction"], errors="coerce"
         )
         major_df = major_df.dropna(subset=["position", "depth", "alt_allele_fraction"])
+        if major_df.empty and heteroplasmy_status == "ok":
+            fingerprint_status = "not_evaluable"
+            fingerprint_reason = "heteroplasmy_all_sites_no_measured_observations"
         major_df = major_df[
             (major_df["depth"] >= fingerprint_depth) & (major_df["alt_allele_fraction"] >= major_vaf)
         ].copy()
@@ -164,6 +203,12 @@ def run_step(
         print(
             "[identity_qc] heteroplasmy table did not include the expected fingerprint columns; "
             "writing an empty fingerprint table",
+            flush=True,
+        )
+    elif fingerprint_status != "ok":
+        print(
+            f"[identity_qc] fingerprint evidence unavailable status={fingerprint_status} "
+            f"reason={fingerprint_reason}",
             flush=True,
         )
     else:
@@ -242,6 +287,14 @@ def run_step(
             {"metric": "reason_code", "value": module_reason},
             {"metric": "fingerprint_status", "value": fingerprint_status},
             {"metric": "fingerprint_reason_code", "value": fingerprint_reason},
+            {
+                "metric": "heteroplasmy_summary_status",
+                "value": heteroplasmy_status or "not_configured",
+            },
+            {
+                "metric": "heteroplasmy_summary_reason_code",
+                "value": heteroplasmy_reason,
+            },
             {"metric": "variant_comparison_status", "value": comparison_status},
             {"metric": "variant_comparison_reason_code", "value": comparison_reason},
             {"metric": "phased_variant_vcf_present", "value": int(phased_vcf_present)},

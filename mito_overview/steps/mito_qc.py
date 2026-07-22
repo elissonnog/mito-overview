@@ -59,13 +59,14 @@ def run_step(
     read_rows = []
     strand_counts = {"forward": 0, "reverse": 0}
     primary = supplementary = secondary = mapped = 0
-    full_length = 0
+    primary_full_length = 0
     high_alignment_fraction_reads = 0
 
     for read in bam_handle.fetch(mt_contig):
         if read.is_unmapped:
             continue
         mapped += 1
+        is_primary = (not read.is_secondary) and (not read.is_supplementary)
         if read.is_secondary:
             secondary += 1
         elif read.is_supplementary:
@@ -85,8 +86,8 @@ def run_step(
                 if op == 4:
                     softclip_bases += length
         softclip_fraction = (softclip_bases / read_len) if read_len else 0.0
-        if aligned_span >= 0.9 * mt_length:
-            full_length += 1
+        if is_primary and aligned_span >= 0.9 * mt_length:
+            primary_full_length += 1
         if query_aligned_fraction >= 0.9:
             high_alignment_fraction_reads += 1
         read_rows.append(
@@ -102,7 +103,7 @@ def run_step(
                 "softclip_bases": softclip_bases,
                 "softclip_fraction": round(softclip_fraction, 6),
                 "has_sa_tag": int(read.has_tag("SA")),
-                "is_primary": int((not read.is_secondary) and (not read.is_supplementary)),
+                "is_primary": int(is_primary),
                 "is_supplementary": int(read.is_supplementary),
                 "is_secondary": int(read.is_secondary),
                 "is_reverse": int(read.is_reverse),
@@ -122,7 +123,11 @@ def run_step(
     breadth_10x = round(sum(d >= 10 for d in depth) / len(depth), 4) if depth else 0.0
     module_status = "ok" if mapped else "not_evaluable"
     module_reason = "" if mapped else "no_mapped_reads"
-    full_length_fraction: float | object = round(full_length / mapped, 4) if mapped else pd.NA
+    primary_full_length_fraction: float | object = (
+        round(primary_full_length / primary, 4) if primary else pd.NA
+    )
+    primary_full_length_status = "ok" if primary else "not_evaluable"
+    primary_full_length_reason = "" if primary else "no_primary_reads"
     high_alignment_fraction: float | object = (
         round(high_alignment_fraction_reads / mapped, 4) if mapped else pd.NA
     )
@@ -132,16 +137,42 @@ def run_step(
         {"metric": "reason_code", "value": module_reason},
         {"metric": "mapped_reads", "value": mapped},
         {"metric": "primary_reads", "value": primary},
+        {"metric": "primary_full_length_reads", "value": primary_full_length},
+        {
+            "metric": "primary_full_length_fraction",
+            "value": primary_full_length_fraction,
+        },
+        {
+            "metric": "primary_full_length_fraction_status",
+            "value": primary_full_length_status,
+        },
+        {
+            "metric": "primary_full_length_fraction_reason_code",
+            "value": primary_full_length_reason,
+        },
+        {
+            "metric": "primary_full_length_fraction_denominator",
+            "value": "primary_alignment_records",
+        },
+        {
+            "metric": "full_length_fraction",
+            "value": primary_full_length_fraction,
+        },
+        {
+            "metric": "full_length_fraction_compatibility_alias_of",
+            "value": "primary_full_length_fraction",
+        },
         {"metric": "supplementary_reads", "value": supplementary},
         {"metric": "secondary_reads", "value": secondary},
         {"metric": "mean_depth", "value": mean_depth},
         {"metric": "median_depth", "value": median_depth},
         {"metric": "breadth_1x", "value": breadth_1x},
         {"metric": "breadth_10x", "value": breadth_10x},
-        {
-            "metric": "full_length_fraction" if read_mode == "long" else "high_query_alignment_fraction",
-            "value": full_length_fraction if read_mode == "long" else high_alignment_fraction,
-        },
+        *(
+            []
+            if read_mode == "long"
+            else [{"metric": "high_query_alignment_fraction", "value": high_alignment_fraction}]
+        ),
         {"metric": "forward_reads", "value": strand_counts["forward"]},
         {"metric": "reverse_reads", "value": strand_counts["reverse"]},
     ]
@@ -178,7 +209,9 @@ def run_step(
         plt.close()
 
     span_metric_label = "Full-length fraction" if read_mode == "long" else "High query-alignment fraction"
-    span_metric_value = full_length_fraction if read_mode == "long" else high_alignment_fraction
+    span_metric_value = (
+        primary_full_length_fraction if read_mode == "long" else high_alignment_fraction
+    )
     span_metric_display = "NA" if pd.isna(span_metric_value) else span_metric_value
     metrics_html = "".join(
         [

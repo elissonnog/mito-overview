@@ -433,9 +433,9 @@ def _prepare_overlap_df(overlap_df: pd.DataFrame) -> pd.DataFrame:
     prepared["position"] = pd.to_numeric(prepared["position"], errors="coerce")
     prepared["alt_allele_fraction"] = pd.to_numeric(
         prepared["alt_allele_fraction"], errors="coerce"
-    ).fillna(0.0)
+    )
     prepared["heteroplasmy_fraction"] = prepared["alt_allele_fraction"]
-    prepared["depth"] = pd.to_numeric(prepared["depth"], errors="coerce").fillna(0.0)
+    prepared["depth"] = pd.to_numeric(prepared["depth"], errors="coerce")
     prepared["feature_label"] = prepared["feature_label"].apply(_normalize_label)
     prepared["feature_class"] = prepared["feature_class"].apply(_normalize_label)
     prepared["ref_base"] = prepared["ref_base"].apply(lambda value: _normalize_label(value, default="."))
@@ -455,16 +455,63 @@ def _candidate_stats_by_feature(overlap_df: pd.DataFrame) -> dict[str, dict[str,
         ordered = feature_rows.sort_values(
             ["alt_allele_fraction", "depth", "position"],
             ascending=[False, False, True],
+            kind="mergesort",
         )
         top_row = ordered.iloc[0]
+        alt_fractions = pd.to_numeric(
+            feature_rows["alt_allele_fraction"], errors="coerce"
+        )
+        depths = pd.to_numeric(feature_rows["depth"], errors="coerce")
+        alt_fraction_complete = bool(not alt_fractions.isna().any())
+        depth_complete = bool(not depths.isna().any())
         stats[str(feature_label)] = {
             "candidate_sites": int(feature_rows["position"].nunique()),
-            "max_alt_allele_fraction": round(float(feature_rows["alt_allele_fraction"].max()), 6),
-            "mean_alt_allele_fraction": round(float(feature_rows["alt_allele_fraction"].mean()), 6),
-            "median_depth": round(float(feature_rows["depth"].median()), 1),
+            "max_alt_allele_fraction": (
+                round(float(alt_fractions.max()), 6)
+                if alt_fraction_complete
+                else pd.NA
+            ),
+            "mean_alt_allele_fraction": (
+                round(float(alt_fractions.mean()), 6)
+                if alt_fraction_complete
+                else pd.NA
+            ),
+            "median_depth": (
+                round(float(depths.median()), 1) if depth_complete else pd.NA
+            ),
             "top_site": _format_top_site(top_row),
         }
     return stats
+
+
+def _candidate_quantitative_evidence(
+    overlap_df: pd.DataFrame,
+    *,
+    candidate_evidence_evaluable: bool,
+    upstream_status: str,
+    upstream_reason: str,
+) -> tuple[str, str, int | object, int | object]:
+    """Describe whether every retained candidate row has AF and depth evidence."""
+
+    if not candidate_evidence_evaluable:
+        return upstream_status, upstream_reason, pd.NA, pd.NA
+    if overlap_df.empty:
+        return "not_applicable", "no_candidate_rows", 0, 0
+
+    alt_measured = int(overlap_df["alt_allele_fraction"].notna().sum())
+    depth_measured = int(overlap_df["depth"].notna().sum())
+    row_count = len(overlap_df)
+    missing_alt = alt_measured != row_count
+    missing_depth = depth_measured != row_count
+    if not missing_alt and not missing_depth:
+        return "ok", "", alt_measured, depth_measured
+    if missing_alt and missing_depth:
+        reason = "candidate_alt_fraction_and_depth_incomplete"
+    elif missing_alt:
+        reason = "candidate_alt_fraction_incomplete"
+    else:
+        reason = "candidate_depth_incomplete"
+    return "not_evaluable", reason, alt_measured, depth_measured
 
 
 def _selected_counts_by_feature(overlap_df: pd.DataFrame, selected_positions: set[int]) -> dict[str, int]:
@@ -568,6 +615,17 @@ def run_step(
     else:
         overlap_df = _empty_site_detail_df()
     overlap_df = _prepare_overlap_df(overlap_df)
+    (
+        candidate_quantitative_status,
+        candidate_quantitative_reason,
+        candidate_rows_with_alt_fraction,
+        candidate_rows_with_depth,
+    ) = _candidate_quantitative_evidence(
+        overlap_df,
+        candidate_evidence_evaluable=candidate_evidence_evaluable,
+        upstream_status=candidate_evidence_status,
+        upstream_reason=candidate_evidence_reason,
+    )
 
     selected_sites_path = _first_existing(
         summary_dir,
@@ -678,9 +736,9 @@ def run_step(
         if candidate_evidence_evaluable:
             candidate_default = {
                 "candidate_sites": 0,
-                "max_alt_allele_fraction": 0.0,
-                "mean_alt_allele_fraction": 0.0,
-                "median_depth": 0.0,
+                "max_alt_allele_fraction": pd.NA,
+                "mean_alt_allele_fraction": pd.NA,
+                "median_depth": pd.NA,
                 "top_site": "NA",
             }
         else:
@@ -773,6 +831,22 @@ def run_step(
             {"metric": "reason_code", "value": module_reason},
             {"metric": "candidate_evidence_status", "value": candidate_evidence_status},
             {"metric": "candidate_evidence_reason_code", "value": candidate_evidence_reason},
+            {
+                "metric": "candidate_quantitative_evidence_status",
+                "value": candidate_quantitative_status,
+            },
+            {
+                "metric": "candidate_quantitative_evidence_reason_code",
+                "value": candidate_quantitative_reason,
+            },
+            {
+                "metric": "candidate_rows_with_alt_allele_fraction",
+                "value": candidate_rows_with_alt_fraction,
+            },
+            {
+                "metric": "candidate_rows_with_depth",
+                "value": candidate_rows_with_depth,
+            },
             {"metric": "cosegregation_evidence_status", "value": cosegregation_evidence_status},
             {
                 "metric": "cosegregation_evidence_reason_code",

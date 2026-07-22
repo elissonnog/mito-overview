@@ -128,6 +128,75 @@ def test_gene_summary_propagates_non_evaluable_feature_annotation(tmp_path: Path
     assert summary["candidate_sites"].isna().all()
 
 
+def test_gene_summary_preserves_candidate_count_without_zero_filling_measurements(
+    tmp_path: Path,
+) -> None:
+    summary_dir = tmp_path / "summary"
+    summary_dir.mkdir()
+    write_minimal_feature_inputs(summary_dir, include_overlap=False)
+    pd.DataFrame(
+        [
+            {
+                "position": 10,
+                "ref_base": "A",
+                "alt_base": "C",
+                "alt_allele_fraction": 0.25,
+                "heteroplasmy_fraction": 0.25,
+                "depth": 120,
+                "feature_class": "protein_coding",
+                "feature_label": "MT-TEST",
+            },
+            {
+                "position": 20,
+                "ref_base": "G",
+                "alt_base": "T",
+                "alt_allele_fraction": pd.NA,
+                "heteroplasmy_fraction": pd.NA,
+                "depth": pd.NA,
+                "feature_class": "protein_coding",
+                "feature_label": "MT-TEST",
+            },
+        ],
+        columns=SITE_DETAIL_COLUMNS,
+    ).to_csv(summary_dir / "mito_feature_overlap_candidates.tsv", sep="\t", index=False)
+
+    outputs = run_step(
+        summary_dir=summary_dir,
+        figure_dir=tmp_path / "figures",
+        report_dir=tmp_path / "reports",
+        sample_id="GENE-MISSING-MEASUREMENTS",
+        mt_contig="MT",
+        mt_length=200,
+    )
+    summary = pd.read_csv(outputs["summary_path"], sep="\t").set_index("feature_label")
+    details = pd.read_csv(outputs["site_details_path"], sep="\t")
+    run_summary = metric_map(Path(outputs["run_summary_path"]))
+
+    feature = summary.loc["MT-TEST"]
+    assert feature["candidate_sites"] == 2
+    assert pd.isna(feature["max_alt_allele_fraction"])
+    assert pd.isna(feature["mean_alt_allele_fraction"])
+    assert pd.isna(feature["median_depth"])
+    assert feature["top_site"] == "10:A>C"
+    assert summary.loc["intergenic", "candidate_sites"] == 0
+    assert pd.isna(summary.loc["intergenic", "max_alt_allele_fraction"])
+    assert pd.isna(summary.loc["intergenic", "median_depth"])
+    assert len(details) == 2
+    missing_detail = details.loc[details["position"] == 20].iloc[0]
+    assert pd.isna(missing_detail["alt_allele_fraction"])
+    assert pd.isna(missing_detail["heteroplasmy_fraction"])
+    assert pd.isna(missing_detail["depth"])
+    assert run_summary["candidate_evidence_status"] == "ok"
+    assert run_summary["candidate_site_rows"] == "2"
+    assert run_summary["candidate_quantitative_evidence_status"] == "not_evaluable"
+    assert (
+        run_summary["candidate_quantitative_evidence_reason_code"]
+        == "candidate_alt_fraction_and_depth_incomplete"
+    )
+    assert run_summary["candidate_rows_with_alt_allele_fraction"] == "1"
+    assert run_summary["candidate_rows_with_depth"] == "1"
+
+
 def test_gene_summary_propagates_non_evaluable_deletion_denominator(
     tmp_path: Path,
 ) -> None:

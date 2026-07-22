@@ -41,7 +41,7 @@ REQUIRED_NUMT_READ_COLUMNS = frozenset(
         "is_supplementary",
     }
 )
-REQUIRED_NUMT_SUMMARY_METRICS = frozenset({"full_length_fraction"})
+REQUIRED_NUMT_SUMMARY_METRICS = frozenset()
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -250,7 +250,36 @@ def run_step(
     heavy_softclip_fraction = column_fraction(eval_df, "softclip_fraction", lambda s: s > 0.20)
     sa_fraction = column_fraction(eval_df, "has_sa_tag", lambda s: s == 1)
     supplementary_fraction = column_fraction(reads_df, "is_supplementary", lambda s: s == 1)
-    full_length_fraction = extract_metric_value(qc_df, "full_length_fraction")
+    primary_full_length_fraction = column_fraction(
+        primary_df,
+        "aligned_fraction_mt",
+        lambda s: s >= 0.90,
+    )
+    primary_full_length_reads: int | None = None
+    if primary_full_length_fraction is not None:
+        primary_full_length_reads = int(
+            (pd.to_numeric(primary_df["aligned_fraction_mt"], errors="coerce") >= 0.90).sum()
+        )
+    qc_primary_full_length_fraction = extract_metric_value(
+        qc_df, "primary_full_length_fraction"
+    )
+    qc_fraction_mismatch = bool(
+        primary_full_length_fraction is not None
+        and qc_primary_full_length_fraction is not None
+        and abs(primary_full_length_fraction - qc_primary_full_length_fraction) > 0.0001
+    )
+    if primary_full_length_fraction is None:
+        qc_fraction_crosscheck_status = "not_evaluable"
+        qc_fraction_crosscheck_reason = "primary_full_length_fraction_unavailable"
+    elif qc_primary_full_length_fraction is None:
+        qc_fraction_crosscheck_status = "not_configured"
+        qc_fraction_crosscheck_reason = "primary_full_length_fraction_missing_from_mito_qc"
+    elif qc_fraction_mismatch:
+        qc_fraction_crosscheck_status = "not_evaluable"
+        qc_fraction_crosscheck_reason = "primary_full_length_fraction_mismatch"
+    else:
+        qc_fraction_crosscheck_status = "ok"
+        qc_fraction_crosscheck_reason = ""
 
     missing_read_columns = sorted(REQUIRED_NUMT_READ_COLUMNS - set(reads_df.columns))
     if "metric" in qc_df.columns:
@@ -265,12 +294,13 @@ def run_step(
         heavy_softclip_fraction,
         sa_fraction,
         supplementary_fraction,
-        full_length_fraction,
+        primary_full_length_fraction,
     )
     evidence_complete = (
         not missing_read_columns
         and not missing_summary_metrics
         and primary_evidence_available
+        and not qc_fraction_mismatch
         and all(value is not None for value in evidence_values)
     )
 
@@ -284,7 +314,7 @@ def run_step(
         risk_score += 1 if heavy_softclip_fraction > 0.10 else 0
         risk_score += 1 if sa_fraction > 0.05 else 0
         risk_score += 1 if supplementary_fraction > 0.15 else 0
-        risk_score += 1 if full_length_fraction < 0.01 else 0
+        risk_score += 1 if primary_full_length_fraction < 0.01 else 0
         risk = risk_label(risk_score)
 
     if reference_scope != "whole_genome":
@@ -294,7 +324,9 @@ def run_step(
         reported_risk_score: int | str = "NA"
     elif not evidence_complete:
         interpretation_status = "not_evaluable"
-        if "is_primary" in reads_df.columns and not primary_indicator_valid:
+        if qc_fraction_mismatch:
+            reason_code = "numt_primary_full_length_fraction_mismatch"
+        elif "is_primary" in reads_df.columns and not primary_indicator_valid:
             reason_code = "numt_primary_indicator_invalid"
         elif primary_indicator_valid and primary_df.empty:
             reason_code = "numt_primary_reads_unavailable"
@@ -317,7 +349,7 @@ def run_step(
         f"short_span={display_metric(short_span_fraction)} "
         f"heavy_softclip={display_metric(heavy_softclip_fraction)} "
         f"sa={display_metric(sa_fraction)} supplementary={display_metric(supplementary_fraction)} "
-        f"full_length={display_metric(full_length_fraction)} risk={reported_risk} "
+        f"primary_full_length={display_metric(primary_full_length_fraction)} risk={reported_risk} "
         f"score={reported_risk_score} "
         f"missing_read_columns={','.join(missing_read_columns) or 'none'} "
         f"missing_summary_metrics={','.join(missing_summary_metrics) or 'none'}",
@@ -341,13 +373,48 @@ def run_step(
             {"metric": "primary_indicator_valid", "value": int(primary_indicator_valid)},
             {"metric": "primary_evidence_available", "value": int(primary_evidence_available)},
             {"metric": "reads_evaluated", "value": int(len(eval_df))},
+            {
+                "metric": "primary_alignment_records",
+                "value": int(len(primary_df)) if primary_indicator_valid else "NA",
+            },
+            {
+                "metric": "primary_full_length_reads",
+                "value": primary_full_length_reads if primary_full_length_reads is not None else "NA",
+            },
             {"metric": "low_mapq_fraction_lt20", "value": rounded_or_na(low_mapq_fraction)},
             {"metric": "very_low_mapq_fraction_lt5", "value": rounded_or_na(very_low_mapq_fraction)},
             {"metric": "short_aligned_fraction_lt0.5_mt", "value": rounded_or_na(short_span_fraction)},
             {"metric": "heavy_softclip_fraction_gt0.2", "value": rounded_or_na(heavy_softclip_fraction)},
             {"metric": "sa_tag_fraction", "value": rounded_or_na(sa_fraction)},
             {"metric": "supplementary_fraction_all_reads", "value": rounded_or_na(supplementary_fraction)},
-            {"metric": "full_length_fraction", "value": rounded_or_na(full_length_fraction)},
+            {
+                "metric": "primary_full_length_fraction",
+                "value": rounded_or_na(primary_full_length_fraction),
+            },
+            {
+                "metric": "primary_full_length_fraction_denominator",
+                "value": "primary_alignment_records",
+            },
+            {
+                "metric": "primary_full_length_fraction_source",
+                "value": "mito_read_stats_primary_alignment_records",
+            },
+            {
+                "metric": "primary_full_length_qc_crosscheck_status",
+                "value": qc_fraction_crosscheck_status,
+            },
+            {
+                "metric": "primary_full_length_qc_crosscheck_reason_code",
+                "value": qc_fraction_crosscheck_reason,
+            },
+            {
+                "metric": "full_length_fraction",
+                "value": rounded_or_na(primary_full_length_fraction),
+            },
+            {
+                "metric": "full_length_fraction_compatibility_alias_of",
+                "value": "primary_full_length_fraction",
+            },
             {"metric": "heuristic_numt_risk", "value": reported_risk},
             {"metric": "heuristic_numt_risk_score", "value": reported_risk_score},
         ],
@@ -428,7 +495,10 @@ def run_step(
             metric_card("Low MAPQ fraction", display_metric(low_mapq_fraction)),
             metric_card("Short-span fraction", display_metric(short_span_fraction)),
             metric_card("Heavy soft-clip fraction", display_metric(heavy_softclip_fraction)),
-            metric_card("Full-length fraction", display_metric(full_length_fraction)),
+            metric_card(
+                "Primary full-length fraction",
+                display_metric(primary_full_length_fraction),
+            ),
         ]
     )
     intro_html = (
@@ -436,6 +506,8 @@ def run_step(
         "A categorical NUMT warning is shown only when reads were aligned against a recognized whole-genome reference. "
         "The summary is based on read-level alignment structure, including MAPQ, mitochondrial "
         "span coverage, soft clipping, supplementary alignments, and SA-tag frequency. "
+        "The full-length metric uses primary alignment records as its denominator; "
+        "supplementary and secondary records do not contribute to that fraction. "
         f"The resolved reference scope is {reference_scope}; NUMT interpretation status is {interpretation_status}. "
         "This remains QC context rather than a formal NUMT classifier.</p>"
         f"<div class='metrics-grid'>{metrics_html}</div>"
