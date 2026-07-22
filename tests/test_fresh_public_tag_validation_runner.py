@@ -2,13 +2,16 @@ from __future__ import annotations
 
 import csv
 import hashlib
+import io
 import json
 import os
 import shlex
 import shutil
 import subprocess
 import sys
+import tarfile
 import textwrap
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -32,6 +35,10 @@ CANONICAL_ASSET_NAMES = ASSET_SOURCE_NAMES | {
     "mito_overview-0.3.0-py3-none-any.whl",
     "mito_overview-0.3.0.tar.gz",
     "SHA256SUMS",
+}
+REPORT_ASSET_NAMES = ASSET_SOURCE_NAMES - {
+    "mito-overview-v0.3.0-validation.zip",
+    "mito-overview-v0.3.0-verification.json",
 }
 
 
@@ -92,6 +99,14 @@ done
     shutil.copyfile(
         ROOT / "scripts" / "sanitize_validation_evidence.py",
         repository / "scripts" / "sanitize_validation_evidence.py",
+    )
+    shutil.copyfile(
+        ROOT / "scripts" / "safe_extract_validation_zip.py",
+        repository / "scripts" / "safe_extract_validation_zip.py",
+    )
+    shutil.copyfile(
+        ROOT / "scripts" / "verify_release_asset_identity_v0.3.0.py",
+        repository / "scripts" / "verify_release_asset_identity_v0.3.0.py",
     )
 
     _git(repository, "add", ".")
@@ -200,22 +215,167 @@ def _build_command_shims(root: Path, fixture_repository: Path) -> Path:
     return shim_root
 
 
-def _build_release_asset_source(root: Path) -> Path:
+def _sha256_bytes(value: bytes) -> str:
+    return hashlib.sha256(value).hexdigest()
+
+
+def _build_release_asset_source(
+    root: Path,
+    final_sha: str,
+    *,
+    identity_sha: str | None = None,
+    substitute_asset: str | None = None,
+) -> Path:
     source = root / "release-asset-source"
     source.mkdir()
-    for name in sorted(ASSET_SOURCE_NAMES):
-        (source / name).write_bytes(f"fixture:{name}\n".encode("ascii"))
+    bound_sha = identity_sha or final_sha
+    (source / "MitoOverview_v0.3.0_release_validation_report.md").write_text(
+        f"# MitoOverview v0.3.0 release validation\n\nCommit: `{bound_sha}`\n",
+        encoding="utf-8",
+    )
+    (source / "RELEASE_NOTES_v0.3.0.md").write_text(
+        f"# MitoOverview v0.3.0\n\nValidated commit: `{bound_sha}`\n",
+        encoding="utf-8",
+    )
+    (source / "mito-overview-v0.3.0-environment.txt").write_text(
+        f"release_version=v0.3.0\ngit_commit={bound_sha}\n",
+        encoding="utf-8",
+    )
+    with zipfile.ZipFile(
+        source / "MitoOverview_v0.3.0_release_validation_report.docx", "w"
+    ) as document:
+        document.writestr(
+            "[Content_Types].xml",
+            '<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"/>',
+        )
+        document.writestr(
+            "word/document.xml",
+            f'<document><body><p>MitoOverview v0.3.0 {bound_sha}</p></body></document>',
+        )
+    (source / "MitoOverview_v0.3.0_release_validation_report.pdf").write_bytes(
+        (
+            "%PDF-1.4\n1 0 obj<</Type/Catalog>>endobj\n"
+            f"% MitoOverview v0.3.0 {bound_sha}\n%%EOF\n"
+        ).encode("ascii")
+    )
+
+    def write_tar(path: Path, files: dict[str, bytes]) -> None:
+        with tarfile.open(path, "w:gz") as archive:
+            for name, payload in sorted(files.items()):
+                info = tarfile.TarInfo(name)
+                info.size = len(payload)
+                info.mode = 0o644
+                archive.addfile(info, io.BytesIO(payload))
+
+    write_tar(
+        source / "MitoOverview_v0.3.0_release_validation_report_assets.tar.gz",
+        {
+            "figure_manifest.tsv": (
+                f"asset\tgit_commit\nfigure01.png\t{bound_sha}\n"
+            ).encode("ascii"),
+            "figure01.png": b"\x89PNG\r\n\x1a\nfixture-figure\n",
+        },
+    )
+    write_tar(
+        source / "mito-overview-v0.3.0-environment-locks.tar.gz",
+        {
+            "environment.yml": (
+                f"name: mito-overview-v0.3.0\n# commit: {bound_sha}\n"
+            ).encode("ascii")
+        },
+    )
+
+    run = {
+        "schema_version": "2.0",
+        "validation_profile": "github_release_validation_v1",
+        "release_version": "v0.3.0",
+        "git_commit": bound_sha,
+        "repository": PUBLIC_FIXTURE_URL,
+    }
+    release_identity = {
+        **run,
+        "package_name": "mito-overview",
+        "package_version": "0.3.0",
+    }
+    packet_files = {
+        "run.json": (json.dumps(run, sort_keys=True) + "\n").encode("utf-8"),
+        "release_identity.json": (
+            json.dumps(release_identity, sort_keys=True) + "\n"
+        ).encode("utf-8"),
+    }
+    manifest_text = "".join(
+        f"{_sha256_bytes(payload)}  {name}\n"
+        for name, payload in sorted(packet_files.items())
+    )
+    packet_files["artifacts.sha256"] = manifest_text.encode("ascii")
+    packet_files["verify_bundle.sh"] = (
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        "cd \"$(dirname \"$0\")\"\n"
+        "shasum -a 256 -c artifacts.sha256\n"
+    ).encode("ascii")
+    archive_path = source / "mito-overview-v0.3.0-validation.zip"
+    with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for name, payload in sorted(packet_files.items()):
+            archive.writestr(name, payload)
+
+    report_assets = []
+    for name in sorted(REPORT_ASSET_NAMES):
+        path = source / name
+        report_assets.append(
+            {
+                "name": name,
+                "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                "size": path.stat().st_size,
+            }
+        )
+    verification = {
+        "schema_version": "2.0",
+        "validation_profile": "github_release_validation_v1",
+        "evidence_type": "release_validation_archive_verification",
+        "verdict": "PASS",
+        "release_version": "v0.3.0",
+        "git_commit": bound_sha,
+        "audit_zip": archive_path.name,
+        "audit_zip_sha256": hashlib.sha256(archive_path.read_bytes()).hexdigest(),
+        "verifier_runs": ["packet_root", "fresh_audit_zip_extraction"],
+        "report_asset_manifest": {
+            "schema_version": "1.0",
+            "manifest_type": "report_asset_manifest",
+            "repository": PUBLIC_FIXTURE_URL,
+            "repository_slug": "fixture/mito-overview",
+            "release_version": "v0.3.0",
+            "release_tag": "v0.3.0",
+            "git_commit": bound_sha,
+            "assets": report_assets,
+        },
+    }
+    (source / "mito-overview-v0.3.0-verification.json").write_text(
+        json.dumps(verification, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    if substitute_asset is not None:
+        with (source / substitute_asset).open("ab") as handle:
+            handle.write(b"substituted-after-manifest\n")
     return source
 
 
 def _execute_fixture_runner(
-    tmp_path: Path, *, report_pages: int
+    tmp_path: Path,
+    *,
+    report_pages: int,
+    identity_sha: str | None = None,
+    substitute_asset: str | None = None,
 ) -> tuple[subprocess.CompletedProcess[str], Path, Path, str, str]:
     fixture, final_sha, tag_object_sha = _build_fixture_repository(
         tmp_path, report_pages=report_pages
     )
     shim_root = _build_command_shims(tmp_path, fixture)
-    asset_source = _build_release_asset_source(tmp_path)
+    asset_source = _build_release_asset_source(
+        tmp_path,
+        final_sha,
+        identity_sha=identity_sha,
+        substitute_asset=substitute_asset,
+    )
     work_root = tmp_path / "release-work"
     evidence_root = tmp_path / "release-evidence"
     environment = os.environ.copy()
@@ -257,6 +417,7 @@ def test_runner_is_valid_shell_and_encodes_all_required_release_gates() -> None:
         "smoke_longread_nomethyl",
         "smoke_standalone",
         "example_builders",
+        "release_asset_semantic_identity",
         "trusted_release_assets",
     }
     for case_id in required_cases:
@@ -283,6 +444,9 @@ def test_runner_is_valid_shell_and_encodes_all_required_release_gates() -> None:
         "evidence.sha256",
         "fresh_public_tag_validation.json",
         "trusted_release_assets.json",
+        "release_asset_semantic_identity.json",
+        "safe_extract_validation_zip.py",
+        "verify_release_asset_identity_v0.3.0.py",
         "RELEASE_ASSET_SOURCE",
     ):
         assert required in text
@@ -323,8 +487,8 @@ def test_runner_success_path_emits_hash_verified_tag_bound_evidence(tmp_path: Pa
 
     with (evidence_root / "cases.tsv").open(encoding="utf-8", newline="") as handle:
         rows = list(csv.DictReader(handle, delimiter="\t"))
-    assert len(rows) == 13
-    assert len({row["case_id"] for row in rows}) == 13
+    assert len(rows) == 14
+    assert len({row["case_id"] for row in rows}) == 14
     assert {row["verdict"] for row in rows} == {"PASS"}
 
     receipt = json.loads(
@@ -332,7 +496,7 @@ def test_runner_success_path_emits_hash_verified_tag_bound_evidence(tmp_path: Pa
     )
     assert receipt["verified"] is True
     assert receipt["verdict"] == "PASS"
-    assert receipt["case_count"] == 13
+    assert receipt["case_count"] == 14
     assert receipt["git_commit"] == final_sha
     assert receipt["tag_object_sha"] == tag_object_sha
     assert receipt["trusted_asset_count"] == len(CANONICAL_ASSET_NAMES)
@@ -341,6 +505,17 @@ def test_runner_success_path_emits_hash_verified_tag_bound_evidence(tmp_path: Pa
     ).splitlines()
     assert any(line.startswith("operating_system=") for line in environment_lines)
     assert any(line.startswith("architecture=") for line in environment_lines)
+
+    semantic = json.loads(
+        (evidence_root / "release_asset_semantic_identity.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert semantic["verified"] is True
+    assert semantic["git_commit"] == final_sha
+    assert semantic["repository"] == PUBLIC_FIXTURE_URL
+    assert semantic["report_asset_count"] == len(REPORT_ASSET_NAMES)
+    assert {row["name"] for row in semantic["report_assets"]} == REPORT_ASSET_NAMES
 
     manifest = evidence_root / "evidence.sha256"
     assert receipt["evidence_manifest_sha256"] == hashlib.sha256(
@@ -387,4 +562,48 @@ def test_runner_rejects_incomplete_example_inventory_without_pass_receipt(
     with (evidence_root / "cases.tsv").open(encoding="utf-8", newline="") as handle:
         rows = list(csv.DictReader(handle, delimiter="\t"))
     assert rows[-1]["case_id"] == "example_builders"
+    assert rows[-1]["verdict"] == "FAIL"
+
+
+def test_runner_rejects_valid_but_stale_prior_commit_asset_bundle(
+    tmp_path: Path,
+) -> None:
+    completed, _, evidence_root, _, _ = _execute_fixture_runner(
+        tmp_path,
+        report_pages=14,
+        identity_sha="f" * 40,
+    )
+    assert completed.returncode != 0
+    assert "identity mismatch for git_commit" in completed.stderr
+    assert not (evidence_root / "fresh_public_tag_validation.json").exists()
+    with (evidence_root / "cases.tsv").open(encoding="utf-8", newline="") as handle:
+        rows = list(csv.DictReader(handle, delimiter="\t"))
+    assert rows[-1]["case_id"] == "release_asset_semantic_identity"
+    assert rows[-1]["verdict"] == "FAIL"
+
+
+@pytest.mark.parametrize(
+    "asset_name",
+    sorted(REPORT_ASSET_NAMES | {"mito-overview-v0.3.0-validation.zip"}),
+)
+def test_runner_rejects_asset_substitution_after_semantic_manifest(
+    tmp_path: Path,
+    asset_name: str,
+) -> None:
+    completed, _, evidence_root, _, _ = _execute_fixture_runner(
+        tmp_path,
+        report_pages=14,
+        substitute_asset=asset_name,
+    )
+    assert completed.returncode != 0
+    assert (
+        "SHA-256 mismatch" in completed.stderr
+        or "size mismatch" in completed.stderr
+        or "audit_zip_sha256" in completed.stderr
+        or "Safe ZIP extraction failed" in completed.stderr
+    )
+    assert not (evidence_root / "fresh_public_tag_validation.json").exists()
+    with (evidence_root / "cases.tsv").open(encoding="utf-8", newline="") as handle:
+        rows = list(csv.DictReader(handle, delimiter="\t"))
+    assert rows[-1]["case_id"] == "release_asset_semantic_identity"
     assert rows[-1]["verdict"] == "FAIL"

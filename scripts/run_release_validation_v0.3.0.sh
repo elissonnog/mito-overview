@@ -34,6 +34,7 @@ done
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+FROZEN_PAPER_TREE="bfb5664db9c8b43ed5de33ecbddef88071fc6378"
 PYTHON_BIN="${MITO_OVERVIEW_PYTHON:-python3}"
 REPOSITORY="https://github.com/elissonnog/mito-overview"
 PUBLIC_REMOTE="${REPOSITORY}.git"
@@ -157,6 +158,11 @@ fi
 CANDIDATE_COMMIT="$(git -C "${REPO_ROOT}" rev-parse HEAD)"
 if [[ ! "${CANDIDATE_COMMIT}" =~ ^[0-9a-f]{40}$ ]]; then
   echo "Release candidate must resolve to a full 40-character Git commit." >&2
+  exit 1
+fi
+OBSERVED_PAPER_TREE="$(git -C "${REPO_ROOT}" rev-parse HEAD:paper 2>/dev/null || true)"
+if [[ "${OBSERVED_PAPER_TREE}" != "${FROZEN_PAPER_TREE}" ]]; then
+  echo "Frozen paper tree mismatch: ${OBSERVED_PAPER_TREE:-missing} != ${FROZEN_PAPER_TREE}" >&2
   exit 1
 fi
 

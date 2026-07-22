@@ -70,6 +70,7 @@ PY
 CLONE_ROOT="${WORK_ROOT}/public-tag-clone"
 DIST_ROOT="${WORK_ROOT}/dist"
 RELEASE_ASSET_ROOT="${WORK_ROOT}/release-assets"
+PACKET_SEMANTIC_ROOT="${WORK_ROOT}/release-packet-verify"
 SDIST_ROOT="${WORK_ROOT}/sdist"
 VENV_ROOT="${WORK_ROOT}/venv"
 PROBE_ROOT="${WORK_ROOT}/installed-probe"
@@ -277,6 +278,26 @@ EOF
 run_case clean_tag_checkout "detached public-tag checkout remained clean"
 
 TAG_OBJECT_SHA="$(cat "${WORK_ROOT}/tag_object_sha.txt")"
+write_command release_asset_semantic_identity <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+$(printf '%q' "${PYTHON_BIN}") \
+  $(printf '%q' "${CLONE_ROOT}/scripts/safe_extract_validation_zip.py") \
+  $(printf '%q' "${ASSET_SOURCE_ROOT}/mito-overview-v0.3.0-validation.zip") \
+  $(printf '%q' "${PACKET_SEMANTIC_ROOT}")
+test -f $(printf '%q' "${PACKET_SEMANTIC_ROOT}/verify_bundle.sh")
+test ! -L $(printf '%q' "${PACKET_SEMANTIC_ROOT}/verify_bundle.sh")
+bash $(printf '%q' "${PACKET_SEMANTIC_ROOT}/verify_bundle.sh")
+$(printf '%q' "${PYTHON_BIN}") \
+  $(printf '%q' "${CLONE_ROOT}/scripts/verify_release_asset_identity_v0.3.0.py") \
+  $(printf '%q' "${ASSET_SOURCE_ROOT}") \
+  $(printf '%q' "${PACKET_SEMANTIC_ROOT}") \
+  $(printf '%q' "${REPOSITORY_URL}") \
+  $(printf '%q' "${FINAL_SHA}") \
+  $(printf '%q' "${EVIDENCE_ROOT}/release_asset_semantic_identity.json")
+EOF
+run_case release_asset_semantic_identity "validation packet, receipt, and report assets matched FINAL_SHA"
+
 write_command trusted_release_assets <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
