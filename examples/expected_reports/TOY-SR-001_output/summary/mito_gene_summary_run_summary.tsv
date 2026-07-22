@@ -3,6 +3,10 @@ status	ok
 reason_code	partial_upstream_evidence
 candidate_evidence_status	ok
 candidate_evidence_reason_code	
+candidate_quantitative_evidence_status	ok
+candidate_quantitative_evidence_reason_code	
+candidate_rows_with_alt_allele_fraction	1
+candidate_rows_with_depth	1
 cosegregation_evidence_status	not_applicable
 cosegregation_evidence_reason_code	
 deletion_evidence_status	not_applicable

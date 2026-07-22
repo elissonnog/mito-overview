@@ -3,6 +3,13 @@ status	ok
 reason_code	
 mapped_reads	10
 primary_reads	10
+primary_full_length_reads	
+primary_full_length_fraction	
+primary_full_length_fraction_status	not_applicable
+primary_full_length_fraction_reason_code	read_mode_short
+primary_full_length_fraction_denominator	
+full_length_fraction	
+full_length_fraction_compatibility_alias_of	primary_full_length_fraction
 supplementary_reads	0
 secondary_reads	0
 mean_depth	3.333

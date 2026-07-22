@@ -3,12 +3,18 @@ status	ok
 reason_code	
 mapped_reads	10
 primary_reads	10
+primary_full_length_reads	0
+primary_full_length_fraction	0.0
+primary_full_length_fraction_status	ok
+primary_full_length_fraction_reason_code	
+primary_full_length_fraction_denominator	primary_alignment_records
+full_length_fraction	0.0
+full_length_fraction_compatibility_alias_of	primary_full_length_fraction
 supplementary_reads	0
 secondary_reads	0
 mean_depth	3.333
 median_depth	0.0
 breadth_1x	0.3333
 breadth_10x	0.3333
-full_length_fraction	0.0
 forward_reads	10
 reverse_reads	0

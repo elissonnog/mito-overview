@@ -3,6 +3,8 @@ status	ok
 reason_code	
 fingerprint_status	ok
 fingerprint_reason_code	
+heteroplasmy_summary_status	ok
+heteroplasmy_summary_reason_code	
 variant_comparison_status	ok
 variant_comparison_reason_code	
 phased_variant_vcf_present	1
