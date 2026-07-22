@@ -1,6 +1,10 @@
 metric	value
 status	ok
+reason_code	
+fingerprint_status	ok
+fingerprint_reason_code	
 variant_comparison_status	ok
+variant_comparison_reason_code	
 phased_variant_vcf_present	1
 unphased_variant_vcf_present	1
 major_fingerprint_sites	0
@@ -10,5 +14,6 @@ shared_mt_variant_records	1
 phased_only_mt_variant_records	0
 np_only_mt_variant_records	1
 formal_haplogroup_assignment_status	ok
+formal_haplogroup_reason_code	
 formal_haplogroup_best_match	H1a1
 major_variant_fingerprint	NA

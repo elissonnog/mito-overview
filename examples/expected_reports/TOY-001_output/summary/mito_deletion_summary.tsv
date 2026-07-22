@@ -1,7 +1,9 @@
 metric	value
+status	ok
+reason_code	
 primary_reads	10
 reads_with_large_deletion	0
 reads_with_supplementary_or_SA	0
 candidate_deletion_clusters	0
 largest_median_deletion	0
-max_support_fraction_primary	0
+max_support_fraction_primary	0.0
