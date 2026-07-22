@@ -2,9 +2,21 @@ metric	value
 status	ok
 reason_code	
 candidate_sites_annotated	1
+candidate_variants_annotated	1
+annotation_rows	1
 distinct_consequence_classes	1
 sites_with_clinvar_annotation	0
+variants_with_clinvar_annotation	0
+clinvar_annotation_rows	0
 protein_coding_sites	0
+protein_coding_variants	0
+protein_coding_annotation_rows	0
 tRNA_sites	0
+tRNA_variants	0
+tRNA_annotation_rows	0
 rRNA_sites	0
+rRNA_variants	0
+rRNA_annotation_rows	0
 control_region_sites	1
+control_region_variants	1
+control_region_annotation_rows	1

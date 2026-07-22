@@ -5,6 +5,10 @@ positions_tested	60
 callable_positions	20
 uncallable_positions	40
 candidate_evaluable_positions	20
+candidate_non_evaluable_positions	40
+candidate_evaluable_fraction	0.333333
+candidate_coverage_scope	partial
+whole_mtdna_zero_candidate_interpretation_status	not_applicable_candidates_observed
 candidate_sites	1
 min_callable_depth	2
 min_alt_allele_fraction	0.2
