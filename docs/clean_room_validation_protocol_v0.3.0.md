@@ -140,7 +140,22 @@ complete rerun from a new final commit.
    `github_prepublication.json` through the publisher's read-only
    `--verify-prepublication` phase before any GitHub release exists. Build and
    visually inspect the report from that exact tag/repository identity, then
-   assemble the remaining non-distribution assets.
+   assemble the remaining non-distribution assets with the fail-closed command
+   below. The command requires an absent output directory, verifies the packet
+   ZIP and its embedded verifier, checks the report/release/environment commit
+   identities, and writes the manifest-bearing verification JSON atomically.
+
+   ```bash
+   python scripts/assemble_release_assets_v0.3.0.py \
+     <absent-asset-source> \
+     <mito-overview-v0.3.0-validation.zip> \
+     <packet-verification-json> \
+     <rendered-report-directory> \
+     <release-notes-markdown> \
+     <environment-text> \
+     <resolved-platform-lock-root> \
+     <FINAL_SHA>
+   ```
 8. Run `scripts/run_fresh_public_tag_validation_v0.3.0.sh` from absent work and
    evidence roots with the assembled asset source. The runner clones the public
    tag, builds wheel/sdist, verifies all package and synthetic gates, and seals

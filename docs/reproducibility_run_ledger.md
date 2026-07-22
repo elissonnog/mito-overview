@@ -89,9 +89,11 @@ The runner must reject legacy DOI/Zenodo arguments, require an absent raw-cache 
    `--verify-prepublication` phase and build/visually inspect the human-readable
    MD/DOCX/PDF report from that exact main/tag identity.
 8. Assemble the non-distribution assets and run
-   `scripts/run_fresh_public_tag_validation_v0.3.0.sh` against the public HTTPS
-   tag. Retain its cases, commands, logs, environment, annotated-tag identity,
-   trusted 12-asset manifest, hashes, and PASS receipt.
+   `scripts/assemble_release_assets_v0.3.0.py`; its atomic output is the only
+   accepted input to `scripts/run_fresh_public_tag_validation_v0.3.0.sh`
+   against the public HTTPS tag. Retain the assembler's semantic identity
+   result plus the fresh-tag cases, commands, logs, environment, annotated-tag
+   identity, trusted 12-asset manifest, hashes, and PASS receipt.
 9. Supply the sealed assets and receipt to create the draft, enable immutable
    releases, upload and authenticated-redownload all assets, publish, and write
    the independently queried post-publication proof to `github_publication.json`.

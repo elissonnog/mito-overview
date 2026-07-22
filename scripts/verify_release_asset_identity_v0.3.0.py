@@ -73,6 +73,10 @@ def verify(
     if repository_slug == repository_url or repository_slug.count("/") != 1:
         raise IdentityError("repository must be a canonical GitHub HTTPS URL")
 
+    if asset_root.is_symlink() or not asset_root.is_dir():
+        raise IdentityError("asset root must be a regular non-symlink directory")
+    if packet_root.is_symlink() or not packet_root.is_dir():
+        raise IdentityError("packet root must be a regular non-symlink directory")
     asset_root = asset_root.resolve(strict=True)
     packet_root = packet_root.resolve(strict=True)
     run = read_object(packet_root / "run.json", "packet run.json")
@@ -94,6 +98,8 @@ def verify(
         raise IdentityError("packet package_version does not match v0.3.0")
 
     archive = asset_root / ZIP_NAME
+    if archive.is_symlink() or not archive.is_file():
+        raise IdentityError("validation archive must be a regular non-symlink file")
     verification = read_object(
         asset_root / VERIFICATION_NAME, "adjacent verification JSON"
     )
