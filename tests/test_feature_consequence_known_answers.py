@@ -7,8 +7,10 @@ import pysam
 import pytest
 
 from mito_overview.steps.mito_feature_annotation import (
+    DLOOP_INTERVALS,
     classify_position,
     load_human_mt_features,
+    resolve_control_region_annotation,
     run_step as run_feature_annotation,
 )
 from mito_overview.steps.mito_variant_consequence import (
@@ -24,6 +26,10 @@ from ._helpers import metric_map
 RESOURCE_DIR = Path(__file__).resolve().parents[1] / "resources" / "annotations"
 HUMAN_MT_FASTA = RESOURCE_DIR / "NC_012920.1.fa"
 HUMAN_MT_GTF = RESOURCE_DIR / "human_mt_reference.gtf"
+
+
+def canonical_mt_sequence() -> str:
+    return "".join(HUMAN_MT_FASTA.read_text(encoding="ascii").splitlines()[1:])
 
 
 def write_heteroplasmy_status(
@@ -53,6 +59,35 @@ def write_consequence_fixture(tmp_path: Path, *, position: int = 1000) -> tuple[
     fasta.write_text(">MT\n" + "A" * 2000 + "\n", encoding="ascii")
     pysam.faidx(str(fasta))
     return summary_dir, fasta
+
+
+def write_feature_gating_fixture(
+    tmp_path: Path,
+    *,
+    contig: str,
+    sequence: str,
+    candidate_position: int = 1,
+) -> tuple[Path, Path, Path]:
+    summary_dir = tmp_path / "summary"
+    summary_dir.mkdir(parents=True)
+    (summary_dir / "mito_heteroplasmy_candidates.tsv").write_text(
+        "position\tref_base\talt_base\tdepth\talt_allele_fraction\theteroplasmy_fraction\n"
+        f"{candidate_position}\tA\tC\t100\t0.25\t0.25\n",
+        encoding="ascii",
+    )
+    write_heteroplasmy_status(summary_dir)
+    fasta = tmp_path / "configured_reference.fa"
+    fasta.write_text(f">{contig}\n{sequence}\n", encoding="ascii")
+    pysam.faidx(str(fasta))
+    gtf = tmp_path / "compatible.gtf"
+    gtf.write_text(
+        f'{contig}\ttest\tgene\t1\t3\t.\t+\t.\tgene_id "CUSTOM-START"; '
+        'gene_name "CUSTOM-START"; gene_biotype "protein_coding";\n'
+        f'{contig}\ttest\tCDS\t1\t3\t.\t+\t0\tgene_id "CUSTOM-START"; '
+        'gene_name "CUSTOM-START"; gene_biotype "protein_coding";\n',
+        encoding="ascii",
+    )
+    return summary_dir, fasta, gtf
 
 
 def run_canonical_consequence_fixture(
@@ -87,6 +122,7 @@ def run_canonical_consequence_fixture(
         build="hg38",
         mt_contig="MT",
         mt_length=16569,
+        ref_fasta=fasta,
         human_mt_gtf=HUMAN_MT_GTF,
     )
     outputs = run_variant_consequence(
@@ -162,18 +198,180 @@ def test_feature_annotation_inclusive_boundaries_and_control_region_precedence()
         ]
     )
 
-    assert classify_position(1, features) == [("control_region", "D-loop/control region")]
-    assert classify_position(576, features) == [("control_region", "D-loop/control region")]
-    assert classify_position(577, features) == [("protein_coding", "MT-ND1")]
-    assert classify_position(579, features) == [("protein_coding", "MT-ND1")]
-    assert classify_position(580, features) == [("intergenic", "intergenic")]
-    assert classify_position(999, features) == [("intergenic", "intergenic")]
-    assert classify_position(1000, features) == [("Mt_tRNA", "MT-TX")]
-    assert classify_position(1002, features) == [("Mt_tRNA", "MT-TX"), ("Mt_tRNA", "MT-TY")]
-    assert classify_position(1003, features) == [("intergenic", "intergenic")]
-    assert classify_position(16023, features) == [("intergenic", "intergenic")]
-    assert classify_position(16024, features) == [("control_region", "D-loop/control region")]
-    assert classify_position(16569, features) == [("control_region", "D-loop/control region")]
+    assert classify_position(1, features) == [("protein_coding", "OVERLAPPING-CONTROL")]
+
+    def classify(position: int) -> list[tuple[str, str]]:
+        return classify_position(
+            position,
+            features,
+            control_region_intervals=DLOOP_INTERVALS,
+        )
+    assert classify(1) == [("control_region", "D-loop/control region")]
+    assert classify(576) == [("control_region", "D-loop/control region")]
+    assert classify(577) == [("protein_coding", "MT-ND1")]
+    assert classify(579) == [("protein_coding", "MT-ND1")]
+    assert classify(580) == [("intergenic", "intergenic")]
+    assert classify(999) == [("intergenic", "intergenic")]
+    assert classify(1000) == [("Mt_tRNA", "MT-TX")]
+    assert classify(1002) == [("Mt_tRNA", "MT-TX"), ("Mt_tRNA", "MT-TY")]
+    assert classify(1003) == [("intergenic", "intergenic")]
+    assert classify(16023) == [("intergenic", "intergenic")]
+    assert classify(16024) == [("control_region", "D-loop/control region")]
+    assert classify(16569) == [("control_region", "D-loop/control region")]
+
+
+@pytest.mark.parametrize("contig", ["MT", "chrM", "NC_012920.1"])
+def test_control_region_requires_exact_sequence_not_contig_name(
+    tmp_path: Path,
+    contig: str,
+) -> None:
+    summary_dir, fasta, gtf = write_feature_gating_fixture(
+        tmp_path,
+        contig=contig,
+        sequence=canonical_mt_sequence().lower(),
+    )
+
+    outputs = run_feature_annotation(
+        summary_dir=summary_dir,
+        figure_dir=tmp_path / "figures",
+        report_dir=tmp_path / "reports",
+        sample_id="EXACT-CANONICAL",
+        species="human",
+        build="custom",
+        mt_contig=contig,
+        mt_length=16569,
+        ref_fasta=fasta,
+        human_mt_gtf=gtf,
+    )
+    overlaps = pd.read_csv(outputs["overlap_path"], sep="\t")
+    catalog = pd.read_csv(outputs["catalog_path"], sep="\t", keep_default_na=False)
+
+    assert outputs["status"] == "ok"
+    assert outputs["control_region_annotation_status"] == "ok"
+    assert outputs["control_region_annotation_reason_code"] == (
+        "reference_sequence_exact_match"
+    )
+    assert overlaps[["position", "feature_class", "feature_label"]].values.tolist() == [
+        [1, "control_region", "D-loop/control region"]
+    ]
+    assert set(catalog["control_region_exact_sequence_match"]) == {1}
+    assert set(catalog["control_region_annotation_method"]) == {
+        "exact_full_sequence_identity"
+    }
+    assert set(catalog["control_region_intervals_applied"]) == {
+        "1-576;16024-16569"
+    }
+
+
+def test_same_length_mutated_reference_disables_canonical_control_region_only(
+    tmp_path: Path,
+) -> None:
+    canonical = canonical_mt_sequence()
+    mutated = ("A" if canonical[0] != "A" else "C") + canonical[1:]
+    summary_dir, fasta, gtf = write_feature_gating_fixture(
+        tmp_path,
+        contig="MT",
+        sequence=mutated,
+    )
+    fasta_with_canonical_name = tmp_path / "NC_012920.1.fa"
+    fasta.rename(fasta_with_canonical_name)
+    Path(f"{fasta}.fai").rename(Path(f"{fasta_with_canonical_name}.fai"))
+
+    outputs = run_feature_annotation(
+        summary_dir=summary_dir,
+        figure_dir=tmp_path / "figures",
+        report_dir=tmp_path / "reports",
+        sample_id="MUTATED-SAME-LENGTH",
+        species="human",
+        build="hg38",
+        mt_contig="MT",
+        mt_length=16569,
+        ref_fasta=fasta_with_canonical_name,
+        human_mt_gtf=gtf,
+    )
+    overlaps = pd.read_csv(outputs["overlap_path"], sep="\t")
+    catalog = pd.read_csv(outputs["catalog_path"], sep="\t", keep_default_na=False)
+
+    assert len(mutated) == len(canonical) == 16569
+    assert outputs["status"] == "ok"
+    assert outputs["control_region_annotation_status"] == "not_evaluable"
+    assert outputs["control_region_annotation_reason_code"] == (
+        "reference_sequence_not_nc_012920_1"
+    )
+    assert overlaps[["position", "feature_class", "feature_label"]].values.tolist() == [
+        [1, "protein_coding", "CUSTOM-START"]
+    ]
+    assert set(catalog["control_region_exact_sequence_match"]) == {0}
+    assert set(catalog["control_region_configured_sequence_length"]) == {16569}
+    assert set(catalog["control_region_canonical_sequence_length"]) == {16569}
+    assert set(catalog["control_region_intervals_applied"]) == {""}
+    assert "reference_sequence_not_nc_012920_1" in Path(outputs["report_path"]).read_text(
+        encoding="utf-8"
+    )
+
+
+def test_tiny_reference_control_region_requires_recorded_synthetic_override(
+    tmp_path: Path,
+) -> None:
+    summary_dir, fasta, gtf = write_feature_gating_fixture(
+        tmp_path,
+        contig="MT",
+        sequence="A" * 60,
+        candidate_position=1,
+    )
+
+    automatic = resolve_control_region_annotation(
+        ref_fasta=fasta,
+        mt_contig="MT",
+        mode="auto",
+    )
+    outputs = run_feature_annotation(
+        summary_dir=summary_dir,
+        figure_dir=tmp_path / "figures",
+        report_dir=tmp_path / "reports",
+        sample_id="SYNTHETIC-OVERRIDE",
+        species="human",
+        build="synthetic",
+        mt_contig="MT",
+        mt_length=60,
+        ref_fasta=fasta,
+        human_mt_gtf=gtf,
+        control_region_annotation_mode="synthetic_fixture_override",
+    )
+    overlaps = pd.read_csv(outputs["overlap_path"], sep="\t")
+    catalog = pd.read_csv(outputs["catalog_path"], sep="\t", keep_default_na=False)
+
+    assert automatic.status == "not_evaluable"
+    assert automatic.intervals == ()
+    assert outputs["control_region_annotation_status"] == "ok"
+    assert outputs["control_region_annotation_reason_code"] == "synthetic_fixture_override"
+    assert overlaps[["position", "feature_class", "feature_label"]].values.tolist() == [
+        [1, "control_region", "D-loop/control region"]
+    ]
+    assert set(catalog["control_region_annotation_mode"]) == {
+        "synthetic_fixture_override"
+    }
+    assert set(catalog["control_region_exact_sequence_match"]) == {0}
+
+
+def test_disabled_control_region_state_is_explicitly_not_configured(
+    tmp_path: Path,
+) -> None:
+    _, fasta, _ = write_feature_gating_fixture(
+        tmp_path,
+        contig="MT",
+        sequence=canonical_mt_sequence(),
+    )
+
+    decision = resolve_control_region_annotation(
+        ref_fasta=fasta,
+        mt_contig="MT",
+        mode="disabled",
+    )
+
+    assert decision.status == "not_configured"
+    assert decision.reason_code == "control_region_annotation_disabled"
+    assert decision.intervals == ()
 
 
 def test_overlapping_mitochondrial_cds_emit_one_stably_ordered_consequence_each(
@@ -391,6 +589,7 @@ def test_consequence_propagates_nonhuman_feature_not_applicable(tmp_path: Path) 
         build="custom",
         mt_contig="MT",
         mt_length=2000,
+        ref_fasta=fasta,
         human_mt_gtf=None,
     )
 
@@ -417,6 +616,7 @@ def test_consequence_propagates_missing_gtf_not_configured(tmp_path: Path) -> No
         build="hg38",
         mt_contig="MT",
         mt_length=2000,
+        ref_fasta=fasta,
         human_mt_gtf=tmp_path / "missing.gtf",
     )
 
@@ -446,6 +646,7 @@ def test_missing_candidate_table_is_not_reported_as_observed_zero(tmp_path: Path
         build="hg38",
         mt_contig="MT",
         mt_length=2000,
+        ref_fasta=fasta,
         human_mt_gtf=HUMAN_MT_GTF,
     )
     feature_metrics = metric_map(Path(feature_outputs["summary_path"]))
@@ -489,6 +690,7 @@ def test_no_callable_positions_propagates_through_feature_and_consequence(
         build="hg38",
         mt_contig="MT",
         mt_length=2000,
+        ref_fasta=fasta,
         human_mt_gtf=HUMAN_MT_GTF,
     )
     consequence_outputs = run_consequence(tmp_path, summary_dir, fasta)
@@ -535,6 +737,7 @@ def test_successful_feature_annotation_preserves_genuine_intergenic_result(tmp_p
         build="hg38",
         mt_contig="MT",
         mt_length=2000,
+        ref_fasta=fasta,
         human_mt_gtf=gtf,
     )
 
@@ -561,6 +764,7 @@ def test_consequence_rejects_candidate_without_explicit_feature_overlap(tmp_path
         build="hg38",
         mt_contig="MT",
         mt_length=2000,
+        ref_fasta=fasta,
         human_mt_gtf=HUMAN_MT_GTF,
     )
     overlap_path = summary_dir / "mito_feature_overlap_candidates.tsv"

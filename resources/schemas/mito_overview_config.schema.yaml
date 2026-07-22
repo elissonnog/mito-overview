@@ -87,6 +87,14 @@ properties:
     type: string
     enum: [auto, mt_only, whole_genome, custom]
     default: auto
+  CONTROL_REGION_ANNOTATION_MODE:
+    type: string
+    enum: [auto, disabled, synthetic_fixture_override]
+    default: auto
+    description: >-
+      Canonical human control-region coordinates require exact NC_012920.1 sequence
+      identity in auto mode. The synthetic fixture override is explicit provenance for
+      tiny test references and must not be used for biological samples.
   MIN_CALLABLE_DEPTH:
     $ref: "#/$defs/integerLike"
     default: "100"

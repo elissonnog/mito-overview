@@ -44,6 +44,7 @@ DEFAULTS: dict[str, Any] = {
     "DELETION_MIN_SIZE": "100",
     "NUCLEAR_WINDOW_SIZE": "100000",
     "NUCLEAR_WINDOW_COUNT": "5",
+    "CONTROL_REGION_ANNOTATION_MODE": "auto",
     "PHYMER_ROOT": "",
     "HUMAN_MT_GTF": "",
     "PHYMER_MIN_DEPTH": "100",
@@ -507,6 +508,7 @@ class PipelineConfig:
     deletion_min_size: int
     nuclear_window_size: int
     nuclear_window_count: int
+    control_region_annotation_mode: str
     phymer_root: Path | None
     human_mt_gtf: Path | None
     phymer_min_depth: int
@@ -568,11 +570,23 @@ class PipelineConfig:
         fasta_reference_profile = detect_reference_profile(fai_lengths, mt_contig)
         read_mode = str(merged["READ_MODE"]).strip().lower()
         assay_type = str(merged["ASSAY_TYPE"]).strip().lower()
+        control_region_annotation_mode = str(
+            merged["CONTROL_REGION_ANNOTATION_MODE"]
+        ).strip().lower()
         mvtool_mode = str(merged["MVTOOL_MODE"]).strip().lower()
         if read_mode not in {"long", "short"}:
             raise ValueError(f"Unsupported READ_MODE: {read_mode}")
         if assay_type not in {"wgs", "targeted_mt"}:
             raise ValueError(f"Unsupported ASSAY_TYPE: {assay_type}")
+        if control_region_annotation_mode not in {
+            "auto",
+            "disabled",
+            "synthetic_fixture_override",
+        }:
+            raise ValueError(
+                "Unsupported CONTROL_REGION_ANNOTATION_MODE: "
+                f"{control_region_annotation_mode}"
+            )
         if mvtool_mode not in {"disabled", "fixture", "network"}:
             raise ValueError(f"Unsupported MVTOOL_MODE: {mvtool_mode}")
         if mvtool_mode == "network" and not str(merged["MVTOOL_API_URL"]).strip():
@@ -635,6 +649,7 @@ class PipelineConfig:
             deletion_min_size=int(merged["DELETION_MIN_SIZE"]),
             nuclear_window_size=int(merged["NUCLEAR_WINDOW_SIZE"]),
             nuclear_window_count=int(merged["NUCLEAR_WINDOW_COUNT"]),
+            control_region_annotation_mode=control_region_annotation_mode,
             phymer_root=_optional_path(str(merged["PHYMER_ROOT"]), base_dir),
             human_mt_gtf=_optional_path(str(merged["HUMAN_MT_GTF"]), base_dir),
             phymer_min_depth=int(merged["PHYMER_MIN_DEPTH"]),
@@ -721,6 +736,7 @@ class PipelineConfig:
             ("allele_ignore_overlaps", str(int(self.allele_ignore_overlaps))),
             ("deletion_min_size", str(self.deletion_min_size)),
             ("human_mt_gtf", str(self.human_mt_gtf or "")),
+            ("control_region_annotation_mode", self.control_region_annotation_mode),
             ("mvtool_mode", self.mvtool_mode),
             ("mvtool_api_url", self.mvtool_api_url if self.mvtool_mode == "network" else ""),
             ("mvtool_fixture_json", str(self.mvtool_fixture_json or "")),

@@ -116,8 +116,40 @@ def test_minimal_bam_contract_infers_mode_length_and_scope(
     assert config.mt_length == 10
     assert config.detected_species == "unknown"
     assert config.reference_scope == "mt_only"
+    assert config.control_region_annotation_mode == "auto"
     assert config.mvtool_mode == "disabled"
     assert validate_config(config) == []
+
+
+@pytest.mark.parametrize(
+    "mode",
+    ["auto", "disabled", "synthetic_fixture_override"],
+)
+def test_control_region_annotation_mode_is_explicit_in_run_context(
+    minimal_inputs: tuple[Path, Path],
+    tmp_path: Path,
+    mode: str,
+) -> None:
+    ref, bam = minimal_inputs
+    mapping = minimal_mapping(tmp_path, ref, bam)
+    mapping["CONTROL_REGION_ANNOTATION_MODE"] = mode
+
+    config = PipelineConfig.from_mapping(mapping)
+
+    assert config.control_region_annotation_mode == mode
+    assert dict(config.context_rows())["control_region_annotation_mode"] == mode
+
+
+def test_unknown_control_region_annotation_mode_fails_configuration(
+    minimal_inputs: tuple[Path, Path],
+    tmp_path: Path,
+) -> None:
+    ref, bam = minimal_inputs
+    mapping = minimal_mapping(tmp_path, ref, bam)
+    mapping["CONTROL_REGION_ANNOTATION_MODE"] = "infer_from_length"
+
+    with pytest.raises(ValueError, match="Unsupported CONTROL_REGION_ANNOTATION_MODE"):
+        PipelineConfig.from_mapping(mapping)
 
 
 @pytest.mark.parametrize(

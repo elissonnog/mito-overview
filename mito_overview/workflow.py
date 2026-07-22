@@ -814,10 +814,20 @@ def _run_feature_annotation(config: PipelineConfig, paths: RunPaths, strict_file
         build=config.reference_build_guess,
         mt_contig=config.mt_contig,
         mt_length=config.mt_length,
+        ref_fasta=config.ref_fasta,
         human_mt_gtf=config.human_mt_gtf,
+        control_region_annotation_mode=config.control_region_annotation_mode,
     )
     status = str(outputs.get("status", "ok"))
     (paths.log_dir / f"feature_annotation.{status}").write_text(status + "\n", encoding="utf-8")
+    control_region_status = str(outputs.get("control_region_annotation_status", "not_configured"))
+    control_region_reason = str(
+        outputs.get("control_region_annotation_reason_code", "control_region_status_unavailable")
+    )
+    (paths.log_dir / f"feature_annotation.control_region.{control_region_status}").write_text(
+        control_region_reason + "\n",
+        encoding="utf-8",
+    )
     return StepResult("feature_annotation", status, f"Wrote {outputs['report_path']}")
 
 
