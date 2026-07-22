@@ -32,15 +32,15 @@ What these assets do not claim:
 - biological methylation conclusions
 
 Observed packaged key values:
-- mapped reads: `1271.0`
+- mapped reads: `1271`
 - mean depth: `545.484`
-- median depth: `544.0`
-- full-length fraction: `0.3721`
+- median depth: `544`
+- full-length fraction: `0.6497`
 - alternate-allele candidate sites: `16`
 - selected co-segregation sites: `8`
 - top consequence class: `synonymous_variant` (`6` sites)
-- singleton CIGAR-deletion bins: `13.0`; each packaged bin has one supporting query name
-- query names with supplementary/SA evidence, summarized separately: `542.0`
+- singleton CIGAR-deletion bins: `13`; each packaged bin has one supporting query name
+- query names with supplementary/SA evidence, summarized separately: `542`
 - NUMT interpretation status: `not_evaluable` (`reference_scope_mt_only`)
 - within-sample mt:nuclear depth-ratio status: `not_applicable`
 - Phy-Mer status: `not_applicable`

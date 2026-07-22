@@ -6,6 +6,14 @@ import pytest
 from mito_overview.steps import mito_cosegregation as cosegregation
 
 
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [(0.0, "white"), (0.59, "white"), (0.6, "black"), (1.0, "black")],
+)
+def test_heatmap_annotation_contrast(value: float, expected: str) -> None:
+    assert cosegregation._heatmap_text_color(value) == expected
+
+
 def test_alt_jaccard_is_conditioned_on_shared_spanning_reads() -> None:
     selected_sites = pd.DataFrame({"site_label": ["10:A>C", "20:A>G"]})
     coverage_by_site = {

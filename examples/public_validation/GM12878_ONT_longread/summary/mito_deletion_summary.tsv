@@ -1,7 +1,9 @@
 metric	value
-primary_reads	728.0
-reads_with_large_deletion	5.0
-reads_with_supplementary_or_SA	542.0
-candidate_deletion_clusters	13.0
+status	ok
+reason_code	
+primary_reads	728
+reads_with_large_deletion	5
+reads_with_supplementary_or_SA	542
+candidate_deletion_clusters	13
 largest_median_deletion	1394.0
 max_support_fraction_primary	0.001374

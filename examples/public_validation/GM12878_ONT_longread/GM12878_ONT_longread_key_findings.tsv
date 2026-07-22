@@ -18,17 +18,17 @@ read_mode	long
 assay_type	targeted_mt
 min_callable_depth	100
 min_alt_allele_fraction	0.1
-mapped_alignment_records	1271.0
-primary_alignment_records	728.0
-supplementary_alignment_records	543.0
-secondary_alignment_records	0.0
+mapped_alignment_records	1271
+primary_alignment_records	728
+supplementary_alignment_records	543
+secondary_alignment_records	0
 allele_engine_unique_query_names_seen	728
 mean_depth	545.484
-median_depth	544.0
-full_length_fraction	0.3721
+median_depth	544
+full_length_fraction	0.6497
 candidate_site_count	16
 selected_cosegregation_sites	8
-candidate_deletion_clusters	13.0
+candidate_deletion_clusters	13
 deletion_screen_method	CIGAR-deletion candidate screen; supplementary/SA evidence summarized separately
 largest_median_deletion	1394.0
 max_deletion_support_fraction_primary	0.001374

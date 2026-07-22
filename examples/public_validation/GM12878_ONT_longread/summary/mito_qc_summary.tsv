@@ -1,12 +1,20 @@
 metric	value
-mapped_reads	1271.0
-primary_reads	728.0
-supplementary_reads	543.0
-secondary_reads	0.0
+status	ok
+reason_code	
+mapped_reads	1271
+primary_reads	728
+primary_full_length_reads	473
+primary_full_length_fraction	0.6497
+primary_full_length_fraction_status	ok
+primary_full_length_fraction_reason_code	
+primary_full_length_fraction_denominator	primary_alignment_records
+full_length_fraction	0.6497
+full_length_fraction_compatibility_alias_of	primary_full_length_fraction
+supplementary_reads	543
+secondary_reads	0
 mean_depth	545.484
-median_depth	544.0
+median_depth	544
 breadth_1x	1.0
 breadth_10x	1.0
-full_length_fraction	0.3721
-forward_reads	738.0
-reverse_reads	533.0
+forward_reads	738
+reverse_reads	533

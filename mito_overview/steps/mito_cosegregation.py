@@ -339,13 +339,18 @@ def _write_heatmap(
             value = values[row_idx, col_idx]
             if np.isnan(value):
                 continue
-            text_color = "white" if value >= 0.6 else "black"
+            text_color = _heatmap_text_color(value)
             plt.text(col_idx, row_idx, f"{value:.2f}", ha="center", va="center", color=text_color, fontsize=8)
     plt.tight_layout()
     figure_path = figure_dir / "mito_cosegregation_heatmap.png"
     plt.savefig(figure_path, dpi=150)
     plt.close()
     return figure_path
+
+
+def _heatmap_text_color(value: float) -> str:
+    """Keep annotations legible across the dark-to-bright viridis scale."""
+    return "black" if value >= 0.6 else "white"
 
 
 def run_step(
