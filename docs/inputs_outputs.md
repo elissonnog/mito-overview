@@ -11,7 +11,7 @@ This document is the v0.3.0 schema index for the public `mito-overview` workflow
 | mitochondrial contig length | inferred | bounds per-base summaries and report labels | inferred from FASTA index; an explicitly supplied conflicting value fails preflight |
 | mitochondrial gene annotation | optional | feature/gene/consequence summaries | public package includes a human mtDNA annotation resource; absence produces an explicit `not_configured` feature-annotation page |
 | run configuration env file | yes | sample ID, paths, canonical thresholds, species/build, read mode, assay type | consumed by `scripts/run_mito_pipeline.sh` and package CLI |
-| bedmethyl-derived mtDNA input | optional | exploratory methylation page | absent inputs produce status-only output |
+| bedmethyl-derived mtDNA input | optional | exploratory methylation page | explicit sidecars may be plain text or gzip (detected from file content); malformed data rows fail with source and line diagnostics; absent inputs produce status-only output |
 | phased/no-phased sidecar summaries | optional | identity QC | absent inputs produce status-only output or not-applicable page by mode |
 | ClinVar or annotation VCF | optional | variant consequence overlay | absent inputs leave ClinVar fields as `NA` |
 | Phy-Mer-style or mvTool-style inputs | optional | human-only enrichment interfaces | public repository validates report wiring with fixtures unless live external use is configured |

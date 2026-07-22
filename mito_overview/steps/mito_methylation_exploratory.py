@@ -172,28 +172,39 @@ def load_bedmethyl_table(path: str | Path | None, track_label: str) -> pd.DataFr
 
     rows: list[dict[str, object]] = []
     with src.open("r", encoding="utf-8") as handle:
-        for line in handle:
-            parts = line.rstrip("\n").split("\t")
+        for line_number, line in enumerate(handle, start=1):
+            if not line.strip() or line.lstrip().startswith("#"):
+                continue
+            parts = line.rstrip("\r\n").split("\t")
             if len(parts) < 13:
-                continue
-            try:
-                rows.append(
-                    {
-                        "track": track_label,
-                        "position": int(parts[1]) + 1,
-                        "modification_code": parts[3].strip() or ".",
-                        "strand": parts[5].strip() or ".",
-                        "valid_coverage": float(parts[9]),
-                        "percent_modified": float(parts[10]),
-                        "modified_count": float(parts[11]),
-                        "canonical_count": float(parts[12]),
-                        "other_modified_count": float(parts[13])
-                        if len(parts) >= 14
-                        else np.nan,
-                    }
+                raise ValueError(
+                    f"Malformed bedMethyl row in {src} at line {line_number}: "
+                    f"expected at least 13 tab-separated columns, found {len(parts)}"
                 )
-            except ValueError:
-                continue
+            try:
+                position = int(parts[1]) + 1
+                valid_coverage = float(parts[9])
+                percent_modified = float(parts[10])
+                modified_count = float(parts[11])
+                canonical_count = float(parts[12])
+                other_modified_count = float(parts[13]) if len(parts) >= 14 else np.nan
+            except ValueError as exc:
+                raise ValueError(
+                    f"Malformed numeric value in bedMethyl source {src} at line {line_number}: {exc}"
+                ) from exc
+            rows.append(
+                {
+                    "track": track_label,
+                    "position": position,
+                    "modification_code": parts[3].strip() or ".",
+                    "strand": parts[5].strip() or ".",
+                    "valid_coverage": valid_coverage,
+                    "percent_modified": percent_modified,
+                    "modified_count": modified_count,
+                    "canonical_count": canonical_count,
+                    "other_modified_count": other_modified_count,
+                }
+            )
     if not rows:
         return empty_rows_df()
     return collapse_track_positions(pd.DataFrame(rows, columns=ROW_COLUMNS))

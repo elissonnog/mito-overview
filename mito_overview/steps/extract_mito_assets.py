@@ -6,6 +6,7 @@ import argparse
 import gzip
 import shutil
 import subprocess
+from io import TextIOBase
 from pathlib import Path
 
 
@@ -41,26 +42,35 @@ def _plain_path(path: str | Path | None) -> Path | None:
     return path
 
 
-def _open_bedmethyl(path_gz: str | Path | None):
-    if not path_gz:
+def _resolve_bedmethyl_source(path: str | Path | None) -> Path | None:
+    """Resolve a configured source, including the legacy ``.gz`` fallback."""
+
+    if not path:
         return None
-    gz_path = Path(path_gz)
-    if gz_path.exists():
-        return gzip.open(gz_path, "rt", encoding="utf-8")
-    plain_path = _plain_path(gz_path)
-    if plain_path and plain_path.exists():
-        return plain_path.open("r", encoding="utf-8")
+    configured_path = Path(path)
+    if configured_path.is_file():
+        return configured_path
+    plain_path = _plain_path(configured_path)
+    if plain_path != configured_path and plain_path is not None and plain_path.is_file():
+        return plain_path
     return None
 
 
-def _bedmethyl_source_exists(path_gz: str | Path | None) -> bool:
-    if not path_gz:
-        return False
-    gz_path = Path(path_gz)
-    if gz_path.exists():
-        return True
-    plain_path = _plain_path(gz_path)
-    return bool(plain_path and plain_path.exists())
+def _open_bedmethyl(path: str | Path | None) -> TextIOBase | None:
+    """Open plain or gzip-compressed bedMethyl based on file magic, not suffix."""
+
+    source = _resolve_bedmethyl_source(path)
+    if source is None:
+        return None
+    with source.open("rb") as probe:
+        is_gzip = probe.read(2) == b"\x1f\x8b"
+    if is_gzip:
+        return gzip.open(source, "rt", encoding="utf-8")
+    return source.open("r", encoding="utf-8")
+
+
+def _bedmethyl_source_exists(path: str | Path | None) -> bool:
+    return _resolve_bedmethyl_source(path) is not None
 
 
 def _write_empty_table(path: str | Path) -> None:
@@ -97,7 +107,7 @@ def subset_bedmethyl(
     with handle:
         with destination.open("w", encoding="utf-8") as out_handle:
             for line in handle:
-                if not line.strip() or line.startswith("#"):
+                if not line.strip() or line.lstrip().startswith("#"):
                     continue
                 if line.split("\t", 1)[0] != contig:
                     continue
