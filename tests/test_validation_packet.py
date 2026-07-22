@@ -6,6 +6,7 @@ import hashlib
 import importlib.util
 import io
 import json
+import os
 import shutil
 import struct
 import subprocess
@@ -2698,3 +2699,93 @@ def test_cli_rejects_legacy_doi_argument(tmp_path: Path) -> None:
     )
     assert completed.returncode == 2
     assert "unrecognized arguments" in completed.stderr
+
+
+def add_nonregular_entry(root: Path, tmp_path: Path, kind: str) -> Path:
+    entry = root / f"unsafe-{kind}"
+    if kind == "file_symlink":
+        target = root / "regular-target.txt"
+        target.write_text("internal evidence\n", encoding="utf-8")
+        entry.symlink_to(target)
+    elif kind == "external_file_symlink":
+        target = tmp_path / "external-payload.txt"
+        target.write_text("external payload must not be copied\n", encoding="utf-8")
+        entry.symlink_to(target)
+    elif kind == "directory_symlink":
+        target = tmp_path / "external-directory"
+        target.mkdir()
+        (target / "payload.txt").write_text("external directory\n", encoding="utf-8")
+        entry.symlink_to(target, target_is_directory=True)
+    elif kind == "broken_symlink":
+        entry.symlink_to(tmp_path / "missing-target")
+    elif kind == "fifo":
+        os.mkfifo(entry)
+    else:  # pragma: no cover - protects the test helper contract.
+        raise AssertionError(f"Unsupported nonregular-entry fixture: {kind}")
+    return entry
+
+
+@pytest.mark.parametrize(
+    "kind",
+    (
+        "file_symlink",
+        "external_file_symlink",
+        "directory_symlink",
+        "broken_symlink",
+        "fifo",
+    ),
+)
+def test_packet_rejects_nonregular_entries_anywhere_in_source_tree(
+    tmp_path: Path,
+    kind: str,
+) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    add_nonregular_entry(validation / "logs", tmp_path, kind)
+
+    with pytest.raises(ValueError, match="contains a symlink|contains a special file"):
+        packet_builder.build_packet(packet_args(validation, repo, tmp_path / "output"))
+
+    assert not (tmp_path / "output" / "packet").exists()
+
+
+def test_packet_source_file_must_resolve_under_declared_root(tmp_path: Path) -> None:
+    source_root = tmp_path / "declared-source"
+    source_root.mkdir()
+    external = tmp_path / "external-regular-file.txt"
+    external.write_text("outside the declared root\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="resolves outside its declared source root"):
+        packet_builder.validate_regular_file(external, source_root=source_root)
+
+
+@pytest.mark.parametrize(
+    "kind",
+    (
+        "file_symlink",
+        "external_file_symlink",
+        "directory_symlink",
+        "broken_symlink",
+        "fifo",
+    ),
+)
+def test_generated_verifier_rejects_nonregular_packet_entries(
+    tmp_path: Path,
+    kind: str,
+) -> None:
+    packet = tmp_path / "unpacked-packet"
+    packet.mkdir()
+    packet_builder.write_verifier(packet / "verify_bundle.sh")
+    add_nonregular_entry(packet, tmp_path, kind)
+
+    checked = subprocess.run(
+        [str(packet / "verify_bundle.sh")],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert checked.returncode != 0
+    assert "packet contains a symlink" in checked.stderr or (
+        "packet contains a special file" in checked.stderr
+    )

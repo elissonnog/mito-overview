@@ -7,6 +7,7 @@ import argparse
 import csv
 import hashlib
 import json
+import os
 import re
 import shutil
 import stat
@@ -758,12 +759,124 @@ def validate_downloaded_public_artifact_identity(
     return identity
 
 
+def _resolved_within(path: Path, root: Path, label: str) -> Path:
+    try:
+        resolved_root = root.resolve(strict=True)
+        resolved = path.resolve(strict=True)
+    except OSError as error:
+        raise ValueError(f"Unable to resolve {label}: {path}") from error
+    if not resolved.is_relative_to(resolved_root):
+        raise ValueError(f"{label} resolves outside its declared source root: {path}")
+    return resolved
+
+
+def validate_regular_file(
+    path: Path,
+    *,
+    source_root: Path,
+    label: str = "Packet source file",
+) -> None:
+    try:
+        mode = path.lstat().st_mode
+    except OSError as error:
+        raise ValueError(f"{label} is missing or unreadable: {path}") from error
+    if stat.S_ISLNK(mode):
+        raise ValueError(f"{label} is a symlink: {path}")
+    if not stat.S_ISREG(mode):
+        raise ValueError(f"{label} is not a regular file: {path}")
+    _resolved_within(path, source_root, label)
+
+
+def validate_regular_tree(
+    source: Path,
+    *,
+    require_files: bool = True,
+    label: str = "Packet source tree",
+) -> list[Path]:
+    try:
+        source_mode = source.lstat().st_mode
+    except OSError as error:
+        raise ValueError(f"{label} is missing or unreadable: {source}") from error
+    if stat.S_ISLNK(source_mode):
+        raise ValueError(f"{label} root is a symlink: {source}")
+    if not stat.S_ISDIR(source_mode):
+        raise ValueError(f"{label} root is not a regular directory: {source}")
+
+    resolved_root = _resolved_within(source, source, label)
+    files: list[Path] = []
+    stack = [source]
+    while stack:
+        directory = stack.pop()
+        for entry in sorted(directory.iterdir(), key=lambda item: item.name):
+            try:
+                mode = entry.lstat().st_mode
+            except OSError as error:
+                raise ValueError(f"{label} entry is unreadable: {entry}") from error
+            if stat.S_ISLNK(mode):
+                raise ValueError(f"{label} contains a symlink: {entry}")
+            if stat.S_ISDIR(mode):
+                _resolved_within(entry, resolved_root, f"{label} directory")
+                stack.append(entry)
+                continue
+            if stat.S_ISREG(mode):
+                _resolved_within(entry, resolved_root, f"{label} file")
+                files.append(entry)
+                continue
+            raise ValueError(f"{label} contains a special file: {entry}")
+    if require_files and not files:
+        raise ValueError(f"{label} contains no evidence files: {source}")
+    return sorted(files)
+
+
+def copy_regular_file(source: Path, destination: Path, *, source_root: Path) -> None:
+    validate_regular_file(source, source_root=source_root)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if destination.exists() or destination.is_symlink():
+        raise FileExistsError(f"Packet destination already exists: {destination}")
+    if not hasattr(os, "O_NOFOLLOW"):
+        raise RuntimeError("No-follow packet copying requires os.O_NOFOLLOW")
+
+    source_fd = os.open(source, os.O_RDONLY | os.O_NOFOLLOW)
+    try:
+        source_stat = os.fstat(source_fd)
+        if not stat.S_ISREG(source_stat.st_mode):
+            raise ValueError(f"Packet source changed during copy: {source}")
+        destination_fd = os.open(
+            destination,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+            stat.S_IMODE(source_stat.st_mode),
+        )
+        try:
+            with os.fdopen(source_fd, "rb", closefd=False) as source_handle:
+                with os.fdopen(destination_fd, "wb", closefd=False) as destination_handle:
+                    shutil.copyfileobj(source_handle, destination_handle)
+        finally:
+            os.close(destination_fd)
+    finally:
+        os.close(source_fd)
+    os.utime(
+        destination,
+        ns=(source_stat.st_atime_ns, source_stat.st_mtime_ns),
+        follow_symlinks=False,
+    )
+
+
 def copy_tree(source: Path, destination: Path) -> None:
-    if not source.is_dir():
-        raise FileNotFoundError(f"Required directory not found: {source}")
-    if not any(path.is_file() for path in source.rglob("*")):
+    files = validate_regular_tree(source)
+    if destination.exists() or destination.is_symlink():
+        raise FileExistsError(f"Packet destination already exists: {destination}")
+    destination.mkdir(parents=True)
+    for entry in sorted(source.rglob("*")):
+        relative = entry.relative_to(source)
+        mode = entry.lstat().st_mode
+        if stat.S_ISDIR(mode):
+            (destination / relative).mkdir()
+        elif stat.S_ISREG(mode):
+            copy_regular_file(entry, destination / relative, source_root=source)
+        else:
+            raise ValueError(f"Packet source changed during copy: {entry}")
+    if not files:
         raise ValueError(f"Required directory contains no evidence files: {source}")
-    shutil.copytree(source, destination)
 
 
 def git_output(repo_root: Path, *arguments: str) -> str:
@@ -3820,7 +3933,9 @@ python3 - "${ROOT}" <<'PY'
 import csv
 import hashlib
 import json
+import os
 import re
+import stat
 import sys
 import tarfile
 import zipfile
@@ -3830,6 +3945,44 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path, PurePosixPath
 
 root = Path(sys.argv[1])
+
+def validate_unpacked_packet_tree(packet_root):
+    try:
+        root_mode = packet_root.lstat().st_mode
+        resolved_root = packet_root.resolve(strict=True)
+    except OSError as error:
+        raise SystemExit(f"packet root is missing or unreadable: {error}") from error
+    if stat.S_ISLNK(root_mode) or not stat.S_ISDIR(root_mode):
+        raise SystemExit("packet root is a symlink or non-directory entry")
+
+    stack = [packet_root]
+    while stack:
+        directory = stack.pop()
+        try:
+            entries = sorted(os.scandir(directory), key=lambda entry: entry.name)
+        except OSError as error:
+            raise SystemExit(f"packet directory is unreadable: {directory}") from error
+        for entry in entries:
+            path = Path(entry.path)
+            try:
+                mode = entry.stat(follow_symlinks=False).st_mode
+            except OSError as error:
+                raise SystemExit(f"packet entry is unreadable: {path}") from error
+            relative = path.relative_to(packet_root)
+            if stat.S_ISLNK(mode):
+                raise SystemExit(f"packet contains a symlink: {relative}")
+            if not stat.S_ISDIR(mode) and not stat.S_ISREG(mode):
+                raise SystemExit(f"packet contains a special file: {relative}")
+            try:
+                resolved = path.resolve(strict=True)
+            except OSError as error:
+                raise SystemExit(f"packet entry cannot be resolved: {relative}") from error
+            if not resolved.is_relative_to(resolved_root):
+                raise SystemExit(f"packet entry resolves outside packet root: {relative}")
+            if stat.S_ISDIR(mode):
+                stack.append(path)
+
+validate_unpacked_packet_tree(root)
 schema = "2.0"
 profile = "github_release_validation_v1"
 required_top_level = {
@@ -5802,8 +5955,15 @@ PY
 
 
 def build_packet(args: argparse.Namespace) -> Path:
-    if not args.validation_root.is_dir():
-        raise SystemExit(f"Validation root not found: {args.validation_root}")
+    validate_regular_tree(
+        args.validation_root,
+        label="Validation packet source tree",
+    )
+    validate_regular_file(
+        args.repo_root / FROZEN_ORACLE_REPOSITORY_PATH,
+        source_root=args.repo_root,
+        label="Tracked scientific oracle",
+    )
     if args.packet_root.exists() and any(args.packet_root.iterdir()):
         raise SystemExit(f"Packet root must be absent or empty: {args.packet_root}")
 
@@ -5913,7 +6073,11 @@ def build_packet(args: argparse.Namespace) -> Path:
     args.packet_root.mkdir(parents=True, exist_ok=True)
 
     for name in ("cases.tsv", "environment.txt", *EVIDENCE_TABLES):
-        shutil.copy2(args.validation_root / name, args.packet_root / name)
+        copy_regular_file(
+            args.validation_root / name,
+            args.packet_root / name,
+            source_root=args.validation_root,
+        )
     copy_tree(args.validation_root / "acceptance", args.packet_root / "acceptance")
     copy_tree(args.validation_root / "commands", args.packet_root / "commands")
     copy_tree(public_root / "commands", args.packet_root / "commands" / "public")
@@ -5930,38 +6094,48 @@ def build_packet(args: argparse.Namespace) -> Path:
         public_root / "environment",
         args.packet_root / PUBLIC_ENVIRONMENT_PACKET_PATH,
     )
-    shutil.copy2(
+    copy_regular_file(
         public_root / "filter_profile_results.tsv",
         args.packet_root / "filter_profile_results.tsv",
+        source_root=args.validation_root,
     )
     (args.packet_root / "inputs.sha256").write_text(
         str(public_inputs["canonical_inputs_sha256"]),
         encoding="utf-8",
     )
-    shutil.copy2(
+    copy_regular_file(
         public_root / RAW_INPUTS_PACKET_PATH,
         args.packet_root / RAW_INPUTS_PACKET_PATH,
+        source_root=args.validation_root,
     )
-    shutil.copy2(
+    copy_regular_file(
         public_root / CACHE_SEAL_PACKET_PATH,
         args.packet_root / CACHE_SEAL_PACKET_PATH,
+        source_root=args.validation_root,
     )
-    shutil.copy2(
+    copy_regular_file(
         public_root / ORACLE_ASSERTIONS_PACKET_PATH,
         args.packet_root / ORACLE_ASSERTIONS_PACKET_PATH,
+        source_root=args.validation_root,
     )
-    shutil.copy2(
+    copy_regular_file(
         public_root / "cases.tsv",
         args.packet_root / PUBLIC_MATRIX_CASES_PACKET_PATH,
+        source_root=args.validation_root,
     )
-    shutil.copy2(
+    copy_regular_file(
         args.repo_root / FROZEN_ORACLE_REPOSITORY_PATH,
         args.packet_root / FROZEN_ORACLE_PACKET_PATH,
+        source_root=args.repo_root,
     )
     for key, specification in PUBLIC_PROVENANCE_FILES.items():
         destination = args.packet_root / str(specification["packet"])
         destination.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(public_root / str(specification["source"]), destination)
+        copy_regular_file(
+            public_root / str(specification["source"]),
+            destination,
+            source_root=args.validation_root,
+        )
 
     release_identity["dist_artifacts"] = dist_artifacts
     release_identity["acceptance_cases"] = [row["case_id"] for row in acceptance_rows]
