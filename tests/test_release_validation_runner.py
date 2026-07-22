@@ -76,6 +76,12 @@ def create_fake_gh_harness(tmp_path: Path) -> tuple[Path, Path, dict[str, str]]:
     (scripts / "check_release_hygiene.py").write_text(
         "raise SystemExit(0)\n", encoding="utf-8"
     )
+    locks = repo / "locks"
+    locks.mkdir()
+    for platform in ("linux-64", "osx-64", "osx-arm64"):
+        (locks / f"environment-{platform}.yml").write_text(
+            "fixture\n", encoding="utf-8"
+        )
     run_git(repo, "init", "-q")
     run_git(repo, "config", "user.name", "Runner Test")
     run_git(repo, "config", "user.email", "runner-test@example.org")
@@ -131,6 +137,7 @@ def create_fake_gh_harness(tmp_path: Path) -> tuple[Path, Path, dict[str, str]]:
     )
 
     gh_source = f"""#!{sys.executable}
+import hashlib
 import json
 import os
 import sys
@@ -347,12 +354,34 @@ if args[:2] == ["run", "download"]:
         (destination / f"pip-{{platform}}.txt").write_text("fixture\\n")
         (destination / f"environment-{{platform}}.yml").write_text("fixture\\n")
         (destination / f"python-{{platform}}.txt").write_text("Python 3.12.13\\n")
+        evidence_names = (
+            f"conda-{{platform}}.explicit.txt",
+            f"pip-{{platform}}.txt",
+            f"environment-{{platform}}.yml",
+            f"python-{{platform}}.txt",
+        )
+        evidence_files = {{}}
+        for evidence_name in evidence_names:
+            payload = (destination / evidence_name).read_bytes()
+            evidence_files[evidence_name] = {{
+                "sha256": hashlib.sha256(payload).hexdigest(),
+                "size_bytes": len(payload),
+            }}
+        manifest_payload = "".join(
+            f"{{evidence_name}}\\t{{evidence_files[evidence_name]['sha256']}}\\t"
+            f"{{evidence_files[evidence_name]['size_bytes']}}\\n"
+            for evidence_name in sorted(evidence_files)
+        ).encode("utf-8")
         (destination / f"platform-{{platform}}.json").write_text(
             json.dumps({{
+                "schema_version": "2.0",
                 "platform_id": platform,
                 "git_commit": candidate,
                 "github_run_id": push_run_id,
                 "resolved_environment": True,
+                "evidence_files": evidence_files,
+                "evidence_manifest_sha256": hashlib.sha256(manifest_payload).hexdigest(),
+                "source_lock_sha256": evidence_files[f"environment-{{platform}}.yml"]["sha256"],
             }}) + "\\n",
             encoding="utf-8",
         )
@@ -550,6 +579,9 @@ def test_runner_declares_public_clone_and_isolated_installed_probe() -> None:
     assert "repository_root;cache_root;validation_root" in text
     assert "cache_root;validation_root" in text
     assert "broad_declared_inputs_and_changed_or_new_outputs_v2" in text
+    assert "measure_command package_build" in text
+    assert "resources/package_build.json" in text
+    assert 'cp "${VALIDATION_ROOT}/resources/${FRESH_CLONE_CASE_ID}.json"' not in text
     assert "--zenodo-reservation-evidence" not in text
     assert "--doi" not in text
 
@@ -607,6 +639,12 @@ def test_resource_measurement_counts_exact_declared_and_changed_inventories(
     )
     assert completed.returncode == 0, completed.stderr
     observed = json.loads(resource_path.read_text(encoding="utf-8"))
+    assert observed["case_id"] == "probe"
+    assert re.fullmatch(
+        r"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}",
+        observed["measurement_id"],
+        flags=re.IGNORECASE,
+    )
     assert observed["broad_declared_input_inventory_bytes"] == 5
     assert observed["changed_or_new_output_inventory_bytes"] == 12
     assert observed["broad_declared_input_inventory_scope"] == (
@@ -654,6 +692,11 @@ def test_runner_binds_ci_evidence_and_receipt_to_all_explicit_ids() -> None:
         assert f"platform-${{platform}}.json" in text
         assert f"python-${{platform}}.txt" in text
     assert "Resolved CI environment inventory mismatch" in text
+    assert "Resolved CI evidence-file digest mismatch" in text
+    assert "Resolved CI evidence manifest digest mismatch" in text
+    assert "Resolved CI solver lock differs from the exact candidate" in text
+    assert "evidence_manifest_sha256" in text
+    assert "source_lock_sha256" in text
     assert "Python 3.12.13" in text
     assert 'gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${PUBLIC_RUN_ID}"' in text
     assert "actions/workflows/public-validation.yml/runs" not in text

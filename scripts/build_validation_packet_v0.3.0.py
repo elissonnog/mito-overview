@@ -29,6 +29,24 @@ PACKET_SCHEMA_VERSION = "2.0"
 VALIDATION_PROFILE = "github_release_validation_v1"
 PUBLIC_ENVIRONMENT_PACKET_PATH = "public_environment"
 PUBLIC_MATRIX_CASES_PACKET_PATH = "public_matrix_cases.tsv"
+DECODED_PIXEL_HASH_COLUMNS = (
+    "path",
+    "width_px",
+    "height_px",
+    "decoded_rgba_sha256",
+)
+DECODED_PIXEL_REPORTS = {
+    "GM11906": {
+        "case_id": "gm11906_default_run1",
+        "source": "logs/GM11906_decoded_pixel_hashes.tsv",
+        "packet": "decoded_pixel_hashes/GM11906.tsv",
+    },
+    "GM12878": {
+        "case_id": "gm12878_default_run1",
+        "source": "logs/GM12878_decoded_pixel_hashes.tsv",
+        "packet": "decoded_pixel_hashes/GM12878.tsv",
+    },
+}
 PUBLIC_ENVIRONMENT_FILES = (
     "conda-explicit.txt",
     "network_entrypoint_contract.tsv",
@@ -381,6 +399,7 @@ REQUIRED_TOP_LEVEL = (
     "public_provenance",
     PUBLIC_ENVIRONMENT_PACKET_PATH,
     "figures",
+    "decoded_pixel_hashes",
     "filter_profile_results.tsv",
     "inputs.sha256",
     RAW_INPUTS_PACKET_PATH,
@@ -408,6 +427,7 @@ EVIDENCE_TABLES = {
         "source_table",
     ),
     "resource_usage.tsv": (
+        "measurement_id",
         "case_id",
         "wall_seconds",
         "user_cpu_seconds",
@@ -3078,6 +3098,9 @@ def validate_read_only_audit_comments(
     for value in comments:
         if not isinstance(value, dict):
             raise ValueError("Pull-request comments evidence contains a non-object entry")
+        body = value.get("body")
+        if not isinstance(body, str) or READ_ONLY_AUDIT_MARKER not in body:
+            continue
         comment_id = positive_json_integer(value.get("id"), "issue comment id")
         if comment_id in comment_ids:
             raise ValueError("Pull-request comments evidence contains duplicate comment IDs")
@@ -3105,12 +3128,9 @@ def validate_read_only_audit_comments(
             raise ValueError(
                 "Read-only audit comment was not authenticated as a repository-owner post"
             )
-        body = value.get("body")
-        if not isinstance(body, str):
-            raise ValueError("Pull-request comment body is not text")
         payload = parse_read_only_audit_payload(body)
-        if payload is None:
-            continue
+        if payload is None:  # Defensive: marker presence above must produce a payload.
+            raise ValueError("Read-only audit marker did not produce a payload")
         role = payload.get("role")
         if role not in READ_ONLY_AUDIT_CASE_IDS:
             raise ValueError(f"Unsupported read-only audit role: {role!r}")
@@ -3973,7 +3993,22 @@ def validate_evidence_tables(validation_root: Path) -> None:
             if invalid:
                 raise ValueError(f"Invalid module states in {name}: {invalid}")
         elif name == "resource_usage.tsv":
+            measurement_ids: set[str] = set()
             for row in rows:
+                measurement_id = row["measurement_id"]
+                if re.fullmatch(
+                    r"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}",
+                    measurement_id,
+                    flags=re.IGNORECASE,
+                ) is None:
+                    raise ValueError(
+                        f"Invalid resource measurement ID: {measurement_id!r}"
+                    )
+                if measurement_id in measurement_ids:
+                    raise ValueError(
+                        f"Duplicate resource measurement ID: {measurement_id}"
+                    )
+                measurement_ids.add(measurement_id)
                 status = row["measurement_status"]
                 if status not in {"measured", "unavailable"}:
                     raise ValueError(f"Invalid resource measurement status: {status!r}")
@@ -4024,6 +4059,71 @@ def validate_evidence_tables(validation_root: Path) -> None:
                     raise ValueError(f"Unsafe packet_path in {name}: {row['packet_path']!r}")
                 if re.fullmatch(r"[0-9a-f]{64}", row["sha256"]) is None:
                     raise ValueError(f"Invalid SHA-256 in {name}: {row['sha256']!r}")
+
+
+def validate_decoded_pixel_evidence(validation_root: Path) -> list[dict[str, object]]:
+    """Bind repeatability pixel hashes to the packet's report-native PNG inventory."""
+
+    figure_rows = read_tsv_rows(
+        validation_root / "figure_provenance.tsv",
+        EVIDENCE_TABLES["figure_provenance.tsv"],
+        "figure_provenance.tsv",
+    )
+    validated: list[dict[str, object]] = []
+    for dataset, specification in DECODED_PIXEL_REPORTS.items():
+        case_id = str(specification["case_id"])
+        expected = {
+            Path(row["packet_path"]).name: (row["width"], row["height"])
+            for row in figure_rows
+            if row["dataset"] == dataset and row["case_id"] == case_id
+        }
+        if not expected:
+            raise ValueError(
+                f"No report-native PNG provenance is available for {dataset}"
+            )
+        source = validation_root / "public" / str(specification["source"])
+        if not source.is_file():
+            raise ValueError(
+                f"Required decoded-pixel evidence is missing for {dataset}: {source}"
+            )
+        rows = read_tsv_rows(
+            source,
+            DECODED_PIXEL_HASH_COLUMNS,
+            f"{dataset} decoded-pixel evidence",
+        )
+        observed: dict[str, tuple[str, str]] = {}
+        for row in rows:
+            name = row["path"]
+            if not name or Path(name).name != name or name in observed:
+                raise ValueError(
+                    f"Invalid or duplicate decoded-pixel path for {dataset}: {name!r}"
+                )
+            try:
+                if int(row["width_px"]) <= 0 or int(row["height_px"]) <= 0:
+                    raise ValueError
+            except ValueError as error:
+                raise ValueError(
+                    f"Invalid decoded-pixel dimensions for {dataset}: {name}"
+                ) from error
+            if re.fullmatch(r"[0-9a-f]{64}", row["decoded_rgba_sha256"]) is None:
+                raise ValueError(
+                    f"Invalid decoded-pixel SHA-256 for {dataset}: {name}"
+                )
+            observed[name] = (row["width_px"], row["height_px"])
+        if observed != expected:
+            raise ValueError(
+                f"Decoded-pixel inventory does not match report-native figures for {dataset}"
+            )
+        validated.append(
+            {
+                "dataset": dataset,
+                "case_id": case_id,
+                "path": str(specification["packet"]),
+                "sha256": sha256(source),
+                "figure_count": len(rows),
+            }
+        )
+    return validated
 
 
 def validate_public_cache_byte_provenance(
@@ -4225,6 +4325,7 @@ required_top_level = {
     "public_data_sources.tsv", "manuscript_handoff.tsv", "limitations.tsv",
     "environment.txt", "commands", "logs", "dist", "expected",
     "observed_normalized", "public_provenance", "public_environment", "figures",
+    "decoded_pixel_hashes",
     "filter_profile_results.tsv", "inputs.sha256", "raw_inputs.tsv",
     "CACHE_SEAL.sha256", "public_validation_oracle_v0.3.0.tsv",
     "oracle_assertions.tsv", "public_matrix_cases.tsv", "artifacts.sha256",
@@ -4237,7 +4338,7 @@ if missing:
 for relative in (
     "acceptance", "commands", "commands/public", "logs", "logs/public",
     "dist", "expected", "observed_normalized", "public_provenance",
-    "public_environment", "figures",
+    "public_environment", "figures", "decoded_pixel_hashes",
 ):
     evidence_root = root / relative
     if not evidence_root.is_dir() or not any(
@@ -4979,7 +5080,8 @@ table_headers = {
         "dataset", "case_id", "module", "status", "reason_code", "source_table",
     ),
     "resource_usage.tsv": (
-        "case_id", "wall_seconds", "user_cpu_seconds", "system_cpu_seconds",
+        "measurement_id", "case_id", "wall_seconds", "user_cpu_seconds",
+        "system_cpu_seconds",
         "max_rss_kb", "broad_declared_input_inventory_bytes",
         "changed_or_new_output_inventory_bytes",
         "broad_declared_input_inventory_scope",
@@ -5369,7 +5471,19 @@ if (
 ):
     raise SystemExit("long-read deterministic subset derivation mismatch")
 
+measurement_ids = set()
 for row in evidence_rows["resource_usage.tsv"]:
+    measurement_id = row["measurement_id"]
+    if (
+        not re.fullmatch(
+            r"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}",
+            measurement_id,
+            flags=re.IGNORECASE,
+        )
+        or measurement_id in measurement_ids
+    ):
+        raise SystemExit(f"invalid or duplicate resource measurement ID: {measurement_id}")
+    measurement_ids.add(measurement_id)
     status = row["measurement_status"]
     if status not in {"measured", "unavailable"}:
         raise SystemExit(f"invalid resource status: {status}")
@@ -5427,6 +5541,59 @@ for name in ("figure_provenance.tsv", "table_provenance.tsv"):
         if not artifact.is_file() or digest(artifact) != row["sha256"]:
             raise SystemExit(f"provenance artifact mismatch in {name}: {relative}")
 
+pixel_reports = {
+    "GM11906": ("gm11906_default_run1", "decoded_pixel_hashes/GM11906.tsv"),
+    "GM12878": ("gm12878_default_run1", "decoded_pixel_hashes/GM12878.tsv"),
+}
+decoded_pixel_identity = []
+actual_pixel_files = {
+    path.relative_to(root).as_posix()
+    for path in (root / "decoded_pixel_hashes").iterdir()
+    if path.is_file() and not path.is_symlink()
+}
+if actual_pixel_files != {value[1] for value in pixel_reports.values()}:
+    raise SystemExit("decoded-pixel evidence inventory mismatch")
+for dataset, (case_id, relative) in pixel_reports.items():
+    with (root / relative).open(encoding="utf-8", newline="") as handle:
+        reader = csv.DictReader(handle, delimiter="\t")
+        if tuple(reader.fieldnames or ()) != (
+            "path", "width_px", "height_px", "decoded_rgba_sha256",
+        ):
+            raise SystemExit(f"decoded-pixel schema mismatch for {dataset}")
+        pixel_rows = list(reader)
+    expected_pixels = {
+        Path(row["packet_path"]).name: (row["width"], row["height"])
+        for row in evidence_rows["figure_provenance.tsv"]
+        if row["dataset"] == dataset and row["case_id"] == case_id
+    }
+    observed_pixels = {}
+    for row in pixel_rows:
+        name = row["path"]
+        if (
+            not name
+            or Path(name).name != name
+            or name in observed_pixels
+            or not row["width_px"].isdigit()
+            or not row["height_px"].isdigit()
+            or int(row["width_px"]) <= 0
+            or int(row["height_px"]) <= 0
+            or not re.fullmatch(r"[0-9a-f]{64}", row["decoded_rgba_sha256"])
+        ):
+            raise SystemExit(f"invalid decoded-pixel evidence for {dataset}: {name}")
+        observed_pixels[name] = (row["width_px"], row["height_px"])
+    if not expected_pixels or observed_pixels != expected_pixels:
+        raise SystemExit(
+            f"decoded-pixel evidence does not match report-native figures for {dataset}"
+        )
+    decoded_pixel_identity.append(
+        {
+            "dataset": dataset,
+            "case_id": case_id,
+            "path": relative,
+            "sha256": digest(root / relative),
+            "figure_count": len(pixel_rows),
+        }
+    )
 actual_normalized_paths = {
     path.relative_to(root).as_posix()
     for path in (root / "observed_normalized").rglob("*.tsv")
@@ -5495,6 +5662,8 @@ def parse_environment(path):
 
 run = json.loads((root / "run.json").read_text(encoding="utf-8"))
 identity = json.loads((root / "release_identity.json").read_text(encoding="utf-8"))
+if identity.get("decoded_pixel_evidence") != decoded_pixel_identity:
+    raise SystemExit("release identity decoded-pixel evidence mismatch")
 environment = parse_environment(root / "environment.txt")
 for label, value in (("run", run), ("identity", identity)):
     if value.get("schema_version") != schema:
@@ -6103,6 +6272,9 @@ repository_owner = repository_slug.split("/", 1)[0]
 for comment in comments:
     if not isinstance(comment, dict):
         raise SystemExit("pull-request comments evidence contains a non-object")
+    body = comment.get("body")
+    if not isinstance(body, str) or audit_marker not in body:
+        continue
     comment_id = positive_integer(comment.get("id"), "pull-request comment ID")
     if comment_id in comment_ids:
         raise SystemExit("pull-request comments evidence contains duplicate IDs")
@@ -6115,12 +6287,8 @@ for comment in comments:
         or comment["user"].get("login") != repository_owner
         or comment["user"].get("html_url") != f"https://github.com/{repository_owner}"
         or comment.get("author_association") != "OWNER"
-        or not isinstance(comment.get("body"), str)
     ):
         raise SystemExit("pull-request comment identity mismatch")
-    body = comment["body"]
-    if audit_marker not in body:
-        continue
     if body.count(audit_marker) != 1:
         raise SystemExit("read-only audit comment contains a duplicate marker")
     suffix = body.split(audit_marker, 1)[1]
@@ -6425,6 +6593,7 @@ def build_packet(args: argparse.Namespace) -> Path:
         acceptance_rows,
     )
     validate_evidence_tables(args.validation_root)
+    decoded_pixel_evidence = validate_decoded_pixel_evidence(args.validation_root)
     public_environment = validate_public_environment(
         public_root / "environment",
         args.repo_root,
@@ -6485,6 +6654,12 @@ def build_packet(args: argparse.Namespace) -> Path:
     copy_tree(args.validation_root / "dist", args.packet_root / "dist")
     copy_tree(args.validation_root / "expected", args.packet_root / "expected")
     copy_tree(args.validation_root / "figures", args.packet_root / "figures")
+    for specification in DECODED_PIXEL_REPORTS.values():
+        copy_regular_file(
+            public_root / str(specification["source"]),
+            args.packet_root / str(specification["packet"]),
+            source_root=args.validation_root,
+        )
     copy_tree(
         public_root / "observed_normalized",
         args.packet_root / "observed_normalized",
@@ -6568,6 +6743,7 @@ def build_packet(args: argparse.Namespace) -> Path:
         "assertion_count": scientific_evidence["assertion_count"],
         "required_assertion_count": scientific_evidence["required_assertion_count"],
     }
+    release_identity["decoded_pixel_evidence"] = decoded_pixel_evidence
     (args.packet_root / "release_identity.json").write_text(
         json.dumps(release_identity, indent=2) + "\n",
         encoding="utf-8",

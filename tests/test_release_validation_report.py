@@ -193,6 +193,14 @@ def make_packet(tmp_path: Path) -> tuple[Path, Path, list[Path]]:
         report_builder.EVIDENCE_COLUMNS["table_provenance.tsv"],
         table_rows,
     )
+    for row in figure_rows:
+        dataset = row[1]
+        filename = Path(row[3]).name
+        write_tsv(
+            packet / "decoded_pixel_hashes" / f"{dataset}.tsv",
+            ("path", "width_px", "height_px", "decoded_rgba_sha256"),
+            [[filename, row[6], row[7], hashlib.sha256(filename.encode()).hexdigest()]],
+        )
     write_tsv(
         packet / "claim_evidence_matrix.tsv",
         report_builder.EVIDENCE_COLUMNS["claim_evidence_matrix.tsv"],
@@ -232,6 +240,7 @@ def make_packet(tmp_path: Path) -> tuple[Path, Path, list[Path]]:
         report_builder.EVIDENCE_COLUMNS["resource_usage.tsv"],
         [
             [
+                "20000000-0000-4000-8000-000000000001",
                 "gm11906_default_run1", "12.4", "10.0", "1.2", "204800",
                 "59499334", "1048576",
                 "repository_root;cache_root;validation_root",
@@ -240,6 +249,7 @@ def make_packet(tmp_path: Path) -> tuple[Path, Path, list[Path]]:
                 "4", "osx-arm64", "measured", "",
             ],
             [
+                "20000000-0000-4000-8000-000000000002",
                 "gm12878_default_run1", "31.8", "28.0", "2.0", "307200",
                 "2033558460", "2097152",
                 "repository_root;cache_root;validation_root",
@@ -248,6 +258,7 @@ def make_packet(tmp_path: Path) -> tuple[Path, Path, list[Path]]:
                 "4", "linux-64", "measured", "",
             ],
             [
+                "20000000-0000-4000-8000-000000000003",
                 "public_cache_prepare", "40.0", "20.0", "3.0", "102400",
                 "0", "3000000000",
                 "repository_root;cache_root;validation_root",

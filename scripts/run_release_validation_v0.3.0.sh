@@ -222,6 +222,7 @@ import resource
 import subprocess
 import sys
 import time
+import uuid
 from pathlib import Path
 
 resource_path = Path(sys.argv[1])
@@ -277,6 +278,7 @@ if sys.platform == "darwin":
     max_rss = max_rss / 1024.0
 record = {
     "schema_version": "2.0",
+    "measurement_id": str(uuid.uuid4()),
     "case_id": resource_path.stem,
     "wall_seconds": round(elapsed, 6),
     "user_cpu_seconds": round(after.ru_utime - before.ru_utime, 6),
@@ -383,7 +385,9 @@ PY
       test -s "${destination}/platform-${platform}.json"
       test -s "${destination}/python-${platform}.txt"
       "${PYTHON_BIN}" - "${destination}/platform-${platform}.json" \
-        "${destination}" "${platform}" "${CANDIDATE_COMMIT}" "${GITHUB_RUN_ID}" <<'PY'
+        "${destination}" "${platform}" "${CANDIDATE_COMMIT}" "${GITHUB_RUN_ID}" \
+        "${REPO_ROOT}/locks/environment-${platform}.yml" <<'PY'
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -407,6 +411,8 @@ if observed_files != expected_files:
     )
 if (root / f"python-{platform_id}.txt").read_text(encoding="utf-8").strip() != "Python 3.12.13":
     raise SystemExit("Resolved CI Python evidence mismatch")
+if record.get("schema_version") != "2.0":
+    raise SystemExit("Resolved CI artifact schema mismatch")
 if record.get("platform_id") != platform_id:
     raise SystemExit("Resolved CI artifact platform identity mismatch")
 if record.get("git_commit") != sys.argv[4]:
@@ -415,6 +421,30 @@ if record.get("github_run_id") != int(sys.argv[5]):
     raise SystemExit("Resolved CI artifact run identity mismatch")
 if record.get("resolved_environment") is not True:
     raise SystemExit("Resolved CI artifact did not attest environment resolution")
+evidence_names = expected_files - {f"platform-{platform_id}.json"}
+evidence_files = record.get("evidence_files")
+if not isinstance(evidence_files, dict) or set(evidence_files) != evidence_names:
+    raise SystemExit("Resolved CI evidence-file manifest inventory mismatch")
+manifest_lines = []
+for name in sorted(evidence_names):
+    payload = (root / name).read_bytes()
+    observed_sha256 = hashlib.sha256(payload).hexdigest()
+    observed_size = len(payload)
+    item = evidence_files.get(name)
+    if not isinstance(item, dict):
+        raise SystemExit(f"Resolved CI evidence-file record is malformed: {name}")
+    if item.get("sha256") != observed_sha256 or item.get("size_bytes") != observed_size:
+        raise SystemExit(f"Resolved CI evidence-file digest mismatch: {name}")
+    manifest_lines.append(f"{name}\t{observed_sha256}\t{observed_size}\n")
+manifest_sha256 = hashlib.sha256("".join(manifest_lines).encode("utf-8")).hexdigest()
+if record.get("evidence_manifest_sha256") != manifest_sha256:
+    raise SystemExit("Resolved CI evidence manifest digest mismatch")
+lock_name = f"environment-{platform_id}.yml"
+if record.get("source_lock_sha256") != evidence_files[lock_name]["sha256"]:
+    raise SystemExit("Resolved CI source-lock digest mismatch")
+tracked_lock = Path(sys.argv[6]).read_bytes()
+if hashlib.sha256(tracked_lock).hexdigest() != evidence_files[lock_name]["sha256"]:
+    raise SystemExit("Resolved CI solver lock differs from the exact candidate")
 PY
     done
     echo "github_actions_metadata_ingestion=PASS"
@@ -839,10 +869,27 @@ run_fresh_clone_validation() {
   local sdist_probe_root="${VALIDATION_ROOT}/work/installed_sdist_probe"
   local command_file="${VALIDATION_ROOT}/commands/${FRESH_CLONE_CASE_ID}.sh"
   local log_file="${VALIDATION_ROOT}/logs/${FRESH_CLONE_CASE_ID}.log"
+  local package_command_file="${VALIDATION_ROOT}/commands/package_build.sh"
+  local package_log_file="${VALIDATION_ROOT}/logs/package_build.log"
 
   mkdir -p "${home_root}" "${tmp_root}" "${cache_root}" "${probe_root}" \
     "${sdist_probe_root}" \
     "${VALIDATION_ROOT}/acceptance/fresh_clone_environment"
+  cat > "${package_command_file}" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+env -i \
+  HOME=$(printf '%q' "${home_root}") \
+  TMPDIR=$(printf '%q' "${tmp_root}") \
+  XDG_CACHE_HOME=$(printf '%q' "${cache_root}") \
+  PATH=$(printf '%q' "${PATH}") \
+  PYTHONNOUSERSITE=1 PYTHONPATH= PIP_DISABLE_PIP_VERSION_CHECK=1 \
+  LC_ALL=C LANG=C TZ=UTC THREADS=4 \
+  $(printf '%q' "${venv_root}/bin/python") -m build --no-isolation \
+    --outdir $(printf '%q' "${VALIDATION_ROOT}/dist") \
+    $(printf '%q' "${clone_root}")
+EOF
+  chmod +x "${package_command_file}"
   cat > "${command_file}" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
@@ -871,8 +918,8 @@ FRESH_PYTHON=$(printf '%q' "${venv_root}/bin/python")
 run_clean "\${FRESH_PYTHON}" -m pip install --force-reinstall \
   pip==26.1.2 build==1.5.0 setuptools==82.0.1 wheel==0.47.0 \
   pytest==9.1.1 python-docx==1.2.0
-run_clean "\${FRESH_PYTHON}" -m build --no-isolation \
-  --outdir $(printf '%q' "${VALIDATION_ROOT}/dist") $(printf '%q' "${clone_root}")
+measure_command package_build $(printf '%q' "${package_log_file}") \
+  bash $(printf '%q' "${package_command_file}")
 WHEEL="\$(find $(printf '%q' "${VALIDATION_ROOT}/dist") -maxdepth 1 -type f -name '*.whl' -print -quit)"
 SDIST="\$(find $(printf '%q' "${VALIDATION_ROOT}/dist") -maxdepth 1 -type f -name '*.tar.gz' -print -quit)"
 test -n "\${WHEEL}" && test -n "\${SDIST}"
@@ -912,6 +959,8 @@ echo fresh_clone_validation=PASS
 EOF
   chmod +x "${command_file}"
 
+  export -f measure_command
+  export PYTHON_BIN VALIDATION_ROOT REPO_ROOT CACHE_ROOT
   if measure_command "${FRESH_CLONE_CASE_ID}" "${log_file}" bash "${command_file}"; then
     "${PYTHON_BIN}" -       "${VALIDATION_ROOT}/acceptance/fresh_clone.json"       "${CANDIDATE_COMMIT}" "${REPOSITORY}" "${PUBLIC_REMOTE}" <<'PY'
 import json
@@ -1267,15 +1316,18 @@ run_logged synthetic_shortread_smoke synthetic   env MITO_OVERVIEW_PYTHON="${PYT
 run_logged synthetic_longread_nomethyl_smoke synthetic   env MITO_OVERVIEW_PYTHON="${PYTHON_BIN}" "${REPO_ROOT}/tests/smoke_public_pipeline_longread_nomethyl.sh"
 run_logged standalone_minimal_smoke synthetic   env MITO_OVERVIEW_PYTHON="${PYTHON_BIN}" "${REPO_ROOT}/tests/smoke_standalone_minimal.sh"
 
-cat > "${VALIDATION_ROOT}/commands/package_build.sh" <<EOF
-#!/usr/bin/env bash
-echo 'Distribution artifacts were built by commands/${FRESH_CLONE_CASE_ID}.sh'
-EOF
-printf 'wheel and sdist built from public clone at %s\n' "${CANDIDATE_COMMIT}"   > "${VALIDATION_ROOT}/logs/package_build.log"
-cp "${VALIDATION_ROOT}/resources/${FRESH_CLONE_CASE_ID}.json"   "${VALIDATION_ROOT}/resources/package_build.json"
-sed -i.bak 's/"case_id": "fresh_clone_candidate_commit"/"case_id": "package_build"/' \
-  "${VALIDATION_ROOT}/resources/package_build.json"
-rm "${VALIDATION_ROOT}/resources/package_build.json.bak"
+"${PYTHON_BIN}" - "${VALIDATION_ROOT}/resources/package_build.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+record = json.loads(path.read_text(encoding="utf-8"))
+if record.get("case_id") != "package_build" or record.get("exit_code") != 0:
+    raise SystemExit("package_build resource evidence is missing or unsuccessful")
+if record.get("measurement_status") != "measured":
+    raise SystemExit("package_build resource evidence is not measured")
+PY
 record_case package_build package 1 1 PASS   "wheel and sdist built from exact public clone; see logs/package_build.log"
 
 cp "${REPO_ROOT}/examples/synthetic_data/TOY-WGS-001/expected_copy_proxy.tsv"   "${VALIDATION_ROOT}/expected/TOY-WGS-001.expected_copy_proxy.tsv"
@@ -1497,7 +1549,8 @@ for resource_path in sorted((validation_root / "resources").glob("*.json")):
         {
             key: value.get(key, "")
             for key in (
-                "case_id", "wall_seconds", "user_cpu_seconds", "system_cpu_seconds",
+                "measurement_id", "case_id", "wall_seconds", "user_cpu_seconds",
+                "system_cpu_seconds",
                 "max_rss_kb", "broad_declared_input_inventory_bytes",
                 "changed_or_new_output_inventory_bytes",
                 "broad_declared_input_inventory_scope",
@@ -1509,7 +1562,8 @@ for resource_path in sorted((validation_root / "resources").glob("*.json")):
 write_table(
     "resource_usage.tsv",
     [
-        "case_id", "wall_seconds", "user_cpu_seconds", "system_cpu_seconds",
+        "measurement_id", "case_id", "wall_seconds", "user_cpu_seconds",
+        "system_cpu_seconds",
         "max_rss_kb", "broad_declared_input_inventory_bytes",
         "changed_or_new_output_inventory_bytes",
         "broad_declared_input_inventory_scope",

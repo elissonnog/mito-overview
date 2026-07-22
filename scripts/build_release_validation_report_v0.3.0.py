@@ -89,6 +89,8 @@ REQUIRED_PACKET_FILES = (
     NETWORK_ISOLATION_PACKET_PATH,
     RUNTIME_VERSIONS_PACKET_PATH,
     GM11906_SOURCE_METADATA_PACKET_PATH,
+    "decoded_pixel_hashes/GM11906.tsv",
+    "decoded_pixel_hashes/GM12878.tsv",
     "artifacts.sha256",
     "verify_bundle.sh",
 )
@@ -146,6 +148,7 @@ EVIDENCE_COLUMNS = {
         "source_table",
     ),
     "resource_usage.tsv": (
+        "measurement_id",
         "case_id",
         "wall_seconds",
         "user_cpu_seconds",
@@ -1073,7 +1076,22 @@ def validate_resource_usage(
         "changed_or_new_output_inventory_bytes",
         "threads",
     )
+    measurement_ids: set[str] = set()
     for row in rows:
+        measurement_id = row["measurement_id"]
+        if (
+            re.fullmatch(
+                r"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}",
+                measurement_id,
+                flags=re.IGNORECASE,
+            )
+            is None
+            or measurement_id in measurement_ids
+        ):
+            raise ReportValidationError(
+                f"Invalid or duplicate resource measurement ID: {measurement_id!r}"
+            )
+        measurement_ids.add(measurement_id)
         status = row["measurement_status"]
         if status not in {"measured", "unavailable"}:
             raise ReportValidationError(

@@ -1351,6 +1351,7 @@ def write_evidence_tables(root: Path) -> None:
         "module_status_matrix.tsv": module_rows,
         "resource_usage.tsv": [
             [
+                "10000000-0000-4000-8000-000000000001",
                 "unit_known_answer", "1.0", "0.5", "0.1", "1024",
                 "2048", "4096",
                 "repository_root;cache_root;validation_root",
@@ -1359,6 +1360,7 @@ def write_evidence_tables(root: Path) -> None:
                 "4", "test", "measured", "",
             ],
             [
+                "10000000-0000-4000-8000-000000000002",
                 "public_cache_prepare", "2.0", "1.0", "0.2", "2048",
                 "1024",
                 str(
@@ -1393,6 +1395,27 @@ def write_evidence_tables(root: Path) -> None:
     }
     for name, rows in rows_by_name.items():
         write_tsv(root / name, packet_builder.EVIDENCE_TABLES[name], rows)
+
+    for dataset, specification in packet_builder.DECODED_PIXEL_REPORTS.items():
+        case_id = str(specification["case_id"])
+        matching_figures = [
+            row
+            for row in figure_rows
+            if row[1] == dataset and row[2] == case_id
+        ]
+        write_tsv(
+            root / "public" / str(specification["source"]),
+            packet_builder.DECODED_PIXEL_HASH_COLUMNS,
+            [
+                [
+                    Path(row[3]).name,
+                    row[6],
+                    row[7],
+                    hashlib.sha256(Path(row[3]).name.encode("utf-8")).hexdigest(),
+                ]
+                for row in matching_figures
+            ],
+        )
 
 
 def create_validation_root(tmp_path: Path, repo: Path, commit: str) -> Path:
@@ -1950,6 +1973,42 @@ def test_packet_rejects_unauthenticated_audit_comment_author(tmp_path: Path) -> 
     write_json(comments_path, comments)
     with pytest.raises(ValueError, match="repository-owner post"):
         packet_builder.build_packet(packet_args(validation, repo, tmp_path / "output"))
+
+
+def test_packet_ignores_unmarked_comment_from_other_author(tmp_path: Path) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    comments_path = validation / "acceptance/pull_request_comments.json"
+    comments = read_json(comments_path)
+    assert isinstance(comments, list)
+    comment_id = 7998
+    comments.append(
+        {
+            "id": comment_id,
+            "url": (
+                f"https://api.github.com/repos/{GITHUB_REPOSITORY}/issues/comments/"
+                f"{comment_id}"
+            ),
+            "html_url": (
+                f"{REPOSITORY}/pull/{PULL_REQUEST_NUMBER}#issuecomment-{comment_id}"
+            ),
+            "issue_url": (
+                f"https://api.github.com/repos/{GITHUB_REPOSITORY}/issues/"
+                f"{PULL_REQUEST_NUMBER}"
+            ),
+            "user": {
+                "login": "external-reviewer",
+                "html_url": "https://github.com/external-reviewer",
+            },
+            "author_association": "NONE",
+            "body": "Ordinary discussion comment without an audit marker.",
+        }
+    )
+    write_json(comments_path, comments)
+    output = tmp_path / "output"
+    packet_builder.build_packet(packet_args(validation, repo, output))
+    checked = verify_packet(output / "packet")
+    assert checked.returncode == 0, checked.stderr
 
 
 def test_packet_rejects_reused_audit_instance_id(tmp_path: Path) -> None:
@@ -2613,6 +2672,77 @@ def test_packet_rejects_public_cache_output_inventory_below_raw_bytes(
     )
     with pytest.raises(ValueError, match="excludes one or more raw downloads"):
         packet_builder.build_packet(packet_args(validation, repo, tmp_path / "output"))
+
+
+def test_packet_rejects_duplicate_resource_measurement_id(tmp_path: Path) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    resource_path = validation / "resource_usage.tsv"
+    with resource_path.open(encoding="utf-8", newline="") as handle:
+        reader = csv.DictReader(handle, delimiter="\t")
+        fields = tuple(reader.fieldnames or ())
+        rows = list(reader)
+    rows[1]["measurement_id"] = rows[0]["measurement_id"]
+    write_tsv(resource_path, fields, [[row[field] for field in fields] for row in rows])
+    with pytest.raises(ValueError, match="Duplicate resource measurement ID"):
+        packet_builder.build_packet(packet_args(validation, repo, tmp_path / "output"))
+
+
+def test_packet_requires_decoded_pixel_evidence(tmp_path: Path) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    report = validation / "public/logs/GM12878_decoded_pixel_hashes.tsv"
+    report.unlink()
+    with pytest.raises(ValueError, match="missing|decoded-pixel"):
+        packet_builder.build_packet(packet_args(validation, repo, tmp_path / "output"))
+
+
+def test_packet_rejects_decoded_pixel_inventory_drift(tmp_path: Path) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    report = validation / "public/logs/GM11906_decoded_pixel_hashes.tsv"
+    rows = report.read_text(encoding="utf-8").splitlines()
+    report.write_text("\n".join(rows[:-1]) + "\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="Decoded-pixel inventory"):
+        packet_builder.build_packet(packet_args(validation, repo, tmp_path / "output"))
+
+
+def test_extracted_verifier_rejects_resealed_duplicate_measurement_id(
+    tmp_path: Path,
+) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    output = tmp_path / "output"
+    packet_builder.build_packet(packet_args(validation, repo, output))
+    packet = output / "packet"
+    resource_path = packet / "resource_usage.tsv"
+    with resource_path.open(encoding="utf-8", newline="") as handle:
+        reader = csv.DictReader(handle, delimiter="\t")
+        fields = tuple(reader.fieldnames or ())
+        rows = list(reader)
+    rows[1]["measurement_id"] = rows[0]["measurement_id"]
+    write_tsv(resource_path, fields, [[row[field] for field in fields] for row in rows])
+    rewrite_manifest(packet)
+    checked = verify_packet(packet)
+    assert checked.returncode != 0
+    assert "duplicate resource measurement ID" in checked.stderr
+
+
+def test_extracted_verifier_rejects_resealed_decoded_pixel_drift(
+    tmp_path: Path,
+) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    output = tmp_path / "output"
+    packet_builder.build_packet(packet_args(validation, repo, output))
+    packet = output / "packet"
+    report = packet / "decoded_pixel_hashes/GM12878.tsv"
+    rows = report.read_text(encoding="utf-8").splitlines()
+    report.write_text("\n".join(rows[:-1]) + "\n", encoding="utf-8")
+    rewrite_manifest(packet)
+    checked = verify_packet(packet)
+    assert checked.returncode != 0
+    assert "decoded-pixel evidence" in checked.stderr
 
 
 def test_extracted_verifier_rejects_rehashed_official_metadata_mutation(
