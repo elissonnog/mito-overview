@@ -579,10 +579,12 @@ def test_runner_declares_public_clone_and_isolated_installed_probe() -> None:
     assert "-I -m mito_overview.cli --list-steps" in text
     assert "executed_outside_checkout" in text
     assert '"broad_declared_input_inventory_bytes"' in text
+    assert '"broad_declared_input_inventory_file_count"' in text
     assert '"changed_or_new_output_inventory_bytes"' in text
+    assert '"changed_or_new_output_inventory_file_count"' in text
     assert "repository_root;cache_root;validation_root" in text
     assert "cache_root;validation_root" in text
-    assert "broad_declared_inputs_and_changed_or_new_outputs_v2" in text
+    assert "broad_declared_inputs_and_changed_or_new_outputs_v3" in text
     assert "measure_command package_build" in text
     assert "resources/package_build.json" in text
     assert 'cp "${VALIDATION_ROOT}/resources/${FRESH_CLONE_CASE_ID}.json"' not in text
@@ -700,9 +702,11 @@ def test_resource_measurement_counts_exact_declared_and_changed_inventories(
     assert observed["log_sha256"] == hashlib.sha256(log_path.read_bytes()).hexdigest()
     assert observed["packaged_log_sha256"] == observed["log_sha256"]
     assert observed["threads"] == "not_applicable"
+    assert observed["broad_declared_input_inventory_file_count"] == 3
     assert observed["broad_declared_input_inventory_bytes"] == (
         5 + command_path.stat().st_size
     )
+    assert observed["changed_or_new_output_inventory_file_count"] == 3
     assert observed["changed_or_new_output_inventory_bytes"] == 12
     assert observed["broad_declared_input_inventory_scope"] == (
         "repository_root;cache_root;validation_root"
@@ -711,7 +715,7 @@ def test_resource_measurement_counts_exact_declared_and_changed_inventories(
         "cache_root;validation_root"
     )
     assert observed["io_measurement_method"] == (
-        "broad_declared_inputs_and_changed_or_new_outputs_v2"
+        "broad_declared_inputs_and_changed_or_new_outputs_v3"
     )
 
 

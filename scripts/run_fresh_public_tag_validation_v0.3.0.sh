@@ -353,6 +353,15 @@ write_command release_asset_semantic_identity <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
 $(printf '%q' "${PYTHON_BIN}") \
+  $(printf '%q' "${CLONE_ROOT}/scripts/verify_release_asset_identity_v0.3.0.py") \
+  archive-digest \
+  $(printf '%q' "${ASSET_SOURCE_ROOT}/mito-overview-v0.3.0-validation.zip") \
+  --release-identity \
+  $(printf '%q' "${ASSET_SOURCE_ROOT}/mito-overview-v0.3.0-verification.json") \
+  --repository-url $(printf '%q' "${REPOSITORY_URL}") \
+  --final-sha $(printf '%q' "${FINAL_SHA}") \
+  --output-json $(printf '%q' "${EVIDENCE_ROOT}/external_archive_digest.json")
+$(printf '%q' "${PYTHON_BIN}") \
   $(printf '%q' "${CLONE_ROOT}/scripts/safe_extract_validation_zip.py") \
   $(printf '%q' "${ASSET_SOURCE_ROOT}/mito-overview-v0.3.0-validation.zip") \
   $(printf '%q' "${PACKET_SEMANTIC_ROOT}")
@@ -367,7 +376,7 @@ $(printf '%q' "${PYTHON_BIN}") \
   $(printf '%q' "${FINAL_SHA}") \
   $(printf '%q' "${EVIDENCE_ROOT}/release_asset_semantic_identity.json")
 EOF
-run_case release_asset_semantic_identity "validation packet, receipt, and report assets matched FINAL_SHA"
+run_case release_asset_semantic_identity "external ZIP digest passed before internal packet and report identity checks"
 
 write_command trusted_release_assets <<EOF
 #!/usr/bin/env bash

@@ -19,6 +19,7 @@ import pytest
 
 ROOT = Path(__file__).parents[1]
 RUNNER = ROOT / "scripts" / "run_fresh_public_tag_validation_v0.3.0.sh"
+IDENTITY_VERIFIER = ROOT / "scripts" / "verify_release_asset_identity_v0.3.0.py"
 PUBLIC_FIXTURE_URL = "https://github.com/fixture/mito-overview"
 ASSET_SOURCE_NAMES = {
     "mito-overview-v0.3.0-validation.zip",
@@ -645,6 +646,7 @@ def test_runner_is_valid_shell_and_encodes_all_required_release_gates() -> None:
         "evidence.sha256",
         "fresh_public_tag_validation.json",
         "trusted_release_assets.json",
+        "external_archive_digest.json",
         "release_asset_semantic_identity.json",
         "safe_extract_validation_zip.py",
         "verify_release_asset_identity_v0.3.0.py",
@@ -654,6 +656,116 @@ def test_runner_is_valid_shell_and_encodes_all_required_release_gates() -> None:
     assert "Zenodo" not in text
     assert "DOI" not in text
     assert "report/index.html" not in text
+
+
+def test_external_digest_rejects_coordinated_internal_reseal(tmp_path: Path) -> None:
+    packet = tmp_path / "packet"
+    packet.mkdir()
+    archive = tmp_path / "mito-overview-v0.3.0-validation.zip"
+    sidecar = tmp_path / "mito-overview-v0.3.0-validation.zip.sha256"
+    payload = packet / "payload.tsv"
+    run_json = packet / "run.json"
+    verifier = packet / "verify_bundle.sh"
+    manifest = packet / "artifacts.sha256"
+    verifier.write_text(
+        """#!/usr/bin/env bash
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+python3 - "$ROOT" <<'PY'
+import hashlib
+import json
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+records = {}
+for line in (root / "artifacts.sha256").read_text(encoding="ascii").splitlines():
+    digest, relative = line.split("  ", 1)
+    records[relative] = digest
+expected = {
+    path.relative_to(root).as_posix()
+    for path in root.rglob("*")
+    if path.is_file() and path.name != "artifacts.sha256"
+}
+if set(records) != expected:
+    raise SystemExit("inventory mismatch")
+for relative, expected_digest in records.items():
+    observed = hashlib.sha256((root / relative).read_bytes()).hexdigest()
+    if observed != expected_digest:
+        raise SystemExit("artifact mismatch")
+run = json.loads((root / "run.json").read_text(encoding="utf-8"))
+if run["payload_sha256"] != hashlib.sha256((root / "payload.tsv").read_bytes()).hexdigest():
+    raise SystemExit("payload mirror mismatch")
+PY
+""",
+        encoding="utf-8",
+    )
+
+    def reseal_packet(value: str) -> None:
+        payload.write_text(f"value\t{value}\n", encoding="utf-8")
+        run_json.write_text(
+            json.dumps(
+                {"payload_sha256": hashlib.sha256(payload.read_bytes()).hexdigest()},
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        rows = []
+        for path in sorted(packet.rglob("*")):
+            if path.is_file() and path.name != manifest.name:
+                rows.append(
+                    f"{hashlib.sha256(path.read_bytes()).hexdigest()}  "
+                    f"{path.relative_to(packet).as_posix()}"
+                )
+        manifest.write_text("\n".join(rows) + "\n", encoding="ascii")
+        with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as bundle:
+            for path in sorted(packet.rglob("*")):
+                if path.is_file():
+                    bundle.write(path, path.relative_to(packet).as_posix())
+
+    reseal_packet("original")
+    original_digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+    sidecar.write_text(f"{original_digest}  {archive.name}\n", encoding="ascii")
+    accepted = subprocess.run(
+        [
+            sys.executable,
+            str(IDENTITY_VERIFIER),
+            "archive-digest",
+            str(archive),
+            "--sha256-sidecar",
+            str(sidecar),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert accepted.returncode == 0, accepted.stderr
+
+    # A coordinated reseal updates both internal hash mirrors and still passes
+    # the packet's internal-consistency verifier.
+    reseal_packet("coordinated-replacement")
+    internal = subprocess.run(
+        ["bash", str(verifier)], capture_output=True, text=True, check=False
+    )
+    assert internal.returncode == 0, internal.stderr
+    assert hashlib.sha256(archive.read_bytes()).hexdigest() != original_digest
+
+    rejected = subprocess.run(
+        [
+            sys.executable,
+            str(IDENTITY_VERIFIER),
+            "archive-digest",
+            str(archive),
+            "--sha256-sidecar",
+            str(sidecar),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert rejected.returncode != 0
+    assert "external archive SHA-256 mismatch" in rejected.stderr
 
 
 @pytest.mark.parametrize(

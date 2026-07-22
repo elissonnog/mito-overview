@@ -7,6 +7,7 @@ import argparse
 import hashlib
 import json
 import re
+import sys
 import tarfile
 from pathlib import Path
 from typing import Any
@@ -28,6 +29,8 @@ REPORT_ASSETS = {
 }
 REPORT_STEM = "MitoOverview_v0.3.0_release_validation_report"
 REPORT_ASSET_ARCHIVE = f"{REPORT_STEM}_assets.tar.gz"
+SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+SHA256_LINE_RE = re.compile(r"^([0-9a-f]{64})  ([A-Za-z0-9][A-Za-z0-9._+-]*)$")
 
 
 class IdentityError(ValueError):
@@ -65,6 +68,161 @@ def require_fields(value: dict[str, Any], expected: dict[str, Any], label: str) 
             raise IdentityError(
                 f"{label} identity mismatch for {field}: {observed!r} != {wanted!r}"
             )
+
+
+def read_sha256_manifest(path: Path) -> dict[str, str]:
+    """Read a strict SHA256SUMS file or one-line SHA-256 sidecar."""
+
+    if path.is_symlink() or not path.is_file():
+        raise IdentityError(f"SHA-256 source must be a regular non-symlink file: {path}")
+    try:
+        lines = path.read_text(encoding="ascii").splitlines()
+    except (OSError, UnicodeDecodeError) as error:
+        raise IdentityError(f"SHA-256 source is not ASCII text: {path}") from error
+    if not lines:
+        raise IdentityError(f"SHA-256 source is empty: {path}")
+    records: dict[str, str] = {}
+    for line in lines:
+        match = SHA256_LINE_RE.fullmatch(line)
+        if match is None or match.group(2) in records:
+            raise IdentityError(f"SHA-256 source is malformed or duplicated: {path}")
+        records[match.group(2)] = match.group(1)
+    return records
+
+
+def release_identity_archive_digest(
+    path: Path,
+    archive_name: str,
+    *,
+    repository_url: str | None,
+    final_sha: str | None,
+) -> str:
+    """Resolve the archive digest from a separately supplied release identity."""
+
+    payload = read_object(path, "external release identity")
+    repository_url = repository_url.rstrip("/") if repository_url else None
+    if payload.get("evidence_type") == "release_validation_archive_verification":
+        expected: dict[str, Any] = {
+            "schema_version": "2.0",
+            "validation_profile": PROFILE,
+            "release_version": VERSION,
+            "audit_zip": archive_name,
+        }
+        if final_sha is not None:
+            expected["git_commit"] = final_sha
+        require_fields(payload, expected, "external release identity")
+        recorded_repository = payload.get("repository")
+        if recorded_repository is None:
+            manifest = payload.get("report_asset_manifest")
+            if isinstance(manifest, dict):
+                recorded_repository = manifest.get("repository")
+        if repository_url is not None and recorded_repository != repository_url:
+            raise IdentityError(
+                "external release identity repository mismatch: "
+                f"{recorded_repository!r} != {repository_url!r}"
+            )
+        digest = payload.get("audit_zip_sha256")
+    elif payload.get("manifest_type") == "trusted_release_asset_manifest":
+        expected = {"release_version": VERSION, "release_tag": TAG}
+        if final_sha is not None:
+            expected["git_commit"] = final_sha
+        if repository_url is not None:
+            expected["repository"] = repository_url
+        require_fields(payload, expected, "external release identity")
+        rows = payload.get("assets")
+        if not isinstance(rows, list):
+            raise IdentityError("external release identity assets must be a list")
+        matches = [
+            row
+            for row in rows
+            if isinstance(row, dict) and row.get("name") == archive_name
+        ]
+        if len(matches) != 1:
+            raise IdentityError(
+                "external release identity must contain exactly one validation ZIP asset"
+            )
+        digest = matches[0].get("sha256")
+    else:
+        raise IdentityError("unsupported external release identity type")
+    if not isinstance(digest, str) or SHA256_RE.fullmatch(digest) is None:
+        raise IdentityError("external release identity has an invalid archive SHA-256")
+    return digest
+
+
+def verify_archive_digest(
+    archive: Path,
+    *,
+    expected_sha256: str | None = None,
+    sha256_sidecar: Path | None = None,
+    release_identity: Path | None = None,
+    repository_url: str | None = None,
+    final_sha: str | None = None,
+) -> dict[str, Any]:
+    """Verify a ZIP against exactly one digest source located outside the ZIP."""
+
+    sources = sum(
+        value is not None
+        for value in (expected_sha256, sha256_sidecar, release_identity)
+    )
+    if sources != 1:
+        raise IdentityError(
+            "exactly one external digest source is required: expected SHA-256, "
+            "sidecar/SHA256SUMS, or release identity"
+        )
+    if archive.is_symlink() or not archive.is_file():
+        raise IdentityError(f"validation archive must be a regular non-symlink file: {archive}")
+    if archive.name != ZIP_NAME:
+        raise IdentityError(f"validation archive name must be {ZIP_NAME}")
+
+    source_type: str
+    source_name: str
+    if expected_sha256 is not None:
+        expected = expected_sha256.lower()
+        if SHA256_RE.fullmatch(expected) is None:
+            raise IdentityError("expected archive SHA-256 must be 64 lowercase hexadecimal characters")
+        source_type = "expected_sha256"
+        source_name = "command_line_expected_sha256"
+    elif sha256_sidecar is not None:
+        records = read_sha256_manifest(sha256_sidecar)
+        if archive.name not in records:
+            raise IdentityError(
+                f"SHA-256 source does not contain the validation archive: {archive.name}"
+            )
+        expected = records[archive.name]
+        source_type = "sha256_sidecar_or_manifest"
+        source_name = sha256_sidecar.name
+    else:
+        assert release_identity is not None
+        expected = release_identity_archive_digest(
+            release_identity,
+            archive.name,
+            repository_url=repository_url,
+            final_sha=final_sha,
+        )
+        source_type = "release_identity"
+        source_name = release_identity.name
+
+    observed = sha256(archive)
+    if observed != expected:
+        raise IdentityError(
+            "external archive SHA-256 mismatch: "
+            f"observed {observed}, expected {expected} from {source_name}"
+        )
+    return {
+        "schema_version": "1.0",
+        "evidence_type": "external_archive_digest_verification",
+        "release_version": VERSION,
+        "archive_name": archive.name,
+        "archive_sha256": observed,
+        "digest_source_type": source_type,
+        "digest_source_name": source_name,
+        "trust_boundary": (
+            "This verifies archive bytes against a digest supplied outside the ZIP; "
+            "the digest source must be authenticated independently."
+        ),
+        "verified": True,
+        "verdict": "PASS",
+    }
 
 
 def read_report_archive(path: Path) -> dict[str, bytes]:
@@ -333,6 +491,17 @@ def verify(
         raise IdentityError("packet root must be a regular non-symlink directory")
     asset_root = asset_root.resolve(strict=True)
     packet_root = packet_root.resolve(strict=True)
+
+    archive = asset_root / ZIP_NAME
+    verification_path = asset_root / VERIFICATION_NAME
+    verify_archive_digest(
+        archive,
+        release_identity=verification_path,
+        repository_url=repository_url,
+        final_sha=final_sha,
+    )
+    verification = read_object(verification_path, "adjacent verification JSON")
+
     run = read_object(packet_root / "run.json", "packet run.json")
     identity = read_object(
         packet_root / "release_identity.json", "packet release_identity.json"
@@ -351,12 +520,6 @@ def verify(
     if identity.get("package_version") != VERSION.removeprefix("v"):
         raise IdentityError("packet package_version does not match v0.3.0")
 
-    archive = asset_root / ZIP_NAME
-    if archive.is_symlink() or not archive.is_file():
-        raise IdentityError("validation archive must be a regular non-symlink file")
-    verification = read_object(
-        asset_root / VERIFICATION_NAME, "adjacent verification JSON"
-    )
     archive_digest = sha256(archive)
     require_fields(
         verification,
@@ -449,18 +612,64 @@ def verify(
     }
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    arguments = list(sys.argv[1:] if argv is None else argv)
+    if arguments[:1] == ["archive-digest"]:
+        parser = argparse.ArgumentParser(
+            description=(
+                "Verify the v0.3.0 validation ZIP against one expected digest "
+                "supplied outside the archive."
+            )
+        )
+        parser.set_defaults(command="archive-digest")
+        parser.add_argument("command_token", choices=("archive-digest",))
+        parser.add_argument("archive", type=Path)
+        sources = parser.add_mutually_exclusive_group(required=True)
+        sources.add_argument("--expected-sha256")
+        sources.add_argument("--sha256-sidecar", type=Path)
+        sources.add_argument("--release-identity", type=Path)
+        parser.add_argument("--repository-url")
+        parser.add_argument("--final-sha")
+        parser.add_argument("--output-json", type=Path)
+        return parser.parse_args(arguments)
+
     parser = argparse.ArgumentParser()
+    parser.set_defaults(command="semantic-identity")
     parser.add_argument("asset_root", type=Path)
     parser.add_argument("packet_root", type=Path)
     parser.add_argument("repository_url")
     parser.add_argument("final_sha")
     parser.add_argument("output_json", type=Path)
-    return parser.parse_args()
+    return parser.parse_args(arguments)
 
 
 def main() -> None:
     args = parse_args()
+    if args.command == "archive-digest":
+        if args.final_sha is not None and re.fullmatch(r"[0-9a-f]{40}", args.final_sha) is None:
+            raise SystemExit("External archive-digest verification failed: invalid FINAL_SHA")
+        try:
+            result = verify_archive_digest(
+                args.archive,
+                expected_sha256=args.expected_sha256,
+                sha256_sidecar=args.sha256_sidecar,
+                release_identity=args.release_identity,
+                repository_url=args.repository_url,
+                final_sha=args.final_sha,
+            )
+        except (IdentityError, OSError) as error:
+            raise SystemExit(f"External archive-digest verification failed: {error}") from error
+        if args.output_json is not None:
+            args.output_json.parent.mkdir(parents=True, exist_ok=True)
+            args.output_json.write_text(
+                json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+            )
+        else:
+            print(
+                "verified external archive digest: "
+                f"{result['archive_name']} {result['archive_sha256']}"
+            )
+        return
     try:
         result = verify(
             args.asset_root, args.packet_root, args.repository_url, args.final_sha

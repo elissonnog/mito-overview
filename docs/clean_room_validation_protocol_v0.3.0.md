@@ -117,8 +117,11 @@ filename alone.
   measured commands. Every row records a case-insensitive unique UUID, the
   full candidate commit, exact `commands/<case>.sh` and `logs/<case>.log`
   paths, the original execution SHA-256 values, the SHA-256 values of the
-  portable sanitized copies, the case-specific thread setting, and the
-  declared inventory-byte method. Public reconstruction uses four threads;
+  portable sanitized copies, the case-specific thread setting, and declared
+  input/output inventory file counts and bytes. Every numeric value is finite;
+  wall time, peak RSS, declared input count, and declared input bytes are
+  positive. `unavailable` is not valid for a required resource case. Public
+  reconstruction uses four threads;
   three lightweight synthetic workflows use one; orchestration/test cases are
   labeled `mixed` or `not_applicable` rather than assigned a false count.
   Missing, duplicated, relabeled, or hash-mismatched rows fail validation.
@@ -147,8 +150,24 @@ filename alone.
   `artifacts.sha256`; only the root manifest excludes itself.
 
 The packet builder validates these rules against the clean candidate checkout.
-The generated `verify_bundle.sh` independently repeats the portable semantic,
-inventory, timestamp, and hash checks after fresh ZIP extraction.
+Verification then follows an explicit trust order:
+
+1. Before extraction, compare the ZIP with an expected SHA-256 supplied
+   outside the ZIP. During assembly this is the separate release-identity
+   receipt; after publication it is the independently obtained `SHA256SUMS`
+   record or an explicit trusted digest.
+2. Safely extract the digest-matched ZIP.
+3. Run the extracted `verify_bundle.sh` to check its closed inventory,
+   internal hashes, semantic constraints, timestamps, and release identity.
+
+`verify_bundle.sh` is deliberately an internal-consistency verifier. It cannot
+authenticate a coordinated replacement in which packet content and every hash
+stored inside the same ZIP are changed together. The external digest source is
+therefore the trust anchor and must be authenticated through the exact tag,
+immutable GitHub release record, or another separately trusted channel. A
+sidecar created in the same local build proves local handoff integrity only;
+it becomes an external trust anchor only after it is published and obtained
+independently.
 
 ## Verdict rules
 

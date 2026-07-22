@@ -219,6 +219,7 @@ measure_command() {
 # BEGIN RESOURCE_MEASUREMENT_PYTHON
 import hashlib
 import json
+import math
 import os
 import platform
 import re
@@ -296,14 +297,27 @@ if hashlib.sha256(expected_command_path.read_bytes()).hexdigest() != command_sha
 log_sha256 = hashlib.sha256(log_path.read_bytes()).hexdigest()
 after = resource.getrusage(resource.RUSAGE_CHILDREN)
 output_after = file_inventory(output_roots)
-changed_or_new_output_inventory_bytes = sum(
-    size
+changed_or_new_outputs = {
+    path: (size, mtime_ns)
     for path, (size, mtime_ns) in output_after.items()
     if output_before.get(path) != (size, mtime_ns)
+}
+changed_or_new_output_inventory_bytes = sum(
+    size for size, _ in changed_or_new_outputs.values()
 )
 max_rss = after.ru_maxrss
 if sys.platform == "darwin":
     max_rss = max_rss / 1024.0
+input_inventory_bytes = sum(size for size, _ in input_inventory.values())
+if (
+    not math.isfinite(elapsed)
+    or elapsed <= 0
+    or not math.isfinite(max_rss)
+    or max_rss <= 0
+    or not input_inventory
+    or input_inventory_bytes <= 0
+):
+    raise SystemExit("Required resource measurement is zero, non-finite, or unavailable")
 record = {
     "schema_version": "2.0",
     "measurement_id": str(uuid.uuid4()).lower(),
@@ -319,16 +333,16 @@ record = {
     "user_cpu_seconds": round(after.ru_utime - before.ru_utime, 6),
     "system_cpu_seconds": round(after.ru_stime - before.ru_stime, 6),
     "max_rss_kb": round(max_rss, 3),
-    "broad_declared_input_inventory_bytes": sum(
-        size for size, _ in input_inventory.values()
-    ),
+    "broad_declared_input_inventory_file_count": len(input_inventory),
+    "broad_declared_input_inventory_bytes": input_inventory_bytes,
+    "changed_or_new_output_inventory_file_count": len(changed_or_new_outputs),
     "changed_or_new_output_inventory_bytes": changed_or_new_output_inventory_bytes,
     "broad_declared_input_inventory_scope": (
         "repository_root;cache_root;validation_root"
     ),
     "changed_or_new_output_inventory_scope": "cache_root;validation_root",
     "io_measurement_method": (
-        "broad_declared_inputs_and_changed_or_new_outputs_v2"
+        "broad_declared_inputs_and_changed_or_new_outputs_v3"
     ),
     "threads": thread_setting,
     "platform": platform.platform(),
@@ -1678,7 +1692,9 @@ for resource_path in sorted((validation_root / "resources").glob("*.json")):
                 "command_sha256", "packaged_command_sha256", "log_path", "log_sha256",
                 "packaged_log_sha256", "wall_seconds", "user_cpu_seconds",
                 "system_cpu_seconds",
-                "max_rss_kb", "broad_declared_input_inventory_bytes",
+                "max_rss_kb", "broad_declared_input_inventory_file_count",
+                "broad_declared_input_inventory_bytes",
+                "changed_or_new_output_inventory_file_count",
                 "changed_or_new_output_inventory_bytes",
                 "broad_declared_input_inventory_scope",
                 "changed_or_new_output_inventory_scope", "io_measurement_method",
@@ -1693,7 +1709,9 @@ write_table(
         "command_sha256", "packaged_command_sha256", "log_path", "log_sha256",
         "packaged_log_sha256", "wall_seconds", "user_cpu_seconds",
         "system_cpu_seconds",
-        "max_rss_kb", "broad_declared_input_inventory_bytes",
+        "max_rss_kb", "broad_declared_input_inventory_file_count",
+        "broad_declared_input_inventory_bytes",
+        "changed_or_new_output_inventory_file_count",
         "changed_or_new_output_inventory_bytes",
         "broad_declared_input_inventory_scope",
         "changed_or_new_output_inventory_scope", "io_measurement_method",
@@ -1963,7 +1981,30 @@ if [[ ! -x "${PACKET_ROOT}/verify_bundle.sh" ]]; then
   exit 1
 fi
 
+AUDIT_ZIP_SHA256="$("${PYTHON_BIN}" - "${AUDIT_ZIP}" <<'PY'
+import hashlib
+import sys
+from pathlib import Path
+
+digest = hashlib.sha256()
+with Path(sys.argv[1]).open("rb") as handle:
+    for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+        digest.update(chunk)
+print(digest.hexdigest())
+PY
+)"
+printf '%s  %s\n' "${AUDIT_ZIP_SHA256}" "${EXPECTED_AUDIT_ZIP}" > "${PACKET_SHA256}"
+
 : > "${PACKET_VERIFY_LOG}"
+echo "[external-archive-digest] verify ZIP before packet extraction or internal verification" >> "${PACKET_VERIFY_LOG}"
+if ! "${PYTHON_BIN}" \
+  "${REPO_ROOT}/scripts/verify_release_asset_identity_v0.3.0.py" \
+  archive-digest "${AUDIT_ZIP}" \
+  --sha256-sidecar "${PACKET_SHA256}" >> "${PACKET_VERIFY_LOG}" 2>&1; then
+  cat "${PACKET_VERIFY_LOG}" >&2
+  exit 1
+fi
+
 echo "[packet-root-verifier] verify_bundle.sh" >> "${PACKET_VERIFY_LOG}"
 if ! "${PACKET_ROOT}/verify_bundle.sh" >> "${PACKET_VERIFY_LOG}" 2>&1; then
   cat "${PACKET_VERIFY_LOG}" >&2
@@ -2033,20 +2074,6 @@ if log.count(expected) != 2:
     raise SystemExit("Both packet-root and fresh-extract verifier evidence are required")
 PY
 cat "${PACKET_VERIFY_LOG}"
-
-AUDIT_ZIP_SHA256="$("${PYTHON_BIN}" - "${AUDIT_ZIP}" <<'PY'
-import hashlib
-import sys
-from pathlib import Path
-
-digest = hashlib.sha256()
-with Path(sys.argv[1]).open("rb") as handle:
-    for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-        digest.update(chunk)
-print(digest.hexdigest())
-PY
-)"
-printf '%s  %s\n' "${AUDIT_ZIP_SHA256}" "${EXPECTED_AUDIT_ZIP}" > "${PACKET_SHA256}"
 
 if [[ "$(git -C "${REPO_ROOT}" rev-parse HEAD)" != "${CANDIDATE_COMMIT}" ]] ||   [[ -n "$(git -C "${REPO_ROOT}" status --porcelain --untracked-files=all)" ]]; then
   echo "Release repository changed while packaging candidate ${CANDIDATE_COMMIT}." >&2

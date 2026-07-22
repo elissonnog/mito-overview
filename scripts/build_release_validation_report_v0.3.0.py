@@ -13,6 +13,7 @@ import argparse
 import csv
 import hashlib
 import json
+import math
 import os
 import re
 import shutil
@@ -190,7 +191,9 @@ EVIDENCE_COLUMNS = {
         "user_cpu_seconds",
         "system_cpu_seconds",
         "max_rss_kb",
+        "broad_declared_input_inventory_file_count",
         "broad_declared_input_inventory_bytes",
+        "changed_or_new_output_inventory_file_count",
         "changed_or_new_output_inventory_bytes",
         "broad_declared_input_inventory_scope",
         "changed_or_new_output_inventory_scope",
@@ -1167,36 +1170,51 @@ def validate_resource_usage(
                     f"Resource {digest_field} does not bind {path_field} for {case_id}"
                 )
         status = row["measurement_status"]
-        if status not in {"measured", "unavailable"}:
+        if status != "measured":
             raise ReportValidationError(
-                f"Invalid resource measurement status for {row['case_id']}: {status}"
+                f"Required resource measurement is not measured for {case_id}: {status}"
             )
-        if status == "unavailable":
-            if not row["reason"]:
-                raise ReportValidationError(
-                    f"Unavailable resource measurement lacks reason: {row['case_id']}"
-                )
         expected_threads = RESOURCE_CASE_THREAD_SETTINGS.get(case_id)
         if row["threads"] != expected_threads:
             raise ReportValidationError(
                 f"Resource thread setting mismatch for {case_id}: "
                 f"{row['threads']!r} != {expected_threads!r}"
             )
-        if status == "unavailable":
-            continue
         try:
             values = [float(row[field]) for field in numeric_fields]
         except ValueError as error:
             raise ReportValidationError(
                 f"Invalid resource measurement for {row['case_id']}"
             ) from error
-        if any(value < 0 for value in values) or values[-1] <= 0:
+        if any(not math.isfinite(value) for value in values):
+            raise ReportValidationError(
+                f"Non-finite resource measurement for {row['case_id']}"
+            )
+        try:
+            input_count = int(row["broad_declared_input_inventory_file_count"])
+            output_count = int(row["changed_or_new_output_inventory_file_count"])
+        except ValueError as error:
+            raise ReportValidationError(
+                f"Invalid resource inventory count for {row['case_id']}"
+            ) from error
+        if (
+            str(input_count) != row["broad_declared_input_inventory_file_count"]
+            or str(output_count) != row["changed_or_new_output_inventory_file_count"]
+            or input_count <= 0
+            or output_count < 0
+            or values[0] <= 0
+            or values[3] <= 0
+            or values[1] < 0
+            or values[2] < 0
+            or values[4] <= 0
+            or values[5] < 0
+        ):
             raise ReportValidationError(
                 f"Out-of-range resource measurement for {row['case_id']}"
             )
         if (
             row["io_measurement_method"]
-            != "broad_declared_inputs_and_changed_or_new_outputs_v2"
+            != "broad_declared_inputs_and_changed_or_new_outputs_v3"
         ):
             raise ReportValidationError(
                 f"Invalid resource I/O measurement method for {row['case_id']}"
@@ -1950,13 +1968,27 @@ def build_report_blocks(
             ),
             tuple(tables["cross_platform_comparison.tsv"]),
         ),
+        Heading(1, "Evidence verification trust boundary"),
+        Paragraph(
+            "Release verification is ordered deliberately. First, the validation ZIP is "
+            "compared with an expected SHA-256 supplied outside that ZIP, using the "
+            "release identity during assembly and the published SHA256SUMS manifest after "
+            "publication. Only after that comparison passes is the archive safely "
+            "extracted and its verify_bundle.sh executed. The packet verifier establishes "
+            "internal inventory and semantic consistency; it does not authenticate a ZIP "
+            "against coordinated replacement of the archive and all internal hashes. The "
+            "external digest source therefore remains the trust anchor and must itself be "
+            "obtained through the exact tag or immutable GitHub release record."
+        ),
         Heading(1, "Resource measurements"),
         Paragraph(
             "Resource values are observational measurements for the recorded hardware and "
             "inputs. Byte values are inventories, not operating-system I/O counters: the "
-            "input value is the broad pre-command inventory of the repository, cache, and "
-            "validation roots, while the output value is the final size of files created "
-            "or changed under the cache and validation roots. They are not generalized "
+            "input count and byte values are the broad pre-command inventory of the "
+            "repository, cache, and validation roots, while the output count and byte "
+            "values describe files created or changed under the cache and validation "
+            "roots. Every required row is measured, finite, and has positive wall time, "
+            "peak RSS, input count, and input bytes. They are not generalized "
             "performance benchmarks. The thread column records the configured workflow "
             "setting for each case; orchestration or mixed test suites are labeled "
             "not_applicable or mixed rather than assigned an artificial thread count. "
@@ -1972,8 +2004,16 @@ def build_report_blocks(
                 ("system_cpu_seconds", "System CPU s"),
                 ("max_rss_kb", "Peak RSS KB"),
                 (
+                    "broad_declared_input_inventory_file_count",
+                    "Broad declared input file count",
+                ),
+                (
                     "broad_declared_input_inventory_bytes",
                     "Broad declared input inventory bytes",
+                ),
+                (
+                    "changed_or_new_output_inventory_file_count",
+                    "Changed/new output file count",
                 ),
                 (
                     "changed_or_new_output_inventory_bytes",

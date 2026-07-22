@@ -263,11 +263,13 @@ def make_packet(tmp_path: Path) -> tuple[Path, Path, list[Path]]:
                 "10.0",
                 "1.2",
                 "204800",
+                "120",
                 "2033558460",
+                "80",
                 "3000000000" if case_id == "public_cache_prepare" else "2097152",
                 "repository_root;cache_root;validation_root",
                 "cache_root;validation_root",
-                "broad_declared_inputs_and_changed_or_new_outputs_v2",
+                "broad_declared_inputs_and_changed_or_new_outputs_v3",
                 report_builder.RESOURCE_CASE_THREAD_SETTINGS[case_id],
                 "osx-arm64",
                 "measured",
@@ -701,6 +703,48 @@ def test_report_rejects_public_cache_output_inventory_below_raw_bytes(
         report_builder.ReportValidationError,
         match="changed/new output inventory excludes raw downloads",
     ):
+        report_builder.generate_report(packet, publication, tmp_path / "report")
+
+
+@pytest.mark.parametrize(
+    ("field", "replacement", "message"),
+    [
+        ("wall_seconds", "0", "Out-of-range resource measurement"),
+        ("max_rss_kb", "NaN", "Non-finite resource measurement"),
+        ("wall_seconds", "Inf", "Non-finite resource measurement"),
+        (
+            "broad_declared_input_inventory_file_count",
+            "0",
+            "Out-of-range resource measurement",
+        ),
+        (
+            "measurement_status",
+            "unavailable",
+            "Required resource measurement is not measured",
+        ),
+    ],
+)
+def test_report_rejects_invalid_required_resource_measurements(
+    tmp_path: Path,
+    field: str,
+    replacement: str,
+    message: str,
+) -> None:
+    packet, publication, _ = make_packet(tmp_path)
+    resource_path = packet / "resource_usage.tsv"
+    columns = report_builder.EVIDENCE_COLUMNS["resource_usage.tsv"]
+    with resource_path.open(encoding="utf-8", newline="") as handle:
+        rows = list(csv.DictReader(handle, delimiter="\t"))
+    row = next(item for item in rows if item["case_id"] == "unit_known_answer")
+    row[field] = replacement
+    write_tsv(
+        resource_path,
+        columns,
+        [[item[column] for column in columns] for item in rows],
+    )
+    rewrite_artifact_manifest(packet)
+
+    with pytest.raises(report_builder.ReportValidationError, match=message):
         report_builder.generate_report(packet, publication, tmp_path / "report")
 
 

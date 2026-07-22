@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the self-checking mito-overview v0.3.0 validation packet."""
+"""Build the internally self-checking mito-overview v0.3.0 validation packet."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ import argparse
 import csv
 import hashlib
 import json
+import math
 import os
 import re
 import shutil
@@ -455,7 +456,9 @@ EVIDENCE_TABLES = {
         "user_cpu_seconds",
         "system_cpu_seconds",
         "max_rss_kb",
+        "broad_declared_input_inventory_file_count",
         "broad_declared_input_inventory_bytes",
+        "changed_or_new_output_inventory_file_count",
         "changed_or_new_output_inventory_bytes",
         "broad_declared_input_inventory_scope",
         "changed_or_new_output_inventory_scope",
@@ -4532,54 +4535,96 @@ def validate_evidence_tables(validation_root: Path) -> None:
                             f"Invalid resource {field} for {case_id}: {row[field]!r}"
                         )
                 status = row["measurement_status"]
-                if status not in {"measured", "unavailable"}:
-                    raise ValueError(f"Invalid resource measurement status: {status!r}")
-                if status == "unavailable" and not row["reason"].strip():
-                    raise ValueError("Unavailable resource measurement lacks a reason")
+                if status != "measured":
+                    raise ValueError(
+                        "Required resource measurement must be measured for "
+                        f"{case_id}: {status!r}"
+                    )
                 expected_threads = RESOURCE_CASE_THREAD_SETTINGS.get(case_id)
                 if row["threads"] != expected_threads:
                     raise ValueError(
                         "Resource thread setting mismatch for "
                         f"{case_id}: {row['threads']!r} != {expected_threads!r}"
                     )
-                if status == "measured":
-                    for field in (
-                        "wall_seconds",
-                        "user_cpu_seconds",
-                        "system_cpu_seconds",
-                        "max_rss_kb",
-                        "broad_declared_input_inventory_bytes",
-                        "changed_or_new_output_inventory_bytes",
-                    ):
-                        try:
-                            if float(row[field]) < 0:
-                                raise ValueError
-                        except ValueError as error:
-                            raise ValueError(
-                                f"Invalid measured resource value {field}={row[field]!r}"
-                            ) from error
-                    if (
-                        row["io_measurement_method"]
-                        != "broad_declared_inputs_and_changed_or_new_outputs_v2"
-                    ):
+                numeric_values: dict[str, float] = {}
+                for field in (
+                    "wall_seconds",
+                    "user_cpu_seconds",
+                    "system_cpu_seconds",
+                    "max_rss_kb",
+                    "broad_declared_input_inventory_bytes",
+                    "changed_or_new_output_inventory_bytes",
+                ):
+                    try:
+                        value = float(row[field])
+                    except ValueError as error:
                         raise ValueError(
-                            "Invalid resource I/O measurement method: "
-                            + row["io_measurement_method"]
-                        )
-                    if row["broad_declared_input_inventory_scope"] != (
-                        "repository_root;cache_root;validation_root"
-                    ):
+                            f"Invalid finite resource value {field}={row[field]!r}"
+                        ) from error
+                    if not math.isfinite(value):
                         raise ValueError(
-                            "Invalid broad declared input inventory scope: "
-                            + row["broad_declared_input_inventory_scope"]
+                            f"Invalid finite resource value {field}={row[field]!r}"
                         )
-                    if row["changed_or_new_output_inventory_scope"] != (
-                        "cache_root;validation_root"
-                    ):
+                    numeric_values[field] = value
+                for field in (
+                    "broad_declared_input_inventory_file_count",
+                    "changed_or_new_output_inventory_file_count",
+                ):
+                    try:
+                        value = int(row[field])
+                    except ValueError as error:
                         raise ValueError(
-                            "Invalid changed/new output inventory scope: "
-                            + row["changed_or_new_output_inventory_scope"]
+                            f"Invalid resource inventory count {field}={row[field]!r}"
+                        ) from error
+                    if value < 0 or str(value) != row[field]:
+                        raise ValueError(
+                            f"Invalid resource inventory count {field}={row[field]!r}"
                         )
+                    numeric_values[field] = float(value)
+                for field in ("wall_seconds", "max_rss_kb"):
+                    if numeric_values[field] <= 0:
+                        raise ValueError(f"Resource {field} must be > 0 for {case_id}")
+                for field in ("user_cpu_seconds", "system_cpu_seconds"):
+                    if numeric_values[field] < 0:
+                        raise ValueError(f"Resource {field} must be >= 0 for {case_id}")
+                if numeric_values["broad_declared_input_inventory_file_count"] <= 0:
+                    raise ValueError(
+                        "Resource broad_declared_input_inventory_file_count must be > 0 "
+                        f"for {case_id}"
+                    )
+                if numeric_values["broad_declared_input_inventory_bytes"] <= 0:
+                    raise ValueError(
+                        "Resource broad_declared_input_inventory_bytes must be > 0 "
+                        f"for {case_id}"
+                    )
+                for field in (
+                    "changed_or_new_output_inventory_file_count",
+                    "changed_or_new_output_inventory_bytes",
+                ):
+                    if numeric_values[field] < 0:
+                        raise ValueError(f"Resource {field} must be >= 0 for {case_id}")
+                if (
+                    row["io_measurement_method"]
+                    != "broad_declared_inputs_and_changed_or_new_outputs_v3"
+                ):
+                    raise ValueError(
+                        "Invalid resource I/O measurement method: "
+                        + row["io_measurement_method"]
+                    )
+                if row["broad_declared_input_inventory_scope"] != (
+                    "repository_root;cache_root;validation_root"
+                ):
+                    raise ValueError(
+                        "Invalid broad declared input inventory scope: "
+                        + row["broad_declared_input_inventory_scope"]
+                    )
+                if row["changed_or_new_output_inventory_scope"] != (
+                    "cache_root;validation_root"
+                ):
+                    raise ValueError(
+                        "Invalid changed/new output inventory scope: "
+                        + row["changed_or_new_output_inventory_scope"]
+                    )
             if resource_case_ids != REQUIRED_RESOURCE_CASE_IDS:
                 raise ValueError(
                     "Resource case inventory mismatch: "
@@ -5019,11 +5064,14 @@ def validate_packet_hygiene(packet_root: Path) -> None:
 def write_verifier(path: Path) -> None:
     script = r'''#!/usr/bin/env bash
 set -euo pipefail
+# Trust boundary: this script checks packet-internal consistency only. Verify
+# the enclosing ZIP against a separately trusted SHA-256 before extraction.
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 python3 - "${ROOT}" <<'PY'
 import csv
 import hashlib
 import json
+import math
 import os
 import re
 import stat
@@ -6054,7 +6102,9 @@ table_headers = {
         "packaged_log_sha256",
         "wall_seconds", "user_cpu_seconds",
         "system_cpu_seconds",
-        "max_rss_kb", "broad_declared_input_inventory_bytes",
+        "max_rss_kb", "broad_declared_input_inventory_file_count",
+        "broad_declared_input_inventory_bytes",
+        "changed_or_new_output_inventory_file_count",
         "changed_or_new_output_inventory_bytes",
         "broad_declared_input_inventory_scope",
         "changed_or_new_output_inventory_scope", "io_measurement_method",
@@ -6504,36 +6554,63 @@ for row in evidence_rows["resource_usage.tsv"]:
                 f"resource {digest_field} does not bind {path_field} for {case_id}"
             )
     status = row["measurement_status"]
-    if status not in {"measured", "unavailable"}:
-        raise SystemExit(f"invalid resource status: {status}")
-    if status == "unavailable" and not row["reason"].strip():
-        raise SystemExit("unavailable resource measurement lacks a reason")
+    if status != "measured":
+        raise SystemExit(f"required resource measurement is not measured: {case_id}")
     if row["threads"] != resource_thread_settings.get(case_id):
         raise SystemExit(f"resource thread setting mismatch: {case_id}")
-    if status == "measured":
-        for field in (
-            "wall_seconds", "user_cpu_seconds", "system_cpu_seconds", "max_rss_kb",
-            "broad_declared_input_inventory_bytes",
-            "changed_or_new_output_inventory_bytes",
-        ):
-            try:
-                if float(row[field]) < 0:
-                    raise ValueError
-            except ValueError as error:
-                raise SystemExit(f"invalid resource measurement {field}") from error
-        if (
-            row["io_measurement_method"]
-            != "broad_declared_inputs_and_changed_or_new_outputs_v2"
-        ):
-            raise SystemExit("invalid resource I/O measurement method")
-        if row["broad_declared_input_inventory_scope"] != (
-            "repository_root;cache_root;validation_root"
-        ):
-            raise SystemExit("invalid broad declared input inventory scope")
-        if row["changed_or_new_output_inventory_scope"] != (
-            "cache_root;validation_root"
-        ):
-            raise SystemExit("invalid changed/new output inventory scope")
+    numeric_values = {}
+    for field in (
+        "wall_seconds", "user_cpu_seconds", "system_cpu_seconds", "max_rss_kb",
+        "broad_declared_input_inventory_bytes",
+        "changed_or_new_output_inventory_bytes",
+    ):
+        try:
+            value = float(row[field])
+        except ValueError as error:
+            raise SystemExit(f"invalid finite resource measurement {field}") from error
+        if not math.isfinite(value):
+            raise SystemExit(f"invalid finite resource measurement {field}")
+        numeric_values[field] = value
+    for field in (
+        "broad_declared_input_inventory_file_count",
+        "changed_or_new_output_inventory_file_count",
+    ):
+        try:
+            value = int(row[field])
+        except ValueError as error:
+            raise SystemExit(f"invalid resource inventory count {field}") from error
+        if value < 0 or str(value) != row[field]:
+            raise SystemExit(f"invalid resource inventory count {field}")
+        numeric_values[field] = value
+    for field in ("wall_seconds", "max_rss_kb"):
+        if numeric_values[field] <= 0:
+            raise SystemExit(f"resource measurement must be positive: {field}")
+    for field in ("user_cpu_seconds", "system_cpu_seconds"):
+        if numeric_values[field] < 0:
+            raise SystemExit(f"resource measurement must be nonnegative: {field}")
+    if numeric_values["broad_declared_input_inventory_file_count"] <= 0:
+        raise SystemExit("resource input inventory file count must be positive")
+    if numeric_values["broad_declared_input_inventory_bytes"] <= 0:
+        raise SystemExit("resource input inventory bytes must be positive")
+    for field in (
+        "changed_or_new_output_inventory_file_count",
+        "changed_or_new_output_inventory_bytes",
+    ):
+        if numeric_values[field] < 0:
+            raise SystemExit(f"resource measurement must be nonnegative: {field}")
+    if (
+        row["io_measurement_method"]
+        != "broad_declared_inputs_and_changed_or_new_outputs_v3"
+    ):
+        raise SystemExit("invalid resource I/O measurement method")
+    if row["broad_declared_input_inventory_scope"] != (
+        "repository_root;cache_root;validation_root"
+    ):
+        raise SystemExit("invalid broad declared input inventory scope")
+    if row["changed_or_new_output_inventory_scope"] != (
+        "cache_root;validation_root"
+    ):
+        raise SystemExit("invalid changed/new output inventory scope")
 
 required_resource_cases = {
     "fresh_clone_candidate_commit", "package_build", "unit_known_answer",

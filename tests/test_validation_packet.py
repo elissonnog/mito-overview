@@ -1558,11 +1558,13 @@ def write_resource_evidence(root: Path, commit: str) -> None:
                 "0.5",
                 "0.1",
                 "1024",
+                "12",
                 "2048",
+                "5",
                 str(raw_fastq_bytes if case_id == "public_cache_prepare" else 4096),
                 "repository_root;cache_root;validation_root",
                 "cache_root;validation_root",
-                "broad_declared_inputs_and_changed_or_new_outputs_v2",
+                "broad_declared_inputs_and_changed_or_new_outputs_v3",
                 packet_builder.RESOURCE_CASE_THREAD_SETTINGS[case_id],
                 "test",
                 "measured",
@@ -3542,6 +3544,48 @@ def test_packet_rejects_casefolded_duplicate_resource_measurement_id(
         packet_builder.build_packet(packet_args(validation, repo, tmp_path / "output"))
 
 
+@pytest.mark.parametrize(
+    ("field", "replacement", "message"),
+    [
+        ("wall_seconds", "0", "wall_seconds must be > 0"),
+        ("max_rss_kb", "NaN", "Invalid finite resource value max_rss_kb"),
+        ("wall_seconds", "Inf", "Invalid finite resource value wall_seconds"),
+        (
+            "broad_declared_input_inventory_file_count",
+            "0",
+            "input_inventory_file_count must be > 0",
+        ),
+        (
+            "broad_declared_input_inventory_bytes",
+            "0",
+            "input_inventory_bytes must be > 0",
+        ),
+        (
+            "measurement_status",
+            "unavailable",
+            "Required resource measurement must be measured",
+        ),
+    ],
+)
+def test_packet_rejects_invalid_required_resource_measurements(
+    tmp_path: Path,
+    field: str,
+    replacement: str,
+    message: str,
+) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    mutate_tsv_value(
+        validation / "resource_usage.tsv",
+        "case_id",
+        "unit_known_answer",
+        field,
+        replacement,
+    )
+    with pytest.raises(ValueError, match=message):
+        packet_builder.build_packet(packet_args(validation, repo, tmp_path / "output"))
+
+
 def test_packet_rejects_missing_resource_case(tmp_path: Path) -> None:
     repo, commit = create_release_repo(tmp_path)
     validation = create_validation_root(tmp_path, repo, commit)
@@ -3710,6 +3754,53 @@ def test_extracted_verifier_rejects_resealed_resource_thread_drift(
     checked = verify_packet(packet)
     assert checked.returncode != 0
     assert "resource thread setting mismatch" in checked.stderr
+
+
+@pytest.mark.parametrize(
+    ("field", "replacement", "message"),
+    [
+        ("wall_seconds", "0", "resource measurement must be positive: wall_seconds"),
+        ("max_rss_kb", "NaN", "invalid finite resource measurement max_rss_kb"),
+        ("wall_seconds", "Inf", "invalid finite resource measurement wall_seconds"),
+        (
+            "broad_declared_input_inventory_file_count",
+            "0",
+            "resource input inventory file count must be positive",
+        ),
+        (
+            "broad_declared_input_inventory_bytes",
+            "0",
+            "resource input inventory bytes must be positive",
+        ),
+        (
+            "measurement_status",
+            "unavailable",
+            "required resource measurement is not measured",
+        ),
+    ],
+)
+def test_extracted_verifier_rejects_resealed_invalid_resource_measurements(
+    tmp_path: Path,
+    field: str,
+    replacement: str,
+    message: str,
+) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    output = tmp_path / "output"
+    packet_builder.build_packet(packet_args(validation, repo, output))
+    packet = output / "packet"
+    mutate_tsv_value(
+        packet / "resource_usage.tsv",
+        "case_id",
+        "unit_known_answer",
+        field,
+        replacement,
+    )
+    rewrite_manifest(packet)
+    checked = verify_packet(packet)
+    assert checked.returncode != 0
+    assert message in checked.stderr
 
 
 def test_extracted_verifier_rejects_resealed_decoded_pixel_drift(
