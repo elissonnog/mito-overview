@@ -125,7 +125,7 @@ MITO_OVERVIEW_PYTHON="$PWD/.conda-release-check/bin/python" \
 
 | Check | Verdict | Observed evidence |
 | --- | --- | --- |
-| Deterministic unit/known-answer suite | PASS | 593 tests passed in 190.90 s on the post-audit local candidate; final commit binding remains deferred to CI and the schema-2.0 packet |
+| Deterministic unit/known-answer suite | Final count deferred | Exact count, commit, environment, and verdict must be read from final CI and the schema-2.0 packet; the post-audit local count is recorded in `analysis_log.md` rather than asserted as final release evidence here |
 | CLI step listing | PASS | command exited 0 |
 | Generic configured dry-run | PASS | command exited 0 |
 | Synthetic long-read workflow | PASS | all applicable steps completed; fixture mvTool and methylation paths exercised |
