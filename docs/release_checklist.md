@@ -7,7 +7,9 @@ The prior `v0.2.1` tag remains immutable at
 `2ba62b775a7204c0dc61f5408989603f536c78da`.
 
 Zenodo, a DOI, bioRxiv submission, manuscript revision, Notion, and MCW/HPC
-deployment are outside this release gate. `CITATION.cff` may omit a DOI. The
+deployment are outside this release gate. Repository-only archive helpers and
+their tests are excluded from default pytest, CI acceptance, and the source
+distribution. `CITATION.cff` may omit a DOI. The
 GitHub release timestamp is authoritative; tracked files do not prerecord a
 release date.
 

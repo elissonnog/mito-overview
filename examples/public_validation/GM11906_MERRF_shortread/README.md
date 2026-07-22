@@ -13,7 +13,7 @@ Example context:
 Included assets:
 - report-native figures from the deterministic pooled input
 - key summary tables from the validation output
-- a focused `8344` mpileup record
+- a filter-matched, focused `8344` mpileup record for read-level inspection
 - a condensed key-findings table
 - input and run provenance records
 
@@ -28,6 +28,14 @@ Observed default-profile values:
 - excluded observations: `7,296,932`
 - `m.8344A>G`: depth `1,027`, alternate count `740`, pooled observed alternate allele fraction `0.720545`
 - feature/consequence output: `MT-TK`, `tRNA_variant`
+
+The focused mpileup is generated with anomalous pairs retained, BAQ disabled,
+unlimited depth, BaseQ/MAPQ `13/20`, excluded flag mask `3844`, and overlap
+removal enabled. Its canonical-base counts are `A=285`, `C=0`, `G=740`, and
+`T=2` (depth `1,027`), matching the default MitoOverview site row. It remains
+an inspection artifact rather than independent validation: `samtools mpileup`
+does not implement MitoOverview's mean-read-quality filter or its complete
+deterministic equal-rank tie policy.
 
 Filter profiles:
 

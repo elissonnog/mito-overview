@@ -37,6 +37,11 @@ MATRIX = REPO_ROOT / "scripts" / "run_public_validation_matrix_v0.3.0.sh"
 ISOLATION_WRAPPER = REPO_ROOT / "scripts" / "run_network_isolated_v0.3.0.sh"
 SHORT_RUNNER = REPO_ROOT / "scripts" / "run_public_shortread_validation_gm11906.sh"
 LONG_RUNNER = REPO_ROOT / "scripts" / "run_public_longread_validation_gm12878.sh"
+GM11906_FOCUSED_MPILEUP = (
+    REPO_ROOT
+    / "examples/public_validation/GM11906_MERRF_shortread"
+    / "GM11906_MERRF_shortread.8344.mpileup"
+)
 ASSERT_ORACLE = REPO_ROOT / "scripts" / "assert_public_validation_oracle_v0.3.0.py"
 ORACLE = (
     REPO_ROOT
@@ -481,7 +486,6 @@ def test_gm11906_source_provenance_identifies_the_pooled_scatac_libraries() -> N
     assert "pooled pseudo-bulk of three GM11906 single-cell ATAC-seq libraries" in runner_contract
     assert "pooled_read_observation_fraction" in runner_contract
     assert "--dataset GM11906_pooled_scATAC" in runner_contract
-
     metadata = json.loads(GM11906_SOURCE_METADATA.read_text(encoding="utf-8"))
     records = metadata["records"]
     canonical = json.dumps(
@@ -519,6 +523,47 @@ def test_gm11906_source_provenance_identifies_the_pooled_scatac_libraries() -> N
         for record in records
         for source in record["source_files"]
     } == expected_source_hashes
+
+
+def test_gm11906_focused_mpileup_uses_the_declared_observation_filters() -> None:
+    runner = SHORT_RUNNER.read_text(encoding="utf-8")
+    for expected in (
+        'samtools mpileup \\\n',
+        'MPILEUP_ARGS=(\n  -A -B -d "${ALLELE_MAX_DEPTH}"',
+        '-Q "${ALLELE_MIN_BASE_QUALITY}" -q "${ALLELE_MIN_MAPPING_QUALITY}"',
+        '--ff "${ALLELE_EXCLUDE_FLAGS}"',
+        'MPILEUP_ARGS+=(-x)',
+        '"${MPILEUP_ARGS[@]}"',
+    ):
+        assert expected in runner
+
+    fields = GM11906_FOCUSED_MPILEUP.read_text(encoding="utf-8").rstrip("\n").split("\t")
+    assert fields[:4] == ["NC_012920.1", "8344", "A", "1027"]
+    bases = fields[4]
+    counts = {base: 0 for base in "ACGT"}
+    index = 0
+    while index < len(bases):
+        symbol = bases[index]
+        if symbol == "^":
+            index += 2
+            continue
+        if symbol == "$":
+            index += 1
+            continue
+        if symbol in "+-":
+            index += 1
+            length_start = index
+            while index < len(bases) and bases[index].isdigit():
+                index += 1
+            indel_length = int(bases[length_start:index])
+            index += indel_length
+            continue
+        if symbol in ".,":
+            counts["A"] += 1
+        elif symbol.upper() in counts:
+            counts[symbol.upper()] += 1
+        index += 1
+    assert counts == {"A": 285, "C": 0, "G": 740, "T": 2}
 
 
 def test_prepare_rejects_tampered_official_metadata_before_network(

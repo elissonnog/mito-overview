@@ -176,7 +176,7 @@ jobs:
 
       - name: Run deterministic unit and known-answer tests
         run: |
-          python -m pytest -q
+          python -m pytest -q tests
 
       - name: Build and inspect source and wheel distributions
         run: |

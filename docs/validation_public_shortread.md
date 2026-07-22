@@ -30,6 +30,13 @@ The provisional default run reported:
 - `m.8344A>G` at depth `1,027`, with `740` alternate observations and pooled observed alternate allele fraction `0.720545`
 - `MT-TK` feature context and `tRNA_variant` consequence output for position `8344`
 
+The accompanying focused mpileup uses `-A -B -d 0 -Q 13 -q 20 --ff 3844`
+with standard overlap removal. It reports canonical
+counts `A=285`, `C=0`, `G=740`, and `T=2` at depth `1,027`. This matched record
+is provided for read-level inspection, not as an independent caller benchmark;
+mpileup does not reproduce the workflow's mean-read-quality filter or complete
+equal-rank tie-resolution contract.
+
 ## Filter-profile matrix
 Profiles vary only the allele-observation quality filters; candidate thresholds remain fixed.
 

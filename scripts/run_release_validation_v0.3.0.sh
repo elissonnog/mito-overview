@@ -1005,7 +1005,7 @@ run_clean "\${SDIST_PYTHON}" -I -c \
   'from importlib.metadata import version; from pathlib import Path; import mito_overview; p=Path(mito_overview.__file__).resolve(); assert version("mito-overview") == "0.3.0"; assert "site-packages" in p.parts; print(p)'
 run_clean "\${SDIST_PYTHON}" -I -m mito_overview.cli --list-steps
 cd $(printf '%q' "${clone_root}")
-run_clean "\${FRESH_PYTHON}" -m pytest -q
+run_clean "\${FRESH_PYTHON}" -m pytest -q tests
 run_clean env MITO_OVERVIEW_PYTHON="\${FRESH_PYTHON}" MITO_OVERVIEW_REQUIRE_INSTALLED=1 ./tests/smoke_public_pipeline.sh
 run_clean env MITO_OVERVIEW_PYTHON="\${FRESH_PYTHON}" MITO_OVERVIEW_REQUIRE_INSTALLED=1 ./tests/smoke_public_pipeline_shortread.sh
 run_clean env MITO_OVERVIEW_PYTHON="\${FRESH_PYTHON}" MITO_OVERVIEW_REQUIRE_INSTALLED=1 ./tests/smoke_public_pipeline_longread_nomethyl.sh
@@ -1430,7 +1430,7 @@ mkdir -p "$(dirname "${CACHE_ROOT}")"
 mkdir "${CACHE_ROOT}"
 run_fresh_clone_validation
 
-run_logged unit_known_answer unit mixed "${FRESH_PYTHON}" -m pytest -q
+run_logged unit_known_answer unit mixed "${FRESH_PYTHON}" -m pytest -q tests
 run_logged cli_step_listing cli not_applicable \
   "${FRESH_PYTHON}" -I -m mito_overview.cli --list-steps
 

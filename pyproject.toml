@@ -48,6 +48,9 @@ mito-overview = "mito_overview.cli:main"
 [project.urls]
 Repository = "https://github.com/elissonnog/mito-overview"
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
 [tool.setuptools.packages.find]
 include = ["mito_overview*"]
 namespaces = false

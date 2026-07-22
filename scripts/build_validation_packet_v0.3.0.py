@@ -1588,6 +1588,8 @@ def read_release_metadata(repo_root: Path) -> dict[str, object]:
         "pyproject.toml": repo_root / "pyproject.toml",
         "mito_overview/__init__.py": repo_root / "mito_overview" / "__init__.py",
         "CITATION.cff": repo_root / "CITATION.cff",
+        "README.md": repo_root / "README.md",
+        "CHANGELOG.md": repo_root / "CHANGELOG.md",
     }
     for label, path in metadata_paths.items():
         if not path.is_file():
@@ -1625,6 +1627,19 @@ def read_release_metadata(repo_root: Path) -> dict[str, object]:
     if init_match is None:
         raise ValueError("mito_overview/__init__.py does not define a literal __version__")
 
+    readme_text = metadata_paths["README.md"].read_text(encoding="utf-8")
+    readme_matches = re.findall(
+        r"(?m)^Version `([^`]+)` defines the workflow/resource release described here\.",
+        readme_text,
+    )
+    if len(readme_matches) != 1:
+        raise ValueError("README.md must contain one canonical release-version sentence")
+
+    changelog_text = metadata_paths["CHANGELOG.md"].read_text(encoding="utf-8")
+    changelog_match = re.search(r"(?m)^## v([^\s]+)(?:\s.*)?$", changelog_text)
+    if changelog_match is None:
+        raise ValueError("CHANGELOG.md does not contain a version heading")
+
     citation_text = metadata_paths["CITATION.cff"].read_text(encoding="utf-8")
     citation_title = top_level_yaml_scalar(citation_text, "title", "CITATION.cff")
     citation_version = top_level_yaml_scalar(citation_text, "version", "CITATION.cff")
@@ -1640,6 +1655,8 @@ def read_release_metadata(repo_root: Path) -> dict[str, object]:
         "pyproject.toml": pyproject_version,
         "mito_overview/__init__.py": init_match.group(1),
         "CITATION.cff": citation_version,
+        "README.md": readme_matches[0],
+        "CHANGELOG.md": changelog_match.group(1),
     }
     stale_versions = [
         f"{label}={version}"
@@ -1655,6 +1672,8 @@ def read_release_metadata(repo_root: Path) -> dict[str, object]:
         "pyproject.toml": pyproject_version,
         "mito_overview/__init__.py": init_match.group(1),
         "CITATION.cff": citation_version,
+        "README.md": readme_matches[0],
+        "CHANGELOG.md": changelog_match.group(1),
     }
     hashes = {label: sha256(path) for label, path in metadata_paths.items()}
     canonical = {
@@ -1673,6 +1692,8 @@ def read_release_metadata(repo_root: Path) -> dict[str, object]:
             "creators": pyproject_authors,
         },
         "mito_overview/__init__.py": {"version": init_match.group(1)},
+        "README.md": {"version": readme_matches[0]},
+        "CHANGELOG.md": {"version": changelog_match.group(1)},
         "CITATION.cff": {
             "name": citation_title,
             "version": citation_version,
@@ -1686,6 +1707,8 @@ def read_release_metadata(repo_root: Path) -> dict[str, object]:
             key: canonical[key] for key in ("name", "version", "repository", "license", "creators")
         },
         "mito_overview/__init__.py": {"version": canonical["version"]},
+        "README.md": {"version": canonical["version"]},
+        "CHANGELOG.md": {"version": canonical["version"]},
         "CITATION.cff": {
             key: canonical[key]
             for key in (
@@ -4473,7 +4496,8 @@ def resolve_release_identity(
     if mismatches:
         raise ValueError(
             f"Release metadata mismatch for {release_version}: {', '.join(mismatches)}; "
-            f"update pyproject.toml, mito_overview/__init__.py, and CITATION.cff to {package_version}"
+            "update pyproject.toml, mito_overview/__init__.py, CITATION.cff, "
+            f"README.md, and CHANGELOG.md to {package_version}"
         )
     return {
         "schema_version": PACKET_SCHEMA_VERSION,
@@ -7251,6 +7275,7 @@ if identity.get("canonical_metadata") != {
     raise SystemExit("canonical package metadata is inconsistent")
 required_metadata = {
     "pyproject.toml", "mito_overview/__init__.py", "CITATION.cff",
+    "README.md", "CHANGELOG.md",
 }
 if (
     set(identity.get("metadata_versions", {})) != required_metadata

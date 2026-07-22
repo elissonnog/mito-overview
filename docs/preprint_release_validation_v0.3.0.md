@@ -124,7 +124,7 @@ Local deterministic validation ran on macOS in an isolated conda environment.
 ### Commands and observed verdicts
 
 ```bash
-./.conda-release-check/bin/python -m pytest -q
+./.conda-release-check/bin/python -m pytest -q tests
 ./.conda-release-check/bin/python -m mito_overview.cli --list-steps
 ./.conda-release-check/bin/python -m mito_overview.cli \
   --config examples/configs/human_example.env --dry-run

@@ -234,7 +234,7 @@ with tarfile.open(archive, "r:gz") as handle:
     handle.extractall(destination, filter="data")
 PY
 cd $(printf '%q' "${SDIST_ROOT}/mito_overview-0.3.0")
-$(printf '%q' "${PYTHON_BIN}") -m pytest -q
+$(printf '%q' "${PYTHON_BIN}") -m pytest -q tests
 EOF
 run_case unit_tests "complete source-distribution test suite passed"
 

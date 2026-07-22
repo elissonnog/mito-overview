@@ -4,6 +4,7 @@ import os
 import subprocess
 import sys
 import tarfile
+import tomllib
 from pathlib import Path, PurePosixPath
 
 from setuptools import build_meta
@@ -22,12 +23,10 @@ REQUIRED_SDIST_PATHS = {
     "resources/annotations/NC_012920.1.fa",
     "resources/annotations/human_mt_reference.gtf",
     "resources/schemas/mito_overview_config.schema.yaml",
-    "resources/zenodo/mito_overview_v0.3.0_draft.json",
     "scripts/build_validation_packet_v0.3.0.py",
     "scripts/export_public_validation_contracts_v0_3_0.py",
     "scripts/assemble_release_assets_v0.3.0.py",
     "scripts/build_release_validation_report_v0.3.0.py",
-    "scripts/capture_zenodo_reservation.py",
     "scripts/check_release_hygiene.py",
     "scripts/hash_validation_inputs.py",
     "scripts/inventory_visual_artifacts.py",
@@ -50,6 +49,12 @@ REQUIRED_SDIST_PATHS = {
     "tests/smoke_public_pipeline.sh",
     "tests/test_validation_packet.py",
     "tests/test_sanitize_validation_evidence.py",
+}
+
+REPOSITORY_ONLY_OPTIONAL_PATHS = {
+    "resources/zenodo/mito_overview_v0.3.0_draft.json",
+    "scripts/capture_zenodo_reservation.py",
+    "optional_checks/test_zenodo_reservation_capture.py",
 }
 
 
@@ -90,7 +95,15 @@ def test_sdist_contains_runnable_release_tests_and_only_public_expected_bundles(
         and PurePosixPath(path).parts[:2] == ("examples", "expected_reports")
     }
     assert expected_bundles == {"TOY-001_output", "TOY-SR-001_output"}
+    assert REPOSITORY_ONLY_OPTIONAL_PATHS.isdisjoint(payload)
     assert not any("__pycache__" in path or path.endswith((".pyc", ".pyo")) for path in payload)
+
+
+def test_default_pytest_scope_excludes_repository_only_optional_checks() -> None:
+    configuration = tomllib.loads(
+        (Path(__file__).parents[1] / "pyproject.toml").read_text(encoding="utf-8")
+    )
+    assert configuration["tool"]["pytest"]["ini_options"]["testpaths"] == ["tests"]
 
 
 def test_extracted_sdist_runs_the_standalone_oracle_checker_in_isolated_mode(

@@ -7,6 +7,7 @@ import importlib.util
 import io
 import json
 import os
+import re
 import shutil
 import struct
 import subprocess
@@ -122,7 +123,15 @@ def create_release_repo(tmp_path: Path, version: str = "0.3.0") -> tuple[Path, s
     (repo / "mito_overview" / "__init__.py").write_text(
         f'__version__ = "{version}"\n', encoding="utf-8"
     )
-    # Deliberately no release date, DOI, manuscript, README, or archive metadata.
+    (repo / "README.md").write_text(
+        f"# mito-overview\n\nVersion `{version}` defines the workflow/resource release described here.\n",
+        encoding="utf-8",
+    )
+    (repo / "CHANGELOG.md").write_text(
+        f"# Changelog\n\n## v{version}\n- release fixture\n",
+        encoding="utf-8",
+    )
+    # Deliberately no release date, DOI, manuscript, or archive metadata.
     (repo / "CITATION.cff").write_text(
         (
             "cff-version: 1.2.0\n"
@@ -177,6 +186,38 @@ def create_release_repo(tmp_path: Path, version: str = "0.3.0") -> tuple[Path, s
         repo,
     )
     return repo, run(["git", "rev-parse", "HEAD"], repo)
+
+
+@pytest.mark.parametrize(
+    ("relative_path", "old", "new", "expected_message"),
+    (
+        (
+            "README.md",
+            "Version `0.3.0`",
+            "Version `0.3.1`",
+            "README.md=0.3.1",
+        ),
+        (
+            "CHANGELOG.md",
+            "## v0.3.0",
+            "## v0.3.1",
+            "CHANGELOG.md=0.3.1",
+        ),
+    ),
+)
+def test_release_metadata_rejects_readme_or_changelog_version_drift(
+    tmp_path: Path,
+    relative_path: str,
+    old: str,
+    new: str,
+    expected_message: str,
+) -> None:
+    repo, _ = create_release_repo(tmp_path)
+    path = repo / relative_path
+    path.write_text(path.read_text(encoding="utf-8").replace(old, new), encoding="utf-8")
+
+    with pytest.raises(ValueError, match=re.escape(expected_message)):
+        packet_builder.read_release_metadata(repo)
 
 
 def write_distribution_artifacts(dist_root: Path, version: str = "0.3.0") -> None:
@@ -1917,6 +1958,8 @@ def test_github_only_packet_builds_and_verifies_from_fresh_extraction(
         "pyproject.toml",
         "mito_overview/__init__.py",
         "CITATION.cff",
+        "README.md",
+        "CHANGELOG.md",
     }
     serialized = json.dumps({"run": run_record, "identity": identity}).lower()
     assert "doi" not in serialized
