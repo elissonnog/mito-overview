@@ -162,12 +162,12 @@ def create_alignment_provenance(
         "reference": digest_file(reference_path),
         "reference_index": digest_file(reference_index_path(reference_path)),
         "public_inputs": _input_records(inputs),
-        "derivation": {
-            "derivation_id": derivation_id,
-            "command_template": command_template,
-            "parameters": dict(sorted(parameters.items())),
-            "tool_versions": {tool: tool_version(tool) for tool in tools},
-        },
+        "derivation": _expected_alignment_derivation(
+            derivation_id=derivation_id,
+            command_template=command_template,
+            parameters=parameters,
+            tools=tools,
+        ),
     }
     _write_json_exclusive(manifest_path, payload)
     return payload
@@ -182,6 +182,27 @@ def _assert_record_matches(label: str, expected: Mapping[str, object], path: Pat
                 f"{label} {field} mismatch for {path}: "
                 f"expected {expected.get(field)}, observed {observed.get(field)}"
             )
+
+
+def _expected_alignment_derivation(
+    *,
+    derivation_id: str,
+    command_template: str,
+    parameters: Mapping[str, str],
+    tools: Sequence[str],
+) -> dict[str, object]:
+    if not derivation_id.strip() or not command_template.strip():
+        raise ProvenanceError("Alignment derivation identity and command must be nonempty")
+    if any(not key or not isinstance(value, str) for key, value in parameters.items()):
+        raise ProvenanceError("Alignment derivation parameters must be nonempty string pairs")
+    if any(not tool for tool in tools) or len(set(tools)) != len(tools):
+        raise ProvenanceError("Alignment derivation tools must be nonempty and unique")
+    return {
+        "derivation_id": derivation_id,
+        "command_template": command_template,
+        "parameters": dict(sorted(parameters.items())),
+        "tool_versions": {tool: tool_version(tool) for tool in sorted(tools)},
+    }
 
 
 def load_manifest(path: Path) -> dict[str, object]:
@@ -202,6 +223,9 @@ def verify_alignment_provenance(
     reference_path: Path,
     inputs: Mapping[str, Path],
     derivation_id: str,
+    command_template: str,
+    parameters: Mapping[str, str],
+    tools: Sequence[str],
 ) -> dict[str, object]:
     """Verify that a cached alignment remains bound to the expected inputs."""
 
@@ -215,8 +239,22 @@ def verify_alignment_provenance(
             f"Dataset mismatch: expected {dataset_id}, observed {payload.get('dataset_id')}"
         )
     derivation = payload.get("derivation")
-    if not isinstance(derivation, dict) or derivation.get("derivation_id") != derivation_id:
-        raise ProvenanceError(f"Derivation identity mismatch for {manifest_path}")
+    expected_derivation = _expected_alignment_derivation(
+        derivation_id=derivation_id,
+        command_template=command_template,
+        parameters=parameters,
+        tools=tools,
+    )
+    if not isinstance(derivation, dict):
+        raise ProvenanceError(f"Derivation metadata is missing for {manifest_path}")
+    for field, expected in expected_derivation.items():
+        if derivation.get(field) != expected:
+            raise ProvenanceError(
+                f"Derivation {field} mismatch for {manifest_path}: "
+                f"expected {expected!r}, observed {derivation.get(field)!r}"
+            )
+    if set(derivation) != set(expected_derivation):
+        raise ProvenanceError(f"Derivation field inventory mismatch for {manifest_path}")
 
     alignment_path = alignment_path.resolve()
     reference_path = reference_path.resolve()
@@ -421,11 +459,22 @@ def verify_deterministic_fastq_subset(
     selection = payload.get("selection")
     if not isinstance(selection, dict):
         raise ProvenanceError("Deterministic FASTQ selection metadata is missing")
+    _assert_record_matches("source FASTQ", payload["source_fastq"], source_fastq)
+    expected_names, source_records_seen = select_fastq_query_names(
+        source_fastq,
+        requested_count=requested_count,
+        seed=seed,
+    )
+    if len(expected_names) != requested_count:
+        raise ProvenanceError(
+            f"Requested {requested_count} FASTQ names but recomputed {len(expected_names)}"
+        )
     expected_selection = {
         "algorithm": "smallest_sha256_seeded_query_names_v1",
         "seed": seed,
         "requested_query_names": requested_count,
         "selected_query_names": requested_count,
+        "source_records_seen": source_records_seen,
         "subset_records_written": requested_count,
     }
     for key, expected in expected_selection.items():
@@ -434,7 +483,8 @@ def verify_deterministic_fastq_subset(
                 f"Deterministic FASTQ {key} mismatch: expected {expected}, "
                 f"observed {selection.get(key)}"
             )
-    _assert_record_matches("source FASTQ", payload["source_fastq"], source_fastq)
+    if set(selection) != set(expected_selection):
+        raise ProvenanceError("Deterministic FASTQ selection field inventory mismatch")
     _assert_record_matches("subset FASTQ", payload["subset_fastq"], output_fastq)
     _assert_record_matches(
         "selected FASTQ query names", payload["selected_query_names"], selected_names_path
@@ -442,6 +492,19 @@ def verify_deterministic_fastq_subset(
     selected_names = selected_names_path.read_text(encoding="utf-8").splitlines()
     if len(selected_names) != requested_count or selected_names != sorted(set(selected_names)):
         raise ProvenanceError("Selected FASTQ query-name ledger is incomplete or noncanonical")
+    if selected_names != expected_names:
+        raise ProvenanceError(
+            "Selected FASTQ query-name ledger is not the seeded minimum-score selection"
+        )
+    subset_names = [query_name for query_name, _ in _iter_fastq_records(output_fastq)]
+    if (
+        len(subset_names) != requested_count
+        or len(set(subset_names)) != requested_count
+        or set(subset_names) != set(expected_names)
+    ):
+        raise ProvenanceError(
+            "Subset FASTQ records do not match the deterministic query-name selection"
+        )
     return payload
 
 

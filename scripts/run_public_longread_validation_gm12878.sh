@@ -191,6 +191,13 @@ if [[ "${alignment_component_count}" -eq 3 ]]; then
     --alignment "${ALIGN_BAM}" \
     --reference "${REF_FASTA}" \
     --derivation-id "${ALIGN_DERIVATION_ID}" \
+    --command-template 'minimap2 -t {threads} -ax map-ont {reference_mmi} {deterministic_subset_fastq} | samtools view -@ {threads} -b -F 4 | samtools sort -@ {threads} -o {alignment_bam}' \
+    --parameter "threads=${THREADS}" \
+    --parameter "unmapped_filter_flag=4" \
+    --parameter "selected_query_names=${SUBSET_READ_NAMES}" \
+    --parameter "selection_seed=${SUBSET_SEED}" \
+    --tool minimap2 \
+    --tool samtools \
     "${ALIGNMENT_INPUTS[@]}"
   echo "[longread-gm12878] reusing provenance-verified reduced BAM ${ALIGN_BAM}"
 elif [[ "${alignment_component_count}" -eq 0 ]]; then

@@ -9,6 +9,7 @@
 - bounded the supported claim to a reproducible, mode-gated mtDNA reporting workflow/resource; this version does not establish clinical validity, analytical sensitivity, deletion truth, absolute copy number, formal NUMT classification, or long-read/short-read equivalence
 - added tracked validation-provenance tooling, known-answer coverage for the five corrections, deterministic public-input provenance, and resource-limited public proof-of-principle reruns
 - aligned the focused GM11906 `m.8344A>G` mpileup with the declared BaseQ, MAPQ, flag, depth, BAQ, orphan-pair, and overlap settings while retaining it as an inspection artifact rather than an independent caller benchmark
+- bound reused public alignments to exact command templates, parameters, and locked tool versions, and bound the GM12878 reduced input to the recomputed seeded minimum-name selection plus frozen subset and ledger identities
 - separated repository-only archival helpers and mocked tests from default pytest, CI acceptance, and source-distribution contents so Zenodo and DOI tooling cannot gate the GitHub release
 - replaced the lead workflow schematic with public ONT report-native views, tightened figure terminology and caveats, consolidated the figure set, and added a deterministic figure builder without repository-specific local paths
 - synchronized package and citation metadata for version 0.3.0, the public repository, and both Medical College of Wisconsin authors

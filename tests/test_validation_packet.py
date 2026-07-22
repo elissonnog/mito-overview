@@ -368,7 +368,9 @@ def write_public_provenance(public_root: Path) -> None:
                 "label": "combined_R2",
             },
         ],
-        "derivation": {"derivation_id": "bwa-mem-samtools-sort-v1"},
+        "derivation": packet_builder.PUBLIC_ALIGNMENT_DERIVATIONS[
+            "GM11906_pooled_scATAC"
+        ],
     }
     paths["shortread_alignment"].write_text(
         json.dumps(short, indent=2) + "\n", encoding="utf-8"
@@ -418,12 +420,15 @@ def write_public_provenance(public_root: Path) -> None:
                 }
             )
 
-    paths["selected_query_names"].write_text(
-        "".join(f"SRR18110025.{index}\n" for index in range(1, 1001)),
-        encoding="utf-8",
+    paths["selected_query_names"].write_bytes(
+        (
+            ROOT
+            / "examples/public_validation/GM12878_ONT_longread/provenance/"
+            "GM12878_ONT_longread.selected_qnames.txt"
+        ).read_bytes()
     )
     source_fastq = frozen_input_record("SRR18110025.fastq.gz")
-    subset_fastq = provenance_record("SRR18110025.deterministic-qnames-1000.fastq.gz")
+    subset_fastq = dict(packet_builder.FROZEN_GM12878_SUBSET_FASTQ_RECORD)
     selected_names = file_provenance_record(
         paths["selected_query_names"],
         "SRR18110025.deterministic-qnames-1000.fastq.gz.selected_qnames.txt",
@@ -435,19 +440,14 @@ def write_public_provenance(public_root: Path) -> None:
         "source_fastq": source_fastq,
         "subset_fastq": subset_fastq,
         "selected_query_names": selected_names,
-        "selection": {
-            "algorithm": "smallest_sha256_seeded_query_names_v1",
-            "requested_query_names": 1000,
-            "selected_query_names": 1000,
-            "source_records_seen": 193043,
-            "seed": "mito-overview-v0.3.0-GM12878-SRR18110025",
-        },
+        "selection": dict(packet_builder.FROZEN_GM12878_SUBSET_SELECTION),
     }
     paths["longread_subset"].write_text(
         json.dumps(subset, indent=2) + "\n", encoding="utf-8"
     )
     subset_record = file_provenance_record(
-        paths["longread_subset"], "subset.provenance.json"
+        paths["longread_subset"],
+        "SRR18110025.deterministic-qnames-1000.fastq.gz.provenance.json",
     )
     long = {
         "schema_version": "1.0",
@@ -463,13 +463,9 @@ def write_public_provenance(public_root: Path) -> None:
             {**subset_record, "label": "deterministic_subset_manifest"},
             {**selected_names, "label": "selected_query_names"},
         ],
-        "derivation": {
-            "derivation_id": "minimap2-map-ont-deterministic-fastq-subset-mapped-only-v1",
-            "parameters": {
-                "selected_query_names": "1000",
-                "selection_seed": "mito-overview-v0.3.0-GM12878-SRR18110025",
-            },
-        },
+        "derivation": packet_builder.PUBLIC_ALIGNMENT_DERIVATIONS[
+            "GM12878_SRR18110025_ONT_reduced_qn1000"
+        ],
     }
     paths["longread_alignment"].write_text(
         json.dumps(long, indent=2) + "\n", encoding="utf-8"
@@ -1742,6 +1738,21 @@ def rewrite_public_artifact_manifest(artifact_root: Path) -> None:
         "\n".join(rows) + "\n",
         encoding="utf-8",
     )
+
+
+def rebind_packet_public_provenance(packet: Path, *paths: Path) -> None:
+    identity_path = packet / "release_identity.json"
+    identity = json.loads(identity_path.read_text(encoding="utf-8"))
+    records = {
+        row["path"]: row
+        for row in identity["public_provenance"]
+        if isinstance(row, dict) and isinstance(row.get("path"), str)
+    }
+    for path in paths:
+        relative = path.relative_to(packet).as_posix()
+        assert relative in records
+        records[relative]["sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
+    identity_path.write_text(json.dumps(identity, indent=2) + "\n", encoding="utf-8")
 
 
 def mutate_tsv_value(
@@ -3557,6 +3568,121 @@ def test_packet_rejects_tampered_official_gm11906_metadata_copy(
         packet_builder.build_packet(packet_args(validation, repo, tmp_path / "output"))
 
 
+@pytest.mark.parametrize(
+    ("provenance_key", "field", "replacement"),
+    (
+        ("shortread_alignment", "command_template", "different short command"),
+        ("shortread_alignment", "parameters", {"threads": "8"}),
+        (
+            "shortread_alignment",
+            "tool_versions",
+            {"bwa": "0.7.18", "samtools": "samtools 1.23.1"},
+        ),
+        ("longread_alignment", "command_template", "different long command"),
+        (
+            "longread_alignment",
+            "parameters",
+            {
+                "selected_query_names": "1000",
+                "selection_seed": "wrong-seed",
+                "threads": "4",
+                "unmapped_filter_flag": "4",
+            },
+        ),
+        (
+            "longread_alignment",
+            "tool_versions",
+            {"minimap2": "2.30", "samtools": "samtools 1.23.1"},
+        ),
+    ),
+)
+def test_packet_rejects_alignment_derivation_drift(
+    tmp_path: Path,
+    provenance_key: str,
+    field: str,
+    replacement: object,
+) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    path = (
+        validation
+        / "public"
+        / packet_builder.PUBLIC_PROVENANCE_FILES[provenance_key]["source"]
+    )
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["derivation"][field] = replacement
+    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="alignment derivation is invalid"):
+        packet_builder.build_packet(packet_args(validation, repo, tmp_path / "output"))
+
+
+def test_packet_rejects_self_consistent_noncanonical_selected_name_ledger(
+    tmp_path: Path,
+) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    public = validation / "public"
+    names_path = public / packet_builder.PUBLIC_PROVENANCE_FILES[
+        "selected_query_names"
+    ]["source"]
+    subset_path = public / packet_builder.PUBLIC_PROVENANCE_FILES["longread_subset"][
+        "source"
+    ]
+    alignment_path = public / packet_builder.PUBLIC_PROVENANCE_FILES[
+        "longread_alignment"
+    ]["source"]
+    names_path.write_text(
+        "".join(f"arbitrary-{index:04d}\n" for index in range(1000)),
+        encoding="utf-8",
+    )
+    selected_record = file_provenance_record(
+        names_path,
+        "SRR18110025.deterministic-qnames-1000.fastq.gz.selected_qnames.txt",
+    )
+    subset = json.loads(subset_path.read_text(encoding="utf-8"))
+    subset["selected_query_names"] = selected_record
+    subset_path.write_text(json.dumps(subset, indent=2) + "\n", encoding="utf-8")
+    alignment = json.loads(alignment_path.read_text(encoding="utf-8"))
+    for record in alignment["public_inputs"]:
+        if record["label"] == "selected_query_names":
+            record.clear()
+            record.update(selected_record, label="selected_query_names")
+    alignment_path.write_text(
+        json.dumps(alignment, indent=2) + "\n", encoding="utf-8"
+    )
+    with pytest.raises(ValueError, match="selected-query-name identity is not frozen"):
+        packet_builder.build_packet(packet_args(validation, repo, tmp_path / "output"))
+
+
+def test_packet_rejects_self_consistent_subset_fastq_digest_drift(
+    tmp_path: Path,
+) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    public = validation / "public"
+    subset_path = public / packet_builder.PUBLIC_PROVENANCE_FILES["longread_subset"][
+        "source"
+    ]
+    alignment_path = public / packet_builder.PUBLIC_PROVENANCE_FILES[
+        "longread_alignment"
+    ]["source"]
+    drifted = dict(packet_builder.FROZEN_GM12878_SUBSET_FASTQ_RECORD)
+    drifted.update(bytes=10721432, md5="e" * 32, sha256="f" * 64)
+    subset = json.loads(subset_path.read_text(encoding="utf-8"))
+    subset["subset_fastq"] = drifted
+    subset_path.write_text(json.dumps(subset, indent=2) + "\n", encoding="utf-8")
+    alignment = json.loads(alignment_path.read_text(encoding="utf-8"))
+    for record in alignment["public_inputs"]:
+        if record["label"] == "deterministic_subset_fastq":
+            record.clear()
+            record.update(drifted, label="deterministic_subset_fastq")
+    alignment_path.write_text(
+        json.dumps(alignment, indent=2) + "\n", encoding="utf-8"
+    )
+    with pytest.raises(ValueError, match="subset FASTQ identity is not frozen"):
+        packet_builder.build_packet(packet_args(validation, repo, tmp_path / "output"))
+
+
 def test_packet_rejects_public_cache_output_inventory_below_raw_bytes(
     tmp_path: Path,
 ) -> None:
@@ -4307,6 +4433,105 @@ def test_extracted_verifier_rejects_rehashed_shortread_provenance_mutation(
     checked = verify_packet(packet)
     assert checked.returncode != 0
     assert "short-read alignment input inventory is incomplete" in checked.stderr
+
+
+def test_extracted_verifier_rejects_resealed_derivation_and_subset_semantic_drift(
+    tmp_path: Path,
+) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    output = tmp_path / "output"
+    packet_builder.build_packet(packet_args(validation, repo, output))
+    base_packet = output / "packet"
+
+    for mutation, expected_error in (
+        ("short_command", "short-read alignment derivation mismatch"),
+        ("short_parameters", "short-read alignment derivation mismatch"),
+        ("long_tools", "long-read alignment derivation mismatch"),
+        ("selected_ledger", "long-read deterministic subset derivation mismatch"),
+        ("subset_digest", "long-read deterministic subset derivation mismatch"),
+    ):
+        packet = tmp_path / f"packet-{mutation}"
+        shutil.copytree(base_packet, packet)
+        short_path = (
+            packet
+            / "public_provenance/GM11906_MERRF_shortread.alignment.provenance.json"
+        )
+        subset_path = (
+            packet
+            / "public_provenance/GM12878_ONT_longread.fastq_subset.provenance.json"
+        )
+        long_path = (
+            packet
+            / "public_provenance/GM12878_ONT_longread.reduced_alignment.provenance.json"
+        )
+        names_path = (
+            packet / "public_provenance/GM12878_ONT_longread.selected_qnames.txt"
+        )
+        changed_paths: list[Path] = []
+        if mutation in {"short_command", "short_parameters"}:
+            payload = json.loads(short_path.read_text(encoding="utf-8"))
+            if mutation == "short_command":
+                payload["derivation"].pop("command_template")
+            else:
+                payload["derivation"]["parameters"] = {"threads": "8"}
+            short_path.write_text(
+                json.dumps(payload, indent=2) + "\n", encoding="utf-8"
+            )
+            changed_paths.append(short_path)
+        elif mutation == "long_tools":
+            payload = json.loads(long_path.read_text(encoding="utf-8"))
+            payload["derivation"]["tool_versions"]["minimap2"] = "2.30"
+            long_path.write_text(
+                json.dumps(payload, indent=2) + "\n", encoding="utf-8"
+            )
+            changed_paths.append(long_path)
+        elif mutation == "selected_ledger":
+            names_path.write_text(
+                "".join(f"arbitrary-{index:04d}\n" for index in range(1000)),
+                encoding="utf-8",
+            )
+            selected_record = file_provenance_record(
+                names_path,
+                "SRR18110025.deterministic-qnames-1000.fastq.gz.selected_qnames.txt",
+            )
+            subset = json.loads(subset_path.read_text(encoding="utf-8"))
+            subset["selected_query_names"] = selected_record
+            subset_path.write_text(
+                json.dumps(subset, indent=2) + "\n", encoding="utf-8"
+            )
+            long = json.loads(long_path.read_text(encoding="utf-8"))
+            for record in long["public_inputs"]:
+                if record["label"] == "selected_query_names":
+                    record.clear()
+                    record.update(selected_record, label="selected_query_names")
+            long_path.write_text(
+                json.dumps(long, indent=2) + "\n", encoding="utf-8"
+            )
+            changed_paths.extend((names_path, subset_path, long_path))
+        else:
+            drifted = dict(packet_builder.FROZEN_GM12878_SUBSET_FASTQ_RECORD)
+            drifted.update(bytes=10721432, md5="e" * 32, sha256="f" * 64)
+            subset = json.loads(subset_path.read_text(encoding="utf-8"))
+            subset["subset_fastq"] = drifted
+            subset_path.write_text(
+                json.dumps(subset, indent=2) + "\n", encoding="utf-8"
+            )
+            long = json.loads(long_path.read_text(encoding="utf-8"))
+            for record in long["public_inputs"]:
+                if record["label"] == "deterministic_subset_fastq":
+                    record.clear()
+                    record.update(drifted, label="deterministic_subset_fastq")
+            long_path.write_text(
+                json.dumps(long, indent=2) + "\n", encoding="utf-8"
+            )
+            changed_paths.extend((subset_path, long_path))
+
+        rebind_packet_public_provenance(packet, *changed_paths)
+        rewrite_manifest(packet)
+        checked = verify_packet(packet)
+        assert checked.returncode != 0, mutation
+        assert expected_error in checked.stderr, mutation
 
 
 def test_oracle_checker_reports_three_run_shortread_derivation(tmp_path: Path) -> None:

@@ -263,6 +263,10 @@ if [[ "${alignment_component_count}" -eq 3 ]]; then
     --alignment "${ALIGN_BAM}" \
     --reference "${REF_FASTA}" \
     --derivation-id "${ALIGN_DERIVATION_ID}" \
+    --command-template 'bwa mem -t {threads} {reference_fasta} {combined_r1} {combined_r2} | samtools sort -@ {threads} -o {alignment_bam}' \
+    --parameter "threads=${THREADS}" \
+    --tool bwa \
+    --tool samtools \
     "${PROVENANCE_INPUTS[@]}"
   echo "[shortread-gm11906] reusing provenance-verified BAM ${ALIGN_BAM}"
 elif [[ "${alignment_component_count}" -eq 0 ]]; then

@@ -32,10 +32,9 @@ def parser() -> argparse.ArgumentParser:
         command.add_argument("--reference", required=True, type=Path)
         command.add_argument("--input", action="append", default=[], metavar="LABEL=PATH")
         command.add_argument("--derivation-id", required=True)
-        if name == "record":
-            command.add_argument("--command-template", required=True)
-            command.add_argument("--parameter", action="append", default=[], metavar="KEY=VALUE")
-            command.add_argument("--tool", action="append", default=[])
+        command.add_argument("--command-template", required=True)
+        command.add_argument("--parameter", action="append", default=[], metavar="KEY=VALUE")
+        command.add_argument("--tool", action="append", default=[])
     return root
 
 
@@ -50,14 +49,12 @@ def main() -> None:
             "reference_path": args.reference,
             "inputs": inputs,
             "derivation_id": args.derivation_id,
+            "command_template": args.command_template,
+            "parameters": parse_key_values(args.parameter),
+            "tools": args.tool,
         }
         if args.action == "record":
-            create_alignment_provenance(
-                **common,
-                command_template=args.command_template,
-                parameters=parse_key_values(args.parameter),
-                tools=args.tool,
-            )
+            create_alignment_provenance(**common)
             print(f"[provenance] recorded {args.manifest}")
         else:
             verify_alignment_provenance(**common)

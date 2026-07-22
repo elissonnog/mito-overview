@@ -369,6 +369,59 @@ FROZEN_PUBLIC_SOURCE_METADATA = {
         "instrument_model": "GridION",
     },
 }
+FROZEN_GM12878_SUBSET_SELECTION = {
+    "algorithm": "smallest_sha256_seeded_query_names_v1",
+    "requested_query_names": 1000,
+    "selected_query_names": 1000,
+    "source_records_seen": 193043,
+    "subset_records_written": 1000,
+    "seed": "mito-overview-v0.3.0-GM12878-SRR18110025",
+}
+FROZEN_GM12878_SUBSET_FASTQ_RECORD = {
+    "name": "SRR18110025.deterministic-qnames-1000.fastq.gz",
+    "bytes": 10721431,
+    "md5": "a337abc2691753c56f030f7f523dd750",
+    "sha256": "40e203ead1d621bfec8caa3c5d18cd1e7e70c08da27008a73364812b6871df33",
+}
+FROZEN_GM12878_SELECTED_QUERY_NAMES_RECORD = {
+    "name": "SRR18110025.deterministic-qnames-1000.fastq.gz.selected_qnames.txt",
+    "bytes": 18422,
+    "sha256": "3444cc7db3dcf78bea807d8bcc6686883a7759d128288c1d26aeae077a771a19",
+}
+PUBLIC_ALIGNMENT_DERIVATIONS = {
+    "GM11906_pooled_scATAC": {
+        "derivation_id": "bwa-mem-samtools-sort-v1",
+        "command_template": (
+            "bwa mem -t {threads} {reference_fasta} {combined_r1} {combined_r2} "
+            "| samtools sort -@ {threads} -o {alignment_bam}"
+        ),
+        "parameters": {"threads": "4"},
+        "tool_versions": {
+            "bwa": "0.7.19-r1273",
+            "samtools": "samtools 1.23.1",
+        },
+    },
+    "GM12878_SRR18110025_ONT_reduced_qn1000": {
+        "derivation_id": (
+            "minimap2-map-ont-deterministic-fastq-subset-mapped-only-v1"
+        ),
+        "command_template": (
+            "minimap2 -t {threads} -ax map-ont {reference_mmi} "
+            "{deterministic_subset_fastq} | samtools view -@ {threads} -b -F 4 "
+            "| samtools sort -@ {threads} -o {alignment_bam}"
+        ),
+        "parameters": {
+            "selected_query_names": "1000",
+            "selection_seed": "mito-overview-v0.3.0-GM12878-SRR18110025",
+            "threads": "4",
+            "unmapped_filter_flag": "4",
+        },
+        "tool_versions": {
+            "minimap2": "2.31-r1302",
+            "samtools": "samtools 1.23.1",
+        },
+    },
+}
 GM11906_SOURCE_METADATA_REPOSITORY_PATH = Path(
     "resources/public_validation/gm11906_ncbi_source_metadata_v0.3.0.json"
 )
@@ -2949,26 +3002,23 @@ def validate_public_provenance(
         (
             short,
             "GM11906_pooled_scATAC",
-            "bwa-mem-samtools-sort-v1",
             "short-read",
         ),
         (
             long,
             "GM12878_SRR18110025_ONT_reduced_qn1000",
-            "minimap2-map-ont-deterministic-fastq-subset-mapped-only-v1",
             "long-read",
         ),
     )
-    for manifest, dataset_id, derivation_id, label in alignment_expectations:
+    for manifest, dataset_id, label in alignment_expectations:
         if manifest.get("schema_version") != "1.0" or manifest.get("provenance_type") != "public_alignment":
             raise ValueError(f"Public {label} alignment provenance identity is invalid")
         if manifest.get("dataset_id") != dataset_id:
             raise ValueError(f"Public {label} alignment dataset identity is invalid")
         for field in ("alignment", "alignment_index", "reference", "reference_index"):
             validate_digest_record(manifest.get(field), f"{label} {field}")
-        derivation = manifest.get("derivation")
-        if not isinstance(derivation, dict) or derivation.get("derivation_id") != derivation_id:
-            raise ValueError(f"Public {label} alignment derivation identity is invalid")
+        if manifest.get("derivation") != PUBLIC_ALIGNMENT_DERIVATIONS[dataset_id]:
+            raise ValueError(f"Public {label} alignment derivation is invalid")
         public_inputs = manifest.get("public_inputs")
         if not isinstance(public_inputs, list) or not public_inputs:
             raise ValueError(f"Public {label} alignment inputs are missing")
@@ -3035,6 +3085,10 @@ def validate_public_provenance(
     selected_names = validate_digest_record(
         subset.get("selected_query_names"), "selected query names"
     )
+    if subset_fastq != FROZEN_GM12878_SUBSET_FASTQ_RECORD:
+        raise ValueError("Public long-read subset FASTQ identity is not frozen")
+    if selected_names != FROZEN_GM12878_SELECTED_QUERY_NAMES_RECORD:
+        raise ValueError("Public long-read selected-query-name identity is not frozen")
     _require_record_content(selected_names, names_path, "selected query names")
 
     try:
@@ -3047,21 +3101,11 @@ def validate_public_provenance(
         raise ValueError("Selected-query-name evidence contains duplicate query names")
 
     selection = subset.get("selection")
-    if not isinstance(selection, dict):
-        raise ValueError("Public long-read subset selection metadata is missing")
-    selected_count = selection.get("selected_query_names")
-    if (
-        selection.get("algorithm") != "smallest_sha256_seeded_query_names_v1"
-        or isinstance(selected_count, bool)
-        or not isinstance(selected_count, int)
-        or selected_count != 1000
-        or selection.get("requested_query_names") != selected_count
-        or selected_count != len(query_names)
-        or selection.get("source_records_seen") != 193043
-        or selection.get("seed")
-        != "mito-overview-v0.3.0-GM12878-SRR18110025"
-    ):
-        raise ValueError("Public long-read subset selection count or algorithm is invalid")
+    if selection != FROZEN_GM12878_SUBSET_SELECTION:
+        raise ValueError("Public long-read subset selection metadata is not frozen")
+    selected_count = FROZEN_GM12878_SUBSET_SELECTION["selected_query_names"]
+    if len(query_names) != selected_count:
+        raise ValueError("Public long-read selected-query-name ledger count is invalid")
 
     long_inputs = {
         record.get("label"): record
@@ -3095,10 +3139,15 @@ def validate_public_provenance(
         paths["longread_subset"],
         "subset manifest",
     )
-    derivation_parameters = long["derivation"].get("parameters")
-    if not isinstance(derivation_parameters, dict) or (
-        derivation_parameters.get("selected_query_names") != str(selected_count)
-        or derivation_parameters.get("selection_seed") != selection.get("seed")
+    if (
+        long_inputs["deterministic_subset_manifest"]["name"]
+        != "SRR18110025.deterministic-qnames-1000.fastq.gz.provenance.json"
+    ):
+        raise ValueError("Public long-read subset-manifest identity is invalid")
+    derivation_parameters = long["derivation"]["parameters"]
+    if (
+        derivation_parameters["selected_query_names"] != str(selected_count)
+        or derivation_parameters["selection_seed"] != selection["seed"]
     ):
         raise ValueError("Public long-read alignment is not tied to the selected query-name subset")
 
@@ -6717,12 +6766,23 @@ short_manifest_path = (
     root / "public_provenance/GM11906_MERRF_shortread.alignment.provenance.json"
 )
 short_manifest = json.loads(short_manifest_path.read_text(encoding="utf-8"))
+expected_short_derivation = {
+    "derivation_id": "bwa-mem-samtools-sort-v1",
+    "command_template": (
+        "bwa mem -t {threads} {reference_fasta} {combined_r1} {combined_r2} "
+        "| samtools sort -@ {threads} -o {alignment_bam}"
+    ),
+    "parameters": {"threads": "4"},
+    "tool_versions": {
+        "bwa": "0.7.19-r1273",
+        "samtools": "samtools 1.23.1",
+    },
+}
 if (
     short_manifest.get("dataset_id") != "GM11906_pooled_scATAC"
-    or short_manifest.get("derivation", {}).get("derivation_id")
-    != "bwa-mem-samtools-sort-v1"
+    or short_manifest.get("derivation") != expected_short_derivation
 ):
-    raise SystemExit("short-read alignment derivation identity mismatch")
+    raise SystemExit("short-read alignment derivation mismatch")
 short_inputs = {
     record.get("label"): record
     for record in short_manifest.get("public_inputs", [])
@@ -6817,16 +6877,100 @@ if (
 selection = long_subset.get("selection", {})
 selected_names_path = root / "public_provenance/GM12878_ONT_longread.selected_qnames.txt"
 selected_names = selected_names_path.read_text(encoding="utf-8").splitlines()
+expected_subset_fastq = {
+    "name": "SRR18110025.deterministic-qnames-1000.fastq.gz",
+    "bytes": 10721431,
+    "md5": "a337abc2691753c56f030f7f523dd750",
+    "sha256": "40e203ead1d621bfec8caa3c5d18cd1e7e70c08da27008a73364812b6871df33",
+}
+expected_selected_names = {
+    "name": "SRR18110025.deterministic-qnames-1000.fastq.gz.selected_qnames.txt",
+    "bytes": 18422,
+    "sha256": "3444cc7db3dcf78bea807d8bcc6686883a7759d128288c1d26aeae077a771a19",
+}
+expected_selection = {
+    "algorithm": "smallest_sha256_seeded_query_names_v1",
+    "requested_query_names": 1000,
+    "selected_query_names": 1000,
+    "source_records_seen": 193043,
+    "subset_records_written": 1000,
+    "seed": "mito-overview-v0.3.0-GM12878-SRR18110025",
+}
 if (
-    selection.get("algorithm") != "smallest_sha256_seeded_query_names_v1"
-    or selection.get("requested_query_names") != 1000
-    or selection.get("selected_query_names") != 1000
-    or selection.get("source_records_seen") != 193043
-    or selection.get("seed") != "mito-overview-v0.3.0-GM12878-SRR18110025"
+    long_subset.get("subset_fastq") != expected_subset_fastq
+    or long_subset.get("selected_query_names") != expected_selected_names
+    or selection != expected_selection
+    or selected_names_path.stat().st_size != expected_selected_names["bytes"]
+    or digest(selected_names_path) != expected_selected_names["sha256"]
     or len(selected_names) != 1000
     or len(set(selected_names)) != 1000
 ):
     raise SystemExit("long-read deterministic subset derivation mismatch")
+
+long_manifest_path = (
+    root / "public_provenance/GM12878_ONT_longread.reduced_alignment.provenance.json"
+)
+long_manifest = json.loads(long_manifest_path.read_text(encoding="utf-8"))
+expected_long_derivation = {
+    "derivation_id": "minimap2-map-ont-deterministic-fastq-subset-mapped-only-v1",
+    "command_template": (
+        "minimap2 -t {threads} -ax map-ont {reference_mmi} "
+        "{deterministic_subset_fastq} | samtools view -@ {threads} -b -F 4 "
+        "| samtools sort -@ {threads} -o {alignment_bam}"
+    ),
+    "parameters": {
+        "selected_query_names": "1000",
+        "selection_seed": "mito-overview-v0.3.0-GM12878-SRR18110025",
+        "threads": "4",
+        "unmapped_filter_flag": "4",
+    },
+    "tool_versions": {
+        "minimap2": "2.31-r1302",
+        "samtools": "samtools 1.23.1",
+    },
+}
+if (
+    long_manifest.get("dataset_id")
+    != "GM12878_SRR18110025_ONT_reduced_qn1000"
+    or long_manifest.get("derivation") != expected_long_derivation
+):
+    raise SystemExit("long-read alignment derivation mismatch")
+long_inputs = {
+    record.get("label"): record
+    for record in long_manifest.get("public_inputs", [])
+    if isinstance(record, dict)
+}
+expected_long_labels = {
+    "SRR18110025_full_fastq",
+    "deterministic_subset_fastq",
+    "deterministic_subset_manifest",
+    "selected_query_names",
+}
+if set(long_inputs) != expected_long_labels:
+    raise SystemExit("long-read alignment input inventory is incomplete")
+
+def without_label(record):
+    return {key: value for key, value in record.items() if key != "label"}
+
+if (
+    without_label(long_inputs["SRR18110025_full_fastq"]) != long_source
+    or without_label(long_inputs["deterministic_subset_fastq"])
+    != expected_subset_fastq
+    or without_label(long_inputs["selected_query_names"])
+    != expected_selected_names
+):
+    raise SystemExit("long-read alignment input linkage mismatch")
+subset_manifest_input = long_inputs["deterministic_subset_manifest"]
+subset_manifest_path = (
+    root / "public_provenance/GM12878_ONT_longread.fastq_subset.provenance.json"
+)
+if (
+    subset_manifest_input.get("name")
+    != "SRR18110025.deterministic-qnames-1000.fastq.gz.provenance.json"
+    or subset_manifest_input.get("bytes") != subset_manifest_path.stat().st_size
+    or subset_manifest_input.get("sha256") != digest(subset_manifest_path)
+):
+    raise SystemExit("long-read subset-manifest linkage mismatch")
 
 measurement_ids = set()
 resource_case_ids = set()
