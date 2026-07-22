@@ -87,6 +87,8 @@ def track_summary(df: pd.DataFrame) -> pd.DataFrame:
     for track, sub in df.groupby("track", sort=False):
         total_cov = float(sub["valid_coverage"].sum())
         total_calls = float((sub["modified_count"] + sub["canonical_count"]).sum())
+        coverage_evaluable = total_cov > 0
+        calls_evaluable = total_calls > 0
         rows.append(
             {
                 "track": track,
@@ -97,14 +99,20 @@ def track_summary(df: pd.DataFrame) -> pd.DataFrame:
                     float((sub["percent_modified"] * sub["valid_coverage"]).sum() / total_cov),
                     6,
                 )
-                if total_cov
-                else 0.0,
+                if coverage_evaluable
+                else np.nan,
+                "coverage_weighted_denominator_valid_coverage": round(total_cov, 6),
+                "coverage_weighted_status": "ok" if coverage_evaluable else "not_evaluable",
+                "coverage_weighted_reason_code": "" if coverage_evaluable else "zero_valid_coverage",
                 "count_weighted_percent_modified": round(
                     float(100.0 * sub["modified_count"].sum() / total_calls),
                     6,
                 )
-                if total_calls
-                else 0.0,
+                if calls_evaluable
+                else np.nan,
+                "count_weighted_denominator_calls": round(total_calls, 6),
+                "count_weighted_status": "ok" if calls_evaluable else "not_evaluable",
+                "count_weighted_reason_code": "" if calls_evaluable else "zero_modified_plus_canonical_count",
                 "mean_valid_coverage": round(float(sub["valid_coverage"].mean()), 6),
                 "median_valid_coverage": round(float(sub["valid_coverage"].median()), 6),
             }
@@ -122,10 +130,104 @@ def build_proxy(df: pd.DataFrame) -> pd.DataFrame:
         modified_count=("modified_count", "sum"),
         canonical_count=("canonical_count", "sum"),
     )
-    total_calls = proxy["modified_count"] + proxy["canonical_count"]
-    proxy["percent_modified"] = np.where(total_calls > 0, 100.0 * proxy["modified_count"] / total_calls, 0.0)
+    modified_count = pd.to_numeric(proxy["modified_count"], errors="coerce")
+    canonical_count = pd.to_numeric(proxy["canonical_count"], errors="coerce")
+    total_calls = modified_count + canonical_count
+    proxy["percent_modified"] = pd.Series(np.nan, index=proxy.index, dtype=float)
+    evaluable = total_calls > 0
+    proxy.loc[evaluable, "percent_modified"] = (
+        100.0 * modified_count.loc[evaluable] / total_calls.loc[evaluable]
+    ).to_numpy(dtype=float)
     proxy["track"] = "Phased_proxy_all_reads"
     return proxy[ROW_COLUMNS]
+
+
+def np_proxy_comparison_summary(
+    comparison_df: pd.DataFrame,
+    *,
+    tracks_available: int,
+    np_rows: int,
+    proxy_rows: int,
+) -> pd.DataFrame:
+    """Summarize NP/proxy agreement without converting undefined statistics to zero."""
+
+    shared_positions = int(len(comparison_df))
+    comparable = comparison_df.copy()
+    for column in ["percent_modified_np", "percent_modified_proxy"]:
+        if column not in comparable.columns:
+            comparable[column] = np.nan
+        comparable[column] = pd.to_numeric(comparable[column], errors="coerce")
+    comparable = comparable.replace([np.inf, -np.inf], np.nan).dropna(
+        subset=["percent_modified_np", "percent_modified_proxy"]
+    )
+    evaluable_positions = int(len(comparable))
+
+    if evaluable_positions:
+        mean_abs_difference = round(
+            float(
+                (
+                    comparable["percent_modified_np"]
+                    - comparable["percent_modified_proxy"]
+                )
+                .abs()
+                .mean()
+            ),
+            6,
+        )
+        mean_status = "ok"
+        mean_reason = ""
+    else:
+        mean_abs_difference = np.nan
+        mean_status = "not_evaluable"
+        mean_reason = "no_shared_positions" if shared_positions == 0 else "no_evaluable_shared_positions"
+
+    correlation = np.nan
+    correlation_status = "not_evaluable"
+    if evaluable_positions < 2:
+        correlation_reason = "fewer_than_two_evaluable_shared_positions"
+    elif (
+        comparable["percent_modified_np"].nunique(dropna=True) < 2
+        or comparable["percent_modified_proxy"].nunique(dropna=True) < 2
+    ):
+        correlation_reason = "undefined_zero_variance"
+    else:
+        corr_value = comparable["percent_modified_np"].corr(comparable["percent_modified_proxy"])
+        if pd.notna(corr_value):
+            correlation = round(float(corr_value), 6)
+            correlation_status = "ok"
+            correlation_reason = ""
+        else:
+            correlation_reason = "undefined_zero_variance"
+
+    if evaluable_positions:
+        status = "ok"
+        reason_code = ""
+    else:
+        status = "not_evaluable"
+        reason_code = "no_shared_positions" if shared_positions == 0 else "no_evaluable_shared_positions"
+
+    return pd.DataFrame(
+        [
+            {"metric": "status", "value": status},
+            {"metric": "reason_code", "value": reason_code},
+            {"metric": "tracks_available", "value": int(tracks_available)},
+            {"metric": "np_rows", "value": int(np_rows)},
+            {"metric": "proxy_rows", "value": int(proxy_rows)},
+            {"metric": "shared_np_proxy_positions", "value": shared_positions},
+            {"metric": "evaluable_np_proxy_positions", "value": evaluable_positions},
+            {"metric": "np_proxy_mean_abs_difference", "value": mean_abs_difference},
+            {
+                "metric": "np_proxy_mean_abs_difference_denominator_positions",
+                "value": evaluable_positions,
+            },
+            {"metric": "np_proxy_mean_abs_difference_status", "value": mean_status},
+            {"metric": "np_proxy_mean_abs_difference_reason_code", "value": mean_reason},
+            {"metric": "np_proxy_correlation", "value": correlation},
+            {"metric": "np_proxy_correlation_denominator_positions", "value": evaluable_positions},
+            {"metric": "np_proxy_correlation_status", "value": correlation_status},
+            {"metric": "np_proxy_correlation_reason_code", "value": correlation_reason},
+        ]
+    )
 
 
 def render_no_data_report(
@@ -164,13 +266,15 @@ def render_no_data_report(
     pd.DataFrame(
         columns=["position", "percent_modified_np", "percent_modified_proxy", "abs_difference"]
     ).to_csv(cmp_path, sep="\t", index=False)
-    pd.DataFrame(
-        [
-            {"metric": "status", "value": status},
-            {"metric": "reason_code", "value": reason_code},
-            {"metric": "shared_np_proxy_positions", "value": 0},
-        ]
-    ).to_csv(cmp_summary_path, sep="\t", index=False)
+    cmp_summary = np_proxy_comparison_summary(
+        pd.DataFrame(),
+        tracks_available=0,
+        np_rows=0,
+        proxy_rows=0,
+    )
+    cmp_summary.loc[cmp_summary["metric"] == "status", "value"] = status
+    cmp_summary.loc[cmp_summary["metric"] == "reason_code", "value"] = reason_code
+    cmp_summary.to_csv(cmp_summary_path, sep="\t", index=False, na_rep="NA")
     intro_html = '<p class="muted">No mitochondrial bedmethyl rows were available for the exploratory methylation summary.</p>'
     body_html = "<section><h2>Status</h2>" + df_to_html_table(summary_df, max_rows=20) + "</section>"
     render_page(
@@ -262,11 +366,11 @@ def run_step(
             inputs_configured=inputs_configured,
         )
 
-    combined_df.to_csv(combined_path, sep="\t", index=False)
+    combined_df.to_csv(combined_path, sep="\t", index=False, na_rep="NA")
     print(f"[methylation] wrote combined rows {combined_path}", flush=True)
 
     summary_df = track_summary(combined_df)
-    summary_df.to_csv(summary_path, sep="\t", index=False)
+    summary_df.to_csv(summary_path, sep="\t", index=False, na_rep="NA")
     print(f"[methylation] wrote track summary {summary_path}", flush=True)
 
     np_proxy_cmp = pd.DataFrame(
@@ -284,27 +388,16 @@ def run_step(
             np_proxy_cmp["abs_difference"] = (
                 np_proxy_cmp["percent_modified_np"] - np_proxy_cmp["percent_modified_proxy"]
             ).abs()
-    np_proxy_cmp.to_csv(cmp_path, sep="\t", index=False)
+    np_proxy_cmp.to_csv(cmp_path, sep="\t", index=False, na_rep="NA")
     print(f"[methylation] wrote NP vs proxy table {cmp_path}", flush=True)
 
-    correlation = 0.0
-    if len(np_proxy_cmp) > 1:
-        corr_value = np_proxy_cmp["percent_modified_np"].corr(np_proxy_cmp["percent_modified_proxy"])
-        correlation = round(float(corr_value), 6) if pd.notna(corr_value) else 0.0
-    cmp_summary = pd.DataFrame(
-        [
-            {"metric": "tracks_available", "value": int(summary_df["track"].nunique())},
-            {"metric": "np_rows", "value": int((combined_df["track"] == "NP_real_all_reads").sum())},
-            {"metric": "proxy_rows", "value": int((combined_df["track"] == "Phased_proxy_all_reads").sum())},
-            {"metric": "shared_np_proxy_positions", "value": int(len(np_proxy_cmp))},
-            {
-                "metric": "np_proxy_mean_abs_difference",
-                "value": round(float(np_proxy_cmp["abs_difference"].mean()), 6) if not np_proxy_cmp.empty else 0.0,
-            },
-            {"metric": "np_proxy_correlation", "value": correlation},
-        ]
+    cmp_summary = np_proxy_comparison_summary(
+        np_proxy_cmp,
+        tracks_available=int(summary_df["track"].nunique()),
+        np_rows=int((combined_df["track"] == "NP_real_all_reads").sum()),
+        proxy_rows=int((combined_df["track"] == "Phased_proxy_all_reads").sum()),
     )
-    cmp_summary.to_csv(cmp_summary_path, sep="\t", index=False)
+    cmp_summary.to_csv(cmp_summary_path, sep="\t", index=False, na_rep="NA")
     print(f"[methylation] wrote NP vs proxy summary {cmp_summary_path}", flush=True)
 
     summary_fig = figure_dir / "mito_methylation_weighted_summary.png"
@@ -335,12 +428,15 @@ def run_step(
     print(f"[methylation] wrote profile figure {profile_fig}", flush=True)
 
     cmp_fig = None
-    if not np_proxy_cmp.empty:
+    evaluable_cmp = np_proxy_cmp.dropna(
+        subset=["percent_modified_np", "percent_modified_proxy"]
+    )
+    if not evaluable_cmp.empty:
         cmp_fig = figure_dir / "mito_methylation_np_vs_proxy.png"
         plt.figure(figsize=(5, 5))
         plt.scatter(
-            np_proxy_cmp["percent_modified_np"],
-            np_proxy_cmp["percent_modified_proxy"],
+            evaluable_cmp["percent_modified_np"],
+            evaluable_cmp["percent_modified_proxy"],
             s=8,
             alpha=0.4,
             color="#2563eb",
@@ -370,7 +466,7 @@ def run_step(
         f"<div class='metrics-grid'>{metrics_html}</div>"
     )
     body_parts = [
-        "<section><h2>Track summary</h2>" + df_to_html_table(summary_df, max_rows=20) + "</section>",
+        "<section><h2>Track summary</h2>" + df_to_html_table(summary_df.fillna("NA"), max_rows=20) + "</section>",
         "<section><h2>Weighted methylation summary</h2>"
         + figure_html(summary_fig, "Coverage-weighted mitochondrial methylation across tracks")
         + "</section>",
@@ -378,10 +474,10 @@ def run_step(
         + figure_html(profile_fig, "Rolling mean methylation profiles across the mitochondrial genome")
         + "</section>",
         "<section><h2>NP vs phased-proxy comparison summary</h2>"
-        + df_to_html_table(cmp_summary, max_rows=20)
+        + df_to_html_table(cmp_summary.fillna("NA"), max_rows=20)
         + "</section>",
         "<section><h2>NP vs phased-proxy shared-position table</h2>"
-        + df_to_html_table(np_proxy_cmp, max_rows=30)
+        + df_to_html_table(np_proxy_cmp.fillna("NA"), max_rows=30)
         + "</section>",
     ]
     if cmp_fig:

@@ -9,6 +9,7 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 
 from mito_overview.report_common import df_to_html_table, figure_html, metric_card, render_page
@@ -137,6 +138,26 @@ def render_status_page(
     }
 
 
+def _metric_status(denominator: int, reason_code: str) -> tuple[str, str]:
+    """Return controlled evaluability metadata for a denominator-backed metric."""
+
+    if denominator > 0:
+        return "ok", ""
+    return "not_evaluable", reason_code
+
+
+def _summary_value(value: object) -> object:
+    """Represent undefined numeric metrics explicitly in TSV and HTML outputs."""
+
+    return "NA" if pd.isna(value) else value
+
+
+def _display_value(value: float, digits: int = 4) -> float | str:
+    """Format report cards without presenting undefined values as zero."""
+
+    return "NA" if pd.isna(value) else round(float(value), digits)
+
+
 def run_step(
     *,
     summary_dir: str | Path,
@@ -196,12 +217,24 @@ def run_step(
     ].copy()
 
     edge_candidates = pd.DataFrame(columns=candidates_df.columns)
-    candidate_edge_fraction = 0.0
+    candidate_edge_fraction = np.nan
+    candidate_position_denominator = 0
     if not candidates_df.empty and "position" in candidates_df.columns:
         candidate_positions = pd.to_numeric(candidates_df["position"], errors="coerce")
-        edge_mask = (candidate_positions <= edge) | (candidate_positions > (mt_length - edge))
-        edge_candidates = candidates_df.loc[edge_mask.fillna(False)].copy()
-        candidate_edge_fraction = float(len(edge_candidates) / len(candidates_df)) if len(candidates_df) else 0.0
+        valid_candidate_positions = candidate_positions.dropna()
+        candidate_position_denominator = int(len(valid_candidate_positions))
+        if candidate_position_denominator:
+            edge_mask = (valid_candidate_positions <= edge) | (
+                valid_candidate_positions > (mt_length - edge)
+            )
+            edge_candidates = candidates_df.loc[edge_mask[edge_mask].index].copy()
+            candidate_edge_fraction = float(
+                len(edge_candidates) / candidate_position_denominator
+            )
+    candidate_status, candidate_reason = _metric_status(
+        candidate_position_denominator,
+        "no_usable_candidate_positions",
+    )
 
     if "is_primary" in reads_df.columns:
         primary_mask = pd.to_numeric(reads_df["is_primary"], errors="coerce") == 1
@@ -209,27 +242,41 @@ def run_step(
     else:
         reads_eval = reads_df.copy()
 
-    edge_start_fraction = 0.0
+    edge_start_fraction = np.nan
+    read_start_denominator = 0
     if not reads_eval.empty and "read_start" in reads_eval.columns:
         read_start = pd.to_numeric(reads_eval["read_start"], errors="coerce")
         read_start = read_start.dropna()
+        read_start_denominator = int(len(read_start))
         if not read_start.empty:
             edge_start_fraction = float((read_start <= edge).mean())
+    read_start_status, read_start_reason = _metric_status(
+        read_start_denominator,
+        "no_usable_primary_read_starts",
+    )
 
-    edge_end_fraction = 0.0
+    edge_end_fraction = np.nan
+    read_end_denominator = 0
     if not reads_eval.empty and "read_end" in reads_eval.columns:
         read_end = pd.to_numeric(reads_eval["read_end"], errors="coerce")
         read_end = read_end.dropna()
+        read_end_denominator = int(len(read_end))
         if not read_end.empty:
             edge_end_fraction = float((read_end > (mt_length - edge)).mean())
+    read_end_status, read_end_reason = _metric_status(
+        read_end_denominator,
+        "no_usable_primary_read_ends",
+    )
 
-    edge_softclip_fraction = 0.0
+    edge_softclip_fraction = np.nan
+    softclip_denominator = 0
     softclip_columns = {"read_start", "read_end", "softclip_fraction"}
     if not reads_eval.empty and softclip_columns.issubset(reads_eval.columns):
         softclip_df = reads_eval.loc[:, ["read_start", "read_end", "softclip_fraction"]].copy()
         for column in softclip_df.columns:
             softclip_df[column] = pd.to_numeric(softclip_df[column], errors="coerce")
         softclip_df = softclip_df.dropna()
+        softclip_denominator = int(len(softclip_df))
         if not softclip_df.empty:
             edge_softclip_fraction = float(
                 (
@@ -240,10 +287,51 @@ def run_step(
                     & (softclip_df["softclip_fraction"] > 0.20)
                 ).mean()
             )
+    softclip_status, softclip_reason = _metric_status(
+        softclip_denominator,
+        "no_usable_primary_read_softclip_records",
+    )
 
-    mean_depth_first_edge = round(float(first_edge["depth"].mean()), 3) if not first_edge.empty else 0.0
-    mean_depth_last_edge = round(float(last_edge["depth"].mean()), 3) if not last_edge.empty else 0.0
-    mean_depth_interior = round(float(interior["depth"].mean()), 3) if not interior.empty else 0.0
+    first_edge_denominator = int(len(first_edge))
+    last_edge_denominator = int(len(last_edge))
+    interior_denominator = int(len(interior))
+    mean_depth_first_edge = (
+        round(float(first_edge["depth"].mean()), 3)
+        if first_edge_denominator
+        else np.nan
+    )
+    mean_depth_last_edge = (
+        round(float(last_edge["depth"].mean()), 3)
+        if last_edge_denominator
+        else np.nan
+    )
+    mean_depth_interior = (
+        round(float(interior["depth"].mean()), 3)
+        if interior_denominator
+        else np.nan
+    )
+    first_depth_status, first_depth_reason = _metric_status(
+        first_edge_denominator,
+        "no_positions_in_first_edge_window",
+    )
+    last_depth_status, last_depth_reason = _metric_status(
+        last_edge_denominator,
+        "no_positions_in_last_edge_window",
+    )
+    interior_depth_status, interior_depth_reason = _metric_status(
+        interior_denominator,
+        "no_positions_in_interior_window",
+    )
+    depth_complete = all(
+        denominator > 0
+        for denominator in [
+            first_edge_denominator,
+            last_edge_denominator,
+            interior_denominator,
+        ]
+    )
+    module_status = "ok" if depth_complete else "not_evaluable"
+    module_reason = "" if depth_complete else "incomplete_depth_region_evidence"
     print(
         f"[circularity_qc] edge_bp={edge} first_edge_mean={mean_depth_first_edge:.3f} "
         f"last_edge_mean={mean_depth_last_edge:.3f} interior_mean={mean_depth_interior:.3f} "
@@ -255,20 +343,45 @@ def run_step(
 
     summary_df = pd.DataFrame(
         [
+            {"metric": "status", "value": module_status},
+            {"metric": "reason_code", "value": module_reason},
             {"metric": "edge_window_bp", "value": int(edge)},
-            {"metric": "mean_depth_first_edge", "value": mean_depth_first_edge},
-            {"metric": "mean_depth_last_edge", "value": mean_depth_last_edge},
-            {"metric": "mean_depth_interior", "value": mean_depth_interior},
+            {"metric": "depth_positions_total", "value": int(len(depth_df))},
+            {"metric": "mean_depth_first_edge", "value": _summary_value(mean_depth_first_edge)},
+            {"metric": "mean_depth_first_edge_denominator_positions", "value": first_edge_denominator},
+            {"metric": "mean_depth_first_edge_status", "value": first_depth_status},
+            {"metric": "mean_depth_first_edge_reason_code", "value": first_depth_reason},
+            {"metric": "mean_depth_last_edge", "value": _summary_value(mean_depth_last_edge)},
+            {"metric": "mean_depth_last_edge_denominator_positions", "value": last_edge_denominator},
+            {"metric": "mean_depth_last_edge_status", "value": last_depth_status},
+            {"metric": "mean_depth_last_edge_reason_code", "value": last_depth_reason},
+            {"metric": "mean_depth_interior", "value": _summary_value(mean_depth_interior)},
+            {"metric": "mean_depth_interior_denominator_positions", "value": interior_denominator},
+            {"metric": "mean_depth_interior_status", "value": interior_depth_status},
+            {"metric": "mean_depth_interior_reason_code", "value": interior_depth_reason},
             {"metric": "candidate_sites_total", "value": int(len(candidates_df))},
+            {"metric": "candidate_edge_fraction_denominator_positions", "value": candidate_position_denominator},
             {"metric": "candidate_sites_in_edges", "value": int(len(edge_candidates))},
-            {"metric": "candidate_edge_fraction", "value": round(candidate_edge_fraction, 6)},
-            {"metric": "primary_read_start_in_edge_fraction", "value": round(edge_start_fraction, 6)},
-            {"metric": "primary_read_end_in_edge_fraction", "value": round(edge_end_fraction, 6)},
-            {"metric": "edge_read_heavy_softclip_fraction", "value": round(edge_softclip_fraction, 6)},
+            {"metric": "candidate_edge_fraction", "value": _summary_value(round(candidate_edge_fraction, 6))},
+            {"metric": "candidate_edge_fraction_status", "value": candidate_status},
+            {"metric": "candidate_edge_fraction_reason_code", "value": candidate_reason},
+            {"metric": "primary_read_rows", "value": int(len(reads_eval))},
+            {"metric": "primary_read_start_in_edge_fraction_denominator_reads", "value": read_start_denominator},
+            {"metric": "primary_read_start_in_edge_fraction", "value": _summary_value(round(edge_start_fraction, 6))},
+            {"metric": "primary_read_start_in_edge_fraction_status", "value": read_start_status},
+            {"metric": "primary_read_start_in_edge_fraction_reason_code", "value": read_start_reason},
+            {"metric": "primary_read_end_in_edge_fraction_denominator_reads", "value": read_end_denominator},
+            {"metric": "primary_read_end_in_edge_fraction", "value": _summary_value(round(edge_end_fraction, 6))},
+            {"metric": "primary_read_end_in_edge_fraction_status", "value": read_end_status},
+            {"metric": "primary_read_end_in_edge_fraction_reason_code", "value": read_end_reason},
+            {"metric": "edge_read_heavy_softclip_fraction_denominator_reads", "value": softclip_denominator},
+            {"metric": "edge_read_heavy_softclip_fraction", "value": _summary_value(round(edge_softclip_fraction, 6))},
+            {"metric": "edge_read_heavy_softclip_fraction_status", "value": softclip_status},
+            {"metric": "edge_read_heavy_softclip_fraction_reason_code", "value": softclip_reason},
         ],
         columns=SUMMARY_COLUMNS,
     )
-    summary_df.to_csv(summary_path, sep="\t", index=False)
+    summary_df.to_csv(summary_path, sep="\t", index=False, na_rep="NA")
     print(f"[circularity_qc] wrote summary table {summary_path}", flush=True)
 
     fig, axes = plt.subplots(1, 2, figsize=(12, 4))
@@ -312,10 +425,10 @@ def run_step(
     metrics_html = "".join(
         [
             metric_card("Edge window (bp)", int(edge)),
-            metric_card("Edge candidate fraction", round(candidate_edge_fraction, 4)),
-            metric_card("Edge read-start fraction", round(edge_start_fraction, 4)),
-            metric_card("Edge read-end fraction", round(edge_end_fraction, 4)),
-            metric_card("Edge heavy-softclip fraction", round(edge_softclip_fraction, 4)),
+            metric_card("Edge candidate fraction", _display_value(candidate_edge_fraction)),
+            metric_card("Edge read-start fraction", _display_value(edge_start_fraction)),
+            metric_card("Edge read-end fraction", _display_value(edge_end_fraction)),
+            metric_card("Edge heavy-softclip fraction", _display_value(edge_softclip_fraction)),
         ]
     )
     intro_html = (
@@ -327,7 +440,7 @@ def run_step(
     )
     body_html = (
         "<section><h2>Circularity QC summary</h2>"
-        + df_to_html_table(summary_df, max_rows=20)
+        + df_to_html_table(summary_df, max_rows=60)
         + "</section>"
         + "<section><h2>Depth near mitochondrial reference edges</h2>"
         + figure_html(depth_fig, "Depth across the first and last mitochondrial edge windows")
@@ -349,7 +462,7 @@ def run_step(
     )
     print(f"[circularity_qc] wrote report {report_path}", flush=True)
     return {
-        "status": "ok",
+        "status": module_status,
         "summary_path": summary_path,
         "depth_figure_path": depth_fig,
         "edge_figure_path": edge_fig,
