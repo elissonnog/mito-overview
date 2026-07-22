@@ -3,7 +3,7 @@
   "resource_id": "gm11906_ncbi_public_source_metadata_v1",
   "authority": "NCBI GEO and NCBI SRA",
   "evidence_scope": "SRR-to-GEO-sample linkage and GEO/SRA cell-line attribution for the GM11906 public validation libraries",
-  "retrieval_completed_utc": "2026-07-21T23:03:33Z",
+  "retrieval_completed_utc": "2026-07-22T04:03:33Z",
   "records_sha256": "c8593c1fb36421f74c30def0a1f9b0088b72631336525bcd5fb813ddc157a1c0",
   "records": [
     {

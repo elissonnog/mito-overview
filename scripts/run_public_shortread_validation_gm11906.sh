@@ -145,7 +145,7 @@ import sys
 
 metadata_path, output_path = sys.argv[1:]
 expected_snapshot_sha256 = (
-    "080782bfe6bf01b19e680c188124aee37607f92d06716c902d368274ecb7a616"
+    "01be488b9dc6bfce0726304be95db4259b1a85a53ac8e620cba4c337842d3185"
 )
 with open(metadata_path, "rb") as handle:
     snapshot_sha256 = hashlib.sha256(handle.read()).hexdigest()

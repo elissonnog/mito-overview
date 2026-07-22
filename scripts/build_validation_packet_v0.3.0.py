@@ -337,7 +337,7 @@ GM11906_SOURCE_METADATA_PACKET_PATH = (
     "public_provenance/GM11906_NCBI_source_metadata.json"
 )
 GM11906_SOURCE_METADATA_SHA256 = (
-    "080782bfe6bf01b19e680c188124aee37607f92d06716c902d368274ecb7a616"
+    "01be488b9dc6bfce0726304be95db4259b1a85a53ac8e620cba4c337842d3185"
 )
 FROZEN_ORACLE_REPOSITORY_PATH = Path(
     "examples/public_validation/public_validation_oracle_v0.3.0.tsv"
@@ -4646,7 +4646,7 @@ gm11906_metadata_path = (
     root / "public_provenance/GM11906_NCBI_source_metadata.json"
 )
 gm11906_metadata_sha256 = (
-    "080782bfe6bf01b19e680c188124aee37607f92d06716c902d368274ecb7a616"
+    "01be488b9dc6bfce0726304be95db4259b1a85a53ac8e620cba4c337842d3185"
 )
 if digest(gm11906_metadata_path) != gm11906_metadata_sha256:
     raise SystemExit("GM11906 official NCBI metadata snapshot SHA-256 mismatch")

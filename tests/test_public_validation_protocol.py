@@ -361,6 +361,10 @@ def test_gm11906_source_provenance_identifies_the_pooled_scatac_libraries() -> N
     ).encode("ascii")
     assert hashlib.sha256(canonical).hexdigest() == metadata["records_sha256"]
     assert metadata["authority"] == "NCBI GEO and NCBI SRA"
+    assert metadata["retrieval_completed_utc"] == "2026-07-22T04:03:33Z"
+    assert hashlib.sha256(GM11906_SOURCE_METADATA.read_bytes()).hexdigest() == (
+        "01be488b9dc6bfce0726304be95db4259b1a85a53ac8e620cba4c337842d3185"
+    )
     by_run = {record["run_accession"]: record for record in records}
     assert {
         run: (

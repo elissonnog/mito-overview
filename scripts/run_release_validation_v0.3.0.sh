@@ -1387,7 +1387,7 @@ if not gm11906_metadata_path.is_file() or gm11906_metadata_path.is_symlink():
         f"Tracked NCBI GM11906 metadata resource is missing: {gm11906_metadata_path}"
     )
 if digest(gm11906_metadata_path) != (
-    "080782bfe6bf01b19e680c188124aee37607f92d06716c902d368274ecb7a616"
+    "01be488b9dc6bfce0726304be95db4259b1a85a53ac8e620cba4c337842d3185"
 ):
     raise SystemExit("Tracked NCBI GM11906 metadata snapshot SHA-256 mismatch")
 gm11906_metadata = json.loads(gm11906_metadata_path.read_text(encoding="utf-8"))
