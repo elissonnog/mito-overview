@@ -4012,6 +4012,31 @@ def test_packet_rejects_extra_compact_evidence_file(tmp_path: Path) -> None:
         )
 
 
+@pytest.mark.parametrize("mutation", ("extra_case", "extra_file"))
+def test_packet_rejects_resealed_unexpected_ubuntu_contract_entries(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    artifact_root = validation / "acceptance/ubuntu_public_validation/artifact"
+    contracts = artifact_root / "results/observed_contracts"
+    if mutation == "extra_case":
+        unexpected = contracts / "unexpected_case"
+        unexpected.mkdir()
+        (unexpected / "unbound.txt").write_text("unbound\n", encoding="utf-8")
+    else:
+        case_root = contracts / "gm11906_default_run1"
+        (case_root / "unbound.tsv").write_text("field\nvalue\n", encoding="utf-8")
+    rewrite_public_artifact_manifest(artifact_root)
+
+    with pytest.raises(
+        ValueError,
+        match="case inventory mismatch|[Cc]ontract directory inventory",
+    ):
+        packet_builder.build_packet(packet_args(validation, repo, tmp_path / "output"))
+
+
 def test_packet_rejects_filter_profile_oracle_mutation(tmp_path: Path) -> None:
     repo, commit = create_release_repo(tmp_path)
     validation = create_validation_root(tmp_path, repo, commit)
@@ -4161,6 +4186,52 @@ def test_extracted_verifier_recomputes_compact_public_contracts(
         shutil.rmtree(contracts / "gm12878_strict")
 
     rewrite_manifest(packet)
+    checked = verify_packet(packet)
+    assert checked.returncode != 0
+    assert "compact-contract" in checked.stderr or "observed_contracts" in checked.stderr
+
+
+def test_extracted_verifier_rejects_rehashed_unexpected_top_level_file(
+    tmp_path: Path,
+) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    output = tmp_path / "output"
+    packet_builder.build_packet(packet_args(validation, repo, output))
+    packet = output / "packet"
+    (packet / "unexpected_unbound_file.txt").write_text(
+        "unbound evidence\n",
+        encoding="utf-8",
+    )
+    rewrite_manifest(packet)
+
+    checked = verify_packet(packet)
+    assert checked.returncode != 0
+    assert "unexpected top-level packet evidence" in checked.stderr
+
+
+@pytest.mark.parametrize("mutation", ("extra_case", "extra_file"))
+def test_extracted_verifier_rejects_rehashed_unexpected_ubuntu_contract_entries(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    output = tmp_path / "output"
+    packet_builder.build_packet(packet_args(validation, repo, output))
+    packet = output / "packet"
+    artifact_root = packet / "acceptance/ubuntu_public_validation/artifact"
+    contracts = artifact_root / "results/observed_contracts"
+    if mutation == "extra_case":
+        unexpected = contracts / "unexpected_case"
+        unexpected.mkdir()
+        (unexpected / "unbound.txt").write_text("unbound\n", encoding="utf-8")
+    else:
+        case_root = contracts / "gm11906_default_run1"
+        (case_root / "unbound.tsv").write_text("field\nvalue\n", encoding="utf-8")
+    rewrite_public_artifact_manifest(artifact_root)
+    rewrite_manifest(packet)
+
     checked = verify_packet(packet)
     assert checked.returncode != 0
     assert "compact-contract" in checked.stderr or "observed_contracts" in checked.stderr

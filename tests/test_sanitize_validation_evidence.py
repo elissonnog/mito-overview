@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 from pathlib import Path
 
 import pytest
@@ -45,4 +46,15 @@ def test_sanitize_tree_rejects_symlinks(tmp_path: Path) -> None:
     (evidence / "link.txt").symlink_to(target)
 
     with pytest.raises(ValueError, match="symlink"):
+        sanitizer.sanitize_tree(evidence, [])
+
+
+def test_sanitize_tree_rejects_special_files(tmp_path: Path) -> None:
+    if not hasattr(os, "mkfifo"):
+        pytest.skip("FIFO creation is unavailable on this platform")
+    evidence = tmp_path / "evidence"
+    evidence.mkdir()
+    os.mkfifo(evidence / "unexpected.fifo")
+
+    with pytest.raises(ValueError, match="special file"):
         sanitizer.sanitize_tree(evidence, [])

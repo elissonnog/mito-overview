@@ -40,8 +40,10 @@ def sanitize_tree(root: Path, replacements: list[tuple[Path, str]]) -> int:
     for path in sorted(root.rglob("*")):
         if path.is_symlink():
             raise ValueError(f"evidence tree contains a symlink: {path}")
-        if not path.is_file():
+        if path.is_dir():
             continue
+        if not path.is_file():
+            raise ValueError(f"evidence tree contains a special file: {path}")
         text = text_payload(path)
         if text is None:
             continue

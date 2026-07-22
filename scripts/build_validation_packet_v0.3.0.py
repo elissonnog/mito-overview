@@ -455,6 +455,7 @@ REQUIRED_TOP_LEVEL = (
     "figures",
     "figures_repeat2",
     "decoded_pixel_hashes",
+    "report_artifacts",
     "filter_profile_results.tsv",
     "inputs.sha256",
     RAW_INPUTS_PACKET_PATH,
@@ -4116,6 +4117,7 @@ def github_actions_identity(
 
 def validate_public_validation_github_actions_evidence(
     validation_root: Path,
+    repo_root: Path,
     expected_commit: str,
     repository: str,
     expected_run_id: int,
@@ -4216,6 +4218,9 @@ def validate_public_validation_github_actions_evidence(
     )
     local_public_root = validation_root / "public"
     ubuntu_public_root = artifact_root / "results"
+    oracle_rows = read_frozen_oracle(repo_root / FROZEN_ORACLE_REPOSITORY_PATH)
+    validate_public_contract_evidence(local_public_root, oracle_rows)
+    validate_public_contract_evidence(ubuntu_public_root, oracle_rows)
     local_environment = validate_public_environment(local_public_root / "environment")
     ubuntu_environment = validate_public_environment(ubuntu_public_root / "environment")
     if local_environment["platform_id"] not in {"osx-64", "osx-arm64"}:
@@ -5249,7 +5254,7 @@ required_top_level = {
     "environment.txt", "commands", "logs", "dist", "expected",
     "observed_normalized", "observed_contracts", "public_provenance",
     "public_environment", "figures",
-    "figures_repeat2", "decoded_pixel_hashes",
+    "figures_repeat2", "decoded_pixel_hashes", "report_artifacts",
     "filter_profile_results.tsv", "inputs.sha256", "raw_inputs.tsv",
     "CACHE_SEAL.sha256", "public_validation_oracle_v0.3.0.tsv",
     "oracle_assertions.tsv", "public_matrix_cases.tsv", "artifacts.sha256",
@@ -5258,6 +5263,9 @@ required_top_level = {
 missing = sorted(name for name in required_top_level if not (root / name).exists())
 if missing:
     raise SystemExit(f"missing required evidence: {missing}")
+unexpected = sorted(entry.name for entry in root.iterdir() if entry.name not in required_top_level)
+if unexpected:
+    raise SystemExit(f"unexpected top-level packet evidence: {unexpected}")
 
 for relative in (
     "acceptance", "commands", "commands/public", "logs", "logs/public",
@@ -7478,6 +7486,7 @@ public_artifact_root = root / "acceptance/ubuntu_public_validation/artifact"
 validate_public_artifact(public_artifact_root, commit, public_run_id)
 macos_public_root = root
 ubuntu_public_root = public_artifact_root / "results"
+validate_compact_contracts(ubuntu_public_root / "observed_contracts", oracle)
 macos_public_environment = validate_public_environment(
     macos_public_root / "public_environment"
 )
@@ -8174,6 +8183,7 @@ def build_packet(args: argparse.Namespace) -> Path:
     )
     public_validation_identity = validate_public_validation_github_actions_evidence(
         args.validation_root,
+        args.repo_root,
         str(release_identity["git_commit"]),
         str(release_identity["repository"]),
         int(release_identity["environment_public_validation_github_actions_run_id"]),
@@ -8543,6 +8553,10 @@ def build_packet(args: argparse.Namespace) -> Path:
     missing = [name for name in REQUIRED_TOP_LEVEL if not (args.packet_root / name).exists()]
     if missing:
         raise SystemExit(f"Packet is missing required entries: {missing}")
+    observed_top_level = {entry.name for entry in args.packet_root.iterdir()}
+    unexpected = sorted(observed_top_level - set(REQUIRED_TOP_LEVEL))
+    if unexpected:
+        raise SystemExit(f"Packet contains unexpected top-level entries: {unexpected}")
 
     args.zip_path.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(args.zip_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:

@@ -120,3 +120,32 @@ def test_extracted_sdist_runs_the_standalone_oracle_checker_in_isolated_mode(
     )
     assert completed.returncode == 0, completed.stderr
     assert "Assert the frozen v0.3.0 public-validation" in completed.stdout
+
+
+def test_extracted_sdist_runs_the_contract_exporter_in_isolated_mode(
+    tmp_path: Path,
+) -> None:
+    build_root = tmp_path / "build"
+    build_root.mkdir()
+    sdist = _build_sdist(Path(__file__).parents[1], build_root)
+    extracted = tmp_path / "extracted"
+    extracted.mkdir()
+    with tarfile.open(sdist, "r:gz") as archive:
+        archive.extractall(extracted, filter="data")
+    source_root = next(extracted.iterdir())
+    exporter = source_root / "scripts/export_public_validation_contracts_v0_3_0.py"
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    environment = dict(os.environ)
+    environment["PYTHONPATH"] = "/forbidden-checkout-path"
+
+    completed = subprocess.run(
+        [sys.executable, "-I", str(exporter), "--help"],
+        cwd=outside,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert "Export exact candidate tables" in completed.stdout
