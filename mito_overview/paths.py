@@ -2,10 +2,44 @@
 
 from __future__ import annotations
 
+import sysconfig
 from dataclasses import dataclass
 from pathlib import Path
 
 from .config import PipelineConfig
+
+
+ANNOTATION_RESOURCE_NAMES = frozenset(
+    {
+        "human_mt_reference.gtf",
+        "NC_012920.1.fa",
+    }
+)
+
+
+def annotation_resource_path(name: str) -> Path:
+    """Resolve a bundled annotation resource in a checkout or installed wheel."""
+
+    if name not in ANNOTATION_RESOURCE_NAMES:
+        allowed = ", ".join(sorted(ANNOTATION_RESOURCE_NAMES))
+        raise ValueError(f"Unknown annotation resource {name!r}; allowed values: {allowed}")
+
+    source_path = Path(__file__).resolve().parents[1] / "resources" / "annotations" / name
+    if source_path.is_file():
+        return source_path
+
+    installed_path = (
+        Path(sysconfig.get_path("data"))
+        / "share"
+        / "mito-overview"
+        / "annotations"
+        / name
+    )
+    if installed_path.is_file():
+        return installed_path
+    raise FileNotFoundError(
+        f"Bundled annotation resource {name!r} was not found at {installed_path}"
+    )
 
 
 def _legacy_sidecar(directory: Path | None, sample_id: str, suffix: str) -> Path | None:

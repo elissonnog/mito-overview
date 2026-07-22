@@ -1,9 +1,17 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import subprocess
+import sys
 import tomllib
+import zipfile
 from pathlib import Path
+
+import pytest
+
+from mito_overview.paths import ANNOTATION_RESOURCE_NAMES, annotation_resource_path
 
 
 REPO_ROOT = Path(__file__).parents[1]
@@ -31,6 +39,10 @@ EXPECTED_PIP_SPECS = {
     "pytest==9.1.1",
     "build==1.5.0",
     "python-docx==1.2.0",
+}
+EXPECTED_ANNOTATION_SHA256 = {
+    "NC_012920.1.fa": "fc392cde8e63b4d2e3a870bb97cc0626dea33d46dfb8abdebffada040f42ec92",
+    "human_mt_reference.gtf": "6c8db180f5dd7999ae70bf9e3c7e5020c6c99b4cefd935d621eedcb1fc5408d9",
 }
 
 
@@ -82,8 +94,112 @@ def test_release_python_and_python_dependencies_are_exactly_bounded() -> None:
         "locks/environment-osx-64.yml",
         "locks/environment-osx-arm64.yml",
     }
+    assert set(
+        project["tool"]["setuptools"]["data-files"][
+            "share/mito-overview/annotations"
+        ]
+    ) == {
+        "resources/annotations/NC_012920.1.fa",
+        "resources/annotations/human_mt_reference.gtf",
+    }
     assert "Programming Language :: Python :: 3.11" not in metadata["classifiers"]
     assert "Programming Language :: Python :: 3.12" in metadata["classifiers"]
+
+
+@pytest.fixture(scope="module")
+def release_wheel(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    output = tmp_path_factory.mktemp("release-wheel")
+    subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "build",
+            "--wheel",
+            "--no-isolation",
+            "--outdir",
+            str(output),
+            str(REPO_ROOT),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    wheels = list(output.glob("mito_overview-0.3.0-py3-none-any.whl"))
+    assert len(wheels) == 1
+    return wheels[0]
+
+
+def test_wheel_contains_annotation_resources_at_stable_location(
+    release_wheel: Path,
+) -> None:
+    prefix = "mito_overview-0.3.0.data/data/share/mito-overview/annotations/"
+    with zipfile.ZipFile(release_wheel) as archive:
+        members = set(archive.namelist())
+        for name, expected_sha256 in EXPECTED_ANNOTATION_SHA256.items():
+            member = f"{prefix}{name}"
+            assert member in members
+            assert hashlib.sha256(archive.read(member)).hexdigest() == expected_sha256
+
+
+def test_installed_wheel_resolves_annotation_resources_outside_checkout(
+    tmp_path: Path,
+    release_wheel: Path,
+) -> None:
+    environment = tmp_path / "venv"
+    subprocess.run(
+        [sys.executable, "-m", "venv", "--system-site-packages", str(environment)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    python = environment / "bin" / "python"
+    subprocess.run(
+        [
+            str(python),
+            "-m",
+            "pip",
+            "install",
+            "--no-deps",
+            "--force-reinstall",
+            str(release_wheel),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    probe = tmp_path / "probe"
+    probe.mkdir()
+    code = """
+import hashlib
+import json
+import sys
+from pathlib import Path
+
+from mito_overview.paths import annotation_resource_path
+
+expected = json.loads(sys.argv[1])
+expected_root = Path(sys.prefix) / "share" / "mito-overview" / "annotations"
+for name, expected_sha256 in expected.items():
+    path = annotation_resource_path(name)
+    assert path == expected_root / name, (path, expected_root / name)
+    assert hashlib.sha256(path.read_bytes()).hexdigest() == expected_sha256
+"""
+    subprocess.run(
+        [str(python), "-I", "-c", code, json.dumps(EXPECTED_ANNOTATION_SHA256)],
+        cwd=probe,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+
+def test_annotation_resource_lookup_is_allowlisted() -> None:
+    assert ANNOTATION_RESOURCE_NAMES == frozenset(EXPECTED_ANNOTATION_SHA256)
+    for name, expected_sha256 in EXPECTED_ANNOTATION_SHA256.items():
+        path = annotation_resource_path(name)
+        assert hashlib.sha256(path.read_bytes()).hexdigest() == expected_sha256
+    with pytest.raises(ValueError, match="Unknown annotation resource"):
+        annotation_resource_path("../README.md")
 
 
 def test_generic_environment_and_platform_solver_specs_are_synchronized() -> None:

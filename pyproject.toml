@@ -54,6 +54,10 @@ namespaces = false
 
 [tool.setuptools.data-files]
 "share/mito-overview/schemas" = ["resources/schemas/mito_overview_config.schema.yaml"]
+"share/mito-overview/annotations" = [
+  "resources/annotations/human_mt_reference.gtf",
+  "resources/annotations/NC_012920.1.fa"
+]
 "share/mito-overview/locks" = [
   "locks/environment-linux-64.yml",
   "locks/environment-osx-64.yml",

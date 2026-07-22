@@ -58,7 +58,12 @@ def _git(repository: Path, *arguments: str) -> str:
     return completed.stdout.strip()
 
 
-def _build_fixture_repository(root: Path, *, report_pages: int) -> tuple[Path, str, str]:
+def _build_fixture_repository(
+    root: Path,
+    *,
+    report_pages: int,
+    example_mutation: str | None = None,
+) -> tuple[Path, str, str]:
     repository = root / "fixture-source"
     repository.mkdir(parents=True)
     subprocess.run(["git", "init", str(repository)], check=True, capture_output=True)
@@ -72,25 +77,71 @@ def _build_fixture_repository(root: Path, *, report_pages: int) -> tuple[Path, s
     ):
         _write_executable(repository / "tests" / name, smoke)
 
-    builder = f"""\
+    def write_expected_bundle(path: Path, *, sample_id: str, file_count: int) -> None:
+        for index in range(1, 15):
+            if index == 1:
+                name = "01_mito_qc.html"
+            elif index == 14:
+                name = "14_mito_mvtool_annotation.html"
+            else:
+                name = f"{index:02d}_fixture.html"
+            report = path / "report" / name
+            report.parent.mkdir(parents=True, exist_ok=True)
+            report.write_text(
+                f"<html><body>{sample_id} fixture {index}</body></html>\n",
+                encoding="ascii",
+            )
+        for index in range(1, file_count - 14 + 1):
+            summary = path / "summary" / f"fixture_{index:03d}.tsv"
+            summary.parent.mkdir(parents=True, exist_ok=True)
+            summary.write_text(
+                f"sample\tindex\n{sample_id}\t{index}\n", encoding="ascii"
+            )
+
+    write_expected_bundle(
+        repository / "examples" / "expected_reports" / "TOY-001_output",
+        sample_id="TOY-001",
+        file_count=88,
+    )
+    write_expected_bundle(
+        repository / "examples" / "expected_reports" / "TOY-SR-001_output",
+        sample_id="TOY-SR-001",
+        file_count=74,
+    )
+
+    effective_mutation = example_mutation
+    if report_pages != 14:
+        assert report_pages == 13
+        assert effective_mutation is None
+        effective_mutation = "missing"
+    mutation_commands = {
+        None: ":",
+        "missing": 'rm "${target}/report/14_mito_mvtool_annotation.html"',
+        "extra": 'printf "unexpected\\n" > "${target}/summary/unexpected.tsv"',
+        "changed": 'printf "changed\\n" >> "${target}/report/01_mito_qc.html"',
+    }
+    if effective_mutation not in mutation_commands:
+        raise ValueError(f"Unknown fixture mutation: {effective_mutation}")
+
+    def builder(bundle_name: str, mutation: str) -> str:
+        return f"""\
 #!/usr/bin/env bash
 set -euo pipefail
 target="$1"
-mkdir -p "${{target}}/report"
-for index in $(seq 1 {report_pages}); do
-  if [[ "${{index}}" -eq 1 ]]; then
-    name="01_mito_qc.html"
-  elif [[ "${{index}}" -eq 14 ]]; then
-    name="14_mito_mvtool_annotation.html"
-  else
-    name="$(printf '%02d_fixture.html' "${{index}}")"
-  fi
-  printf '<html><body>fixture %s</body></html>\n' "${{index}}" > "${{target}}/report/${{name}}"
-done
+repo_root="$(cd "$(dirname "${{BASH_SOURCE[0]}}")/.." && pwd)"
+mkdir -p "${{target}}"
+cp -R "${{repo_root}}/examples/expected_reports/{bundle_name}/." "${{target}}/"
+{mutation}
 """
-    _write_executable(repository / "scripts" / "build_public_example_bundle.sh", builder)
+
+    mutation = mutation_commands[effective_mutation]
     _write_executable(
-        repository / "scripts" / "build_public_shortread_example_bundle.sh", builder
+        repository / "scripts" / "build_public_example_bundle.sh",
+        builder("TOY-001_output", mutation),
+    )
+    _write_executable(
+        repository / "scripts" / "build_public_shortread_example_bundle.sh",
+        builder("TOY-SR-001_output", ":"),
     )
     _write_executable(
         repository / "scripts" / "run_mito_pipeline.sh",
@@ -505,11 +556,14 @@ def _execute_fixture_runner(
     tmp_path: Path,
     *,
     report_pages: int,
+    example_mutation: str | None = None,
     identity_sha: str | None = None,
     substitute_asset: str | None = None,
 ) -> tuple[subprocess.CompletedProcess[str], Path, Path, str, str]:
     fixture, final_sha, tag_object_sha = _build_fixture_repository(
-        tmp_path, report_pages=report_pages
+        tmp_path,
+        report_pages=report_pages,
+        example_mutation=example_mutation,
     )
     shim_root = _build_command_shims(tmp_path, fixture)
     asset_source = _build_release_asset_source(
@@ -572,6 +626,8 @@ def test_runner_is_valid_shell_and_encodes_all_required_release_gates() -> None:
         "python=3.12.13",
         "samtools=1.23.1",
         "mito_overview-0.3.0.tar.gz",
+        "annotation_resource_path",
+        'Path(sys.prefix)/"share"/"mito-overview"/"annotations"',
         "-m pytest -q",
         "smoke_public_pipeline.sh",
         "smoke_public_pipeline_shortread.sh",
@@ -579,10 +635,12 @@ def test_runner_is_valid_shell_and_encodes_all_required_release_gates() -> None:
         "smoke_standalone_minimal.sh",
         "build_public_example_bundle.sh",
         "build_public_shortread_example_bundle.sh",
-        "longread/report/01_mito_qc.html",
-        "longread/report/14_mito_mvtool_annotation.html",
-        "shortread/report/01_mito_qc.html",
-        "shortread/report/14_mito_mvtool_annotation.html",
+        "examples/expected_reports/TOY-001_output",
+        "examples/expected_reports/TOY-SR-001_output",
+        "88 longread",
+        "74 shortread",
+        "bundle inventory mismatch",
+        "bundle content mismatch",
         "sanitize_validation_evidence.py",
         "evidence.sha256",
         "fresh_public_tag_validation.json",
@@ -701,6 +759,33 @@ def test_runner_rejects_incomplete_example_inventory_without_pass_receipt(
         tmp_path, report_pages=13
     )
     assert completed.returncode != 0
+    assert not (evidence_root / "fresh_public_tag_validation.json").exists()
+    with (evidence_root / "cases.tsv").open(encoding="utf-8", newline="") as handle:
+        rows = list(csv.DictReader(handle, delimiter="\t"))
+    assert rows[-1]["case_id"] == "example_builders"
+    assert rows[-1]["verdict"] == "FAIL"
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        ("extra", "bundle inventory mismatch"),
+        ("changed", "bundle content mismatch"),
+    ],
+)
+def test_runner_rejects_extra_or_changed_example_artifacts(
+    tmp_path: Path,
+    mutation: str,
+    message: str,
+) -> None:
+    completed, _, evidence_root, _, _ = _execute_fixture_runner(
+        tmp_path,
+        report_pages=14,
+        example_mutation=mutation,
+    )
+
+    assert completed.returncode != 0
+    assert message in completed.stderr
     assert not (evidence_root / "fresh_public_tag_validation.json").exists()
     with (evidence_root / "cases.tsv").open(encoding="utf-8", newline="") as handle:
         rows = list(csv.DictReader(handle, delimiter="\t"))

@@ -200,11 +200,12 @@ $(printf '%q' "${PYTHON_BIN}") -m venv --system-site-packages $(printf '%q' "${V
 $(printf '%q' "${VENV_ROOT}/bin/python") -m pip install --no-deps --force-reinstall $(printf '%q' "${DIST_ROOT}/mito_overview-0.3.0-py3-none-any.whl")
 cd $(printf '%q' "${PROBE_ROOT}")
 $(printf '%q' "${VENV_ROOT}/bin/python") -I -c 'from importlib.metadata import version; import mito_overview; assert version("mito-overview") == "0.3.0"; assert "site-packages" in mito_overview.__file__'
+$(printf '%q' "${VENV_ROOT}/bin/python") -I -c 'import hashlib, sys; from pathlib import Path; from mito_overview.paths import annotation_resource_path; expected={"NC_012920.1.fa":"fc392cde8e63b4d2e3a870bb97cc0626dea33d46dfb8abdebffada040f42ec92","human_mt_reference.gtf":"6c8db180f5dd7999ae70bf9e3c7e5020c6c99b4cefd935d621eedcb1fc5408d9"}; root=Path(sys.prefix)/"share"/"mito-overview"/"annotations"; observed={name:annotation_resource_path(name) for name in expected}; assert observed=={name:root/name for name in expected}; assert {name:hashlib.sha256(path.read_bytes()).hexdigest() for name,path in observed.items()}==expected'
 $(printf '%q' "${VENV_ROOT}/bin/python") -I -m mito_overview.cli --list-steps > installed_steps.tsv
 MITO_OVERVIEW_PYTHON=$(printf '%q' "${VENV_ROOT}/bin/python") MITO_OVERVIEW_REQUIRE_INSTALLED=1 $(printf '%q' "${CLONE_ROOT}/scripts/run_mito_pipeline.sh") --list-steps > launcher_steps.tsv
 diff -u installed_steps.tsv launcher_steps.tsv
 EOF
-run_case installed_cli "installed wheel executed outside the source checkout"
+run_case installed_cli "installed wheel and annotation resources resolved outside the source checkout"
 
 write_command installed_sdist_cli <<EOF
 #!/usr/bin/env bash
@@ -275,14 +276,69 @@ set -euo pipefail
 cd $(printf '%q' "${CLONE_ROOT}")
 MITO_OVERVIEW_PYTHON=$(printf '%q' "${VENV_ROOT}/bin/python") MITO_OVERVIEW_REQUIRE_INSTALLED=1 ./scripts/build_public_example_bundle.sh $(printf '%q' "${EXAMPLE_ROOT}/longread")
 MITO_OVERVIEW_PYTHON=$(printf '%q' "${VENV_ROOT}/bin/python") MITO_OVERVIEW_REQUIRE_INSTALLED=1 ./scripts/build_public_shortread_example_bundle.sh $(printf '%q' "${EXAMPLE_ROOT}/shortread")
-test "\$(find $(printf '%q' "${EXAMPLE_ROOT}/longread/report") -maxdepth 1 -type f -name '*.html' | wc -l | tr -d ' ')" = 14
-test "\$(find $(printf '%q' "${EXAMPLE_ROOT}/shortread/report") -maxdepth 1 -type f -name '*.html' | wc -l | tr -d ' ')" = 14
-test -s $(printf '%q' "${EXAMPLE_ROOT}/longread/report/01_mito_qc.html")
-test -s $(printf '%q' "${EXAMPLE_ROOT}/longread/report/14_mito_mvtool_annotation.html")
-test -s $(printf '%q' "${EXAMPLE_ROOT}/shortread/report/01_mito_qc.html")
-test -s $(printf '%q' "${EXAMPLE_ROOT}/shortread/report/14_mito_mvtool_annotation.html")
+$(printf '%q' "${VENV_ROOT}/bin/python") - \
+  $(printf '%q' "${CLONE_ROOT}/examples/expected_reports/TOY-001_output") \
+  $(printf '%q' "${EXAMPLE_ROOT}/longread") 88 longread \
+  $(printf '%q' "${CLONE_ROOT}/examples/expected_reports/TOY-SR-001_output") \
+  $(printf '%q' "${EXAMPLE_ROOT}/shortread") 74 shortread <<'PY'
+import hashlib
+import sys
+from pathlib import Path
+
+
+def inventory(root: Path, label: str) -> dict[str, Path]:
+    if root.is_symlink() or not root.is_dir():
+        raise SystemExit(f"{label} root is not a regular directory: {root}")
+    paths: dict[str, Path] = {}
+    for path in sorted(root.rglob("*")):
+        relative = path.relative_to(root).as_posix()
+        if path.is_symlink():
+            raise SystemExit(f"{label} contains a symlink: {relative}")
+        if path.is_dir():
+            continue
+        if not path.is_file():
+            raise SystemExit(f"{label} contains a non-regular file: {relative}")
+        paths[relative] = path
+    return paths
+
+
+arguments = sys.argv[1:]
+if len(arguments) != 8:
+    raise SystemExit("internal error: expected two synthetic bundle comparison specifications")
+
+for offset in (0, 4):
+    expected_root = Path(arguments[offset]).resolve(strict=True)
+    observed_root = Path(arguments[offset + 1]).resolve(strict=True)
+    expected_count = int(arguments[offset + 2])
+    label = arguments[offset + 3]
+    expected = inventory(expected_root, f"tracked {label} bundle")
+    observed = inventory(observed_root, f"generated {label} bundle")
+    if len(expected) != expected_count:
+        raise SystemExit(
+            f"tracked {label} bundle count mismatch: expected contract={expected_count}, "
+            f"observed={len(expected)}"
+        )
+    missing = sorted(set(expected) - set(observed))
+    extra = sorted(set(observed) - set(expected))
+    if missing or extra:
+        raise SystemExit(
+            f"generated {label} bundle inventory mismatch: "
+            f"missing={missing!r}; extra={extra!r}"
+        )
+    changed = []
+    for relative in sorted(expected):
+        expected_sha256 = hashlib.sha256(expected[relative].read_bytes()).hexdigest()
+        observed_sha256 = hashlib.sha256(observed[relative].read_bytes()).hexdigest()
+        if observed_sha256 != expected_sha256:
+            changed.append(relative)
+    if changed:
+        raise SystemExit(
+            f"generated {label} bundle content mismatch: changed={changed!r}"
+        )
+    print(f"verified {label} bundle: files={expected_count}")
+PY
 EOF
-run_case example_builders "both tracked-mode example builders passed"
+run_case example_builders "both generated example bundles exactly matched tracked paths and content"
 
 write_command clean_tag_checkout <<EOF
 #!/usr/bin/env bash

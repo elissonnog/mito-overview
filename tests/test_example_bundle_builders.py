@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -66,9 +67,22 @@ def run_sanitizer(path: Path, contig: str = "MT") -> subprocess.CompletedProcess
 
 
 def shlex_quote(value: object) -> str:
-    import shlex
-
     return shlex.quote(str(value))
+
+
+def checkout_python_shim(path: Path) -> Path:
+    shim = path / "checkout-python"
+    shim.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        'if [[ "${1:-}" == "-I" && "${2:-}" == "-c" ]]; then\n'
+        "  exit 1\n"
+        "fi\n"
+        f"exec {shlex.quote(sys.executable)} \"$@\"\n",
+        encoding="ascii",
+    )
+    shim.chmod(0o755)
+    return shim
 
 
 def test_sanitizer_removes_pg_without_changing_alignment_records(tmp_path: Path) -> None:
@@ -102,23 +116,24 @@ def test_sanitizer_fails_closed_when_target_contig_is_absent(tmp_path: Path) -> 
 
 
 @pytest.mark.parametrize(
-    ("builder", "sample_id"),
+    ("builder", "sample_id", "expected_count"),
     [
-        ("build_public_example_bundle.sh", "TOY-001"),
-        ("build_public_shortread_example_bundle.sh", "TOY-SR-001"),
+        ("build_public_example_bundle.sh", "TOY-001", 88),
+        ("build_public_shortread_example_bundle.sh", "TOY-SR-001", 74),
     ],
 )
 def test_generated_example_bundle_has_path_free_indexed_mt_bam(
     tmp_path: Path,
     builder: str,
     sample_id: str,
+    expected_count: int,
 ) -> None:
     if shutil.which("samtools") is None:
         pytest.skip("samtools is required for the example builders")
 
     output = tmp_path / f"{sample_id}_output"
     env = os.environ.copy()
-    env["MITO_OVERVIEW_PYTHON"] = sys.executable
+    env["MITO_OVERVIEW_PYTHON"] = str(checkout_python_shim(tmp_path))
     subprocess.run(
         [str(REPO_ROOT / "scripts" / builder), str(output)],
         cwd=REPO_ROOT,
@@ -136,3 +151,19 @@ def test_generated_example_bundle_has_path_free_indexed_mt_bam(
         assert alignment.has_index()
         records = list(alignment.fetch("MT", 0, 60))
     assert records
+
+    tracked = REPO_ROOT / "examples" / "expected_reports" / f"{sample_id}_output"
+    tracked_files = {
+        path.relative_to(tracked).as_posix(): path
+        for path in tracked.rglob("*")
+        if path.is_file()
+    }
+    generated_files = {
+        path.relative_to(output).as_posix(): path
+        for path in output.rglob("*")
+        if path.is_file()
+    }
+    assert len(tracked_files) == expected_count
+    assert set(generated_files) == set(tracked_files)
+    for relative, tracked_path in tracked_files.items():
+        assert generated_files[relative].read_bytes() == tracked_path.read_bytes(), relative
