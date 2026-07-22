@@ -144,6 +144,11 @@ jobs:
             [[ -f "$metrics" ]] && cp "$metrics" "$ARTIFACT_ROOT/environment/"
           done
           if [[ -d "$RESULTS_ROOT" ]]; then
+            if find "$RESULTS_ROOT/outputs" -type f -name '*.svg' \
+              -print -quit 2>/dev/null | grep -q .; then
+              echo "SVG report artifacts are outside the v0.3.0 HTML/PNG evidence contract" >&2
+              exit 1
+            fi
             for relative in \
               cases.tsv filter_profile_results.tsv inputs.sha256 \
               oracle_assertions.tsv raw_inputs.tsv CACHE_SEAL.sha256; do
@@ -161,7 +166,7 @@ jobs:
               cp "$source" "$destination"
             done < <(
               find "$RESULTS_ROOT/outputs" -type f \
-                \( -name '*.html' -o -name '*.png' -o -name '*.svg' \) \
+                \( -name '*.html' -o -name '*.png' \) \
                 -print0 2>/dev/null || true
             )
           fi
@@ -177,6 +182,17 @@ jobs:
             --replace "$GITHUB_WORKSPACE=\${REPOSITORY_CHECKOUT}" \
             --replace "$RUNNER_TEMP=\${RUNNER_TEMP}" \
             --replace "$HOME=\${HOME}"
+          while IFS= read -r -d '' inventory; do
+            case_id="$(basename "$(dirname "$inventory")")"
+            case_root="$ARTIFACT_ROOT/results/report_artifacts/outputs/$case_id"
+            structure="$RUNNER_TEMP/${case_id}-staged-visual-structure.tsv"
+            python scripts/inventory_visual_artifacts.py \
+              "$case_root" "$inventory" "$structure"
+            rm -f "$structure"
+          done < <(
+            find "$ARTIFACT_ROOT/results/observed_normalized" \
+              -type f -name visual_artifact_inventory.tsv -print0
+          )
           (
             cd "$ARTIFACT_ROOT"
             find . -type f ! -name SHA256SUMS -print0 \

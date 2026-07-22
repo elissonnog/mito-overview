@@ -116,9 +116,12 @@ filename alone.
 - `resource_usage.tsv` contains exactly one row for each of the 11 prescribed
   measured commands. Every row records a case-insensitive unique UUID, the
   full candidate commit, exact `commands/<case>.sh` and `logs/<case>.log`
-  paths, their SHA-256 values, the four-thread contract, and the declared
-  inventory-byte method. Missing, duplicated, relabeled, or hash-mismatched
-  rows fail validation.
+  paths, the original execution SHA-256 values, the SHA-256 values of the
+  portable sanitized copies, the case-specific thread setting, and the
+  declared inventory-byte method. Public reconstruction uses four threads;
+  three lightweight synthetic workflows use one; orchestration/test cases are
+  labeled `mixed` or `not_applicable` rather than assigned a false count.
+  Missing, duplicated, relabeled, or hash-mismatched rows fail validation.
 - The resolved CI environment root contains exactly five files for each of
   `linux-64`, `osx-64`, and `osx-arm64`. The platform record binds the exact
   commit and GitHub Actions run, Python 3.12.13, architecture, every evidence
@@ -128,6 +131,11 @@ filename alone.
   run-1 and run-2 PNG to canonical RGBA bytes and recomputing its pixel hash.
   A syntactically valid replacement digest, changed run-2 image, missing
   image, dimension mismatch, or duplicate basename fails validation.
+- The downloaded Ubuntu artifact carries the actual HTML/PNG reports as well
+  as each `visual_artifact_inventory.tsv`. Every row is rebound to the staged
+  file's byte count and SHA-256; PNGs are reopened and decoded and HTML is
+  parsed for the required document structure. Cross-platform comparison still
+  gates only path, type, dimensions, and integrity, not rendered byte identity.
 - Read-only audit comments must use the structured audit marker, be posted by
   the repository owner, bind the reviewed PR-head commit and final tree, carry
   unique case-insensitive audit-instance IDs, and include GitHub `created_at`

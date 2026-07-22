@@ -128,6 +128,19 @@ REQUIRED_RESOURCE_CASE_IDS = frozenset(
         "public_validation_matrix",
     }
 )
+RESOURCE_CASE_THREAD_SETTINGS = {
+    "fresh_clone_candidate_commit": "mixed",
+    "package_build": "not_applicable",
+    "unit_known_answer": "mixed",
+    "cli_step_listing": "not_applicable",
+    "strict_generic_dry_run": "4",
+    "synthetic_longread_smoke": "1",
+    "synthetic_shortread_smoke": "1",
+    "synthetic_longread_nomethyl_smoke": "1",
+    "standalone_minimal_smoke": "4",
+    "public_cache_prepare": "not_applicable",
+    "public_validation_matrix": "4",
+}
 
 ALLOWED_MODULE_STATES = frozenset(
     {
@@ -169,8 +182,10 @@ EVIDENCE_COLUMNS = {
         "candidate_commit",
         "command_path",
         "command_sha256",
+        "packaged_command_sha256",
         "log_path",
         "log_sha256",
+        "packaged_log_sha256",
         "wall_seconds",
         "user_cpu_seconds",
         "system_cpu_seconds",
@@ -1097,7 +1112,6 @@ def validate_resource_usage(
         "max_rss_kb",
         "broad_declared_input_inventory_bytes",
         "changed_or_new_output_inventory_bytes",
-        "threads",
     )
     measurement_ids: set[str] = set()
     case_ids: set[str] = set()
@@ -1133,9 +1147,14 @@ def validate_resource_usage(
                 raise ReportValidationError(
                     f"Resource {path_field} mismatch for {case_id}"
                 )
+        for digest_field in ("command_sha256", "log_sha256"):
+            if SHA256_RE.fullmatch(row[digest_field]) is None:
+                raise ReportValidationError(
+                    f"Invalid original execution digest for {case_id}: {digest_field}"
+                )
         for path_field, digest_field in (
-            ("command_path", "command_sha256"),
-            ("log_path", "log_sha256"),
+            ("command_path", "packaged_command_sha256"),
+            ("log_path", "packaged_log_sha256"),
         ):
             relative = row[path_field]
             evidence_path = packet_path(packet_root, relative)
@@ -1157,9 +1176,11 @@ def validate_resource_usage(
                 raise ReportValidationError(
                     f"Unavailable resource measurement lacks reason: {row['case_id']}"
                 )
-        if row["threads"] != "4":
+        expected_threads = RESOURCE_CASE_THREAD_SETTINGS.get(case_id)
+        if row["threads"] != expected_threads:
             raise ReportValidationError(
-                f"Resource thread count must be 4 for {case_id}"
+                f"Resource thread setting mismatch for {case_id}: "
+                f"{row['threads']!r} != {expected_threads!r}"
             )
         if status == "unavailable":
             continue
@@ -1913,9 +1934,11 @@ def build_report_blocks(
         Paragraph(
             f"The packet records independent macOS ({platform['macos_platform']}) and "
             f"Ubuntu ({platform['ubuntu_platform']}) public-data executions at the exact "
-            "release commit. Normalized scientific TSVs are required to match exactly. PNG "
-            "byte hashes are not cross-platform gates; visual path, type, dimensions, and "
-            "integrity are compared instead."
+            "release commit. Each visual inventory is first bound to its platform's actual "
+            "HTML/PNG artifacts, including byte count, SHA-256, and decoded PNG dimensions. "
+            "Normalized scientific TSVs are required to match exactly. PNG byte hashes are "
+            "not cross-platform gates; visual path, type, dimensions, and integrity are "
+            "compared instead."
         ),
         TableBlock(
             "Cross-platform comparison",
@@ -1934,7 +1957,11 @@ def build_report_blocks(
             "input value is the broad pre-command inventory of the repository, cache, and "
             "validation roots, while the output value is the final size of files created "
             "or changed under the cache and validation roots. They are not generalized "
-            "performance benchmarks."
+            "performance benchmarks. The thread column records the configured workflow "
+            "setting for each case; orchestration or mixed test suites are labeled "
+            "not_applicable or mixed rather than assigned an artificial thread count. "
+            "Original execution hashes are retained separately from hashes of portable, "
+            "path-sanitized command and log copies."
         ),
         TableBlock(
             "Recorded resource usage",
@@ -1952,7 +1979,7 @@ def build_report_blocks(
                     "changed_or_new_output_inventory_bytes",
                     "Changed/new output inventory bytes",
                 ),
-                ("threads", "Threads"),
+                ("threads", "Configured workflow threads"),
                 ("platform", "Platform"),
                 ("measurement_status", "Status"),
             ),

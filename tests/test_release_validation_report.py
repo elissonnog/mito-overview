@@ -255,7 +255,9 @@ def make_packet(tmp_path: Path) -> tuple[Path, Path, list[Path]]:
                 COMMIT,
                 f"commands/{case_id}.sh",
                 digest(command),
+                digest(command),
                 f"logs/{case_id}.log",
+                digest(log),
                 digest(log),
                 "12.4",
                 "10.0",
@@ -266,7 +268,7 @@ def make_packet(tmp_path: Path) -> tuple[Path, Path, list[Path]]:
                 "repository_root;cache_root;validation_root",
                 "cache_root;validation_root",
                 "broad_declared_inputs_and_changed_or_new_outputs_v2",
-                "4",
+                report_builder.RESOURCE_CASE_THREAD_SETTINGS[case_id],
                 "osx-arm64",
                 "measured",
                 "",
@@ -709,7 +711,7 @@ def test_report_rejects_resource_command_or_commit_drift(tmp_path: Path) -> None
     rewrite_artifact_manifest(packet)
     with pytest.raises(
         report_builder.ReportValidationError,
-        match="command_sha256 does not bind command_path",
+        match="packaged_command_sha256 does not bind command_path",
     ):
         report_builder.generate_report(packet, publication, tmp_path / "command-report")
 

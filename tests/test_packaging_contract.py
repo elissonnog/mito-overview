@@ -343,6 +343,9 @@ def test_ci_uses_fixed_runners_and_public_artifacts_exclude_raw_inputs() -> None
     assert "actions/cache" not in public
     assert "public-validation-derived-evidence" in public
     assert "Raw genomic input or alignment entered artifact staging" in public
+    assert "report_artifacts/outputs" in public
+    assert "inventory_visual_artifacts.py" in public
+    assert "outside the v0.3.0 HTML/PNG evidence contract" in public
     assert 'MITO_OVERVIEW_REQUIRE_INSTALLED: "1"' in public
     assert "MITO_OVERVIEW_EXPECTED_PLATFORM=linux-64" in public
     assert "run_network_isolated_v0.3.0.sh" in public

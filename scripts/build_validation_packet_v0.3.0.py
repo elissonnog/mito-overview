@@ -446,8 +446,10 @@ EVIDENCE_TABLES = {
         "candidate_commit",
         "command_path",
         "command_sha256",
+        "packaged_command_sha256",
         "log_path",
         "log_sha256",
+        "packaged_log_sha256",
         "wall_seconds",
         "user_cpu_seconds",
         "system_cpu_seconds",
@@ -538,6 +540,19 @@ REQUIRED_RESOURCE_CASE_IDS = frozenset(
         "public_validation_matrix",
     }
 )
+RESOURCE_CASE_THREAD_SETTINGS = {
+    FRESH_CLONE_CASE_ID: "mixed",
+    "package_build": "not_applicable",
+    "unit_known_answer": "mixed",
+    "cli_step_listing": "not_applicable",
+    "strict_generic_dry_run": "4",
+    "synthetic_longread_smoke": "1",
+    "synthetic_shortread_smoke": "1",
+    "synthetic_longread_nomethyl_smoke": "1",
+    "standalone_minimal_smoke": "4",
+    "public_cache_prepare": "not_applicable",
+    "public_validation_matrix": "4",
+}
 READ_ONLY_AUDIT_MARKER = "<!-- mito-overview-read-only-audit-v1 -->"
 READ_ONLY_AUDIT_SCHEMA_VERSION = "1.1"
 READ_ONLY_AUDIT_METHOD = "read_only_agent_role_audit"
@@ -788,7 +803,7 @@ def public_visual_paths(root: Path) -> set[PurePosixPath]:
     return paths
 
 
-def visual_inventory_structure(path: Path) -> list[tuple[str, ...]]:
+def parse_visual_inventory(path: Path) -> list[dict[str, str]]:
     rows = read_tsv_rows(
         path,
         (
@@ -802,12 +817,134 @@ def visual_inventory_structure(path: Path) -> list[tuple[str, ...]]:
         ),
         path.name,
     )
+    if not rows:
+        raise ValueError(f"Cross-platform visual inventory is empty: {path}")
+    seen: set[PurePosixPath] = set()
+    for row in rows:
+        raw_relative = row["relative_path"]
+        if any(character in raw_relative for character in ("\x00", "\t", "\n", "\r")):
+            raise ValueError(f"Visual artifact path contains a control character: {path}")
+        relative = safe_posix_relative_path(raw_relative, "visual artifact path")
+        if len(relative.parts) != 2 or relative in seen:
+            raise ValueError(
+                f"Visual artifact path is nested or duplicated in {path}: {raw_relative!r}"
+            )
+        seen.add(relative)
+        expected_type = {
+            ("report", ".html"): "html",
+            ("figures", ".png"): "png",
+        }.get((relative.parts[0], relative.suffix.lower()))
+        if expected_type is None or row["artifact_type"] != expected_type:
+            raise ValueError(
+                f"Visual artifact type/path mismatch in {path}: {raw_relative!r}"
+            )
+        if row["integrity_status"] != "ok":
+            raise ValueError(f"Visual artifact is not marked ok in {path}: {raw_relative}")
+        if re.fullmatch(r"[0-9a-f]{64}", row["sha256"]) is None:
+            raise ValueError(f"Invalid visual artifact SHA-256 in {path}: {raw_relative}")
+        try:
+            size = int(row["bytes"])
+        except ValueError as error:
+            raise ValueError(
+                f"Invalid visual artifact byte count in {path}: {raw_relative}"
+            ) from error
+        if size <= 0 or str(size) != row["bytes"]:
+            raise ValueError(f"Noncanonical visual artifact byte count in {path}")
+        if expected_type == "html":
+            if row["width_px"] or row["height_px"]:
+                raise ValueError(f"HTML visual artifact declares dimensions in {path}")
+        else:
+            try:
+                width = int(row["width_px"])
+                height = int(row["height_px"])
+            except ValueError as error:
+                raise ValueError(
+                    f"Invalid PNG dimensions in {path}: {raw_relative}"
+                ) from error
+            if (
+                width <= 0
+                or height <= 0
+                or str(width) != row["width_px"]
+                or str(height) != row["height_px"]
+            ):
+                raise ValueError(f"Noncanonical PNG dimensions in {path}: {raw_relative}")
+    return rows
+
+
+def visual_inventory_structure(path: Path) -> list[tuple[str, ...]]:
+    rows = parse_visual_inventory(path)
     structure = sorted(
         tuple(row[field] for field in CROSS_PLATFORM_VISUAL_FIELDS) for row in rows
     )
-    if not structure or any(row[-1] != "ok" for row in structure):
-        raise ValueError(f"Cross-platform visual inventory is empty or invalid: {path}")
     return structure
+
+
+def bind_visual_inventory(inventory_path: Path, case_root: Path) -> list[tuple[str, ...]]:
+    """Bind one visual inventory to actual HTML/PNG bytes and decoded dimensions."""
+
+    if case_root.is_symlink() or not case_root.is_dir():
+        raise ValueError(f"Visual artifact case root is missing: {case_root}")
+    rows = parse_visual_inventory(inventory_path)
+    expected_paths: set[PurePosixPath] = set()
+    for row in rows:
+        relative = safe_posix_relative_path(row["relative_path"], "visual artifact path")
+        expected_paths.add(relative)
+        artifact = case_root / Path(*relative.parts)
+        validate_regular_file(
+            artifact,
+            source_root=case_root,
+            label=f"Visual artifact {relative}",
+        )
+        if artifact.stat().st_size != int(row["bytes"]):
+            raise ValueError(
+                f"Visual artifact byte count does not match inventory: {relative}"
+            )
+        if sha256(artifact) != row["sha256"]:
+            raise ValueError(f"Visual artifact SHA-256 does not match inventory: {relative}")
+        if row["artifact_type"] == "html":
+            try:
+                normalized = artifact.read_text(encoding="utf-8").lower()
+            except UnicodeDecodeError as error:
+                raise ValueError(f"Visual HTML is not UTF-8: {relative}") from error
+            if not all(token in normalized for token in ("<html", "<body", "</html>")):
+                raise ValueError(f"Visual HTML structure is invalid: {relative}")
+        else:
+            width, height, _ = decoded_png_rgba(artifact)
+            if width != int(row["width_px"]) or height != int(row["height_px"]):
+                raise ValueError(
+                    f"Visual PNG dimensions do not match inventory: {relative}"
+                )
+
+    actual_paths: set[PurePosixPath] = set()
+    for directory, suffix in (("report", ".html"), ("figures", ".png")):
+        root = case_root / directory
+        if root.is_symlink() or not root.is_dir():
+            raise ValueError(f"Visual artifact directory is missing: {root}")
+        for artifact in root.iterdir():
+            if artifact.is_symlink() or not artifact.is_file():
+                raise ValueError(f"Visual artifact collection contains a non-regular entry")
+            if artifact.suffix.lower() != suffix:
+                raise ValueError(f"Unsupported or unbound visual artifact: {artifact}")
+            actual_paths.add(PurePosixPath(directory, artifact.name))
+    if actual_paths != expected_paths:
+        raise ValueError(
+            "Visual artifact inventory coverage mismatch: "
+            f"missing={sorted(map(str, actual_paths - expected_paths))}; "
+            f"stale={sorted(map(str, expected_paths - actual_paths))}"
+        )
+    return visual_inventory_structure(inventory_path)
+
+
+def visual_inventory_case_id(root: Path, path: Path) -> str:
+    relative = PurePosixPath(path.relative_to(root).as_posix())
+    if relative.parts[:1] != ("observed_normalized",) or len(relative.parts) != 3:
+        raise ValueError(f"Unexpected visual inventory path: {relative}")
+    if relative.name != "visual_artifact_inventory.tsv":
+        raise ValueError(f"Unexpected visual inventory filename: {relative}")
+    case_id = relative.parts[1]
+    if not re.fullmatch(r"[a-z0-9][a-z0-9_.-]*", case_id):
+        raise ValueError(f"Unsafe visual inventory case ID: {case_id!r}")
+    return case_id
 
 
 def validate_downloaded_public_artifact_identity(
@@ -3875,6 +4012,24 @@ def validate_public_validation_github_actions_evidence(
     ubuntu_visuals = public_visual_paths(ubuntu_public_root)
     if local_visuals != ubuntu_visuals:
         raise ValueError("Cross-platform visual-inventory paths differ")
+    expected_visual_cases = {
+        visual_inventory_case_id(ubuntu_public_root, ubuntu_public_root / Path(*path.parts))
+        for path in ubuntu_visuals
+    }
+    ubuntu_report_outputs = ubuntu_public_root / "report_artifacts" / "outputs"
+    if ubuntu_report_outputs.is_symlink() or not ubuntu_report_outputs.is_dir():
+        raise ValueError("Ubuntu report_artifacts/outputs evidence is missing")
+    observed_visual_cases: set[str] = set()
+    for entry in ubuntu_report_outputs.iterdir():
+        if entry.is_symlink() or not entry.is_dir():
+            raise ValueError("Ubuntu report artifact collection contains a non-directory entry")
+        observed_visual_cases.add(entry.name)
+    if observed_visual_cases != expected_visual_cases:
+        raise ValueError(
+            "Ubuntu report artifact case inventory mismatch: "
+            f"unexpected={sorted(observed_visual_cases - expected_visual_cases)}; "
+            f"missing={sorted(expected_visual_cases - observed_visual_cases)}"
+        )
 
     expected_reproduction = {
         "schema_version": PACKET_SCHEMA_VERSION,
@@ -3958,11 +4113,19 @@ def validate_public_validation_github_actions_evidence(
                 or row["ubuntu_sha256"] != "not_compared"
             ):
                 raise ValueError("Cross-platform visual rows must not claim bytewise comparison")
-            local_structure = visual_inventory_structure(
-                local_public_root / Path(*relative.parts)
+            local_inventory = local_public_root / Path(*relative.parts)
+            ubuntu_inventory = ubuntu_public_root / Path(*relative.parts)
+            local_case_id = visual_inventory_case_id(local_public_root, local_inventory)
+            ubuntu_case_id = visual_inventory_case_id(ubuntu_public_root, ubuntu_inventory)
+            if local_case_id != ubuntu_case_id:
+                raise ValueError("Cross-platform visual inventory case IDs differ")
+            local_structure = bind_visual_inventory(
+                local_inventory,
+                local_public_root / "outputs" / local_case_id,
             )
-            ubuntu_structure = visual_inventory_structure(
-                ubuntu_public_root / Path(*relative.parts)
+            ubuntu_structure = bind_visual_inventory(
+                ubuntu_inventory,
+                ubuntu_report_outputs / ubuntu_case_id,
             )
             if local_structure != ubuntu_structure:
                 raise ValueError(
@@ -4249,7 +4412,12 @@ def validate_evidence_tables(validation_root: Path) -> None:
                         raise ValueError(
                             f"Resource {field} mismatch for {case_id}: {row[field]!r}"
                         )
-                for field in ("command_sha256", "log_sha256"):
+                for field in (
+                    "command_sha256",
+                    "packaged_command_sha256",
+                    "log_sha256",
+                    "packaged_log_sha256",
+                ):
                     if re.fullmatch(r"[0-9a-f]{64}", row[field]) is None:
                         raise ValueError(
                             f"Invalid resource {field} for {case_id}: {row[field]!r}"
@@ -4259,9 +4427,11 @@ def validate_evidence_tables(validation_root: Path) -> None:
                     raise ValueError(f"Invalid resource measurement status: {status!r}")
                 if status == "unavailable" and not row["reason"].strip():
                     raise ValueError("Unavailable resource measurement lacks a reason")
-                if row["threads"] != "4":
+                expected_threads = RESOURCE_CASE_THREAD_SETTINGS.get(case_id)
+                if row["threads"] != expected_threads:
                     raise ValueError(
-                        f"Resource thread count must be 4 for {case_id}: {row['threads']!r}"
+                        "Resource thread setting mismatch for "
+                        f"{case_id}: {row['threads']!r} != {expected_threads!r}"
                     )
                 if status == "measured":
                     for field in (
@@ -4316,7 +4486,12 @@ def validate_evidence_tables(validation_root: Path) -> None:
                     raise ValueError(f"Invalid SHA-256 in {name}: {row['sha256']!r}")
 
 
-def validate_resource_bindings(root: Path, expected_commit: str) -> None:
+def validate_resource_bindings(
+    root: Path,
+    expected_commit: str,
+    *,
+    packaged: bool = False,
+) -> None:
     rows = read_tsv_rows(
         root / "resource_usage.tsv",
         EVIDENCE_TABLES["resource_usage.tsv"],
@@ -4329,9 +4504,10 @@ def validate_resource_bindings(root: Path, expected_commit: str) -> None:
                 f"Resource candidate commit mismatch for {case_id}: "
                 f"{row['candidate_commit']} != {expected_commit}"
             )
+        digest_prefix = "packaged_" if packaged else ""
         for path_field, digest_field in (
-            ("command_path", "command_sha256"),
-            ("log_path", "log_sha256"),
+            ("command_path", f"{digest_prefix}command_sha256"),
+            ("log_path", f"{digest_prefix}log_sha256"),
         ):
             relative = PurePosixPath(row[path_field])
             if relative.is_absolute() or ".." in relative.parts:
@@ -4346,6 +4522,13 @@ def validate_resource_bindings(root: Path, expected_commit: str) -> None:
                 raise ValueError(
                     f"Resource {digest_field} does not match {path_field} for {case_id}"
                 )
+            if not packaged:
+                packaged_field = f"packaged_{digest_field}"
+                if row[packaged_field] != row[digest_field]:
+                    raise ValueError(
+                        "Pre-packaging resource digest mismatch for "
+                        f"{case_id}: {packaged_field} != {digest_field}"
+                    )
 
 
 def rebind_packaged_resource_evidence(packet_root: Path, expected_commit: str) -> None:
@@ -4360,8 +4543,10 @@ def rebind_packaged_resource_evidence(packet_root: Path, expected_commit: str) -
             raise ValueError(
                 f"Resource candidate commit changed during packaging: {row['case_id']}"
             )
-        row["command_sha256"] = sha256(packet_root / row["command_path"])
-        row["log_sha256"] = sha256(packet_root / row["log_path"])
+        row["packaged_command_sha256"] = sha256(
+            packet_root / row["command_path"]
+        )
+        row["packaged_log_sha256"] = sha256(packet_root / row["log_path"])
     with table_path.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(
             handle,
@@ -4371,7 +4556,7 @@ def rebind_packaged_resource_evidence(packet_root: Path, expected_commit: str) -
         )
         writer.writeheader()
         writer.writerows(rows)
-    validate_resource_bindings(packet_root, expected_commit)
+    validate_resource_bindings(packet_root, expected_commit, packaged=True)
 
 
 def decoded_png_rgba(path: Path) -> tuple[int, int, bytes]:
@@ -5072,7 +5257,7 @@ def public_visual_paths(public_root):
         raise SystemExit("cross-platform visual-inventory evidence is empty")
     return paths
 
-def visual_structure(path):
+def parse_visual_inventory(path):
     with path.open(encoding="utf-8", newline="") as handle:
         reader = csv.DictReader(handle, delimiter="\t")
         expected_fields = (
@@ -5082,10 +5267,115 @@ def visual_structure(path):
         if tuple(reader.fieldnames or ()) != expected_fields:
             raise SystemExit(f"cross-platform visual inventory schema mismatch: {path}")
         rows = list(reader)
+    if not rows:
+        raise SystemExit(f"cross-platform visual inventory is empty: {path}")
+    seen = set()
+    for row in rows:
+        raw_relative = row.get("relative_path", "")
+        if any(character in raw_relative for character in ("\x00", "\t", "\n", "\r")):
+            raise SystemExit("visual artifact path contains a control character")
+        relative = safe_posix_relative(raw_relative, "visual artifact path")
+        if len(relative.parts) != 2 or relative in seen:
+            raise SystemExit("visual artifact path is nested or duplicated")
+        seen.add(relative)
+        expected_type = {
+            ("report", ".html"): "html",
+            ("figures", ".png"): "png",
+        }.get((relative.parts[0], relative.suffix.lower()))
+        if expected_type is None or row.get("artifact_type") != expected_type:
+            raise SystemExit("visual artifact type/path mismatch")
+        if row.get("integrity_status") != "ok":
+            raise SystemExit("visual artifact is not marked ok")
+        if not re.fullmatch(r"[0-9a-f]{64}", row.get("sha256", "")):
+            raise SystemExit("invalid visual artifact SHA-256")
+        try:
+            size = int(row.get("bytes", ""))
+        except ValueError as error:
+            raise SystemExit("invalid visual artifact byte count") from error
+        if size <= 0 or str(size) != row.get("bytes"):
+            raise SystemExit("noncanonical visual artifact byte count")
+        if expected_type == "html":
+            if row.get("width_px") or row.get("height_px"):
+                raise SystemExit("HTML visual artifact declares dimensions")
+        else:
+            try:
+                width = int(row.get("width_px", ""))
+                height = int(row.get("height_px", ""))
+            except ValueError as error:
+                raise SystemExit("invalid PNG dimensions") from error
+            if (
+                width <= 0 or height <= 0
+                or str(width) != row.get("width_px")
+                or str(height) != row.get("height_px")
+            ):
+                raise SystemExit("noncanonical PNG dimensions")
+    return rows
+
+def visual_structure(path):
+    rows = parse_visual_inventory(path)
     structure = sorted(tuple(row.get(field, "") for field in visual_fields) for row in rows)
-    if not structure or any(row[-1] != "ok" for row in structure):
-        raise SystemExit(f"cross-platform visual inventory is empty or invalid: {path}")
     return structure
+
+def bind_visual_inventory(inventory_path, case_root):
+    if case_root.is_symlink() or not case_root.is_dir():
+        raise SystemExit(f"visual artifact case root is missing: {case_root}")
+    rows = parse_visual_inventory(inventory_path)
+    expected_paths = set()
+    for row in rows:
+        relative = safe_posix_relative(row["relative_path"], "visual artifact path")
+        expected_paths.add(relative)
+        artifact = case_root / Path(*relative.parts)
+        if artifact.is_symlink() or not artifact.is_file():
+            raise SystemExit(f"visual artifact is missing or non-regular: {relative}")
+        try:
+            resolved_root = case_root.resolve(strict=True)
+            resolved_artifact = artifact.resolve(strict=True)
+        except OSError as error:
+            raise SystemExit(f"unable to resolve visual artifact: {relative}") from error
+        if not resolved_artifact.is_relative_to(resolved_root):
+            raise SystemExit(f"visual artifact resolves outside case root: {relative}")
+        if artifact.stat().st_size != int(row["bytes"]):
+            raise SystemExit(f"visual artifact byte count mismatch: {relative}")
+        if digest(artifact) != row["sha256"]:
+            raise SystemExit(f"visual artifact SHA-256 mismatch: {relative}")
+        if row["artifact_type"] == "html":
+            try:
+                normalized = artifact.read_text(encoding="utf-8").lower()
+            except UnicodeDecodeError as error:
+                raise SystemExit(f"visual HTML is not UTF-8: {relative}") from error
+            if not all(token in normalized for token in ("<html", "<body", "</html>")):
+                raise SystemExit(f"visual HTML structure is invalid: {relative}")
+        else:
+            width, height, _ = decoded_png_rgba(artifact)
+            if width != int(row["width_px"]) or height != int(row["height_px"]):
+                raise SystemExit(f"visual PNG dimensions mismatch: {relative}")
+    actual_paths = set()
+    for directory, suffix in (("report", ".html"), ("figures", ".png")):
+        directory_root = case_root / directory
+        if directory_root.is_symlink() or not directory_root.is_dir():
+            raise SystemExit(f"visual artifact directory is missing: {directory_root}")
+        for artifact in directory_root.iterdir():
+            if artifact.is_symlink() or not artifact.is_file():
+                raise SystemExit("visual artifact collection contains a non-regular entry")
+            if artifact.suffix.lower() != suffix:
+                raise SystemExit(f"unsupported or unbound visual artifact: {artifact}")
+            actual_paths.add(PurePosixPath(directory, artifact.name))
+    if actual_paths != expected_paths:
+        raise SystemExit("visual artifact inventory coverage mismatch")
+    return visual_structure(inventory_path)
+
+def visual_inventory_case_id(public_root, path):
+    relative = PurePosixPath(path.relative_to(public_root).as_posix())
+    if (
+        relative.parts[:1] != ("observed_normalized",)
+        or len(relative.parts) != 3
+        or relative.name != "visual_artifact_inventory.tsv"
+    ):
+        raise SystemExit(f"unexpected visual inventory path: {relative}")
+    case_id = relative.parts[1]
+    if not re.fullmatch(r"[a-z0-9][a-z0-9_.-]*", case_id):
+        raise SystemExit(f"unsafe visual inventory case ID: {case_id!r}")
+    return case_id
 
 def parse_manifest(path, *, packet_paths):
     entries = {}
@@ -5651,7 +5941,8 @@ table_headers = {
     ),
     "resource_usage.tsv": (
         "measurement_id", "case_id", "candidate_commit", "command_path",
-        "command_sha256", "log_path", "log_sha256",
+        "command_sha256", "packaged_command_sha256", "log_path", "log_sha256",
+        "packaged_log_sha256",
         "wall_seconds", "user_cpu_seconds",
         "system_cpu_seconds",
         "max_rss_kb", "broad_declared_input_inventory_bytes",
@@ -6046,6 +6337,19 @@ if (
 measurement_ids = set()
 resource_case_ids = set()
 resource_candidate_commits = set()
+resource_thread_settings = {
+    "fresh_clone_candidate_commit": "mixed",
+    "package_build": "not_applicable",
+    "unit_known_answer": "mixed",
+    "cli_step_listing": "not_applicable",
+    "strict_generic_dry_run": "4",
+    "synthetic_longread_smoke": "1",
+    "synthetic_shortread_smoke": "1",
+    "synthetic_longread_nomethyl_smoke": "1",
+    "standalone_minimal_smoke": "4",
+    "public_cache_prepare": "not_applicable",
+    "public_validation_matrix": "4",
+}
 for row in evidence_rows["resource_usage.tsv"]:
     measurement_id = row["measurement_id"].lower()
     if (
@@ -6070,9 +6374,15 @@ for row in evidence_rows["resource_usage.tsv"]:
     for path_field, expected_path in expected_paths.items():
         if row[path_field] != expected_path:
             raise SystemExit(f"resource {path_field} mismatch for {case_id}")
+    for original_digest_field in ("command_sha256", "log_sha256"):
+        if not re.fullmatch(r"[0-9a-f]{64}", row[original_digest_field]):
+            raise SystemExit(
+                f"invalid original execution digest for {case_id}: "
+                f"{original_digest_field}"
+            )
     for path_field, digest_field in (
-        ("command_path", "command_sha256"),
-        ("log_path", "log_sha256"),
+        ("command_path", "packaged_command_sha256"),
+        ("log_path", "packaged_log_sha256"),
     ):
         evidence_path = root / row[path_field]
         if (
@@ -6089,8 +6399,8 @@ for row in evidence_rows["resource_usage.tsv"]:
         raise SystemExit(f"invalid resource status: {status}")
     if status == "unavailable" and not row["reason"].strip():
         raise SystemExit("unavailable resource measurement lacks a reason")
-    if row["threads"] != "4":
-        raise SystemExit(f"resource thread count must be 4: {case_id}")
+    if row["threads"] != resource_thread_settings.get(case_id):
+        raise SystemExit(f"resource thread setting mismatch: {case_id}")
     if status == "measured":
         for field in (
             "wall_seconds", "user_cpu_seconds", "system_cpu_seconds", "max_rss_kb",
@@ -6696,6 +7006,22 @@ macos_visuals = public_visual_paths(macos_public_root)
 ubuntu_visuals = public_visual_paths(ubuntu_public_root)
 if macos_visuals != ubuntu_visuals:
     raise SystemExit("cross-platform visual-inventory paths differ")
+expected_visual_cases = {
+    visual_inventory_case_id(
+        ubuntu_public_root, ubuntu_public_root / Path(*relative.parts)
+    )
+    for relative in ubuntu_visuals
+}
+ubuntu_report_outputs = ubuntu_public_root / "report_artifacts" / "outputs"
+if ubuntu_report_outputs.is_symlink() or not ubuntu_report_outputs.is_dir():
+    raise SystemExit("Ubuntu report_artifacts/outputs evidence is missing")
+observed_visual_cases = set()
+for entry in ubuntu_report_outputs.iterdir():
+    if entry.is_symlink() or not entry.is_dir():
+        raise SystemExit("Ubuntu report artifact collection has a non-directory entry")
+    observed_visual_cases.add(entry.name)
+if observed_visual_cases != expected_visual_cases:
+    raise SystemExit("Ubuntu report artifact case inventory mismatch")
 
 cross_reproduction = json.loads(
     (root / "acceptance/cross_platform_public_reproduction.json").read_text(
@@ -6769,9 +7095,17 @@ for row in comparison_rows:
             or row.get("ubuntu_sha256") != "not_compared"
         ):
             raise SystemExit("cross-platform visual row claims a bytewise comparison")
-        if visual_structure(
-            macos_public_root / Path(*relative.parts)
-        ) != visual_structure(ubuntu_public_root / Path(*relative.parts)):
+        macos_inventory = macos_public_root / Path(*relative.parts)
+        ubuntu_inventory = ubuntu_public_root / Path(*relative.parts)
+        macos_case_id = visual_inventory_case_id(macos_public_root, macos_inventory)
+        ubuntu_case_id = visual_inventory_case_id(ubuntu_public_root, ubuntu_inventory)
+        if macos_case_id != ubuntu_case_id:
+            raise SystemExit("cross-platform visual inventory case IDs differ")
+        macos_structure = visual_structure(macos_inventory)
+        ubuntu_structure = bind_visual_inventory(
+            ubuntu_inventory, ubuntu_report_outputs / ubuntu_case_id
+        )
+        if macos_structure != ubuntu_structure:
             raise SystemExit("cross-platform visual structure differs")
     comparison_counts[evidence_type] += 1
 if comparison_paths["normalized_scientific_table"] != macos_scientific:

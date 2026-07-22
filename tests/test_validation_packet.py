@@ -797,6 +797,17 @@ def write_acceptance_evidence(
         root / "public" / "observed_normalized",
         ubuntu_results / "observed_normalized",
     )
+    staged_outputs = ubuntu_results / "report_artifacts" / "outputs"
+    for inventory in sorted(
+        (root / "public" / "observed_normalized").rglob(
+            "visual_artifact_inventory.tsv"
+        )
+    ):
+        case_id = inventory.parent.name
+        shutil.copytree(
+            root / "public" / "outputs" / case_id,
+            staged_outputs / case_id,
+        )
     shutil.copytree(root / "public" / "environment", ubuntu_results / "environment")
     write_tsv(
         ubuntu_results / "environment/network_isolation.tsv",
@@ -946,13 +957,20 @@ def png_chunk(kind: bytes, data: bytes) -> bytes:
     )
 
 
-def write_png(path: Path, rgb: tuple[int, int, int] = (0, 0, 0)) -> None:
+def write_png(
+    path: Path,
+    rgb: tuple[int, int, int] = (0, 0, 0),
+    *,
+    width: int = 1,
+    height: int = 1,
+) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    ihdr = struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0)
+    ihdr = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+    pixels = b"".join(b"\x00" + bytes(rgb) * width for _ in range(height))
     path.write_bytes(
         b"\x89PNG\r\n\x1a\n"
         + png_chunk(b"IHDR", ihdr)
-        + png_chunk(b"IDAT", zlib.compress(b"\x00" + bytes(rgb)))
+        + png_chunk(b"IDAT", zlib.compress(pixels))
         + png_chunk(b"IEND", b"")
     )
 
@@ -1248,26 +1266,35 @@ def write_normalized_case(
         ],
     )
 
+    output_root = root.parents[1] / "outputs" / case_id
     visual_rows = []
     for index in range(int(oracle["html_count"])):
+        artifact = output_root / "report" / f"{index + 1:02d}.html"
+        artifact.parent.mkdir(parents=True, exist_ok=True)
+        artifact.write_text(
+            f"<!doctype html><html><body>{case_id} report {index + 1}</body></html>\n",
+            encoding="utf-8",
+        )
         visual_rows.append(
             [
                 f"report/{index + 1:02d}.html",
                 "html",
-                "100",
-                hashlib.sha256(f"html-{index}".encode()).hexdigest(),
+                str(artifact.stat().st_size),
+                hashlib.sha256(artifact.read_bytes()).hexdigest(),
                 "",
                 "",
                 "ok",
             ]
         )
     for index in range(int(oracle["png_count"])):
+        artifact = output_root / "figures" / f"{index + 1:02d}.png"
+        write_png(artifact)
         visual_rows.append(
             [
                 f"figures/{index + 1:02d}.png",
                 "png",
-                "69",
-                hashlib.sha256(f"png-{index}".encode()).hexdigest(),
+                str(artifact.stat().st_size),
+                hashlib.sha256(artifact.read_bytes()).hexdigest(),
                 "1",
                 "1",
                 "ok",
@@ -1475,15 +1502,19 @@ def write_resource_evidence(root: Path, commit: str) -> None:
             command.write_text(f"echo {case_id}\n", encoding="utf-8")
         if not log.exists():
             log.write_text(f"{case_id}=PASS\n", encoding="utf-8")
+        command_digest = hashlib.sha256(command.read_bytes()).hexdigest()
+        log_digest = hashlib.sha256(log.read_bytes()).hexdigest()
         rows.append(
             [
                 f"10000000-0000-4000-8000-{index:012d}",
                 case_id,
                 commit,
                 f"commands/{case_id}.sh",
-                hashlib.sha256(command.read_bytes()).hexdigest(),
+                command_digest,
+                command_digest,
                 f"logs/{case_id}.log",
-                hashlib.sha256(log.read_bytes()).hexdigest(),
+                log_digest,
+                log_digest,
                 "1.0",
                 "0.5",
                 "0.1",
@@ -1493,7 +1524,7 @@ def write_resource_evidence(root: Path, commit: str) -> None:
                 "repository_root;cache_root;validation_root",
                 "cache_root;validation_root",
                 "broad_declared_inputs_and_changed_or_new_outputs_v2",
-                "4",
+                packet_builder.RESOURCE_CASE_THREAD_SETTINGS[case_id],
                 "test",
                 "measured",
                 "",
@@ -1933,7 +1964,18 @@ def test_packet_rejects_self_consistent_ubuntu_visual_structure_drift(
         reader = csv.DictReader(handle, delimiter="\t")
         fieldnames = tuple(reader.fieldnames or ())
         rows = list(reader)
-    rows[0]["width_px"] = "2"
+    row = next(item for item in rows if item["artifact_type"] == "png")
+    case_id = visual.parent.name
+    artifact = (
+        artifact_root
+        / "results/report_artifacts/outputs"
+        / case_id
+        / row["relative_path"]
+    )
+    write_png(artifact, width=2)
+    row["bytes"] = str(artifact.stat().st_size)
+    row["sha256"] = hashlib.sha256(artifact.read_bytes()).hexdigest()
+    row["width_px"] = "2"
     with visual.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(
             handle,
@@ -1946,6 +1988,181 @@ def test_packet_rejects_self_consistent_ubuntu_visual_structure_drift(
     rewrite_public_artifact_manifest(artifact_root)
     with pytest.raises(ValueError, match="visual structure differs"):
         packet_builder.build_packet(packet_args(validation, repo, tmp_path / "output"))
+
+
+@pytest.mark.parametrize(
+    ("relative_path", "artifact_type"),
+    [
+        ("../report/01.html", "html"),
+        ("report\\01.html", "html"),
+        ("nested/report/01.html", "html"),
+        ("report/01.png", "html"),
+    ],
+)
+def test_visual_inventory_rejects_unsafe_or_type_mismatched_paths(
+    tmp_path: Path,
+    relative_path: str,
+    artifact_type: str,
+) -> None:
+    inventory = tmp_path / "visual_artifact_inventory.tsv"
+    write_tsv(
+        inventory,
+        (
+            "relative_path",
+            "artifact_type",
+            "bytes",
+            "sha256",
+            "width_px",
+            "height_px",
+            "integrity_status",
+        ),
+        [[relative_path, artifact_type, "1", "a" * 64, "", "", "ok"]],
+    )
+    with pytest.raises(ValueError, match="visual artifact|Visual artifact"):
+        packet_builder.parse_visual_inventory(inventory)
+
+
+def test_packet_rejects_resealed_missing_or_unlisted_ubuntu_visual_artifact(
+    tmp_path: Path,
+) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    artifact_root = validation / "acceptance/ubuntu_public_validation/artifact"
+    report_root = artifact_root / "results/report_artifacts/outputs"
+    missing = next(report_root.rglob("*.html"))
+    missing.unlink()
+    rewrite_public_artifact_manifest(artifact_root)
+    with pytest.raises(ValueError, match="Visual artifact .*missing"):
+        packet_builder.build_packet(packet_args(validation, repo, tmp_path / "missing"))
+
+    validation = create_validation_root(tmp_path / "extra", repo, commit)
+    artifact_root = validation / "acceptance/ubuntu_public_validation/artifact"
+    report_root = artifact_root / "results/report_artifacts/outputs"
+    case_root = next(path for path in report_root.iterdir() if path.is_dir())
+    (case_root / "report/unlisted.html").write_text(
+        "<html><body>unlisted</body></html>\n", encoding="utf-8"
+    )
+    rewrite_public_artifact_manifest(artifact_root)
+    with pytest.raises(ValueError, match="inventory coverage mismatch"):
+        packet_builder.build_packet(packet_args(validation, repo, tmp_path / "extra-output"))
+
+
+def test_packet_rejects_resealed_ubuntu_visual_hash_drift(tmp_path: Path) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    artifact_root = validation / "acceptance/ubuntu_public_validation/artifact"
+    visual = next(
+        (artifact_root / "results/report_artifacts/outputs").rglob("*.html")
+    )
+    visual.write_text(
+        visual.read_text(encoding="utf-8").replace("report", "Report", 1),
+        encoding="utf-8",
+    )
+    rewrite_public_artifact_manifest(artifact_root)
+    with pytest.raises(ValueError, match="SHA-256 does not match inventory"):
+        packet_builder.build_packet(packet_args(validation, repo, tmp_path / "output"))
+
+
+def test_packet_rejects_resealed_undecodable_ubuntu_png(tmp_path: Path) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    artifact_root = validation / "acceptance/ubuntu_public_validation/artifact"
+    inventory = next(
+        (artifact_root / "results/observed_normalized").rglob(
+            "visual_artifact_inventory.tsv"
+        )
+    )
+    with inventory.open(encoding="utf-8", newline="") as handle:
+        rows = list(csv.DictReader(handle, delimiter="\t"))
+    row = next(item for item in rows if item["artifact_type"] == "png")
+    artifact = (
+        artifact_root
+        / "results/report_artifacts/outputs"
+        / inventory.parent.name
+        / row["relative_path"]
+    )
+    artifact.write_bytes(b"\x89PNG\r\n\x1a\ntruncated")
+    mutate_tsv_value(
+        inventory,
+        "relative_path",
+        row["relative_path"],
+        "bytes",
+        str(artifact.stat().st_size),
+    )
+    mutate_tsv_value(
+        inventory,
+        "relative_path",
+        row["relative_path"],
+        "sha256",
+        hashlib.sha256(artifact.read_bytes()).hexdigest(),
+    )
+    rewrite_public_artifact_manifest(artifact_root)
+    with pytest.raises(ValueError, match="PNG"):
+        packet_builder.build_packet(packet_args(validation, repo, tmp_path / "output"))
+
+
+def test_packet_accepts_platform_specific_png_bytes_at_same_dimensions(
+    tmp_path: Path,
+) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    artifact_root = validation / "acceptance/ubuntu_public_validation/artifact"
+    inventory = next(
+        (artifact_root / "results/observed_normalized").rglob(
+            "visual_artifact_inventory.tsv"
+        )
+    )
+    with inventory.open(encoding="utf-8", newline="") as handle:
+        rows = list(csv.DictReader(handle, delimiter="\t"))
+    row = next(item for item in rows if item["artifact_type"] == "png")
+    artifact = (
+        artifact_root
+        / "results/report_artifacts/outputs"
+        / inventory.parent.name
+        / row["relative_path"]
+    )
+    write_png(artifact, (255, 0, 0))
+    mutate_tsv_value(
+        inventory,
+        "relative_path",
+        row["relative_path"],
+        "bytes",
+        str(artifact.stat().st_size),
+    )
+    mutate_tsv_value(
+        inventory,
+        "relative_path",
+        row["relative_path"],
+        "sha256",
+        hashlib.sha256(artifact.read_bytes()).hexdigest(),
+    )
+    rewrite_public_artifact_manifest(artifact_root)
+
+    output = tmp_path / "output"
+    packet_builder.build_packet(packet_args(validation, repo, output))
+    assert verify_packet(output / "packet").returncode == 0
+
+
+def test_extracted_verifier_rejects_resealed_ubuntu_visual_hash_drift(
+    tmp_path: Path,
+) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    output = tmp_path / "output"
+    packet_builder.build_packet(packet_args(validation, repo, output))
+    packet = output / "packet"
+    artifact_root = packet / "acceptance/ubuntu_public_validation/artifact"
+    visual = next((artifact_root / "results/report_artifacts/outputs").rglob("*.html"))
+    visual.write_text(
+        visual.read_text(encoding="utf-8").replace("report", "Report", 1),
+        encoding="utf-8",
+    )
+    rewrite_public_artifact_manifest(artifact_root)
+    rewrite_manifest(packet)
+
+    checked = verify_packet(packet)
+    assert checked.returncode != 0
+    assert "visual artifact SHA-256 mismatch" in checked.stderr
 
 
 def test_extracted_verifier_binds_downloaded_public_artifact_files(
@@ -2615,15 +2832,17 @@ def test_packet_rejects_secret_like_material(tmp_path: Path) -> None:
     (validation / "logs" / "unit_known_answer.log").write_text(
         "access_token=ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ\n", encoding="utf-8"
     )
-    mutate_tsv_value(
-        validation / "resource_usage.tsv",
-        "case_id",
-        "unit_known_answer",
-        "log_sha256",
-        hashlib.sha256(
-            (validation / "logs" / "unit_known_answer.log").read_bytes()
-        ).hexdigest(),
-    )
+    digest = hashlib.sha256(
+        (validation / "logs" / "unit_known_answer.log").read_bytes()
+    ).hexdigest()
+    for field in ("log_sha256", "packaged_log_sha256"):
+        mutate_tsv_value(
+            validation / "resource_usage.tsv",
+            "case_id",
+            "unit_known_answer",
+            field,
+            digest,
+        )
     with pytest.raises(ValueError, match="secret-like material"):
         packet_builder.build_packet(packet_args(validation, repo, tmp_path / "output"))
 
@@ -2633,13 +2852,15 @@ def test_packet_normalizes_local_absolute_paths(tmp_path: Path) -> None:
     validation = create_validation_root(tmp_path, repo, commit)
     source = validation / "logs" / "unit_known_answer.log"
     source.write_text("source=/Users/alice/private/run.log\n", encoding="utf-8")
-    mutate_tsv_value(
-        validation / "resource_usage.tsv",
-        "case_id",
-        "unit_known_answer",
-        "log_sha256",
-        hashlib.sha256(source.read_bytes()).hexdigest(),
-    )
+    digest = hashlib.sha256(source.read_bytes()).hexdigest()
+    for field in ("log_sha256", "packaged_log_sha256"):
+        mutate_tsv_value(
+            validation / "resource_usage.tsv",
+            "case_id",
+            "unit_known_answer",
+            field,
+            digest,
+        )
     output = tmp_path / "output"
     packet_builder.build_packet(packet_args(validation, repo, output))
     copied = (output / "packet" / "logs" / "unit_known_answer.log").read_text(
@@ -2647,6 +2868,16 @@ def test_packet_normalizes_local_absolute_paths(tmp_path: Path) -> None:
     )
     assert "/Users/" not in copied
     assert "${HOME}" in copied
+    with (output / "packet" / "resource_usage.tsv").open(
+        encoding="utf-8", newline=""
+    ) as handle:
+        rows = list(csv.DictReader(handle, delimiter="\t"))
+    resource = next(row for row in rows if row["case_id"] == "unit_known_answer")
+    assert resource["log_sha256"] == digest
+    assert resource["packaged_log_sha256"] == hashlib.sha256(
+        copied.encode("utf-8")
+    ).hexdigest()
+    assert resource["packaged_log_sha256"] != resource["log_sha256"]
 
 
 def test_packet_rejects_local_paths_inside_immutable_public_artifact(
@@ -3010,8 +3241,22 @@ def test_packet_rejects_resource_command_digest_or_thread_drift(tmp_path: Path) 
         "threads",
         "8",
     )
-    with pytest.raises(ValueError, match="thread count must be 4"):
+    with pytest.raises(ValueError, match="thread setting mismatch"):
         packet_builder.build_packet(packet_args(validation, repo, tmp_path / "thread-output"))
+
+
+def test_packet_rejects_prepackaging_resource_digest_divergence(tmp_path: Path) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    mutate_tsv_value(
+        validation / "resource_usage.tsv",
+        "case_id",
+        "unit_known_answer",
+        "packaged_command_sha256",
+        "f" * 64,
+    )
+    with pytest.raises(ValueError, match="Pre-packaging resource digest mismatch"):
+        packet_builder.build_packet(packet_args(validation, repo, tmp_path / "output"))
 
 
 def test_packet_requires_decoded_pixel_evidence(tmp_path: Path) -> None:
@@ -3055,6 +3300,24 @@ def test_packet_rejects_repeat2_decoded_pixel_drift(tmp_path: Path) -> None:
         / "public/outputs/gm12878_default_run2/figures/01.png"
     )
     write_png(figure, (255, 0, 0))
+    inventory = (
+        validation
+        / "public/observed_normalized/gm12878_default_run2/visual_artifact_inventory.tsv"
+    )
+    mutate_tsv_value(
+        inventory,
+        "relative_path",
+        "figures/01.png",
+        "bytes",
+        str(figure.stat().st_size),
+    )
+    mutate_tsv_value(
+        inventory,
+        "relative_path",
+        "figures/01.png",
+        "sha256",
+        hashlib.sha256(figure.read_bytes()).hexdigest(),
+    )
     with pytest.raises(ValueError, match="hash does not match repeat-2 PNG"):
         packet_builder.build_packet(packet_args(validation, repo, tmp_path / "output"))
 
@@ -3094,7 +3357,28 @@ def test_extracted_verifier_rejects_resealed_resource_command_drift(
     rewrite_manifest(packet)
     checked = verify_packet(packet)
     assert checked.returncode != 0
-    assert "command_sha256 does not bind command_path" in checked.stderr
+    assert "packaged_command_sha256 does not bind command_path" in checked.stderr
+
+
+def test_extracted_verifier_rejects_resealed_resource_thread_drift(
+    tmp_path: Path,
+) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    output = tmp_path / "output"
+    packet_builder.build_packet(packet_args(validation, repo, output))
+    packet = output / "packet"
+    mutate_tsv_value(
+        packet / "resource_usage.tsv",
+        "case_id",
+        "synthetic_longread_smoke",
+        "threads",
+        "4",
+    )
+    rewrite_manifest(packet)
+    checked = verify_packet(packet)
+    assert checked.returncode != 0
+    assert "resource thread setting mismatch" in checked.stderr
 
 
 def test_extracted_verifier_rejects_resealed_decoded_pixel_drift(

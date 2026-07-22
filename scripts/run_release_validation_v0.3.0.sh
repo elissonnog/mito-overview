@@ -210,11 +210,12 @@ record_case() {
 measure_command() {
   local case_id="$1"
   local log_file="$2"
-  shift 2
+  local thread_setting="$3"
+  shift 3
   "${PYTHON_BIN}" - \
     "${VALIDATION_ROOT}/resources/${case_id}.json" "${log_file}" \
     "${REPO_ROOT}" "${CACHE_ROOT}" "${VALIDATION_ROOT}" \
-    "${CANDIDATE_COMMIT}" "$@" <<'PY'
+    "${CANDIDATE_COMMIT}" "${thread_setting}" "$@" <<'PY'
 # BEGIN RESOURCE_MEASUREMENT_PYTHON
 import hashlib
 import json
@@ -232,9 +233,10 @@ resource_path = Path(sys.argv[1])
 log_path = Path(sys.argv[2])
 repository_root, cache_root, validation_root = [Path(value) for value in sys.argv[3:6]]
 candidate_commit = sys.argv[6]
+thread_setting = sys.argv[7]
 input_roots = [repository_root, cache_root, validation_root]
 output_roots = [cache_root, validation_root]
-command = sys.argv[7:]
+command = sys.argv[8:]
 
 case_id = resource_path.stem
 expected_resource_path = validation_root / "resources" / f"{case_id}.json"
@@ -247,6 +249,10 @@ if (
     or not expected_command_path.is_file()
     or expected_command_path.is_symlink()
     or not re.fullmatch(r"[0-9a-f]{40}", candidate_commit)
+    or not (
+        (thread_setting.isdigit() and int(thread_setting) > 0)
+        or thread_setting in {"mixed", "not_applicable"}
+    )
 ):
     raise SystemExit("Resource measurement command identity mismatch")
 command_sha256 = hashlib.sha256(expected_command_path.read_bytes()).hexdigest()
@@ -305,8 +311,10 @@ record = {
     "candidate_commit": candidate_commit,
     "command_path": f"commands/{case_id}.sh",
     "command_sha256": command_sha256,
+    "packaged_command_sha256": command_sha256,
     "log_path": f"logs/{case_id}.log",
     "log_sha256": log_sha256,
+    "packaged_log_sha256": log_sha256,
     "wall_seconds": round(elapsed, 6),
     "user_cpu_seconds": round(after.ru_utime - before.ru_utime, 6),
     "system_cpu_seconds": round(after.ru_stime - before.ru_stime, 6),
@@ -322,7 +330,7 @@ record = {
     "io_measurement_method": (
         "broad_declared_inputs_and_changed_or_new_outputs_v2"
     ),
-    "threads": os.environ.get("THREADS", "4"),
+    "threads": thread_setting,
     "platform": platform.platform(),
     "measurement_status": "measured",
     "reason": "",
@@ -337,7 +345,8 @@ PY
 run_logged() {
   local case_id="$1"
   local category="$2"
-  shift 2
+  local thread_setting="$3"
+  shift 3
   local command_file="${VALIDATION_ROOT}/commands/${case_id}.sh"
   local log_file="${VALIDATION_ROOT}/logs/${case_id}.log"
   {
@@ -347,7 +356,7 @@ run_logged() {
     printf '\n'
   } > "${command_file}"
   chmod +x "${command_file}"
-  if measure_command "${case_id}" "${log_file}" bash "${command_file}"; then
+  if measure_command "${case_id}" "${log_file}" "${thread_setting}" bash "${command_file}"; then
     record_case "${case_id}" "${category}" 1 1 PASS "see logs/${case_id}.log"
   else
     record_case "${case_id}" "${category}" 1 1 FAIL "see logs/${case_id}.log"
@@ -945,7 +954,7 @@ FRESH_PYTHON=$(printf '%q' "${venv_root}/bin/python")
 run_clean "\${FRESH_PYTHON}" -m pip install --force-reinstall \
   pip==26.1.2 build==1.5.0 setuptools==82.0.1 wheel==0.47.0 \
   pytest==9.1.1 python-docx==1.2.0
-measure_command package_build $(printf '%q' "${package_log_file}") \
+measure_command package_build $(printf '%q' "${package_log_file}") not_applicable \
   bash $(printf '%q' "${package_command_file}")
 WHEEL="\$(find $(printf '%q' "${VALIDATION_ROOT}/dist") -maxdepth 1 -type f -name '*.whl' -print -quit)"
 SDIST="\$(find $(printf '%q' "${VALIDATION_ROOT}/dist") -maxdepth 1 -type f -name '*.tar.gz' -print -quit)"
@@ -988,7 +997,7 @@ EOF
 
   export -f measure_command
   export PYTHON_BIN VALIDATION_ROOT REPO_ROOT CACHE_ROOT CANDIDATE_COMMIT
-  if measure_command "${FRESH_CLONE_CASE_ID}" "${log_file}" bash "${command_file}"; then
+  if measure_command "${FRESH_CLONE_CASE_ID}" "${log_file}" mixed bash "${command_file}"; then
     "${PYTHON_BIN}" -       "${VALIDATION_ROOT}/acceptance/fresh_clone.json"       "${CANDIDATE_COMMIT}" "${REPOSITORY}" "${PUBLIC_REMOTE}" <<'PY'
 import json
 import sys
@@ -1322,8 +1331,9 @@ mkdir -p "$(dirname "${CACHE_ROOT}")"
 mkdir "${CACHE_ROOT}"
 run_fresh_clone_validation
 
-run_logged unit_known_answer unit "${PYTHON_BIN}" -m pytest -q
-run_logged cli_step_listing cli "${PYTHON_BIN}" -m mito_overview.cli --list-steps
+run_logged unit_known_answer unit mixed "${FRESH_PYTHON}" -m pytest -q
+run_logged cli_step_listing cli not_applicable \
+  "${FRESH_PYTHON}" -I -m mito_overview.cli --list-steps
 
 source "${REPO_ROOT}/scripts/lib/prepare_synthetic_toy_sample.sh"
 STRICT_ROOT="${VALIDATION_ROOT}/work/strict_generic"
@@ -1337,11 +1347,21 @@ REF_FASTA=${STRICT_ROOT}/tiny_GRCh38.fa
 SOURCE_ALIGN_FILE=${STRICT_ROOT}/sample/human_variation/TOY-001.input.bam
 MT_CONTIG=MT
 EOF
-run_logged strict_generic_dry_run cli   "${PYTHON_BIN}" -m mito_overview.cli   --config "${STRICT_ROOT}/standalone.env" --dry-run --strict-files
-run_logged synthetic_longread_smoke synthetic   env MITO_OVERVIEW_PYTHON="${PYTHON_BIN}" "${REPO_ROOT}/tests/smoke_public_pipeline.sh"
-run_logged synthetic_shortread_smoke synthetic   env MITO_OVERVIEW_PYTHON="${PYTHON_BIN}" "${REPO_ROOT}/tests/smoke_public_pipeline_shortread.sh"
-run_logged synthetic_longread_nomethyl_smoke synthetic   env MITO_OVERVIEW_PYTHON="${PYTHON_BIN}" "${REPO_ROOT}/tests/smoke_public_pipeline_longread_nomethyl.sh"
-run_logged standalone_minimal_smoke synthetic   env MITO_OVERVIEW_PYTHON="${PYTHON_BIN}" "${REPO_ROOT}/tests/smoke_standalone_minimal.sh"
+run_logged strict_generic_dry_run cli 4 \
+  "${FRESH_PYTHON}" -I -m mito_overview.cli \
+  --config "${STRICT_ROOT}/standalone.env" --dry-run --strict-files
+run_logged synthetic_longread_smoke synthetic 1 \
+  env MITO_OVERVIEW_PYTHON="${FRESH_PYTHON}" MITO_OVERVIEW_REQUIRE_INSTALLED=1 \
+  "${REPO_ROOT}/tests/smoke_public_pipeline.sh"
+run_logged synthetic_shortread_smoke synthetic 1 \
+  env MITO_OVERVIEW_PYTHON="${FRESH_PYTHON}" MITO_OVERVIEW_REQUIRE_INSTALLED=1 \
+  "${REPO_ROOT}/tests/smoke_public_pipeline_shortread.sh"
+run_logged synthetic_longread_nomethyl_smoke synthetic 1 \
+  env MITO_OVERVIEW_PYTHON="${FRESH_PYTHON}" MITO_OVERVIEW_REQUIRE_INSTALLED=1 \
+  "${REPO_ROOT}/tests/smoke_public_pipeline_longread_nomethyl.sh"
+run_logged standalone_minimal_smoke synthetic 4 \
+  env MITO_OVERVIEW_PYTHON="${FRESH_PYTHON}" MITO_OVERVIEW_REQUIRE_INSTALLED=1 \
+  "${REPO_ROOT}/tests/smoke_standalone_minimal.sh"
 
 "${PYTHON_BIN}" - "${VALIDATION_ROOT}/resources/package_build.json" <<'PY'
 import json
@@ -1375,7 +1395,7 @@ if [[ ! -d "${CACHE_ROOT}" || -L "${CACHE_ROOT}" ]] || \
   echo "Raw cache root must still be an empty regular directory immediately before download: ${CACHE_ROOT}" >&2
   exit 1
 fi
-run_logged public_cache_prepare public_input \
+run_logged public_cache_prepare public_input not_applicable \
   "${PREPARE_SCRIPT}" --cache "${CACHE_ROOT}"
 
 case "$(uname -s)/$(uname -m)" in
@@ -1392,7 +1412,7 @@ NETWORK_ISOLATION_EVIDENCE="${VALIDATION_ROOT}/work/public_network_isolation.tsv
 mkdir -p "${VALIDATION_ROOT}/work/public_home" \
   "${VALIDATION_ROOT}/work/public_tmp" \
   "${VALIDATION_ROOT}/work/public_xdg_cache"
-run_logged public_validation_matrix public \
+run_logged public_validation_matrix public 4 \
   env -i \
     HOME="${VALIDATION_ROOT}/work/public_home" \
     TMPDIR="${VALIDATION_ROOT}/work/public_tmp" \
@@ -1577,7 +1597,8 @@ for resource_path in sorted((validation_root / "resources").glob("*.json")):
             key: value.get(key, "")
             for key in (
                 "measurement_id", "case_id", "candidate_commit", "command_path",
-                "command_sha256", "log_path", "log_sha256", "wall_seconds", "user_cpu_seconds",
+                "command_sha256", "packaged_command_sha256", "log_path", "log_sha256",
+                "packaged_log_sha256", "wall_seconds", "user_cpu_seconds",
                 "system_cpu_seconds",
                 "max_rss_kb", "broad_declared_input_inventory_bytes",
                 "changed_or_new_output_inventory_bytes",
@@ -1591,7 +1612,8 @@ write_table(
     "resource_usage.tsv",
     [
         "measurement_id", "case_id", "candidate_commit", "command_path",
-        "command_sha256", "log_path", "log_sha256", "wall_seconds", "user_cpu_seconds",
+        "command_sha256", "packaged_command_sha256", "log_path", "log_sha256",
+        "packaged_log_sha256", "wall_seconds", "user_cpu_seconds",
         "system_cpu_seconds",
         "max_rss_kb", "broad_declared_input_inventory_bytes",
         "changed_or_new_output_inventory_bytes",

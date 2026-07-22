@@ -590,6 +590,32 @@ def test_runner_declares_public_clone_and_isolated_installed_probe() -> None:
     assert "--doi" not in text
 
 
+def test_runner_records_factual_threads_and_uses_fresh_installed_smokes() -> None:
+    text = RUNNER.read_text(encoding="utf-8")
+    assert '"threads": thread_setting' in text
+    assert 'os.environ.get("THREADS", "4")' not in text
+    expected_calls = (
+        "run_logged unit_known_answer unit mixed",
+        "run_logged cli_step_listing cli not_applicable",
+        "run_logged strict_generic_dry_run cli 4",
+        "run_logged synthetic_longread_smoke synthetic 1",
+        "run_logged synthetic_shortread_smoke synthetic 1",
+        "run_logged synthetic_longread_nomethyl_smoke synthetic 1",
+        "run_logged standalone_minimal_smoke synthetic 4",
+        "run_logged public_cache_prepare public_input not_applicable",
+        "run_logged public_validation_matrix public 4",
+    )
+    for call in expected_calls:
+        assert call in text
+    smoke_block = text[
+        text.index("run_logged synthetic_longread_smoke") :
+        text.index('"${PYTHON_BIN}" - "${VALIDATION_ROOT}/resources/package_build.json"')
+    ]
+    assert 'MITO_OVERVIEW_PYTHON="${FRESH_PYTHON}"' in smoke_block
+    assert "MITO_OVERVIEW_REQUIRE_INSTALLED=1" in smoke_block
+    assert 'MITO_OVERVIEW_PYTHON="${PYTHON_BIN}"' not in smoke_block
+
+
 def test_resource_measurement_counts_exact_declared_and_changed_inventories(
     tmp_path: Path,
 ) -> None:
@@ -648,6 +674,7 @@ def test_resource_measurement_counts_exact_declared_and_changed_inventories(
             str(cache),
             str(validation),
             candidate_commit,
+            "not_applicable",
             "bash",
             str(command_path),
         ],
@@ -668,8 +695,11 @@ def test_resource_measurement_counts_exact_declared_and_changed_inventories(
     assert observed["command_sha256"] == hashlib.sha256(
         command_path.read_bytes()
     ).hexdigest()
+    assert observed["packaged_command_sha256"] == observed["command_sha256"]
     assert observed["log_path"] == "logs/probe.log"
     assert observed["log_sha256"] == hashlib.sha256(log_path.read_bytes()).hexdigest()
+    assert observed["packaged_log_sha256"] == observed["log_sha256"]
+    assert observed["threads"] == "not_applicable"
     assert observed["broad_declared_input_inventory_bytes"] == (
         5 + command_path.stat().st_size
     )
