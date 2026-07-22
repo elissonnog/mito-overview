@@ -1,0 +1,121 @@
+{
+  "schema_version": "1.0",
+  "resource_id": "gm11906_ncbi_public_source_metadata_v1",
+  "authority": "NCBI GEO and NCBI SRA",
+  "evidence_scope": "SRR-to-GEO-sample linkage and GEO/SRA cell-line attribution for the GM11906 public validation libraries",
+  "retrieval_completed_utc": "2026-07-21T23:03:33Z",
+  "records_sha256": "c8593c1fb36421f74c30def0a1f9b0088b72631336525bcd5fb813ddc157a1c0",
+  "records": [
+    {
+      "run_accession": "SRR10804585",
+      "experiment_accession": "SRX7478441",
+      "sra_sample_accession": "SRS5922054",
+      "biosample_accession": "SAMN13699362",
+      "geo_accession": "GSM4238454",
+      "sra_study_accession": "SRP239086",
+      "bioproject_accession": "PRJNA598179",
+      "geo_series_accessions": [
+        "GSE142741",
+        "GSE142745"
+      ],
+      "sample_title": "MERFF-29-S42",
+      "cell_line": "GM11906",
+      "cell_type": "lymphoblastoid cell line",
+      "source_name": "Coriell cell line",
+      "organism": "Homo sapiens",
+      "library_strategy": "ATAC-seq",
+      "library_source": "GENOMIC",
+      "library_selection": "other",
+      "library_layout": "PAIRED",
+      "instrument_model": "NextSeq 550",
+      "source_files": [
+        {
+          "format": "NCBI_SRA_EFETCH_XML",
+          "url": "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=sra&id=SRR10804585&rettype=full&retmode=xml",
+          "bytes": 9001,
+          "sha256": "d1f14494b835ab8cf440892ddb66158aab62c58ffc4f0bd973e10d78de036627"
+        },
+        {
+          "format": "NCBI_GEO_SOFT",
+          "url": "https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSM4238454&targ=self&view=full&form=text",
+          "bytes": 2982,
+          "sha256": "97a6c54e4c957b98badc373a290e3554444cab270d21b6deaf61d90df0dff097"
+        }
+      ]
+    },
+    {
+      "run_accession": "SRR10804590",
+      "experiment_accession": "SRX7478446",
+      "sra_sample_accession": "SRS5922059",
+      "biosample_accession": "SAMN13699398",
+      "geo_accession": "GSM4238459",
+      "sra_study_accession": "SRP239086",
+      "bioproject_accession": "PRJNA598179",
+      "geo_series_accessions": [
+        "GSE142741",
+        "GSE142745"
+      ],
+      "sample_title": "MERFF-33-S46",
+      "cell_line": "GM11906",
+      "cell_type": "lymphoblastoid cell line",
+      "source_name": "Coriell cell line",
+      "organism": "Homo sapiens",
+      "library_strategy": "ATAC-seq",
+      "library_source": "GENOMIC",
+      "library_selection": "other",
+      "library_layout": "PAIRED",
+      "instrument_model": "NextSeq 550",
+      "source_files": [
+        {
+          "format": "NCBI_SRA_EFETCH_XML",
+          "url": "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=sra&id=SRR10804590&rettype=full&retmode=xml",
+          "bytes": 8978,
+          "sha256": "80b27624e09216055020933d8cf5d81136191f2104180acf7fcb219a6acdd03a"
+        },
+        {
+          "format": "NCBI_GEO_SOFT",
+          "url": "https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSM4238459&targ=self&view=full&form=text",
+          "bytes": 2982,
+          "sha256": "f717e8d921f2e28a796ccd77a6fb2710e7e738b1c50fea4db31ab5d539df3584"
+        }
+      ]
+    },
+    {
+      "run_accession": "SRR10804657",
+      "experiment_accession": "SRX7478513",
+      "sra_sample_accession": "SRS5922125",
+      "biosample_accession": "SAMN13699338",
+      "geo_accession": "GSM4238526",
+      "sra_study_accession": "SRP239086",
+      "bioproject_accession": "PRJNA598179",
+      "geo_series_accessions": [
+        "GSE142741",
+        "GSE142745"
+      ],
+      "sample_title": "MERFF-94-S107",
+      "cell_line": "GM11906",
+      "cell_type": "lymphoblastoid cell line",
+      "source_name": "Coriell cell line",
+      "organism": "Homo sapiens",
+      "library_strategy": "ATAC-seq",
+      "library_source": "GENOMIC",
+      "library_selection": "other",
+      "library_layout": "PAIRED",
+      "instrument_model": "NextSeq 550",
+      "source_files": [
+        {
+          "format": "NCBI_SRA_EFETCH_XML",
+          "url": "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=sra&id=SRR10804657&rettype=full&retmode=xml",
+          "bytes": 9014,
+          "sha256": "8792f8b0ff0f411afd9fbaafdb0db07f500175232345ec4e3d836c225006c9b1"
+        },
+        {
+          "format": "NCBI_GEO_SOFT",
+          "url": "https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSM4238526&targ=self&view=full&form=text",
+          "bytes": 2983,
+          "sha256": "c481df75f2e46ec9d11cbd6e6b035962e9b73aca4170cf5c89b20d8200403445"
+        }
+      ]
+    }
+  ]
+}

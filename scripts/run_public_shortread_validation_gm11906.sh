@@ -40,6 +40,12 @@ if [[ -n "${MITO_OVERVIEW_PYTHON:-}" ]]; then
   esac
 fi
 PYTHON_BIN="${MITO_OVERVIEW_PYTHON:-python3}"
+GM11906_METADATA_RESOURCE="${REPO_ROOT}/resources/public_validation/gm11906_ncbi_source_metadata_v0.3.0.json"
+
+[[ -f "${GM11906_METADATA_RESOURCE}" && ! -L "${GM11906_METADATA_RESOURCE}" ]] || {
+  echo "Tracked NCBI GM11906 metadata resource is missing or invalid: ${GM11906_METADATA_RESOURCE}" >&2
+  exit 1
+}
 
 required_tools=(bwa samtools)
 if [[ "${INPUT_MODE}" == download ]]; then
@@ -131,12 +137,85 @@ assert_md5 "${RAW_DATA_DIR}/SRR10804657_1.fastq.gz" 8f082f73cb64bf56ea8a053fe80e
 assert_md5 "${RAW_DATA_DIR}/SRR10804657_2.fastq.gz" 62b7d1b2294a580c021f5fa1f52609be
 
 SOURCE_METADATA_TSV="${WORKDIR}/GM11906_MERRF_shortread.source_libraries.tsv"
-cat > "${SOURCE_METADATA_TSV}" <<'EOF'
-run_accession	geo_accession	source_sample_id	library_strategy	library_unit	combination_role	source_record_url
-SRR10804585	GSM4238454	GM11906	ATAC-seq	single_cell_library	pooled_pseudobulk	https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSM4238454
-SRR10804590	GSM4238459	GM11906	ATAC-seq	single_cell_library	pooled_pseudobulk	https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSM4238459
-SRR10804657	GSM4238526	GM11906	ATAC-seq	single_cell_library	pooled_pseudobulk	https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSM4238526
-EOF
+"${PYTHON_BIN}" - "${GM11906_METADATA_RESOURCE}" "${SOURCE_METADATA_TSV}" <<'PY'
+import csv
+import hashlib
+import json
+import sys
+
+metadata_path, output_path = sys.argv[1:]
+expected_snapshot_sha256 = (
+    "080782bfe6bf01b19e680c188124aee37607f92d06716c902d368274ecb7a616"
+)
+with open(metadata_path, "rb") as handle:
+    snapshot_sha256 = hashlib.sha256(handle.read()).hexdigest()
+if snapshot_sha256 != expected_snapshot_sha256:
+    raise SystemExit("GM11906 official metadata snapshot SHA-256 mismatch")
+with open(metadata_path, encoding="utf-8") as handle:
+    metadata = json.load(handle)
+records = metadata.get("records")
+if (
+    metadata.get("schema_version") != "1.0"
+    or metadata.get("resource_id") != "gm11906_ncbi_public_source_metadata_v1"
+    or not isinstance(records, list)
+):
+    raise SystemExit("GM11906 official metadata resource identity mismatch")
+canonical_records = json.dumps(
+    records, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+).encode("ascii")
+if hashlib.sha256(canonical_records).hexdigest() != metadata.get("records_sha256"):
+    raise SystemExit("GM11906 official metadata records SHA-256 mismatch")
+by_run = {record.get("run_accession"): record for record in records}
+required_runs = ("SRR10804585", "SRR10804590", "SRR10804657")
+if len(by_run) != 3 or set(by_run) != set(required_runs):
+    raise SystemExit("GM11906 official metadata run inventory mismatch")
+fieldnames = (
+    "run_accession",
+    "geo_accession",
+    "source_sample_id",
+    "library_strategy",
+    "library_unit",
+    "combination_role",
+    "source_record_url",
+    "metadata_snapshot_sha256",
+    "metadata_record_sha256",
+)
+with open(output_path, "x", encoding="utf-8", newline="") as handle:
+    writer = csv.DictWriter(
+        handle, fieldnames=fieldnames, delimiter="\t", lineterminator="\n"
+    )
+    writer.writeheader()
+    for run_accession in required_runs:
+        record = by_run[run_accession]
+        if (
+            record.get("cell_line") != "GM11906"
+            or record.get("library_strategy") != "ATAC-seq"
+        ):
+            raise SystemExit(
+                f"GM11906 official metadata captured-value mismatch for {run_accession}"
+            )
+        record_sha256 = hashlib.sha256(
+            json.dumps(
+                record, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+            ).encode("ascii")
+        ).hexdigest()
+        writer.writerow(
+            {
+                "run_accession": run_accession,
+                "geo_accession": record["geo_accession"],
+                "source_sample_id": record["cell_line"],
+                "library_strategy": record["library_strategy"],
+                "library_unit": "single_cell_library",
+                "combination_role": "pooled_pseudobulk",
+                "source_record_url": (
+                    "https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc="
+                    + record["geo_accession"]
+                ),
+                "metadata_snapshot_sha256": snapshot_sha256,
+                "metadata_record_sha256": record_sha256,
+            }
+        )
+PY
 
 R1_FASTQ="${DERIVED_DIR}/GM11906_MERRF_R1.fastq.gz"
 R2_FASTQ="${DERIVED_DIR}/GM11906_MERRF_R2.fastq.gz"
@@ -330,6 +409,7 @@ esac
 mkdir -p "${OUTPUT_DIR}/provenance"
 copy_if_needed "${ALIGN_PROVENANCE}" "${OUTPUT_DIR}/provenance/GM11906_MERRF_shortread.alignment.provenance.json"
 copy_if_needed "${SOURCE_METADATA_TSV}" "${OUTPUT_DIR}/provenance/GM11906_MERRF_shortread.source_libraries.tsv"
+copy_if_needed "${GM11906_METADATA_RESOURCE}" "${OUTPUT_DIR}/provenance/GM11906_NCBI_source_metadata.json"
 copy_if_needed "${WORKDIR}/GM11906_MERRF_shortread.flagstat.txt" "$(dirname "${OUTPUT_DIR}")/GM11906_MERRF_shortread.flagstat.txt"
 copy_if_needed "${WORKDIR}/GM11906_MERRF_shortread.8344.mpileup" "$(dirname "${OUTPUT_DIR}")/GM11906_MERRF_shortread.8344.mpileup"
 
@@ -358,6 +438,8 @@ if [[ -n "${MITO_OVERVIEW_SHORTREAD_ASSET_DIR:-}" ]]; then
     "${PROVENANCE_DIR}/GM11906_MERRF_shortread.alignment.provenance.json"
   copy_if_needed "${SOURCE_METADATA_TSV}" \
     "${PROVENANCE_DIR}/GM11906_MERRF_shortread.source_libraries.tsv"
+  copy_if_needed "${GM11906_METADATA_RESOURCE}" \
+    "${PROVENANCE_DIR}/GM11906_NCBI_source_metadata.json"
   "${PYTHON_BIN}" - <<'PY' "${OUTPUT_DIR}" "${ASSET_DIR}"
 import sys
 from pathlib import Path

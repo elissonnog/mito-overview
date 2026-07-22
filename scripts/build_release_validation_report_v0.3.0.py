@@ -44,6 +44,12 @@ SAFE_ID_RE = re.compile(r"[^A-Za-z0-9_.-]+")
 PUBLIC_ENVIRONMENT_ROOT = "public_environment"
 NETWORK_ISOLATION_PACKET_PATH = f"{PUBLIC_ENVIRONMENT_ROOT}/network_isolation.tsv"
 RUNTIME_VERSIONS_PACKET_PATH = f"{PUBLIC_ENVIRONMENT_ROOT}/runtime_versions.json"
+GM11906_SOURCE_METADATA_PACKET_PATH = (
+    "public_provenance/GM11906_NCBI_source_metadata.json"
+)
+GM11906_SOURCE_METADATA_SHA256 = (
+    "080782bfe6bf01b19e680c188124aee37607f92d06716c902d368274ecb7a616"
+)
 
 EXPECTED_RUNTIME_PACKAGES = {
     "mito-overview": "0.3.0",
@@ -82,6 +88,7 @@ REQUIRED_PACKET_FILES = (
     "acceptance/cross_platform_public_reproduction.json",
     NETWORK_ISOLATION_PACKET_PATH,
     RUNTIME_VERSIONS_PACKET_PATH,
+    GM11906_SOURCE_METADATA_PACKET_PATH,
     "artifacts.sha256",
     "verify_bundle.sh",
 )
@@ -144,8 +151,10 @@ EVIDENCE_COLUMNS = {
         "user_cpu_seconds",
         "system_cpu_seconds",
         "max_rss_kb",
-        "input_bytes",
-        "output_bytes",
+        "broad_declared_input_inventory_bytes",
+        "changed_or_new_output_inventory_bytes",
+        "broad_declared_input_inventory_scope",
+        "changed_or_new_output_inventory_scope",
         "io_measurement_method",
         "threads",
         "platform",
@@ -334,6 +343,7 @@ class ReportEvidence:
     runtime_versions: dict[str, object]
     network_isolation: dict[str, str]
     cross_platform: dict[str, object]
+    public_source_metadata: dict[str, object]
     figures: list[dict[str, object]]
 
 
@@ -1050,14 +1060,17 @@ def validate_oracles(rows: list[dict[str, str]]) -> None:
             )
 
 
-def validate_resource_usage(rows: list[dict[str, str]]) -> None:
+def validate_resource_usage(
+    rows: list[dict[str, str]],
+    raw_inputs: list[dict[str, str]],
+) -> None:
     numeric_fields = (
         "wall_seconds",
         "user_cpu_seconds",
         "system_cpu_seconds",
         "max_rss_kb",
-        "input_bytes",
-        "output_bytes",
+        "broad_declared_input_inventory_bytes",
+        "changed_or_new_output_inventory_bytes",
         "threads",
     )
     for row in rows:
@@ -1084,11 +1097,118 @@ def validate_resource_usage(rows: list[dict[str, str]]) -> None:
             )
         if (
             row["io_measurement_method"]
-            != "declared_input_inventory_and_validation_output_delta_v1"
+            != "broad_declared_inputs_and_changed_or_new_outputs_v2"
         ):
             raise ReportValidationError(
                 f"Invalid resource I/O measurement method for {row['case_id']}"
             )
+        if row["broad_declared_input_inventory_scope"] != (
+            "repository_root;cache_root;validation_root"
+        ):
+            raise ReportValidationError(
+                f"Invalid broad input inventory scope for {row['case_id']}"
+            )
+        if row["changed_or_new_output_inventory_scope"] != (
+            "cache_root;validation_root"
+        ):
+            raise ReportValidationError(
+                f"Invalid changed/new output inventory scope for {row['case_id']}"
+            )
+    cache_rows = [row for row in rows if row["case_id"] == "public_cache_prepare"]
+    if len(cache_rows) != 1 or cache_rows[0]["measurement_status"] != "measured":
+        raise ReportValidationError(
+            "Resource evidence requires one measured public_cache_prepare row"
+        )
+    raw_fastq_bytes = sum(int(row["bytes"]) for row in raw_inputs)
+    observed = int(cache_rows[0]["changed_or_new_output_inventory_bytes"])
+    if observed < raw_fastq_bytes:
+        raise ReportValidationError(
+            "public_cache_prepare changed/new output inventory excludes raw downloads"
+        )
+
+
+def validate_gm11906_source_metadata(
+    packet_root: Path,
+    run: dict[str, object],
+    release: dict[str, object],
+) -> dict[str, object]:
+    path = packet_root / GM11906_SOURCE_METADATA_PACKET_PATH
+    if sha256_file(path) != GM11906_SOURCE_METADATA_SHA256:
+        raise ReportValidationError(
+            "GM11906 official NCBI metadata snapshot SHA-256 mismatch"
+        )
+    payload = read_json_object(path, "GM11906 official NCBI metadata snapshot")
+    records = payload.get("records")
+    if (
+        payload.get("schema_version") != "1.0"
+        or payload.get("resource_id")
+        != "gm11906_ncbi_public_source_metadata_v1"
+        or payload.get("authority") != "NCBI GEO and NCBI SRA"
+        or not isinstance(records, list)
+    ):
+        raise ReportValidationError(
+            "GM11906 official NCBI metadata snapshot identity mismatch"
+        )
+    canonical = json.dumps(
+        records, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+    ).encode("ascii")
+    records_sha256 = hashlib.sha256(canonical).hexdigest()
+    if records_sha256 != payload.get("records_sha256"):
+        raise ReportValidationError(
+            "GM11906 official NCBI metadata records SHA-256 mismatch"
+        )
+    try:
+        retrieved = datetime.fromisoformat(
+            str(payload["retrieval_completed_utc"]).replace("Z", "+00:00")
+        )
+    except (KeyError, ValueError) as error:
+        raise ReportValidationError(
+            "GM11906 official NCBI metadata retrieval timestamp is invalid"
+        ) from error
+    if retrieved.tzinfo is None or retrieved.utcoffset() is None:
+        raise ReportValidationError(
+            "GM11906 official NCBI metadata retrieval timestamp lacks a timezone"
+        )
+    by_run = {
+        record.get("run_accession"): record
+        for record in records
+        if isinstance(record, dict)
+    }
+    expected = {
+        "SRR10804585": ("SAMN13699362", "GSM4238454"),
+        "SRR10804590": ("SAMN13699398", "GSM4238459"),
+        "SRR10804657": ("SAMN13699338", "GSM4238526"),
+    }
+    if len(by_run) != 3 or set(by_run) != set(expected):
+        raise ReportValidationError(
+            "GM11906 official NCBI metadata run inventory mismatch"
+        )
+    for run_accession, identifiers in expected.items():
+        record = by_run[run_accession]
+        if (
+            (record.get("biosample_accession"), record.get("geo_accession"))
+            != identifiers
+            or record.get("cell_line") != "GM11906"
+            or record.get("library_strategy") != "ATAC-seq"
+        ):
+            raise ReportValidationError(
+                f"GM11906 official NCBI metadata linkage mismatch for {run_accession}"
+            )
+    identity = {
+        "path": GM11906_SOURCE_METADATA_PACKET_PATH,
+        "sha256": GM11906_SOURCE_METADATA_SHA256,
+        "records_sha256": records_sha256,
+        "retrieval_completed_utc": payload["retrieval_completed_utc"],
+        "authority": payload["authority"],
+    }
+    if (
+        run.get("public_source_metadata") != identity
+        or release.get("public_source_metadata") != identity
+    ):
+        raise ReportValidationError(
+            "Release identity is not bound to the official NCBI metadata snapshot"
+        )
+    return {**identity, "records": records}
 
 
 def validate_provenance_tables(root: Path, tables: dict[str, list[dict[str, str]]]) -> None:
@@ -1145,6 +1265,11 @@ def load_and_validate_packet(
     release = read_json_object(packet_root / "release_identity.json", "release identity")
     publication = read_json_object(publication_path, "GitHub publication metadata")
     validate_identity(run, release, publication)
+    public_source_metadata = validate_gm11906_source_metadata(
+        packet_root,
+        run,
+        release,
+    )
 
     tables: dict[str, list[dict[str, str]]] = {}
     for name, columns in EVIDENCE_COLUMNS.items():
@@ -1163,7 +1288,7 @@ def load_and_validate_packet(
     validate_inputs(packet_root, raw_inputs)
     validate_module_states(tables["module_status_matrix.tsv"])
     validate_oracles(tables["oracle_assertions.tsv"])
-    validate_resource_usage(tables["resource_usage.tsv"])
+    validate_resource_usage(tables["resource_usage.tsv"], raw_inputs)
     runtime_versions = validate_runtime_versions(
         packet_root / RUNTIME_VERSIONS_PACKET_PATH
     )
@@ -1199,6 +1324,7 @@ def load_and_validate_packet(
         runtime_versions=runtime_versions,
         network_isolation=network_isolation,
         cross_platform=cross,
+        public_source_metadata=public_source_metadata,
         figures=figures,
     )
 
@@ -1372,6 +1498,17 @@ def build_report_blocks(
             "network_isolation_verdict",
         )
     )
+    gm11906_source_rows = tuple(
+        {
+            "run_accession": str(record["run_accession"]),
+            "experiment_accession": str(record["experiment_accession"]),
+            "geo_accession": str(record["geo_accession"]),
+            "biosample_accession": str(record["biosample_accession"]),
+            "cell_line": str(record["cell_line"]),
+            "library_strategy": str(record["library_strategy"]),
+        }
+        for record in evidence.public_source_metadata["records"]
+    )
 
     blocks: list[Block] = [
         Heading(1, "Release decision"),
@@ -1536,6 +1673,26 @@ def build_report_blocks(
             ),
             tuple(tables["public_data_sources.tsv"]),
         ),
+        Paragraph(
+            "The three GM11906 run-to-sample relationships are bound to a tracked "
+            "official NCBI GEO/SRA snapshot captured at "
+            f"{evidence.public_source_metadata['retrieval_completed_utc']}. The packet "
+            "verifies the snapshot at SHA-256 "
+            f"{evidence.public_source_metadata['sha256']}; no live metadata lookup is "
+            "used during offline validation."
+        ),
+        TableBlock(
+            "Official NCBI GM11906 accession linkage",
+            (
+                ("run_accession", "Run"),
+                ("experiment_accession", "Experiment"),
+                ("geo_accession", "GEO sample"),
+                ("biosample_accession", "BioSample"),
+                ("cell_line", "Cell line"),
+                ("library_strategy", "Library"),
+            ),
+            gm11906_source_rows,
+        ),
         Heading(1, "Execution environment"),
         Paragraph(
             "The packet records the release identity, platform, software versions, and "
@@ -1684,7 +1841,11 @@ def build_report_blocks(
         Heading(1, "Resource measurements"),
         Paragraph(
             "Resource values are observational measurements for the recorded hardware and "
-            "inputs. They are not generalized performance benchmarks."
+            "inputs. Byte values are inventories, not operating-system I/O counters: the "
+            "input value is the broad pre-command inventory of the repository, cache, and "
+            "validation roots, while the output value is the final size of files created "
+            "or changed under the cache and validation roots. They are not generalized "
+            "performance benchmarks."
         ),
         TableBlock(
             "Recorded resource usage",
@@ -1694,8 +1855,14 @@ def build_report_blocks(
                 ("user_cpu_seconds", "User CPU s"),
                 ("system_cpu_seconds", "System CPU s"),
                 ("max_rss_kb", "Peak RSS KB"),
-                ("input_bytes", "Input bytes"),
-                ("output_bytes", "Output bytes"),
+                (
+                    "broad_declared_input_inventory_bytes",
+                    "Broad declared input inventory bytes",
+                ),
+                (
+                    "changed_or_new_output_inventory_bytes",
+                    "Changed/new output inventory bytes",
+                ),
                 ("threads", "Threads"),
                 ("platform", "Platform"),
                 ("measurement_status", "Status"),

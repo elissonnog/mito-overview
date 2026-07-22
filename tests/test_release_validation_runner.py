@@ -545,11 +545,79 @@ def test_runner_declares_public_clone_and_isolated_installed_probe() -> None:
     assert '"separate_distribution_environments": True' in text
     assert "-I -m mito_overview.cli --list-steps" in text
     assert "executed_outside_checkout" in text
-    assert '"input_bytes"' in text
-    assert '"output_bytes"' in text
-    assert "declared_input_inventory_and_validation_output_delta_v1" in text
+    assert '"broad_declared_input_inventory_bytes"' in text
+    assert '"changed_or_new_output_inventory_bytes"' in text
+    assert "repository_root;cache_root;validation_root" in text
+    assert "cache_root;validation_root" in text
+    assert "broad_declared_inputs_and_changed_or_new_outputs_v2" in text
     assert "--zenodo-reservation-evidence" not in text
     assert "--doi" not in text
+
+
+def test_resource_measurement_counts_exact_declared_and_changed_inventories(
+    tmp_path: Path,
+) -> None:
+    text = RUNNER.read_text(encoding="utf-8")
+    match = re.search(
+        r"# BEGIN RESOURCE_MEASUREMENT_PYTHON\n(?P<code>.*?)"
+        r"\n# END RESOURCE_MEASUREMENT_PYTHON",
+        text,
+        re.DOTALL,
+    )
+    assert match is not None
+
+    repository = tmp_path / "repository"
+    cache = tmp_path / "cache"
+    validation = tmp_path / "validation"
+    repository.mkdir()
+    cache.mkdir()
+    validation.mkdir()
+    (repository / "input.bin").write_bytes(b"abc")
+    (validation / "existing.bin").write_bytes(b"xy")
+    resource_path = validation / "resources" / "probe.json"
+    resource_path.parent.mkdir()
+    log_path = validation / "logs" / "probe.log"
+    log_path.parent.mkdir()
+    cache_output = cache / "download.fastq.gz"
+    validation_output = validation / "result.tsv"
+    command_code = (
+        "from pathlib import Path; import sys; "
+        "Path(sys.argv[1]).write_bytes(b'12345'); "
+        "Path(sys.argv[2]).write_bytes(b'1234567')"
+    )
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            match.group("code"),
+            str(resource_path),
+            str(log_path),
+            str(repository),
+            str(cache),
+            str(validation),
+            sys.executable,
+            "-c",
+            command_code,
+            str(cache_output),
+            str(validation_output),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 0, completed.stderr
+    observed = json.loads(resource_path.read_text(encoding="utf-8"))
+    assert observed["broad_declared_input_inventory_bytes"] == 5
+    assert observed["changed_or_new_output_inventory_bytes"] == 12
+    assert observed["broad_declared_input_inventory_scope"] == (
+        "repository_root;cache_root;validation_root"
+    )
+    assert observed["changed_or_new_output_inventory_scope"] == (
+        "cache_root;validation_root"
+    )
+    assert observed["io_measurement_method"] == (
+        "broad_declared_inputs_and_changed_or_new_outputs_v2"
+    )
 
 
 def test_runner_machine_enforces_frozen_paper_tree() -> None:

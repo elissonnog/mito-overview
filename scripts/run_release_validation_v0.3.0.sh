@@ -214,6 +214,7 @@ measure_command() {
   "${PYTHON_BIN}" - \
     "${VALIDATION_ROOT}/resources/${case_id}.json" "${log_file}" \
     "${REPO_ROOT}" "${CACHE_ROOT}" "${VALIDATION_ROOT}" "$@" <<'PY'
+# BEGIN RESOURCE_MEASUREMENT_PYTHON
 import json
 import os
 import platform
@@ -225,8 +226,9 @@ from pathlib import Path
 
 resource_path = Path(sys.argv[1])
 log_path = Path(sys.argv[2])
-input_roots = [Path(value) for value in sys.argv[3:6]]
-output_root = Path(sys.argv[5])
+repository_root, cache_root, validation_root = [Path(value) for value in sys.argv[3:6]]
+input_roots = [repository_root, cache_root, validation_root]
+output_roots = [cache_root, validation_root]
 command = sys.argv[6:]
 
 EXCLUDED_NAMES = {".git", ".pytest_cache", "__pycache__"}
@@ -257,15 +259,15 @@ def file_inventory(roots):
 
 
 input_inventory = file_inventory(input_roots)
-output_before = file_inventory([output_root])
+output_before = file_inventory(output_roots)
 before = resource.getrusage(resource.RUSAGE_CHILDREN)
 started = time.monotonic()
 with log_path.open("wb") as log:
     completed = subprocess.run(command, stdout=log, stderr=subprocess.STDOUT, check=False)
 elapsed = time.monotonic() - started
 after = resource.getrusage(resource.RUSAGE_CHILDREN)
-output_after = file_inventory([output_root])
-output_bytes = sum(
+output_after = file_inventory(output_roots)
+changed_or_new_output_inventory_bytes = sum(
     size
     for path, (size, mtime_ns) in output_after.items()
     if output_before.get(path) != (size, mtime_ns)
@@ -280,9 +282,17 @@ record = {
     "user_cpu_seconds": round(after.ru_utime - before.ru_utime, 6),
     "system_cpu_seconds": round(after.ru_stime - before.ru_stime, 6),
     "max_rss_kb": round(max_rss, 3),
-    "input_bytes": sum(size for size, _ in input_inventory.values()),
-    "output_bytes": output_bytes,
-    "io_measurement_method": "declared_input_inventory_and_validation_output_delta_v1",
+    "broad_declared_input_inventory_bytes": sum(
+        size for size, _ in input_inventory.values()
+    ),
+    "changed_or_new_output_inventory_bytes": changed_or_new_output_inventory_bytes,
+    "broad_declared_input_inventory_scope": (
+        "repository_root;cache_root;validation_root"
+    ),
+    "changed_or_new_output_inventory_scope": "cache_root;validation_root",
+    "io_measurement_method": (
+        "broad_declared_inputs_and_changed_or_new_outputs_v2"
+    ),
     "threads": os.environ.get("THREADS", "4"),
     "platform": platform.platform(),
     "measurement_status": "measured",
@@ -291,6 +301,7 @@ record = {
 }
 resource_path.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
 raise SystemExit(completed.returncode)
+# END RESOURCE_MEASUREMENT_PYTHON
 PY
 }
 
@@ -1336,7 +1347,7 @@ cp -R "${PUBLIC_ROOT}/environment" \
 fetch_and_compare_ubuntu_public_evidence
 append_acceptance_cases >> "${CASES_TSV}"
 
-"${PYTHON_BIN}" - "${VALIDATION_ROOT}" "${PUBLIC_ROOT}" <<'PY'
+"${PYTHON_BIN}" - "${VALIDATION_ROOT}" "${PUBLIC_ROOT}" "${FRESH_CLONE_ROOT}" <<'PY'
 import csv
 import hashlib
 import json
@@ -1348,6 +1359,11 @@ from pathlib import Path
 
 validation_root = Path(sys.argv[1])
 public_root = Path(sys.argv[2])
+fresh_clone_root = Path(sys.argv[3])
+gm11906_metadata_path = (
+    fresh_clone_root
+    / "resources/public_validation/gm11906_ncbi_source_metadata_v0.3.0.json"
+)
 
 def digest(path: Path) -> str:
     value = hashlib.sha256()
@@ -1365,6 +1381,36 @@ def write_table(name: str, fieldnames: list[str], rows: list[dict[str, object]])
         )
         writer.writeheader()
         writer.writerows(rows)
+
+if not gm11906_metadata_path.is_file() or gm11906_metadata_path.is_symlink():
+    raise SystemExit(
+        f"Tracked NCBI GM11906 metadata resource is missing: {gm11906_metadata_path}"
+    )
+if digest(gm11906_metadata_path) != (
+    "080782bfe6bf01b19e680c188124aee37607f92d06716c902d368274ecb7a616"
+):
+    raise SystemExit("Tracked NCBI GM11906 metadata snapshot SHA-256 mismatch")
+gm11906_metadata = json.loads(gm11906_metadata_path.read_text(encoding="utf-8"))
+gm11906_records = gm11906_metadata.get("records")
+if (
+    gm11906_metadata.get("schema_version") != "1.0"
+    or gm11906_metadata.get("resource_id")
+    != "gm11906_ncbi_public_source_metadata_v1"
+    or not isinstance(gm11906_records, list)
+):
+    raise SystemExit("Tracked NCBI GM11906 metadata resource identity mismatch")
+canonical_records = json.dumps(
+    gm11906_records, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+).encode("ascii")
+if hashlib.sha256(canonical_records).hexdigest() != gm11906_metadata.get(
+    "records_sha256"
+):
+    raise SystemExit("Tracked NCBI GM11906 metadata resource digest mismatch")
+gm11906_by_run = {
+    record.get("run_accession"): record for record in gm11906_records
+}
+if set(gm11906_by_run) != {"SRR10804585", "SRR10804590", "SRR10804657"}:
+    raise SystemExit("Tracked NCBI GM11906 metadata run inventory mismatch")
 
 claim_rows = [
     {
@@ -1452,7 +1498,10 @@ for resource_path in sorted((validation_root / "resources").glob("*.json")):
             key: value.get(key, "")
             for key in (
                 "case_id", "wall_seconds", "user_cpu_seconds", "system_cpu_seconds",
-                "max_rss_kb", "input_bytes", "output_bytes", "io_measurement_method",
+                "max_rss_kb", "broad_declared_input_inventory_bytes",
+                "changed_or_new_output_inventory_bytes",
+                "broad_declared_input_inventory_scope",
+                "changed_or_new_output_inventory_scope", "io_measurement_method",
                 "threads", "platform", "measurement_status", "reason",
             )
         }
@@ -1461,7 +1510,10 @@ write_table(
     "resource_usage.tsv",
     [
         "case_id", "wall_seconds", "user_cpu_seconds", "system_cpu_seconds",
-        "max_rss_kb", "input_bytes", "output_bytes", "io_measurement_method",
+        "max_rss_kb", "broad_declared_input_inventory_bytes",
+        "changed_or_new_output_inventory_bytes",
+        "broad_declared_input_inventory_scope",
+        "changed_or_new_output_inventory_scope", "io_measurement_method",
         "threads", "platform", "measurement_status", "reason",
     ],
     resource_rows,
@@ -1600,9 +1652,25 @@ public_rows = [
     },
 ]
 for row in public_rows:
+    source_metadata = gm11906_by_run.get(row["run_accession"])
+    if source_metadata is not None:
+        row.update(
+            {
+                "study_accession": source_metadata["bioproject_accession"],
+                "sample_accession": source_metadata["biosample_accession"],
+                "cell_line": source_metadata["cell_line"],
+                "platform": "ILLUMINA",
+                "instrument_model": source_metadata["instrument_model"],
+                "library_strategy": source_metadata["library_strategy"],
+            }
+        )
     row.update(
         {
-            "metadata_recorded_utc": recorded,
+            "metadata_recorded_utc": (
+                gm11906_metadata["retrieval_completed_utc"]
+                if source_metadata is not None
+                else recorded
+            ),
             "role": "fixed-input reproducibility and descriptive filter profile",
             "redistribution": "raw reads excluded from Git and validation ZIP",
         }

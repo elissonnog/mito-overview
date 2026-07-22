@@ -64,6 +64,23 @@ def rewrite_artifact_manifest(packet: Path) -> None:
 def make_packet(tmp_path: Path) -> tuple[Path, Path, list[Path]]:
     packet = tmp_path / "packet"
     packet.mkdir()
+    source_metadata_path = packet / report_builder.GM11906_SOURCE_METADATA_PACKET_PATH
+    source_metadata_path.parent.mkdir(parents=True)
+    source_metadata_path.write_bytes(
+        (
+            ROOT
+            / "resources/public_validation/"
+            "gm11906_ncbi_source_metadata_v0.3.0.json"
+        ).read_bytes()
+    )
+    source_metadata = json.loads(source_metadata_path.read_text(encoding="utf-8"))
+    source_metadata_identity = {
+        "path": report_builder.GM11906_SOURCE_METADATA_PACKET_PATH,
+        "sha256": digest(source_metadata_path),
+        "records_sha256": source_metadata["records_sha256"],
+        "retrieval_completed_utc": source_metadata["retrieval_completed_utc"],
+        "authority": source_metadata["authority"],
+    }
     case_ids = sorted(report_builder.REQUIRED_CASE_IDS)
     cases = [
         [case_id, "release_validation", "1", "1", "PASS", "evidence available"]
@@ -87,6 +104,7 @@ def make_packet(tmp_path: Path) -> tuple[Path, Path, list[Path]]:
             "XFAIL": 0,
             "BLOCKED": 0,
         },
+        "public_source_metadata": source_metadata_identity,
         "claim_scope": "reproducible mode-gated mtDNA reporting workflow/resource",
         "diagnostic_validation_claimed": False,
     }
@@ -99,6 +117,7 @@ def make_packet(tmp_path: Path) -> tuple[Path, Path, list[Path]]:
         "package_version": "0.3.0",
         "repository": REPOSITORY,
         "git_commit": COMMIT,
+        "public_source_metadata": source_metadata_identity,
     }
     (packet / "release_identity.json").write_text(
         json.dumps(release, indent=2) + "\n", encoding="utf-8"
@@ -215,14 +234,26 @@ def make_packet(tmp_path: Path) -> tuple[Path, Path, list[Path]]:
             [
                 "gm11906_default_run1", "12.4", "10.0", "1.2", "204800",
                 "59499334", "1048576",
-                "declared_input_inventory_and_validation_output_delta_v1",
+                "repository_root;cache_root;validation_root",
+                "cache_root;validation_root",
+                "broad_declared_inputs_and_changed_or_new_outputs_v2",
                 "4", "osx-arm64", "measured", "",
             ],
             [
                 "gm12878_default_run1", "31.8", "28.0", "2.0", "307200",
                 "2033558460", "2097152",
-                "declared_input_inventory_and_validation_output_delta_v1",
+                "repository_root;cache_root;validation_root",
+                "cache_root;validation_root",
+                "broad_declared_inputs_and_changed_or_new_outputs_v2",
                 "4", "linux-64", "measured", "",
+            ],
+            [
+                "public_cache_prepare", "40.0", "20.0", "3.0", "102400",
+                "0", "3000000000",
+                "repository_root;cache_root;validation_root",
+                "cache_root;validation_root",
+                "broad_declared_inputs_and_changed_or_new_outputs_v2",
+                "4", "osx-arm64", "measured", "",
             ],
         ],
     )
@@ -605,6 +636,49 @@ def test_fails_closed_on_release_identity_drift(
         rewrite_artifact_manifest(packet)
 
     with pytest.raises(report_builder.ReportValidationError, match=message):
+        report_builder.generate_report(packet, publication, tmp_path / "report")
+
+
+def test_report_rejects_rehashed_official_metadata_mutation(tmp_path: Path) -> None:
+    packet, publication, _ = make_packet(tmp_path)
+    metadata_path = packet / report_builder.GM11906_SOURCE_METADATA_PACKET_PATH
+    payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+    payload["records"][0]["cell_line"] = "GM00000"
+    canonical = json.dumps(
+        payload["records"], sort_keys=True, separators=(",", ":"), ensure_ascii=True
+    ).encode("ascii")
+    payload["records_sha256"] = hashlib.sha256(canonical).hexdigest()
+    metadata_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    rewrite_artifact_manifest(packet)
+
+    with pytest.raises(
+        report_builder.ReportValidationError,
+        match="official NCBI metadata snapshot SHA-256 mismatch",
+    ):
+        report_builder.generate_report(packet, publication, tmp_path / "report")
+
+
+def test_report_rejects_public_cache_output_inventory_below_raw_bytes(
+    tmp_path: Path,
+) -> None:
+    packet, publication, _ = make_packet(tmp_path)
+    resource_path = packet / "resource_usage.tsv"
+    columns = report_builder.EVIDENCE_COLUMNS["resource_usage.tsv"]
+    with resource_path.open(encoding="utf-8", newline="") as handle:
+        rows = list(csv.DictReader(handle, delimiter="\t"))
+    row = next(item for item in rows if item["case_id"] == "public_cache_prepare")
+    row["changed_or_new_output_inventory_bytes"] = "1"
+    write_tsv(
+        resource_path,
+        columns,
+        [[item[column] for column in columns] for item in rows],
+    )
+    rewrite_artifact_manifest(packet)
+
+    with pytest.raises(
+        report_builder.ReportValidationError,
+        match="changed/new output inventory excludes raw downloads",
+    ):
         report_builder.generate_report(packet, publication, tmp_path / "report")
 
 

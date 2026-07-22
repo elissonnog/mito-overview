@@ -125,7 +125,7 @@ MITO_OVERVIEW_PYTHON="$PWD/.conda-release-check/bin/python" \
 
 | Check | Verdict | Observed evidence |
 | --- | --- | --- |
-| Deterministic unit/known-answer suite | PASS | 239 passed in 17.07 s |
+| Deterministic unit/known-answer suite | Final count deferred | Exact count, commit, environment, and verdict must be read from final CI and the schema-2.0 packet; this provisional document does not assert a candidate-wide count |
 | CLI step listing | PASS | command exited 0 |
 | Generic configured dry-run | PASS | command exited 0 |
 | Synthetic long-read workflow | PASS | all applicable steps completed; fixture mvTool and methylation paths exercised |
@@ -134,6 +134,8 @@ MITO_OVERVIEW_PYTHON="$PWD/.conda-release-check/bin/python" \
 | Minimal standalone workflow | PASS | six-key BAM and CRAM configurations each passed strict dry-run and full execution without deployment-specific inputs |
 
 These results characterize the tested release-candidate state within the stated environment and evidence boundaries.
+
+Resource byte values in the final packet are inventories rather than operating-system I/O counters. `broad_declared_input_inventory_bytes` records the pre-command size of the repository, cache, and validation roots. `changed_or_new_output_inventory_bytes` records the final size of files created or changed under the cache and validation roots. The `public_cache_prepare` value must be at least the summed byte size of the seven sealed FASTQs, so downloaded cache content cannot be omitted from the output inventory.
 
 ## Public-data validation design
 
@@ -245,7 +247,7 @@ These differences describe filter dependence. They are not sensitivity, specific
 
 | Claim permitted for v0.3.0 | Supporting evidence | Boundary |
 | --- | --- | --- |
-| Shared, filtered alternate-allele counting is deterministic on known-answer fixtures | `tests/test_allele_counting.py`; 239-test PASS | No clinical calibration |
+| Shared, filtered alternate-allele counting is deterministic on known-answer fixtures | `tests/test_allele_counting.py`; exact-commit CI and final packet PASS required | No clinical calibration |
 | Co-segregation reuses the same observation filters | shared engine tests and synthetic long-read smoke | No biological phasing benchmark |
 | Default mvTool execution is offline | `tests/test_mvtool_modes.py`; standalone smoke reports `not_configured` | Network service content not validated |
 | Generic BAM/CRAM inputs are supported | config tests plus minimal standalone smoke | Platform breadth limited to tested environments |
@@ -273,8 +275,8 @@ Version `0.3.0` remains unreleased. The final GitHub tag, release assets, and ex
 
 An external reviewer can:
 
-1. Reproduce the historical 239-test snapshot if auditing this record; for the active release gate, run the complete current test suite and record its exact count and commit in the final packet.
-2. Verify the GM11906 and GM12878 tracked provenance JSON and SHA-256 records.
+1. Run the complete current test suite and verify its exact count, commit, environment, and verdict in the final packet rather than relying on a count embedded in this provisional document.
+2. Verify the GM11906 official NCBI GEO/SRA metadata snapshot, its captured source URLs and SHA-256 values, and the GM12878 tracked provenance records.
 3. Confirm `m.8344A>G` is `1027/740/0.720545` in the default GM11906 output.
 4. Confirm GM12878 uses exactly the labeled 1,000-query-name deterministic subset.
 5. Confirm no mt-only output contains a categorical NUMT-risk label.

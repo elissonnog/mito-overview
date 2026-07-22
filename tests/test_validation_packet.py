@@ -143,6 +143,11 @@ def create_release_repo(tmp_path: Path, version: str = "0.3.0") -> tuple[Path, s
     oracle.write_bytes(
         (ROOT / packet_builder.FROZEN_ORACLE_REPOSITORY_PATH).read_bytes()
     )
+    source_metadata = repo / packet_builder.GM11906_SOURCE_METADATA_REPOSITORY_PATH
+    source_metadata.parent.mkdir(parents=True, exist_ok=True)
+    source_metadata.write_bytes(
+        (ROOT / packet_builder.GM11906_SOURCE_METADATA_REPOSITORY_PATH).read_bytes()
+    )
     run(["git", "init", "-q"], repo)
     run(["git", "config", "user.name", "Validation Test"], repo)
     run(["git", "config", "user.email", "validation@example.org"], repo)
@@ -216,6 +221,19 @@ def write_public_provenance(public_root: Path) -> None:
     for path in paths.values():
         path.parent.mkdir(parents=True, exist_ok=True)
 
+    paths["shortread_source_metadata"].write_bytes(
+        (ROOT / packet_builder.GM11906_SOURCE_METADATA_REPOSITORY_PATH).read_bytes()
+    )
+    source_metadata = json.loads(
+        paths["shortread_source_metadata"].read_text(encoding="utf-8")
+    )
+    source_metadata_sha256 = hashlib.sha256(
+        paths["shortread_source_metadata"].read_bytes()
+    ).hexdigest()
+    source_metadata_by_run = {
+        record["run_accession"]: record for record in source_metadata["records"]
+    }
+
     short = {
         "schema_version": "1.0",
         "provenance_type": "public_alignment",
@@ -283,17 +301,50 @@ def write_public_provenance(public_root: Path) -> None:
     paths["shortread_alignment"].write_text(
         json.dumps(short, indent=2) + "\n", encoding="utf-8"
     )
-    paths["shortread_source_libraries"].write_text(
-        "run_accession\tgeo_accession\tsource_sample_id\tlibrary_strategy\t"
-        "library_unit\tcombination_role\tsource_record_url\n"
-        "SRR10804585\tGSM4238454\tGM11906\tATAC-seq\tsingle_cell_library\t"
-        "pooled_pseudobulk\thttps://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSM4238454\n"
-        "SRR10804590\tGSM4238459\tGM11906\tATAC-seq\tsingle_cell_library\t"
-        "pooled_pseudobulk\thttps://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSM4238459\n"
-        "SRR10804657\tGSM4238526\tGM11906\tATAC-seq\tsingle_cell_library\t"
-        "pooled_pseudobulk\thttps://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSM4238526\n",
-        encoding="utf-8",
-    )
+    with paths["shortread_source_libraries"].open(
+        "w", encoding="utf-8", newline=""
+    ) as handle:
+        fields = (
+            "run_accession",
+            "geo_accession",
+            "source_sample_id",
+            "library_strategy",
+            "library_unit",
+            "combination_role",
+            "source_record_url",
+            "metadata_snapshot_sha256",
+            "metadata_record_sha256",
+        )
+        writer = csv.DictWriter(
+            handle, fieldnames=fields, delimiter="\t", lineterminator="\n"
+        )
+        writer.writeheader()
+        for run_accession in ("SRR10804585", "SRR10804590", "SRR10804657"):
+            record = source_metadata_by_run[run_accession]
+            record_sha256 = hashlib.sha256(
+                json.dumps(
+                    record,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    ensure_ascii=True,
+                ).encode("ascii")
+            ).hexdigest()
+            writer.writerow(
+                {
+                    "run_accession": run_accession,
+                    "geo_accession": record["geo_accession"],
+                    "source_sample_id": record["cell_line"],
+                    "library_strategy": record["library_strategy"],
+                    "library_unit": "single_cell_library",
+                    "combination_role": "pooled_pseudobulk",
+                    "source_record_url": (
+                        "https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc="
+                        + record["geo_accession"]
+                    ),
+                    "metadata_snapshot_sha256": source_metadata_sha256,
+                    "metadata_record_sha256": record_sha256,
+                }
+            )
 
     paths["selected_query_names"].write_text(
         "".join(f"SRR18110025.{index}\n" for index in range(1, 1001)),
@@ -1254,6 +1305,15 @@ def write_evidence_tables(root: Path) -> None:
             )
 
     public_source_rows = []
+    gm11906_source_metadata = json.loads(
+        (
+            ROOT / packet_builder.GM11906_SOURCE_METADATA_REPOSITORY_PATH
+        ).read_text(encoding="utf-8")
+    )
+    gm11906_source_by_run = {
+        record["run_accession"]: record
+        for record in gm11906_source_metadata["records"]
+    }
     inputs_by_run: dict[str, list[dict[str, str]]] = {}
     for row in packet_builder.FROZEN_PUBLIC_INPUTS:
         inputs_by_run.setdefault(row["run_accession"], []).append(dict(row))
@@ -1274,7 +1334,11 @@ def write_evidence_tables(root: Path) -> None:
                 ";".join(row["md5"] for row in inputs),
                 ";".join(row["sha256"] for row in inputs),
                 ";".join(row["bytes"] for row in inputs),
-                "2026-07-21T00:00:00+00:00",
+                (
+                    gm11906_source_metadata["retrieval_completed_utc"]
+                    if run_accession in gm11906_source_by_run
+                    else "2026-07-21T00:00:00+00:00"
+                ),
                 "fixed-input reproducibility and descriptive filter profile",
                 "raw reads excluded from Git and validation ZIP",
             ]
@@ -1289,9 +1353,25 @@ def write_evidence_tables(root: Path) -> None:
             [
                 "unit_known_answer", "1.0", "0.5", "0.1", "1024",
                 "2048", "4096",
-                "declared_input_inventory_and_validation_output_delta_v1",
+                "repository_root;cache_root;validation_root",
+                "cache_root;validation_root",
+                "broad_declared_inputs_and_changed_or_new_outputs_v2",
                 "4", "test", "measured", "",
-            ]
+            ],
+            [
+                "public_cache_prepare", "2.0", "1.0", "0.2", "2048",
+                "1024",
+                str(
+                    sum(
+                        int(row["bytes"])
+                        for row in packet_builder.FROZEN_PUBLIC_INPUTS
+                    )
+                ),
+                "repository_root;cache_root;validation_root",
+                "cache_root;validation_root",
+                "broad_declared_inputs_and_changed_or_new_outputs_v2",
+                "4", "test", "measured", "",
+            ],
         ],
         "figure_provenance.tsv": figure_rows,
         "table_provenance.tsv": table_rows,
@@ -2218,6 +2298,17 @@ def test_public_source_timestamp_is_recorded_not_live_checked(tmp_path: Path) ->
         reader = csv.DictReader(handle, delimiter="\t")
         assert "metadata_recorded_utc" in tuple(reader.fieldnames or ())
         assert "metadata_checked_utc" not in tuple(reader.fieldnames or ())
+        rows = list(reader)
+    metadata = json.loads(
+        (repo / packet_builder.GM11906_SOURCE_METADATA_REPOSITORY_PATH).read_text(
+            encoding="utf-8"
+        )
+    )
+    assert {
+        row["metadata_recorded_utc"]
+        for row in rows
+        if row["run_accession"] in {"SRR10804585", "SRR10804590", "SRR10804657"}
+    } == {metadata["retrieval_completed_utc"]}
 
 
 def test_packet_rejects_secret_like_material(tmp_path: Path) -> None:
@@ -2485,6 +2576,65 @@ def test_packet_rejects_public_source_hash_drift(tmp_path: Path) -> None:
     )
     with pytest.raises(ValueError, match="public_data_sources.tsv mismatch"):
         packet_builder.build_packet(packet_args(validation, repo, tmp_path / "output"))
+
+
+def test_packet_rejects_tampered_official_gm11906_metadata_copy(
+    tmp_path: Path,
+) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    metadata_path = (
+        validation
+        / "public"
+        / packet_builder.PUBLIC_PROVENANCE_FILES["shortread_source_metadata"]["source"]
+    )
+    payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+    payload["records"][0]["cell_line"] = "GM00000"
+    canonical = json.dumps(
+        payload["records"], sort_keys=True, separators=(",", ":"), ensure_ascii=True
+    ).encode("ascii")
+    payload["records_sha256"] = hashlib.sha256(canonical).hexdigest()
+    metadata_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="execution copy SHA-256 mismatch"):
+        packet_builder.build_packet(packet_args(validation, repo, tmp_path / "output"))
+
+
+def test_packet_rejects_public_cache_output_inventory_below_raw_bytes(
+    tmp_path: Path,
+) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    mutate_tsv_value(
+        validation / "resource_usage.tsv",
+        "case_id",
+        "public_cache_prepare",
+        "changed_or_new_output_inventory_bytes",
+        "1",
+    )
+    with pytest.raises(ValueError, match="excludes one or more raw downloads"):
+        packet_builder.build_packet(packet_args(validation, repo, tmp_path / "output"))
+
+
+def test_extracted_verifier_rejects_rehashed_official_metadata_mutation(
+    tmp_path: Path,
+) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    output = tmp_path / "output"
+    packet_builder.build_packet(packet_args(validation, repo, output))
+    packet = output / "packet"
+    metadata_path = packet / packet_builder.GM11906_SOURCE_METADATA_PACKET_PATH
+    payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+    payload["records"][0]["cell_line"] = "GM00000"
+    canonical = json.dumps(
+        payload["records"], sort_keys=True, separators=(",", ":"), ensure_ascii=True
+    ).encode("ascii")
+    payload["records_sha256"] = hashlib.sha256(canonical).hexdigest()
+    metadata_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    rewrite_manifest(packet)
+    checked = verify_packet(packet)
+    assert checked.returncode != 0
+    assert "official NCBI metadata snapshot SHA-256 mismatch" in checked.stderr
 
 
 def test_packet_rejects_incomplete_three_run_shortread_derivation(tmp_path: Path) -> None:

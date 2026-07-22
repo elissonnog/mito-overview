@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import csv
 import gzip
+import hashlib
 import json
 import os
 import platform
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -24,6 +26,13 @@ ORACLE = (
     / "public_validation"
     / "public_validation_oracle_v0.3.0.tsv"
 )
+GM11906_SOURCE_METADATA = (
+    REPO_ROOT
+    / "resources"
+    / "public_validation"
+    / "gm11906_ncbi_source_metadata_v0.3.0.json"
+)
+PREPRINT_VALIDATION_DOC = REPO_ROOT / "docs" / "preprint_release_validation_v0.3.0.md"
 
 
 def read_tsv(path: Path) -> list[dict[str, str]]:
@@ -344,6 +353,89 @@ def test_gm11906_source_provenance_identifies_the_pooled_scatac_libraries() -> N
     assert "pooled pseudo-bulk of three GM11906 single-cell ATAC-seq libraries" in runner_contract
     assert "pooled_read_observation_fraction" in runner_contract
     assert "--dataset GM11906_pooled_scATAC" in runner_contract
+
+    metadata = json.loads(GM11906_SOURCE_METADATA.read_text(encoding="utf-8"))
+    records = metadata["records"]
+    canonical = json.dumps(
+        records, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+    ).encode("ascii")
+    assert hashlib.sha256(canonical).hexdigest() == metadata["records_sha256"]
+    assert metadata["authority"] == "NCBI GEO and NCBI SRA"
+    by_run = {record["run_accession"]: record for record in records}
+    assert {
+        run: (
+            record["geo_accession"],
+            record["biosample_accession"],
+            record["cell_line"],
+        )
+        for run, record in by_run.items()
+    } == {
+        "SRR10804585": ("GSM4238454", "SAMN13699362", "GM11906"),
+        "SRR10804590": ("GSM4238459", "SAMN13699398", "GM11906"),
+        "SRR10804657": ("GSM4238526", "SAMN13699338", "GM11906"),
+    }
+    expected_source_hashes = {
+        "d1f14494b835ab8cf440892ddb66158aab62c58ffc4f0bd973e10d78de036627",
+        "80b27624e09216055020933d8cf5d81136191f2104180acf7fcb219a6acdd03a",
+        "8792f8b0ff0f411afd9fbaafdb0db07f500175232345ec4e3d836c225006c9b1",
+        "97a6c54e4c957b98badc373a290e3554444cab270d21b6deaf61d90df0dff097",
+        "f717e8d921f2e28a796ccd77a6fb2710e7e738b1c50fea4db31ab5d539df3584",
+        "c481df75f2e46ec9d11cbd6e6b035962e9b73aca4170cf5c89b20d8200403445",
+    }
+    assert {
+        source["sha256"]
+        for record in records
+        for source in record["source_files"]
+    } == expected_source_hashes
+
+
+def test_prepare_rejects_tampered_official_metadata_before_network(
+    tmp_path: Path,
+) -> None:
+    fixture_repo = tmp_path / "repo"
+    fixture_script = fixture_repo / "scripts" / PREPARE.name
+    fixture_metadata = (
+        fixture_repo
+        / "resources"
+        / "public_validation"
+        / GM11906_SOURCE_METADATA.name
+    )
+    fixture_script.parent.mkdir(parents=True)
+    fixture_metadata.parent.mkdir(parents=True)
+    shutil.copy2(PREPARE, fixture_script)
+    shutil.copy2(GM11906_SOURCE_METADATA, fixture_metadata)
+    metadata = json.loads(fixture_metadata.read_text(encoding="utf-8"))
+    metadata["records"][0]["cell_line"] = "GM00000"
+    canonical = json.dumps(
+        metadata["records"], sort_keys=True, separators=(",", ":"), ensure_ascii=True
+    ).encode("ascii")
+    metadata["records_sha256"] = hashlib.sha256(canonical).hexdigest()
+    fixture_metadata.write_text(
+        json.dumps(metadata, indent=2) + "\n", encoding="utf-8"
+    )
+    fixture_script.chmod(0o755)
+
+    marker = tmp_path / "curl-called.txt"
+    fake_bin = tmp_path / "bin"
+    write_fake_curl(fake_bin, marker)
+    result = subprocess.run(
+        [str(fixture_script), "--cache", str(tmp_path / "cache")],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={**os.environ, "PATH": f"{fake_bin}:{os.environ['PATH']}"},
+    )
+    assert result.returncode != 0
+    assert "snapshot SHA-256 mismatch" in result.stderr
+    assert not marker.exists()
+
+
+def test_provisional_validation_doc_defers_exact_final_suite_count() -> None:
+    text = PREPRINT_VALIDATION_DOC.read_text(encoding="utf-8")
+    assert "239 passed" not in text
+    assert "239-test PASS" not in text
+    assert "Final count deferred" in text
+    assert "exact count, commit, environment, and verdict" in text
 
 
 def test_oracle_accepts_exact_six_profile_fixture(tmp_path: Path) -> None:

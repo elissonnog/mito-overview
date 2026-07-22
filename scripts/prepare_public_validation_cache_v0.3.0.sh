@@ -60,11 +60,18 @@ if [[ "${MODE}" == verify && ! -d "${CACHE_ROOT}" ]]; then
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 PYTHON_BIN="${MITO_OVERVIEW_PYTHON:-python3}"
 MANIFEST_NAME=raw_inputs.tsv
 SEAL_NAME=CACHE_SEAL.sha256
 MANIFEST_PATH="${CACHE_ROOT}/${MANIFEST_NAME}"
 SEAL_PATH="${CACHE_ROOT}/${SEAL_NAME}"
+GM11906_METADATA_PATH="${REPO_ROOT}/resources/public_validation/gm11906_ncbi_source_metadata_v0.3.0.json"
+
+[[ -f "${GM11906_METADATA_PATH}" && ! -L "${GM11906_METADATA_PATH}" ]] || {
+  echo "Tracked NCBI GM11906 metadata resource is missing or invalid: ${GM11906_METADATA_PATH}" >&2
+  exit 1
+}
 
 for tool in "${PYTHON_BIN}" gzip; do
   command -v "${tool}" >/dev/null 2>&1 || {
@@ -104,6 +111,112 @@ GM11906_pooled_scATAC	SRR10804657	SAMN13699338	GSM4238526	MERFF-94-S107	GM11906	
 GM11906_pooled_scATAC	SRR10804657	SAMN13699338	GSM4238526	MERFF-94-S107	GM11906	ATAC-seq	single_cell_library	https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSM4238526	SRR10804657_2.fastq.gz	21573731	62b7d1b2294a580c021f5fa1f52609be	bfc555c7e722695b02110027757bba4d7fc88f487798423cd6809e8a771a5184	https://ftp.sra.ebi.ac.uk/vol1/fastq/SRR108/057/SRR10804657/SRR10804657_2.fastq.gz
 GM12878_ONT	SRR18110025	SAMN26195906	GM12878_mtDNA	Human GM12878 Cell Line	GM12878	OTHER	targeted_mt_library	https://www.ebi.ac.uk/ena/browser/view/SRR18110025	SRR18110025.fastq.gz	2033558460	d5bfb9aeba04cae5f3dd79462a42e5b0	c0872ee9ceb772ee5a4b76735c0d670e2159764b23dd800b6eb1f4933da11320	https://ftp.sra.ebi.ac.uk/vol1/fastq/SRR181/025/SRR18110025/SRR18110025_1.fastq.gz
 EOF
+
+"${PYTHON_BIN}" - "${GM11906_METADATA_PATH}" "${SPEC_PATH}" <<'PY'
+import csv
+import hashlib
+import json
+import re
+import sys
+from datetime import datetime
+
+metadata_path, spec_path = sys.argv[1:]
+expected_snapshot_sha256 = (
+    "080782bfe6bf01b19e680c188124aee37607f92d06716c902d368274ecb7a616"
+)
+with open(metadata_path, "rb") as handle:
+    snapshot_sha256 = hashlib.sha256(handle.read()).hexdigest()
+if snapshot_sha256 != expected_snapshot_sha256:
+    raise SystemExit("GM11906 official metadata snapshot SHA-256 mismatch")
+with open(metadata_path, encoding="utf-8") as handle:
+    metadata = json.load(handle)
+records = metadata.get("records")
+if (
+    metadata.get("schema_version") != "1.0"
+    or metadata.get("resource_id") != "gm11906_ncbi_public_source_metadata_v1"
+    or metadata.get("authority") != "NCBI GEO and NCBI SRA"
+    or not isinstance(records, list)
+):
+    raise SystemExit("GM11906 official metadata resource identity mismatch")
+canonical = json.dumps(
+    records, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+).encode("ascii")
+if hashlib.sha256(canonical).hexdigest() != metadata.get("records_sha256"):
+    raise SystemExit("GM11906 official metadata records SHA-256 mismatch")
+try:
+    retrieved = datetime.fromisoformat(
+        str(metadata["retrieval_completed_utc"]).replace("Z", "+00:00")
+    )
+except (KeyError, ValueError) as error:
+    raise SystemExit("GM11906 official metadata retrieval timestamp is invalid") from error
+if retrieved.tzinfo is None or retrieved.utcoffset() is None:
+    raise SystemExit("GM11906 official metadata retrieval timestamp lacks a timezone")
+
+by_run = {record.get("run_accession"): record for record in records}
+required_runs = {"SRR10804585", "SRR10804590", "SRR10804657"}
+if len(by_run) != 3 or set(by_run) != required_runs:
+    raise SystemExit("GM11906 official metadata run inventory mismatch")
+for run_accession, record in by_run.items():
+    if (
+        record.get("cell_line") != "GM11906"
+        or record.get("organism") != "Homo sapiens"
+        or record.get("library_strategy") != "ATAC-seq"
+        or record.get("library_layout") != "PAIRED"
+        or not re.fullmatch(r"GSM[0-9]+", str(record.get("geo_accession", "")))
+        or not re.fullmatch(r"SAMN[0-9]+", str(record.get("biosample_accession", "")))
+    ):
+        raise SystemExit(
+            f"GM11906 official metadata captured-value mismatch for {run_accession}"
+        )
+    source_files = record.get("source_files")
+    if not isinstance(source_files, list) or {item.get("format") for item in source_files} != {
+        "NCBI_SRA_EFETCH_XML",
+        "NCBI_GEO_SOFT",
+    }:
+        raise SystemExit(
+            f"GM11906 official metadata source-file inventory mismatch for {run_accession}"
+        )
+    for source in source_files:
+        if (
+            not str(source.get("url", "")).startswith("https://")
+            or "ncbi.nlm.nih.gov/" not in str(source.get("url", ""))
+            or re.fullmatch(r"[0-9a-f]{64}", str(source.get("sha256", ""))) is None
+            or not isinstance(source.get("bytes"), int)
+            or source["bytes"] <= 0
+        ):
+            raise SystemExit(
+                f"GM11906 official metadata source evidence mismatch for {run_accession}"
+            )
+
+with open(spec_path, encoding="utf-8", newline="") as handle:
+    spec_rows = list(csv.DictReader(handle, delimiter="\t"))
+gm_rows = [row for row in spec_rows if row["dataset_id"] == "GM11906_pooled_scATAC"]
+if len(gm_rows) != 6:
+    raise SystemExit("GM11906 cache specification must contain exactly six FASTQ mates")
+for row in gm_rows:
+    record = by_run.get(row["run_accession"])
+    expected = {
+        "sample_accession": record["biosample_accession"],
+        "sample_alias": record["geo_accession"],
+        "sample_title": record["sample_title"],
+        "source_sample_id": record["cell_line"],
+        "library_strategy": record["library_strategy"],
+        "source_record_url": (
+            "https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc="
+            + record["geo_accession"]
+        ),
+    }
+    mismatches = {
+        field: (value, row.get(field, ""))
+        for field, value in expected.items()
+        if row.get(field, "") != value
+    }
+    if mismatches:
+        raise SystemExit(
+            f"GM11906 cache specification is not bound to official metadata for "
+            f"{row['run_accession']}: {mismatches!r}"
+        )
+PY
 
 expected_names() {
   awk -F '\t' 'NR > 1 {print $10}' "${SPEC_PATH}"

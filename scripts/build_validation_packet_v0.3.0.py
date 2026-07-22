@@ -115,6 +115,13 @@ ZENODO_PUBLIC_METADATA_FIELDS = {
 }
 
 PUBLIC_PROVENANCE_FILES = {
+    "shortread_source_metadata": {
+        "source": (
+            "outputs/gm11906_default_run1/provenance/"
+            "GM11906_NCBI_source_metadata.json"
+        ),
+        "packet": "public_provenance/GM11906_NCBI_source_metadata.json",
+    },
     "shortread_source_libraries": {
         "source": (
             "outputs/gm11906_default_run1/provenance/"
@@ -323,6 +330,15 @@ FROZEN_PUBLIC_SOURCE_METADATA = {
         "instrument_model": "GridION",
     },
 }
+GM11906_SOURCE_METADATA_REPOSITORY_PATH = Path(
+    "resources/public_validation/gm11906_ncbi_source_metadata_v0.3.0.json"
+)
+GM11906_SOURCE_METADATA_PACKET_PATH = (
+    "public_provenance/GM11906_NCBI_source_metadata.json"
+)
+GM11906_SOURCE_METADATA_SHA256 = (
+    "080782bfe6bf01b19e680c188124aee37607f92d06716c902d368274ecb7a616"
+)
 FROZEN_ORACLE_REPOSITORY_PATH = Path(
     "examples/public_validation/public_validation_oracle_v0.3.0.tsv"
 )
@@ -397,8 +413,10 @@ EVIDENCE_TABLES = {
         "user_cpu_seconds",
         "system_cpu_seconds",
         "max_rss_kb",
-        "input_bytes",
-        "output_bytes",
+        "broad_declared_input_inventory_bytes",
+        "changed_or_new_output_inventory_bytes",
+        "broad_declared_input_inventory_scope",
+        "changed_or_new_output_inventory_scope",
         "io_measurement_method",
         "threads",
         "platform",
@@ -1524,9 +1542,121 @@ def canonical_public_input_hashes(rows: list[dict[str, str]]) -> str:
     return "".join(f"{row['sha256']}  {row['filename']}\n" for row in rows)
 
 
+def validate_gm11906_source_metadata(
+    repo_root: Path,
+    public_root: Path,
+) -> dict[str, object]:
+    """Validate the tracked official NCBI snapshot and its execution copy."""
+
+    repository_path = repo_root / GM11906_SOURCE_METADATA_REPOSITORY_PATH
+    output_path = public_root / str(
+        PUBLIC_PROVENANCE_FILES["shortread_source_metadata"]["source"]
+    )
+    for path, label in (
+        (repository_path, "tracked GM11906 NCBI metadata resource"),
+        (output_path, "GM11906 NCBI metadata execution copy"),
+    ):
+        if not path.is_file() or path.is_symlink():
+            raise FileNotFoundError(f"Required {label} not found: {path}")
+        if sha256(path) != GM11906_SOURCE_METADATA_SHA256:
+            raise ValueError(f"{label} SHA-256 mismatch")
+
+    payload = load_json_object(repository_path, "GM11906 NCBI metadata resource")
+    records = payload.get("records")
+    if (
+        payload.get("schema_version") != "1.0"
+        or payload.get("resource_id")
+        != "gm11906_ncbi_public_source_metadata_v1"
+        or payload.get("authority") != "NCBI GEO and NCBI SRA"
+        or not isinstance(records, list)
+    ):
+        raise ValueError("GM11906 NCBI metadata resource identity is invalid")
+    canonical_records = json.dumps(
+        records, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+    ).encode("ascii")
+    records_sha256 = hashlib.sha256(canonical_records).hexdigest()
+    if records_sha256 != payload.get("records_sha256"):
+        raise ValueError("GM11906 NCBI metadata records SHA-256 mismatch")
+    try:
+        retrieved = datetime.fromisoformat(
+            str(payload["retrieval_completed_utc"]).replace("Z", "+00:00")
+        )
+    except (KeyError, ValueError) as error:
+        raise ValueError("GM11906 NCBI metadata retrieval timestamp is invalid") from error
+    if retrieved.tzinfo is None or retrieved.utcoffset() is None:
+        raise ValueError("GM11906 NCBI metadata retrieval timestamp lacks a timezone")
+
+    by_run = {
+        str(record.get("run_accession", "")): record
+        for record in records
+        if isinstance(record, dict)
+    }
+    expected = {
+        "SRR10804585": ("SRX7478441", "SRS5922054", "SAMN13699362", "GSM4238454"),
+        "SRR10804590": ("SRX7478446", "SRS5922059", "SAMN13699398", "GSM4238459"),
+        "SRR10804657": ("SRX7478513", "SRS5922125", "SAMN13699338", "GSM4238526"),
+    }
+    if len(by_run) != 3 or set(by_run) != set(expected):
+        raise ValueError("GM11906 NCBI metadata run inventory is invalid")
+    for run_accession, identifiers in expected.items():
+        record = by_run[run_accession]
+        observed = (
+            record.get("experiment_accession"),
+            record.get("sra_sample_accession"),
+            record.get("biosample_accession"),
+            record.get("geo_accession"),
+        )
+        if observed != identifiers:
+            raise ValueError(
+                f"GM11906 NCBI metadata accession linkage mismatch for {run_accession}"
+            )
+        if (
+            record.get("bioproject_accession") != "PRJNA598179"
+            or record.get("cell_line") != "GM11906"
+            or record.get("organism") != "Homo sapiens"
+            or record.get("library_strategy") != "ATAC-seq"
+            or record.get("library_layout") != "PAIRED"
+            or record.get("instrument_model") != "NextSeq 550"
+        ):
+            raise ValueError(
+                f"GM11906 NCBI metadata captured-value mismatch for {run_accession}"
+            )
+        source_files = record.get("source_files")
+        if not isinstance(source_files, list) or {
+            item.get("format") for item in source_files if isinstance(item, dict)
+        } != {"NCBI_SRA_EFETCH_XML", "NCBI_GEO_SOFT"}:
+            raise ValueError(
+                f"GM11906 NCBI metadata source evidence mismatch for {run_accession}"
+            )
+        for source in source_files:
+            if (
+                not isinstance(source, dict)
+                or not str(source.get("url", "")).startswith("https://")
+                or "ncbi.nlm.nih.gov/" not in str(source.get("url", ""))
+                or re.fullmatch(r"[0-9a-f]{64}", str(source.get("sha256", "")))
+                is None
+                or not isinstance(source.get("bytes"), int)
+                or int(source["bytes"]) <= 0
+            ):
+                raise ValueError(
+                    f"GM11906 NCBI metadata source evidence is invalid for {run_accession}"
+                )
+
+    return {
+        "path": GM11906_SOURCE_METADATA_PACKET_PATH,
+        "sha256": GM11906_SOURCE_METADATA_SHA256,
+        "records_sha256": records_sha256,
+        "retrieval_completed_utc": payload["retrieval_completed_utc"],
+        "authority": payload["authority"],
+        "records": records,
+        "by_run": by_run,
+    }
+
+
 def validate_public_input_evidence(
     public_root: Path,
     public_sources_path: Path,
+    gm11906_metadata: dict[str, object],
 ) -> dict[str, object]:
     """Bind the packet to the seven immutable FASTQs without redistributing reads."""
 
@@ -1580,18 +1710,49 @@ def validate_public_input_evidence(
     inputs_by_run: dict[str, list[dict[str, str]]] = {}
     for row in rows:
         inputs_by_run.setdefault(row["run_accession"], []).append(row)
+    gm11906_by_run = gm11906_metadata["by_run"]
+    if not isinstance(gm11906_by_run, dict):
+        raise ValueError("GM11906 NCBI metadata run mapping is malformed")
     for run_accession, metadata in FROZEN_PUBLIC_SOURCE_METADATA.items():
         inputs = inputs_by_run[run_accession]
         source = source_by_run[run_accession]
         first = inputs[0]
+        official = gm11906_by_run.get(run_accession)
+        if official is not None:
+            if not isinstance(official, dict):
+                raise ValueError(
+                    f"GM11906 NCBI metadata record is malformed for {run_accession}"
+                )
+            manifest_expected = {
+                "sample_accession": official["biosample_accession"],
+                "sample_alias": official["geo_accession"],
+                "sample_title": official["sample_title"],
+                "source_sample_id": official["cell_line"],
+                "library_strategy": official["library_strategy"],
+            }
+            manifest_mismatches = {
+                field: (value, first.get(field, ""))
+                for field, value in manifest_expected.items()
+                if first.get(field, "") != value
+            }
+            if manifest_mismatches:
+                raise ValueError(
+                    f"Public-input manifest is not bound to official NCBI metadata for "
+                    f"{run_accession}: {manifest_mismatches!r}"
+                )
+            study_accession = str(official["bioproject_accession"])
+            instrument_model = str(official["instrument_model"])
+        else:
+            study_accession = metadata["study_accession"]
+            instrument_model = metadata["instrument_model"]
         expected = {
             "dataset": metadata["dataset"],
             "run_accession": run_accession,
-            "study_accession": metadata["study_accession"],
+            "study_accession": study_accession,
             "sample_accession": first["sample_accession"],
             "cell_line": first["source_sample_id"],
             "platform": "ILLUMINA" if first["source_sample_id"] == "GM11906" else "OXFORD_NANOPORE",
-            "instrument_model": metadata["instrument_model"],
+            "instrument_model": instrument_model,
             "library_strategy": first["library_strategy"],
             "fastq_url": ";".join(item["url"] for item in inputs),
             "fastq_md5": ";".join(item["md5"] for item in inputs),
@@ -1620,6 +1781,13 @@ def validate_public_input_evidence(
         if recorded.tzinfo is None or recorded.utcoffset() is None:
             raise ValueError(
                 f"public_data_sources.tsv metadata timestamp lacks a timezone for {run_accession}"
+            )
+        if official is not None and source["metadata_recorded_utc"] != str(
+            gm11906_metadata["retrieval_completed_utc"]
+        ):
+            raise ValueError(
+                f"public_data_sources.tsv is not bound to the official metadata "
+                f"retrieval timestamp for {run_accession}"
             )
 
     return {
@@ -2264,6 +2432,7 @@ def _records_match(
 def validate_public_provenance(
     public_root: Path,
     public_input_rows: list[dict[str, str]],
+    gm11906_metadata: dict[str, object],
 ) -> list[dict[str, str]]:
     paths = {
         key: public_root / str(specification["source"])
@@ -2288,7 +2457,36 @@ def validate_public_provenance(
         "library_unit",
         "combination_role",
         "source_record_url",
+        "metadata_snapshot_sha256",
+        "metadata_record_sha256",
     )
+    gm11906_by_run = gm11906_metadata["by_run"]
+    if not isinstance(gm11906_by_run, dict):
+        raise ValueError("GM11906 NCBI metadata run mapping is malformed")
+    expected_source_rows = []
+    for run_accession in ("SRR10804585", "SRR10804590", "SRR10804657"):
+        record = gm11906_by_run[run_accession]
+        if not isinstance(record, dict):
+            raise ValueError(
+                f"GM11906 NCBI metadata record is malformed for {run_accession}"
+            )
+        record_sha256 = hashlib.sha256(
+            json.dumps(
+                record, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+            ).encode("ascii")
+        ).hexdigest()
+        expected_source_rows.append(
+            (
+                run_accession,
+                record["geo_accession"],
+                record["cell_line"],
+                record["library_strategy"],
+                "single_cell_library",
+                "pooled_pseudobulk",
+                GM11906_SOURCE_METADATA_SHA256,
+                record_sha256,
+            )
+        )
     if (
         not source_rows
         or tuple(source_rows[0]) != expected_source_header
@@ -2300,35 +2498,12 @@ def validate_public_provenance(
                 row["library_strategy"],
                 row["library_unit"],
                 row["combination_role"],
+                row["metadata_snapshot_sha256"],
+                row["metadata_record_sha256"],
             )
             for row in source_rows
         ]
-        != [
-            (
-                "SRR10804585",
-                "GSM4238454",
-                "GM11906",
-                "ATAC-seq",
-                "single_cell_library",
-                "pooled_pseudobulk",
-            ),
-            (
-                "SRR10804590",
-                "GSM4238459",
-                "GM11906",
-                "ATAC-seq",
-                "single_cell_library",
-                "pooled_pseudobulk",
-            ),
-            (
-                "SRR10804657",
-                "GSM4238526",
-                "GM11906",
-                "ATAC-seq",
-                "single_cell_library",
-                "pooled_pseudobulk",
-            ),
-        ]
+        != expected_source_rows
         or any(
             row["source_record_url"]
             != "https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc="
@@ -3809,8 +3984,8 @@ def validate_evidence_tables(validation_root: Path) -> None:
                         "user_cpu_seconds",
                         "system_cpu_seconds",
                         "max_rss_kb",
-                        "input_bytes",
-                        "output_bytes",
+                        "broad_declared_input_inventory_bytes",
+                        "changed_or_new_output_inventory_bytes",
                     ):
                         try:
                             if float(row[field]) < 0:
@@ -3821,11 +3996,25 @@ def validate_evidence_tables(validation_root: Path) -> None:
                             ) from error
                     if (
                         row["io_measurement_method"]
-                        != "declared_input_inventory_and_validation_output_delta_v1"
+                        != "broad_declared_inputs_and_changed_or_new_outputs_v2"
                     ):
                         raise ValueError(
                             "Invalid resource I/O measurement method: "
                             + row["io_measurement_method"]
+                        )
+                    if row["broad_declared_input_inventory_scope"] != (
+                        "repository_root;cache_root;validation_root"
+                    ):
+                        raise ValueError(
+                            "Invalid broad declared input inventory scope: "
+                            + row["broad_declared_input_inventory_scope"]
+                        )
+                    if row["changed_or_new_output_inventory_scope"] != (
+                        "cache_root;validation_root"
+                    ):
+                        raise ValueError(
+                            "Invalid changed/new output inventory scope: "
+                            + row["changed_or_new_output_inventory_scope"]
                         )
         elif name in {"figure_provenance.tsv", "table_provenance.tsv"}:
             for row in rows:
@@ -3834,6 +4023,34 @@ def validate_evidence_tables(validation_root: Path) -> None:
                     raise ValueError(f"Unsafe packet_path in {name}: {row['packet_path']!r}")
                 if re.fullmatch(r"[0-9a-f]{64}", row["sha256"]) is None:
                     raise ValueError(f"Invalid SHA-256 in {name}: {row['sha256']!r}")
+
+
+def validate_public_cache_byte_provenance(
+    validation_root: Path,
+    public_input_rows: list[dict[str, str]],
+) -> None:
+    """Require the cache-preparation output inventory to include raw downloads."""
+
+    rows = read_tsv_rows(
+        validation_root / "resource_usage.tsv",
+        EVIDENCE_TABLES["resource_usage.tsv"],
+        "resource_usage.tsv",
+    )
+    cache_rows = [row for row in rows if row["case_id"] == "public_cache_prepare"]
+    if len(cache_rows) != 1:
+        raise ValueError(
+            "resource_usage.tsv must contain exactly one public_cache_prepare row"
+        )
+    cache_row = cache_rows[0]
+    if cache_row["measurement_status"] != "measured":
+        raise ValueError("public_cache_prepare byte provenance must be measured")
+    raw_fastq_bytes = sum(int(row["bytes"]) for row in public_input_rows)
+    observed = int(cache_row["changed_or_new_output_inventory_bytes"])
+    if observed < raw_fastq_bytes:
+        raise ValueError(
+            "public_cache_prepare changed/new output inventory excludes one or more "
+            f"raw downloads: expected at least {raw_fastq_bytes}, observed {observed}"
+        )
 
 
 def _text_payload(path: Path) -> str | None:
@@ -4425,6 +4642,83 @@ def validate_public_environment(environment_root):
 
 public_environment = validate_public_environment(root / "public_environment")
 
+gm11906_metadata_path = (
+    root / "public_provenance/GM11906_NCBI_source_metadata.json"
+)
+gm11906_metadata_sha256 = (
+    "080782bfe6bf01b19e680c188124aee37607f92d06716c902d368274ecb7a616"
+)
+if digest(gm11906_metadata_path) != gm11906_metadata_sha256:
+    raise SystemExit("GM11906 official NCBI metadata snapshot SHA-256 mismatch")
+gm11906_metadata = json.loads(gm11906_metadata_path.read_text(encoding="utf-8"))
+gm11906_records = gm11906_metadata.get("records")
+if (
+    gm11906_metadata.get("schema_version") != "1.0"
+    or gm11906_metadata.get("resource_id")
+    != "gm11906_ncbi_public_source_metadata_v1"
+    or gm11906_metadata.get("authority") != "NCBI GEO and NCBI SRA"
+    or not isinstance(gm11906_records, list)
+):
+    raise SystemExit("GM11906 official NCBI metadata snapshot identity mismatch")
+canonical_gm11906_records = json.dumps(
+    gm11906_records, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+).encode("ascii")
+gm11906_records_sha256 = hashlib.sha256(canonical_gm11906_records).hexdigest()
+if gm11906_records_sha256 != gm11906_metadata.get("records_sha256"):
+    raise SystemExit("GM11906 official NCBI metadata records SHA-256 mismatch")
+gm11906_by_run = {
+    record.get("run_accession"): record
+    for record in gm11906_records
+    if isinstance(record, dict)
+}
+expected_gm11906_accessions = {
+    "SRR10804585": ("SRX7478441", "SRS5922054", "SAMN13699362", "GSM4238454"),
+    "SRR10804590": ("SRX7478446", "SRS5922059", "SAMN13699398", "GSM4238459"),
+    "SRR10804657": ("SRX7478513", "SRS5922125", "SAMN13699338", "GSM4238526"),
+}
+if len(gm11906_by_run) != 3 or set(gm11906_by_run) != set(
+    expected_gm11906_accessions
+):
+    raise SystemExit("GM11906 official NCBI metadata run inventory mismatch")
+for run_accession, identifiers in expected_gm11906_accessions.items():
+    record = gm11906_by_run[run_accession]
+    if (
+        (
+            record.get("experiment_accession"),
+            record.get("sra_sample_accession"),
+            record.get("biosample_accession"),
+            record.get("geo_accession"),
+        )
+        != identifiers
+        or record.get("bioproject_accession") != "PRJNA598179"
+        or record.get("cell_line") != "GM11906"
+        or record.get("organism") != "Homo sapiens"
+        or record.get("library_strategy") != "ATAC-seq"
+        or record.get("library_layout") != "PAIRED"
+        or record.get("instrument_model") != "NextSeq 550"
+    ):
+        raise SystemExit(
+            f"GM11906 official NCBI metadata captured-value mismatch for {run_accession}"
+        )
+    source_files = record.get("source_files")
+    if not isinstance(source_files, list) or {
+        item.get("format") for item in source_files if isinstance(item, dict)
+    } != {"NCBI_SRA_EFETCH_XML", "NCBI_GEO_SOFT"}:
+        raise SystemExit(
+            f"GM11906 official NCBI metadata source evidence mismatch for {run_accession}"
+        )
+    for source in source_files:
+        if (
+            not str(source.get("url", "")).startswith("https://")
+            or "ncbi.nlm.nih.gov/" not in str(source.get("url", ""))
+            or re.fullmatch(r"[0-9a-f]{64}", str(source.get("sha256", ""))) is None
+            or not isinstance(source.get("bytes"), int)
+            or source["bytes"] <= 0
+        ):
+            raise SystemExit(
+                f"GM11906 official NCBI metadata source evidence is invalid for {run_accession}"
+            )
+
 frozen_input_hashes = {
     "SRR10804585_1.fastq.gz": "b69746cb61d8bf3bc25887d6ece3c60db3acc7baaefd84a9a8b5d6ffce33288d",
     "SRR10804585_2.fastq.gz": "1fca2c35a955a4ed232465d8392bc04683828229178aee7915929e67b2aac961",
@@ -4685,7 +4979,10 @@ table_headers = {
     ),
     "resource_usage.tsv": (
         "case_id", "wall_seconds", "user_cpu_seconds", "system_cpu_seconds",
-        "max_rss_kb", "input_bytes", "output_bytes", "io_measurement_method",
+        "max_rss_kb", "broad_declared_input_inventory_bytes",
+        "changed_or_new_output_inventory_bytes",
+        "broad_declared_input_inventory_scope",
+        "changed_or_new_output_inventory_scope", "io_measurement_method",
         "threads", "platform", "measurement_status", "reason",
     ),
     "figure_provenance.tsv": (
@@ -4740,23 +5037,20 @@ for row in raw_inputs:
 if len(source_by_run) != len(source_rows) or set(source_by_run) != set(raw_by_run):
     raise SystemExit("public_data_sources.tsv run inventory does not bind the raw manifest")
 expected_source_metadata = {
-    "SRR10804585": (
-        "GM11906 pooled single-cell ATAC-seq pseudo-bulk", "PRJNA598179",
-        "GM11906", "ILLUMINA", "NextSeq 550", "ATAC-seq",
-    ),
-    "SRR10804590": (
-        "GM11906 pooled single-cell ATAC-seq pseudo-bulk", "PRJNA598179",
-        "GM11906", "ILLUMINA", "NextSeq 550", "ATAC-seq",
-    ),
-    "SRR10804657": (
-        "GM11906 pooled single-cell ATAC-seq pseudo-bulk", "PRJNA598179",
-        "GM11906", "ILLUMINA", "NextSeq 550", "ATAC-seq",
-    ),
-    "SRR18110025": (
+    run_accession: (
+        "GM11906 pooled single-cell ATAC-seq pseudo-bulk",
+        record["bioproject_accession"],
+        record["cell_line"],
+        "ILLUMINA",
+        record["instrument_model"],
+        record["library_strategy"],
+    )
+    for run_accession, record in gm11906_by_run.items()
+}
+expected_source_metadata["SRR18110025"] = (
         "GM12878 ONT targeted-mt proof-of-principle", "PRJNA809571",
         "GM12878", "OXFORD_NANOPORE", "GridION", "OTHER",
-    ),
-}
+    )
 for run_accession, inputs in raw_by_run.items():
     row = source_by_run[run_accession]
     first = inputs[0]
@@ -4767,6 +5061,26 @@ for run_accession, inputs in raw_by_run.items():
     )
     if observed_identity != expected_identity or row["sample_accession"] != first["sample_accession"]:
         raise SystemExit(f"public source metadata mismatch: {run_accession}")
+    official = gm11906_by_run.get(run_accession)
+    if official is not None:
+        expected_manifest_identity = (
+            official["biosample_accession"],
+            official["geo_accession"],
+            official["sample_title"],
+            official["cell_line"],
+            official["library_strategy"],
+        )
+        observed_manifest_identity = (
+            first["sample_accession"],
+            first["sample_alias"],
+            first["sample_title"],
+            first["source_sample_id"],
+            first["library_strategy"],
+        )
+        if observed_manifest_identity != expected_manifest_identity:
+            raise SystemExit(
+                f"public input is not bound to official NCBI metadata: {run_accession}"
+            )
     for field, raw_field in (
         ("fastq_url", "url"), ("fastq_md5", "md5"),
         ("fastq_sha256", "sha256"), ("fastq_bytes", "bytes"),
@@ -4789,6 +5103,12 @@ for run_accession, inputs in raw_by_run.items():
     if recorded.tzinfo is None or recorded.utcoffset() is None:
         raise SystemExit(
             f"public source metadata-recorded timestamp lacks timezone: {run_accession}"
+        )
+    if official is not None and row["metadata_recorded_utc"] != gm11906_metadata[
+        "retrieval_completed_utc"
+    ]:
+        raise SystemExit(
+            f"public source metadata timestamp is not bound to NCBI snapshot: {run_accession}"
         )
 
 def read_rows(path):
@@ -4989,29 +5309,35 @@ for label, expected_name, component_labels in (
 source_fields, source_libraries = read_rows(
     root / "public_provenance/GM11906_MERRF_shortread.source_libraries.tsv"
 )
-expected_source_libraries = [
-    (
-        "SRR10804585", "GSM4238454", "GM11906", "ATAC-seq",
-        "single_cell_library", "pooled_pseudobulk",
-        "https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSM4238454",
-    ),
-    (
-        "SRR10804590", "GSM4238459", "GM11906", "ATAC-seq",
-        "single_cell_library", "pooled_pseudobulk",
-        "https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSM4238459",
-    ),
-    (
-        "SRR10804657", "GSM4238526", "GM11906", "ATAC-seq",
-        "single_cell_library", "pooled_pseudobulk",
-        "https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSM4238526",
-    ),
-]
+expected_source_libraries = []
+for run_accession in ("SRR10804585", "SRR10804590", "SRR10804657"):
+    record = gm11906_by_run[run_accession]
+    record_sha256 = hashlib.sha256(
+        json.dumps(
+            record, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+        ).encode("ascii")
+    ).hexdigest()
+    expected_source_libraries.append(
+        (
+            run_accession,
+            record["geo_accession"],
+            record["cell_line"],
+            record["library_strategy"],
+            "single_cell_library",
+            "pooled_pseudobulk",
+            "https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc="
+            + record["geo_accession"],
+            gm11906_metadata_sha256,
+            record_sha256,
+        )
+    )
 observed_source_libraries = [
     tuple(row[field] for field in source_fields) for row in source_libraries
 ]
 if source_fields != (
     "run_accession", "geo_accession", "source_sample_id", "library_strategy",
     "library_unit", "combination_role", "source_record_url",
+    "metadata_snapshot_sha256", "metadata_record_sha256",
 ) or observed_source_libraries != expected_source_libraries:
     raise SystemExit("GM11906 three-cell source-library derivation mismatch")
 
@@ -5051,7 +5377,8 @@ for row in evidence_rows["resource_usage.tsv"]:
     if status == "measured":
         for field in (
             "wall_seconds", "user_cpu_seconds", "system_cpu_seconds", "max_rss_kb",
-            "input_bytes", "output_bytes",
+            "broad_declared_input_inventory_bytes",
+            "changed_or_new_output_inventory_bytes",
         ):
             try:
                 if float(row[field]) < 0:
@@ -5060,9 +5387,35 @@ for row in evidence_rows["resource_usage.tsv"]:
                 raise SystemExit(f"invalid resource measurement {field}") from error
         if (
             row["io_measurement_method"]
-            != "declared_input_inventory_and_validation_output_delta_v1"
+            != "broad_declared_inputs_and_changed_or_new_outputs_v2"
         ):
             raise SystemExit("invalid resource I/O measurement method")
+        if row["broad_declared_input_inventory_scope"] != (
+            "repository_root;cache_root;validation_root"
+        ):
+            raise SystemExit("invalid broad declared input inventory scope")
+        if row["changed_or_new_output_inventory_scope"] != (
+            "cache_root;validation_root"
+        ):
+            raise SystemExit("invalid changed/new output inventory scope")
+
+public_cache_resources = [
+    row
+    for row in evidence_rows["resource_usage.tsv"]
+    if row["case_id"] == "public_cache_prepare"
+]
+if len(public_cache_resources) != 1:
+    raise SystemExit("missing or duplicate public_cache_prepare resource evidence")
+public_cache_resource = public_cache_resources[0]
+raw_fastq_bytes = sum(int(row["bytes"]) for row in raw_inputs)
+if (
+    public_cache_resource["measurement_status"] != "measured"
+    or int(public_cache_resource["changed_or_new_output_inventory_bytes"])
+    < raw_fastq_bytes
+):
+    raise SystemExit(
+        "public_cache_prepare changed/new output inventory excludes raw downloads"
+    )
 
 for name in ("figure_provenance.tsv", "table_provenance.tsv"):
     for row in evidence_rows[name]:
@@ -5147,6 +5500,18 @@ for label, value in (("run", run), ("identity", identity)):
         raise SystemExit(f"{label} schema version mismatch")
     if value.get("validation_profile") != profile:
         raise SystemExit(f"{label} validation profile mismatch")
+expected_public_source_metadata = {
+    "path": "public_provenance/GM11906_NCBI_source_metadata.json",
+    "sha256": gm11906_metadata_sha256,
+    "records_sha256": gm11906_records_sha256,
+    "retrieval_completed_utc": gm11906_metadata["retrieval_completed_utc"],
+    "authority": gm11906_metadata["authority"],
+}
+if (
+    run.get("public_source_metadata") != expected_public_source_metadata
+    or identity.get("public_source_metadata") != expected_public_source_metadata
+):
+    raise SystemExit("release identity public-source metadata binding mismatch")
 if run.get("release_version") != "v0.3.0" or identity.get("release_version") != "v0.3.0":
     raise SystemExit("release identity mismatch")
 if identity.get("package_version") != "0.3.0" or identity.get("package_name") != "mito-overview":
@@ -6063,13 +6428,23 @@ def build_packet(args: argparse.Namespace) -> Path:
         public_root / "environment",
         args.repo_root,
     )
+    gm11906_source_metadata = validate_gm11906_source_metadata(
+        args.repo_root,
+        public_root,
+    )
     public_inputs = validate_public_input_evidence(
         public_root,
         args.validation_root / "public_data_sources.tsv",
+        gm11906_source_metadata,
+    )
+    validate_public_cache_byte_provenance(
+        args.validation_root,
+        list(public_inputs["rows"]),
     )
     public_provenance = validate_public_provenance(
         public_root,
         list(public_inputs["rows"]),
+        gm11906_source_metadata,
     )
     scientific_evidence = validate_scientific_evidence(
         args.repo_root,
@@ -6167,6 +6542,17 @@ def build_packet(args: argparse.Namespace) -> Path:
     release_identity.update(pr_acceptance)
     release_identity["public_provenance"] = public_provenance
     release_identity["public_environment"] = public_environment
+    public_source_metadata_identity = {
+        key: gm11906_source_metadata[key]
+        for key in (
+            "path",
+            "sha256",
+            "records_sha256",
+            "retrieval_completed_utc",
+            "authority",
+        )
+    }
+    release_identity["public_source_metadata"] = public_source_metadata_identity
     release_identity["public_input_evidence"] = {
         "manifest_path": RAW_INPUTS_PACKET_PATH,
         "manifest_sha256": public_inputs["manifest_sha256"],
@@ -6200,6 +6586,7 @@ def build_packet(args: argparse.Namespace) -> Path:
         "case_count": case_count,
         "verdict_counts": verdict_counts,
         "evidence_tables": sorted(EVIDENCE_TABLES),
+        "public_source_metadata": public_source_metadata_identity,
         "claim_scope": "reproducible mode-gated mtDNA reporting workflow/resource",
         "diagnostic_validation_claimed": False,
     }
