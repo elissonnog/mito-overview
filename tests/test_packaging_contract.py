@@ -318,6 +318,14 @@ def test_launcher_validation_mode_rejects_missing_or_shadowed_install(
     assert len(shadowed_calls) == 1
 
 
+def test_standalone_smoke_direct_cli_probes_use_isolated_mode() -> None:
+    smoke = (REPO_ROOT / "tests" / "smoke_standalone_minimal.sh").read_text(
+        encoding="utf-8"
+    )
+    invocation = '"${MITO_OVERVIEW_PYTHON:-python3}" -I -m mito_overview.cli'
+    assert smoke.count(invocation) == 2
+
+
 def test_ci_uses_fixed_runners_and_public_artifacts_exclude_raw_inputs() -> None:
     smoke = (REPO_ROOT / ".github" / "workflows" / "smoke-tests.yml").read_text(
         encoding="utf-8"

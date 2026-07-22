@@ -30,7 +30,7 @@ MT_CONTIG=MT
 EOF
 
 cd "${REPO_ROOT}"
-"${MITO_OVERVIEW_PYTHON:-python3}" -m mito_overview.cli \
+"${MITO_OVERVIEW_PYTHON:-python3}" -I -m mito_overview.cli \
   --config "${WORKDIR}/standalone.env" --dry-run --strict-files >/dev/null
 ./scripts/run_mito_pipeline.sh --config "${WORKDIR}/standalone.env" --strict-files
 
@@ -63,7 +63,7 @@ SOURCE_ALIGN_FILE=${SOURCE_CRAM}
 MT_CONTIG=MT
 EOF
 
-"${MITO_OVERVIEW_PYTHON:-python3}" -m mito_overview.cli \
+"${MITO_OVERVIEW_PYTHON:-python3}" -I -m mito_overview.cli \
   --config "${WORKDIR}/standalone_cram.env" --dry-run --strict-files >/dev/null
 ./scripts/run_mito_pipeline.sh --config "${WORKDIR}/standalone_cram.env" --strict-files
 
