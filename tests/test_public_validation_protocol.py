@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import csv
+import gzip
 import json
 import os
+import platform
 import subprocess
+import sys
 from pathlib import Path
 
 
@@ -25,6 +28,62 @@ ORACLE = (
 def read_tsv(path: Path) -> list[dict[str, str]]:
     with path.open(encoding="utf-8", newline="") as handle:
         return list(csv.DictReader(handle, delimiter="\t"))
+
+
+def write_valid_isolation_evidence(path: Path) -> None:
+    platform_id = f"{platform.system()}/{platform.machine()}"
+    method = {
+        "Darwin/x86_64": "macos_sandbox_exec_deny_network",
+        "Darwin/arm64": "macos_sandbox_exec_deny_network",
+        "Linux/x86_64": "linux_unshare_network_namespace",
+    }[platform_id]
+    rows = [
+        ("schema_version", "1.0"),
+        ("platform", platform_id),
+        ("isolation_method", method),
+        ("isolation_scope", "process_tree"),
+        ("parent_loopback_control", "reachable"),
+        ("isolated_loopback_probe", "blocked"),
+        ("probe_target", "parent_loopback_listener"),
+        ("probe_error", "PermissionError:1"),
+        ("invoking_uid", str(os.getuid())),
+        ("invoking_gid", str(os.getgid())),
+        ("child_uid", str(os.getuid())),
+        ("child_gid", str(os.getgid())),
+        ("network_isolation_verdict", "PASS"),
+    ]
+    path.write_text(
+        "field\tvalue\n" + "".join(f"{key}\t{value}\n" for key, value in rows),
+        encoding="utf-8",
+    )
+
+
+def write_fake_curl(bin_dir: Path, marker: Path, exit_code: int = 55) -> None:
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    executable = bin_dir / "curl"
+    executable.write_text(
+        "#!/usr/bin/env bash\n"
+        f"printf '%s\\n' \"$*\" >> {str(marker)!r}\n"
+        f"exit {exit_code}\n",
+        encoding="utf-8",
+    )
+    executable.chmod(0o755)
+
+
+def matrix_command(tmp_path: Path, cache: Path) -> list[str]:
+    return [
+        str(MATRIX),
+        "--mode",
+        "offline",
+        "--cache",
+        str(cache),
+        "--work",
+        str(tmp_path / "work"),
+        "--output",
+        str(tmp_path / "output"),
+        "--oracle",
+        str(ORACLE),
+    ]
 
 
 def write_metric_table(path: Path, values: dict[str, object]) -> None:
@@ -339,6 +398,181 @@ def test_prepare_rejects_unexpected_unsealed_cache_content_without_network(
     assert list(cache.iterdir()) == [cache / "derived.bam"]
 
 
+def test_prepare_rejects_symlinked_cache_root_before_network(tmp_path: Path) -> None:
+    target = tmp_path / "target"
+    target.mkdir()
+    cache = tmp_path / "cache"
+    cache.symlink_to(target, target_is_directory=True)
+    marker = tmp_path / "curl-called.txt"
+    fake_bin = tmp_path / "bin"
+    write_fake_curl(fake_bin, marker)
+
+    result = subprocess.run(
+        [str(PREPARE), "--cache", f"{cache}/"],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={**os.environ, "PATH": f"{fake_bin}:{os.environ['PATH']}"},
+    )
+    assert result.returncode != 0
+    assert "cache root must not be a symlink" in result.stderr.lower()
+    assert not marker.exists()
+    assert list(target.iterdir()) == []
+
+
+def test_prepare_verify_does_not_create_a_missing_cache(tmp_path: Path) -> None:
+    cache = tmp_path / "missing-cache"
+    result = subprocess.run(
+        [str(PREPARE), "--verify", "--cache", str(cache)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode != 0
+    assert "sealed cache root not found" in result.stderr.lower()
+    assert not cache.exists()
+
+
+def test_prepare_rejects_valid_name_symlink_without_network(tmp_path: Path) -> None:
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    outside = tmp_path / "outside.fastq.gz"
+    outside.write_bytes(b"not public data")
+    (cache / "SRR10804585_1.fastq.gz").symlink_to(outside)
+    marker = tmp_path / "curl-called.txt"
+    fake_bin = tmp_path / "bin"
+    write_fake_curl(fake_bin, marker)
+
+    result = subprocess.run(
+        [str(PREPARE), "--cache", str(cache)],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={**os.environ, "PATH": f"{fake_bin}:{os.environ['PATH']}"},
+    )
+    assert result.returncode != 0
+    assert "regular, non-symlink files" in result.stderr.lower()
+    assert not marker.exists()
+
+
+def test_prepare_rejects_wrong_hash_without_network(tmp_path: Path) -> None:
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    poisoned = cache / "SRR10804585_1.fastq.gz"
+    with gzip.open(poisoned, "wt", encoding="ascii", newline="") as handle:
+        handle.write("@wrong\nACGT\n+\nIIII\n")
+    marker = tmp_path / "curl-called.txt"
+    fake_bin = tmp_path / "bin"
+    write_fake_curl(fake_bin, marker)
+
+    result = subprocess.run(
+        [str(PREPARE), "--cache", str(cache)],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={**os.environ, "PATH": f"{fake_bin}:{os.environ['PATH']}"},
+    )
+    assert result.returncode != 0
+    assert "byte-size mismatch" in result.stderr
+    assert not marker.exists()
+    assert not (cache / "raw_inputs.tsv").exists()
+    assert not (cache / "CACHE_SEAL.sha256").exists()
+
+
+def test_prepare_corrupt_partial_cannot_be_promoted_or_sealed(tmp_path: Path) -> None:
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    partial = cache / "SRR10804585_1.fastq.gz.partial"
+    partial.write_bytes(b"corrupted interrupted download")
+    marker = tmp_path / "curl-called.txt"
+    fake_bin = tmp_path / "bin"
+    write_fake_curl(fake_bin, marker)
+
+    result = subprocess.run(
+        [str(PREPARE), "--cache", str(cache)],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={**os.environ, "PATH": f"{fake_bin}:{os.environ['PATH']}"},
+    )
+    assert result.returncode != 0
+    assert marker.is_file()
+    assert "--continue-at -" in marker.read_text(encoding="utf-8")
+    assert not (cache / "SRR10804585_1.fastq.gz").exists()
+    assert not (cache / "raw_inputs.tsv").exists()
+    assert not (cache / "CACHE_SEAL.sha256").exists()
+
+
+def test_matrix_rejects_symlinked_cache_root_before_execution(tmp_path: Path) -> None:
+    target = tmp_path / "cache-target"
+    target.mkdir()
+    cache = tmp_path / "cache"
+    cache.symlink_to(target, target_is_directory=True)
+    result = subprocess.run(
+        matrix_command(tmp_path, cache),
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode != 0
+    assert "sealed raw cache must not be a symlink" in result.stderr.lower()
+    assert not (tmp_path / "work").exists()
+    assert not (tmp_path / "output").exists()
+
+
+def test_matrix_rejects_symlinked_workspace_before_execution(tmp_path: Path) -> None:
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    work_target = tmp_path / "work-target"
+    work_target.mkdir()
+    (tmp_path / "work").symlink_to(work_target, target_is_directory=True)
+    result = subprocess.run(
+        matrix_command(tmp_path, cache),
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode != 0
+    assert "validation work root must not be a symlink" in result.stderr.lower()
+    assert list(work_target.iterdir()) == []
+    assert not (tmp_path / "output").exists()
+
+
+def test_matrix_rejects_symlinked_oracle_before_execution(tmp_path: Path) -> None:
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    oracle_link = tmp_path / "oracle.tsv"
+    oracle_link.symlink_to(ORACLE)
+    command = matrix_command(tmp_path, cache)
+    command[-1] = str(oracle_link)
+    result = subprocess.run(
+        command,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode != 0
+    assert "oracle tsv not found or is a symlink" in result.stderr.lower()
+    assert not (tmp_path / "work").exists()
+    assert not (tmp_path / "output").exists()
+
+
+def test_matrix_rejects_wrong_thread_count_before_execution(tmp_path: Path) -> None:
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    result = subprocess.run(
+        matrix_command(tmp_path, cache),
+        check=False,
+        capture_output=True,
+        text=True,
+        env={**os.environ, "THREADS": "8"},
+    )
+    assert result.returncode != 0
+    assert "validation thread count mismatch: 8 != 4" in result.stderr.lower()
+    assert not (tmp_path / "work").exists()
+    assert not (tmp_path / "output").exists()
+
+
 def test_matrix_rejects_legacy_positional_interface() -> None:
     result = subprocess.run(
         [str(MATRIX), "/tmp/legacy-output"],
@@ -391,7 +625,9 @@ def test_matrix_requires_installed_distribution_and_exact_runtime_contract() -> 
     contract = MATRIX.read_text(encoding="utf-8")
     assert '"MITO_OVERVIEW_REQUIRE_INSTALLED=1"' in contract
     assert '"PYTHONPATH="' in contract
-    assert '"threads": 4' in contract
+    assert "VALIDATION_THREADS=4" in contract
+    assert "expected_threads != 4" in contract
+    assert '"threads": expected_threads' in contract
     for expected in (
         '"mito-overview": "0.3.0"',
         '"pysam": "0.24.0"',
@@ -500,6 +736,140 @@ def test_matrix_rejects_malformed_isolation_evidence_before_execution(
     assert "network-isolation evidence mismatch" in result.stderr
     assert not (tmp_path / "work").exists()
     assert not (tmp_path / "output").exists()
+
+
+def test_matrix_executes_runtime_version_gate_and_rejects_wrong_samtools(
+    tmp_path: Path,
+) -> None:
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    evidence = tmp_path / "network_isolation.tsv"
+    write_valid_isolation_evidence(evidence)
+
+    # Install the checkout without dependencies into a disposable interpreter.
+    # System-site packages supply the exact lock already used by this test run.
+    venv_root = tmp_path / "runtime-venv"
+    subprocess.run(
+        [sys.executable, "-m", "venv", "--system-site-packages", str(venv_root)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    python_bin = venv_root / "bin" / "python"
+    subprocess.run(
+        [
+            str(python_bin),
+            "-m",
+            "pip",
+            "install",
+            "--disable-pip-version-check",
+            "--no-deps",
+            "--no-build-isolation",
+            str(REPO_ROOT),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    fake_bin = tmp_path / "wrong-runtime-bin"
+    fake_bin.mkdir()
+    samtools = fake_bin / "samtools"
+    samtools.write_text(
+        "#!/usr/bin/env bash\n"
+        "printf 'samtools 0.0.0\\nUsing htslib 0.0.0\\n'\n",
+        encoding="utf-8",
+    )
+    samtools.chmod(0o755)
+
+    result = subprocess.run(
+        matrix_command(tmp_path, cache),
+        check=False,
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "PATH": f"{fake_bin}:{os.environ['PATH']}",
+            "MITO_OVERVIEW_PYTHON": str(python_bin),
+            "MITO_OVERVIEW_NETWORK_ISOLATION_ACTIVE": "1",
+            "MITO_OVERVIEW_NETWORK_ISOLATION_EVIDENCE": str(evidence),
+        },
+    )
+    assert result.returncode != 0
+    assert "samtools version mismatch" in result.stderr.lower()
+    assert not (tmp_path / "output" / "cases.tsv").exists()
+
+
+def test_matrix_executes_runtime_gate_and_rejects_wrong_python(tmp_path: Path) -> None:
+    system_python = Path("/usr/bin/python3")
+    assert system_python.is_file()
+    observed = subprocess.run(
+        [str(system_python), "-c", "import platform; print(platform.python_version())"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    assert observed != "3.12.13"
+
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    evidence = tmp_path / "network_isolation.tsv"
+    write_valid_isolation_evidence(evidence)
+    result = subprocess.run(
+        matrix_command(tmp_path, cache),
+        check=False,
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "MITO_OVERVIEW_PYTHON": str(system_python),
+            "MITO_OVERVIEW_NETWORK_ISOLATION_ACTIVE": "1",
+            "MITO_OVERVIEW_NETWORK_ISOLATION_EVIDENCE": str(evidence),
+        },
+    )
+    assert result.returncode != 0
+    assert f"python version mismatch: {observed} != 3.12.13" in result.stderr.lower()
+    assert not (tmp_path / "output" / "cases.tsv").exists()
+
+
+def test_isolation_wrapper_blocks_an_executed_network_attempt_or_fails_closed(
+    tmp_path: Path,
+) -> None:
+    evidence = tmp_path / "network_isolation.tsv"
+    attempted_network = (
+        "import socket\n"
+        "try:\n"
+        "    socket.create_connection(('1.1.1.1', 53), timeout=0.5)\n"
+        "except OSError:\n"
+        "    raise SystemExit(0)\n"
+        "raise SystemExit('network unexpectedly reachable')\n"
+    )
+    result = subprocess.run(
+        [
+            str(ISOLATION_WRAPPER),
+            "--evidence",
+            str(evidence),
+            "--",
+            sys.executable,
+            "-I",
+            "-c",
+            attempted_network,
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=45,
+    )
+    if result.returncode != 0:
+        # Some outer sandboxes deny even the wrapper's pre-isolation parent
+        # control socket. That is a valid fail-closed result, never a PASS.
+        assert "Parent loopback listener terminated during startup" in result.stderr
+        assert not evidence.exists()
+        return
+    rows = {row["field"]: row["value"] for row in read_tsv(evidence)}
+    assert rows["parent_loopback_control"] == "reachable"
+    assert rows["isolated_loopback_probe"] == "blocked"
+    assert rows["network_isolation_verdict"] == "PASS"
 
 
 def test_isolation_wrapper_rejects_incomplete_or_reused_interfaces(tmp_path: Path) -> None:

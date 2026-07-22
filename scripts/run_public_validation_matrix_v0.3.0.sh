@@ -52,8 +52,31 @@ done
 for value in CACHE_ROOT WORK_ROOT OUTPUT_ROOT ORACLE_TSV; do
   [[ -n "${!value}" ]] || { echo "Missing required argument: ${value}" >&2; exit 2; }
 done
+for path_specification in \
+  "${CACHE_ROOT}|Sealed raw cache" \
+  "${WORK_ROOT}|Validation work root" \
+  "${OUTPUT_ROOT}|Validation output root"; do
+  path="${path_specification%%|*}"
+  label="${path_specification#*|}"
+  while [[ "${path}" != / && "${path}" == */ ]]; do
+    path="${path%/}"
+  done
+  [[ ! -L "${path}" ]] || {
+    echo "${label} must not be a symlink: ${path}" >&2
+    exit 1
+  }
+done
 [[ -d "${CACHE_ROOT}" ]] || { echo "Sealed raw cache not found: ${CACHE_ROOT}" >&2; exit 1; }
-[[ -f "${ORACLE_TSV}" ]] || { echo "Oracle TSV not found: ${ORACLE_TSV}" >&2; exit 1; }
+[[ -f "${ORACLE_TSV}" && ! -L "${ORACLE_TSV}" ]] || {
+  echo "Oracle TSV not found or is a symlink: ${ORACLE_TSV}" >&2
+  exit 1
+}
+
+VALIDATION_THREADS=4
+if [[ -n "${THREADS+x}" && "${THREADS}" != "${VALIDATION_THREADS}" ]]; then
+  echo "Validation thread count mismatch: ${THREADS} != ${VALIDATION_THREADS}" >&2
+  exit 1
+fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
@@ -174,6 +197,10 @@ done < <(env)
 assert_absent_or_empty() {
   local path="$1"
   local label="$2"
+  if [[ -L "${path}" ]]; then
+    echo "${label} must not be a symlink: ${path}" >&2
+    exit 1
+  fi
   if [[ -d "${path}" && -n "$(find "${path}" -mindepth 1 -maxdepth 1 -print -quit)" ]]; then
     echo "${label} must be absent or empty: ${path}" >&2
     exit 1
@@ -245,7 +272,7 @@ common_environment=(
 
 env -i "${common_environment[@]}" "${PYTHON_BIN}" -I - \
   "${REPO_ROOT}" "${OUTPUT_ROOT}/environment/runtime_versions.json" \
-  "${EXPECTED_PLATFORM}" <<'PY'
+  "${EXPECTED_PLATFORM}" "${VALIDATION_THREADS}" <<'PY'
 import json
 import platform
 import subprocess
@@ -256,6 +283,10 @@ from pathlib import Path
 repo_root = Path(sys.argv[1]).resolve()
 output = Path(sys.argv[2])
 expected_platform = sys.argv[3]
+expected_threads = int(sys.argv[4])
+
+if expected_threads != 4:
+    raise SystemExit(f"Validation thread count mismatch: {expected_threads} != 4")
 
 if tuple(sys.version_info[:3]) != (3, 12, 13):
     raise SystemExit(f"Python version mismatch: {platform.python_version()} != 3.12.13")
@@ -328,7 +359,7 @@ record = {
     "htslib": samtools_lines[1],
     "minimap2": minimap2,
     "bwa": "0.7.19-r1273",
-    "threads": 4,
+    "threads": expected_threads,
     "installed_distribution_required": True,
 }
 output.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -389,7 +420,7 @@ run_short_case() {
     "MITO_OVERVIEW_SHORTREAD_RAW_DATA_DIR=${CACHE_ROOT}"
     "MITO_OVERVIEW_SHORTREAD_DERIVED_DIR=${DERIVED_ROOT}/GM11906"
     "MITO_OVERVIEW_SHORTREAD_ALIGN_BAM=${alignment}"
-    "MITO_OVERVIEW_SHORTREAD_THREADS=4"
+    "MITO_OVERVIEW_SHORTREAD_THREADS=${VALIDATION_THREADS}"
     "MITO_OVERVIEW_SHORTREAD_ALLELE_MIN_BASE_QUALITY=${baseq}"
     "MITO_OVERVIEW_SHORTREAD_ALLELE_MIN_MAPPING_QUALITY=${mapq}"
     "MITO_OVERVIEW_SHORTREAD_ALLELE_MIN_READ_MEAN_QUALITY=${readq}"
@@ -431,7 +462,7 @@ run_long_case() {
     "MITO_OVERVIEW_LONGREAD_ALIGN_BAM=${alignment}"
     "MITO_OVERVIEW_LONGREAD_SUBSET_READ_NAMES=1000"
     "MITO_OVERVIEW_LONGREAD_SUBSET_SEED=mito-overview-v0.3.0-GM12878-SRR18110025"
-    "MITO_OVERVIEW_LONGREAD_THREADS=4"
+    "MITO_OVERVIEW_LONGREAD_THREADS=${VALIDATION_THREADS}"
     "MITO_OVERVIEW_LONGREAD_ALLELE_MIN_BASE_QUALITY=${baseq}"
     "MITO_OVERVIEW_LONGREAD_ALLELE_MIN_MAPPING_QUALITY=${mapq}"
     "MITO_OVERVIEW_LONGREAD_ALLELE_MIN_READ_MEAN_QUALITY=${readq}"

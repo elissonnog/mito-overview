@@ -41,6 +41,24 @@ done
 
 [[ -n "${CACHE_ROOT}" ]] || { usage >&2; exit 2; }
 
+# A cache path is part of the public-data identity contract. Do not silently
+# canonicalize a caller-supplied symlink into an unrelated directory.
+while [[ "${CACHE_ROOT}" != / && "${CACHE_ROOT}" == */ ]]; do
+  CACHE_ROOT="${CACHE_ROOT%/}"
+done
+[[ ! -L "${CACHE_ROOT}" ]] || {
+  echo "Cache root must not be a symlink: ${CACHE_ROOT}" >&2
+  exit 1
+}
+if [[ -e "${CACHE_ROOT}" && ! -d "${CACHE_ROOT}" ]]; then
+  echo "Cache root must be a directory path: ${CACHE_ROOT}" >&2
+  exit 1
+fi
+if [[ "${MODE}" == verify && ! -d "${CACHE_ROOT}" ]]; then
+  echo "Sealed cache root not found: ${CACHE_ROOT}" >&2
+  exit 1
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PYTHON_BIN="${MITO_OVERVIEW_PYTHON:-python3}"
 MANIFEST_NAME=raw_inputs.tsv
@@ -61,7 +79,13 @@ if [[ "${MODE}" == prepare ]]; then
   }
 fi
 
-mkdir -p "${CACHE_ROOT}"
+if [[ "${MODE}" == prepare ]]; then
+  mkdir -p "${CACHE_ROOT}"
+fi
+[[ -d "${CACHE_ROOT}" && ! -L "${CACHE_ROOT}" ]] || {
+  echo "Cache root must be a regular directory, not a symlink: ${CACHE_ROOT}" >&2
+  exit 1
+}
 CACHE_ROOT="$(cd "${CACHE_ROOT}" && pwd)"
 MANIFEST_PATH="${CACHE_ROOT}/${MANIFEST_NAME}"
 SEAL_PATH="${CACHE_ROOT}/${SEAL_NAME}"
