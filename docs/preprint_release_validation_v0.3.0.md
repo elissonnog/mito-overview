@@ -1,21 +1,27 @@
-# MitoOverview v0.3.0 Release-Candidate Validation
+# MitoOverview v0.3.0 Historical Candidate Snapshot
 
-> **Provisional candidate-validation record.** The local results below include
-> the 2026-07-21 seven-FASTQ, 17-case matrix and its regenerated lightweight
-> public assets. They are not yet bound to `FINAL_SHA`. The active release gate is defined in
+> **Historical local snapshot; not release evidence.** The local results below
+> describe a pre-push candidate exercise and regenerated lightweight public
+> assets. They are not bound to `FINAL_SHA`, a release tag, or the final
+> cross-platform packet. The active release gate is defined in
 > [`clean_room_validation_protocol_v0.3.0.md`](clean_room_validation_protocol_v0.3.0.md),
 > and its current state is tracked in
 > [`reproducibility_run_ledger.md`](reproducibility_run_ledger.md).
 
 ## Document status
 
-This document records public validation evidence for the unreleased MitoOverview v0.3.0 release candidate. It does not claim a final tagged release.
+This document preserves useful methods and provisional observations from an
+unreleased MitoOverview v0.3.0 candidate. It must not be cited as the final
+release-validation report. The authoritative report is generated outside Git
+only after the exact merged commit passes macOS and Ubuntu clean-room
+reproduction, packet verification, tag, and release-asset checks as
+`MitoOverview_v0.3.0_release_validation_report.md`, with matching DOCX and PDF.
 
 - Evidence date: 2026-07-21
 - Repository: https://github.com/elissonnog/mito-overview
 - Candidate version: `0.3.0`
 - Release status: **unreleased release candidate**
-- Validation status: **local provisional matrix passed; exact-final-commit cross-platform validation pending**
+- Validation status: **historical local characterization only; exact-final-commit cross-platform validation pending**
 
 The final `v0.3.0` tag has not been assigned. Zenodo, an archival DOI, and manuscript work are outside this GitHub-only validation gate.
 
@@ -151,9 +157,9 @@ The packet trust boundary is ordered and explicit. The final validation ZIP must
 
 ## Public-data validation design
 
-The local public validation matrix reconstructed both alignments from the seven sealed FASTQs, ran two default report invocations and one invocation per descriptive filter profile, and passed all 17 required cases. Exact normalized TSV and decoded-pixel comparisons were used for same-platform repeatability; HTML files were compared structurally. All 256 frozen scientific oracle assertions passed. The matrix ran inside macOS process-tree network isolation, with the parent connectivity control reachable and the isolated child probe blocked. These tracked outputs are provisional supporting evidence, not evidence bound to the eventual final v0.3.0 commit. Exact-`FINAL_SHA` macOS and Ubuntu reruns, external archive-digest verification, and internal packet verification remain release gates.
+The local public validation matrix reconstructed both alignments from the seven sealed FASTQs, ran two default report invocations and one invocation per descriptive filter profile, and passed all 17 required cases. Exact normalized TSV and decoded-pixel comparisons were used for same-platform repeatability; HTML files were compared structurally. Its then-current scientific oracle passed, but assertion counts and derivative hashes are intentionally not presented as release evidence in this non-commit-bound snapshot. The matrix ran inside macOS process-tree network isolation, with the parent connectivity control reachable and the isolated child probe blocked. Exact-`FINAL_SHA` macOS and Ubuntu reruns, external archive-digest verification, and internal packet verification remain release gates.
 
-After independent scientific review, the default public outputs were regenerated with the fail-closed upstream-status contracts and the aligned-reference completeness definition described above. The GM11906 marker result and all candidate/observation oracles were unchanged. For GM12878, the historical compatibility field `primary_full_length_fraction` changed from a reference-span-derived `473/728 = 0.649725` to an aligned-reference result of `25/728 = 0.034341`; the new numerator excludes CIGAR `D` and `N` operations and is not interpreted as intact-molecule evidence. The corrected two-run defaults were inserted into a fresh provisional matrix, all 256 scientific oracle assertions passed, and the fail-closed refresher rebuilt the exact 56-file tracked public asset inventory. The changed scatter and four-panel montage passed visual inspection. These cached reruns support candidate asset correction only and do not replace the required empty-cache exact-final-commit reproduction.
+After independent scientific review, the default public outputs were regenerated with the fail-closed upstream-status contracts and the aligned-reference completeness definition described above. The GM11906 marker result and candidate/observation aggregates were unchanged. For GM12878, the historical compatibility field `primary_full_length_fraction` changed from a reference-span-derived `473/728 = 0.649725` to an aligned-reference result of `25/728 = 0.034341`; the new numerator excludes CIGAR `D` and `N` operations and is not interpreted as intact-molecule evidence. The corrected two-run defaults were inserted into a fresh provisional matrix, and the fail-closed refresher rebuilt the exact 56-file tracked public asset inventory. The changed scatter and four-panel montage passed visual inspection. These cached reruns support candidate asset correction only and do not replace the required empty-cache exact-final-commit reproduction.
 
 Lightweight, tracked evidence copies are:
 
@@ -167,7 +173,7 @@ Lightweight, tracked evidence copies are:
 
 | Dataset | Public source | Analyzed material | Key provenance |
 | --- | --- | --- | --- |
-| GM11906 | `SRR10804585`, `SRR10804590`, `SRR10804657` | pooled paired-end reads aligned with BWA-MEM | BAM SHA-256 `a18f2194487dbbd0ce72eeeedcd6203d8675ec47b5fb351454b7f506ed014166`; BWA `0.7.19-r1273`; samtools `1.23.1` |
+| GM11906 | `SRR10804585`, `SRR10804590`, `SRR10804657` | pooled paired-end reads aligned with BWA-MEM | BWA `0.7.19-r1273`; samtools `1.23.1`; derivative hashes deferred to the final commit-bound packet |
 | GM12878 [Vandiver et al. 2022](https://pmc.ncbi.nlm.nih.gov/articles/PMC9399971/) | `SRR18110025`, `PRJNA809571`, `SAMN26195906` | deterministic 1,000-query-name subset, not the full run | raw FASTQ MD5 `d5bfb9aeba04cae5f3dd79462a42e5b0`; subset SHA-256 `40e203ead1d621bfec8caa3c5d18cd1e7e70c08da27008a73364812b6871df33`; selected-name SHA-256 `3444cc7db3dcf78bea807d8bcc6686883a7759d128288c1d26aeae077a771a19` |
 
 Both datasets were aligned to the 16,569-bp `NC_012920.1` reference. BWA-MEM was selected for the pooled paired-end GM11906 reads; the tracked BWA `0.7.19-r1273` command template was:
@@ -182,7 +188,7 @@ Minimap2 with the `map-ont` preset was selected for the GM12878 ONT reads; the t
 minimap2 -t {threads} -ax map-ont {reference_mmi} {deterministic_subset_fastq} | samtools view -@ {threads} -b -F 4 | samtools sort -@ {threads} -o {alignment_bam}
 ```
 
-The GM12878 subset used the 1,000 smallest seeded query-name hashes under `smallest_sha256_seeded_query_names_v1` with seed `mito-overview-v0.3.0-GM12878-SRR18110025`. This fixed-size hash selection bounded the example while making inclusion deterministic and auditable; it was not intended to produce a statistically representative sample. The subset contained 1,000 of 193,043 source records (fraction 0.00518019). The provisional BAM SHA-256 was `11605372e020dc79d3c1f0e05bc89441c3ef132e1343a19d37379df22c2ae04a`; its index SHA-256 was `eb4dd1d907a32b0202c479215ff3a9fe3ad2788a65127bbafc6f74ac4a27b366`. The alignment contained 728 primary and 543 supplementary records from 728 mapped query names. The two default report invocations reused this newly generated derivative; cross-platform reconstruction remains a final release gate.
+The GM12878 subset used the 1,000 smallest seeded query-name hashes under `smallest_sha256_seeded_query_names_v1` with seed `mito-overview-v0.3.0-GM12878-SRR18110025`. This fixed-size hash selection bounded the example while making inclusion deterministic and auditable; it was not intended to produce a statistically representative sample. The subset contained 1,000 of 193,043 source records (fraction 0.00518019). The alignment contained 728 primary and 543 supplementary records from 728 mapped query names. Platform-specific derivative BAM and index hashes are intentionally deferred to the final commit-bound packet because BAM byte identity is not a cross-platform acceptance criterion. The two default report invocations reused the newly generated derivative; cross-platform reconstruction remains a final release gate.
 
 ## Public-data results
 

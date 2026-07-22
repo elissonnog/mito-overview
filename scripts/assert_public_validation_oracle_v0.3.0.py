@@ -6,10 +6,20 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import re
 import sys
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
+from validation_fingerprints_v0_3_0 import (
+    FINGERPRINT_FIELDS,
+    summary_contract_fingerprints,
+)
 
 
 EXPECTED_CASES = {
@@ -132,6 +142,12 @@ def read_oracle(path: Path) -> list[dict[str, str]]:
     if not rows:
         raise ValueError("Oracle contains no data rows")
     for row_number, row in enumerate(rows, start=2):
+        for field in FINGERPRINT_FIELDS:
+            value = row.get(field, "").strip()
+            if not re.fullmatch(r"[0-9a-f]{64}", value):
+                raise ValueError(
+                    f"Oracle row {row_number} has invalid {field}={value!r}"
+                )
         for field in REQUIRED_STATUS_FIELDS:
             value = row.get(field, "").strip()
             if not value:
@@ -247,6 +263,22 @@ def assert_inventory(audit: Auditor, case_id: str, output: Path, oracle: dict[st
     for field, observed in expected_counts.items():
         audit.assert_value(
             f"{case_id}.inventory.{field}", oracle[field], observed, numeric=True
+        )
+
+
+def assert_summary_contract(
+    audit: Auditor,
+    case_id: str,
+    summary: Path,
+    oracle: dict[str, str],
+) -> None:
+    observed = summary_contract_fingerprints(summary)
+    for field in FINGERPRINT_FIELDS:
+        audit.assert_value(
+            f"{case_id}.{field}",
+            oracle[field],
+            observed[field],
+            detail="versioned canonical SHA-256 release contract",
         )
 
 
@@ -511,6 +543,7 @@ def assert_output(
                 f"{case_id}.{field}", oracle[field], heteroplasmy.get(metric), numeric=True
             )
         assert_marker(audit, case_id, output, oracle)
+        assert_summary_contract(audit, case_id, summary, oracle)
         assert_statuses(audit, case_id, summary, oracle)
         assert_inventory(audit, case_id, output, oracle)
         if dataset == "GM12878":

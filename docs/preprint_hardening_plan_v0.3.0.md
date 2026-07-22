@@ -112,7 +112,7 @@ GM11906 must retain `m.8344A>G` for that manuscript claim to remain. GM12878 mus
 
 ## Audit Outputs
 
-The human-readable audit is `docs/preprint_release_validation_v0.3.0.md`. The portable bundle is generated outside Git at `$MITO_OVERVIEW_VALIDATION_ROOT/v0.3.0/mito-overview-v0.3.0-validation.zip` and contains `run.json`, case and claim-evidence tables, data-source records, environment and command transcripts, normalized expected/observed outputs, SHA-256 manifests, and `verify_bundle.sh`. Raw public data remain outside Git.
+The repository file `docs/preprint_release_validation_v0.3.0.md` is a historical local candidate snapshot, not the final audit. The authoritative human-readable audit is generated outside Git as `MitoOverview_v0.3.0_release_validation_report.md`, with matching DOCX and PDF. The portable bundle is generated at `$MITO_OVERVIEW_VALIDATION_ROOT/v0.3.0/mito-overview-v0.3.0-validation.zip` and contains `run.json`, case and claim-evidence tables, data-source records, environment and command transcripts, normalized expected/observed outputs, SHA-256 manifests, and `verify_bundle.sh`. Raw public data remain outside Git.
 
 ## Release Gates
 

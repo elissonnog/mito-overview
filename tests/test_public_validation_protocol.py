@@ -14,6 +14,11 @@ from pathlib import Path
 
 import pytest
 
+from scripts.validation_fingerprints_v0_3_0 import (
+    FINGERPRINT_FIELDS,
+    summary_contract_fingerprints,
+)
+
 
 REPO_ROOT = Path(__file__).parents[1]
 PREPARE = REPO_ROOT / "scripts" / "prepare_public_validation_cache_v0.3.0.sh"
@@ -35,6 +40,7 @@ GM11906_SOURCE_METADATA = (
     / "gm11906_ncbi_source_metadata_v0.3.0.json"
 )
 PREPRINT_VALIDATION_DOC = REPO_ROOT / "docs" / "preprint_release_validation_v0.3.0.md"
+FIXTURE_ORACLE_NAME = "_fixture_public_validation_oracle.tsv"
 REPORT_MODULE_STATUS_OUTPUTS = (
     ("mito_qc_module_status", "mito_qc_summary.tsv"),
     ("heteroplasmy_module_status", "mito_heteroplasmy_summary.tsv"),
@@ -320,6 +326,26 @@ def build_matrix_fixture(root: Path) -> None:
     for key, case_ids in cases.items():
         for case_id in case_ids:
             write_case_output(root, case_id, by_key[key])
+        fingerprints = [
+            summary_contract_fingerprints(
+                root / "outputs" / case_id / "summary"
+            )
+            for case_id in case_ids
+        ]
+        if any(value != fingerprints[0] for value in fingerprints[1:]):
+            raise AssertionError(f"Fixture repeats disagree for {key}")
+        by_key[key].update(fingerprints[0])
+
+    fixture_oracle = root / FIXTURE_ORACLE_NAME
+    with fixture_oracle.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=list(oracle_rows[0]),
+            delimiter="\t",
+            lineterminator="\n",
+        )
+        writer.writeheader()
+        writer.writerows(oracle_rows)
 
     with (root / "filter_profile_results.tsv").open(
         "w", encoding="utf-8", newline=""
@@ -362,6 +388,9 @@ def run_oracle(
     report: Path,
     oracle: Path = ORACLE,
 ) -> subprocess.CompletedProcess[str]:
+    fixture_oracle = matrix_root / FIXTURE_ORACLE_NAME
+    if oracle == ORACLE and fixture_oracle.is_file():
+        oracle = fixture_oracle
     return subprocess.run(
         [
             "python3",
@@ -524,10 +553,21 @@ def test_prepare_rejects_tampered_official_metadata_before_network(
 
 def test_provisional_validation_doc_defers_exact_final_suite_count() -> None:
     text = PREPRINT_VALIDATION_DOC.read_text(encoding="utf-8")
+    opening = "\n".join(text.splitlines()[:12]).lower()
+    assert "historical" in opening
+    assert "not release evidence" in opening
     assert "239 passed" not in text
     assert "239-test PASS" not in text
+    assert "All 256" not in text
+    stale_hashes = (
+        "a18f2194487dbbd0ce72eeeedcd6203d8675ec47b5fb351454b7f506ed014166",
+        "11605372e020dc79d3c1f0e05bc89441c3ef132e1343a19d37379df22c2ae04a",
+        "eb4dd1d907a32b0202c479215ff3a9fe3ad2788a65127bbafc6f74ac4a27b366",
+    )
+    assert not any(value in text for value in stale_hashes)
     assert "Final count deferred" in text
     assert "exact count, commit, environment, and verdict" in text
+    assert "MitoOverview_v0.3.0_release_validation_report" in text
 
 
 def test_oracle_accepts_exact_six_profile_fixture(tmp_path: Path) -> None:
@@ -563,6 +603,51 @@ def test_oracle_rejects_deterministic_candidate_regression(tmp_path: Path) -> No
     assert result.returncode != 0
     assert "gm12878_default_run1.candidate_sites" in result.stderr
     assert any(row["verdict"] == "FAIL" for row in read_tsv(report))
+
+
+def test_oracle_rejects_candidate_row_change_that_preserves_counts(
+    tmp_path: Path,
+) -> None:
+    matrix_root = tmp_path / "matrix"
+    build_matrix_fixture(matrix_root)
+    candidate_path = (
+        matrix_root
+        / "outputs/gm12878_default_run1/summary/mito_heteroplasmy_candidates.tsv"
+    )
+    rows = read_tsv(candidate_path)
+    rows[0]["alt_count"] = str(int(rows[0]["alt_count"]) + 1)
+    write_oracle_fixture(candidate_path, rows, list(rows[0]))
+
+    report = tmp_path / "oracle_assertions.tsv"
+    result = run_oracle(matrix_root, report)
+    assert result.returncode != 0
+    assert "gm12878_default_run1.candidate_table_sha256" in result.stderr
+
+
+def test_oracle_rejects_summary_schema_drift_with_same_file_count(
+    tmp_path: Path,
+) -> None:
+    matrix_root = tmp_path / "matrix"
+    build_matrix_fixture(matrix_root)
+    table = matrix_root / "outputs/gm12878_default_run1/summary/zz_dummy_00.tsv"
+    table.write_text("renamed_key\tvalue\n", encoding="utf-8")
+
+    result = run_oracle(matrix_root, tmp_path / "oracle_assertions.tsv")
+    assert result.returncode != 0
+    assert "gm12878_default_run1.summary_schema_sha256" in result.stderr
+
+
+def test_oracle_rejects_same_count_summary_inventory_substitution(
+    tmp_path: Path,
+) -> None:
+    matrix_root = tmp_path / "matrix"
+    build_matrix_fixture(matrix_root)
+    summary = matrix_root / "outputs/gm12878_default_run1/summary"
+    (summary / "zz_dummy_00.tsv").rename(summary / "zz_replacement.tsv")
+
+    result = run_oracle(matrix_root, tmp_path / "oracle_assertions.tsv")
+    assert result.returncode != 0
+    assert "gm12878_default_run1.summary_inventory_sha256" in result.stderr
 
 
 @pytest.mark.parametrize(
@@ -673,7 +758,7 @@ def test_oracle_rejects_blank_or_malformed_expected_module_state(
 ) -> None:
     matrix_root = tmp_path / "matrix"
     build_matrix_fixture(matrix_root)
-    rows = read_tsv(ORACLE)
+    rows = read_tsv(matrix_root / FIXTURE_ORACLE_NAME)
     fieldnames = list(rows[0])
     rows[0]["deletions_module_status"] = value
     modified_oracle = tmp_path / "modified_oracle.tsv"
@@ -695,7 +780,7 @@ def test_oracle_requires_the_exact_closed_status_key_set(
 ) -> None:
     matrix_root = tmp_path / "matrix"
     build_matrix_fixture(matrix_root)
-    rows = read_tsv(ORACLE)
+    rows = read_tsv(matrix_root / FIXTURE_ORACLE_NAME)
     fieldnames = list(rows[0])
     if mutation == "missing":
         fieldnames.remove("identity_qc_module_status")
@@ -722,7 +807,7 @@ def test_oracle_rejects_blank_expected_numt_interpretation_reason(
 ) -> None:
     matrix_root = tmp_path / "matrix"
     build_matrix_fixture(matrix_root)
-    rows = read_tsv(ORACLE)
+    rows = read_tsv(matrix_root / FIXTURE_ORACLE_NAME)
     fieldnames = list(rows[0])
     rows[0]["numt_interpretation_reason_code"] = ""
     modified_oracle = tmp_path / "modified_oracle.tsv"
@@ -735,6 +820,27 @@ def test_oracle_rejects_blank_expected_numt_interpretation_reason(
     )
     assert result.returncode != 0
     assert "blank numt_interpretation_reason_code" in result.stderr
+
+
+@pytest.mark.parametrize("field", FINGERPRINT_FIELDS)
+def test_oracle_rejects_invalid_frozen_fingerprint(
+    tmp_path: Path,
+    field: str,
+) -> None:
+    matrix_root = tmp_path / "matrix"
+    build_matrix_fixture(matrix_root)
+    rows = read_tsv(matrix_root / FIXTURE_ORACLE_NAME)
+    rows[0][field] = "not-a-sha256"
+    modified_oracle = tmp_path / "modified_oracle.tsv"
+    write_oracle_fixture(modified_oracle, rows, list(rows[0]))
+
+    result = run_oracle(
+        matrix_root,
+        tmp_path / "oracle_assertions.tsv",
+        modified_oracle,
+    )
+    assert result.returncode != 0
+    assert f"invalid {field}" in result.stderr
 
 
 def test_oracle_rejects_missing_observed_status_metric(tmp_path: Path) -> None:

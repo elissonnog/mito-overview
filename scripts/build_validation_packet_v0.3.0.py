@@ -375,7 +375,7 @@ FROZEN_ORACLE_REPOSITORY_PATH = Path(
     "examples/public_validation/public_validation_oracle_v0.3.0.tsv"
 )
 FROZEN_ORACLE_PACKET_PATH = "public_validation_oracle_v0.3.0.tsv"
-FROZEN_ORACLE_SHA256 = "1087bd2d0b6145dd06c75d184e1b93d8eb91e7068ad928e284524f011d5e75f4"
+FROZEN_ORACLE_SHA256 = "a50852f92136d008d83e8fd86ca9888b1885c66a566f5cfb13ba30db696a68e4"
 FROZEN_RAW_INPUT_MANIFEST_SHA256 = (
     "188d9e493c7cc43dc63c6bfe972914af5ae42cadb6cb2f59092cb13452adf756"
 )
@@ -2166,8 +2166,16 @@ def expected_oracle_assertions(
         "excluded_observations",
     )
     inventory_fields = ("summary_tsv_count", "html_count", "png_count")
-    status_fields = tuple(field for field, _ in PUBLIC_ORACLE_MODULE_STATUS_SPECS) + tuple(
+    module_status_fields = tuple(
+        field for field, _ in PUBLIC_ORACLE_MODULE_STATUS_SPECS
+    )
+    interpretation_status_fields = tuple(
         field for field, _, _ in PUBLIC_ORACLE_INTERPRETATION_SPECS
+    )
+    fingerprint_fields = (
+        "candidate_table_sha256",
+        "summary_inventory_sha256",
+        "summary_schema_sha256",
     )
     longread_fields = (
         "mapped_reads",
@@ -2193,9 +2201,14 @@ def expected_oracle_assertions(
             expected[f"{case_id}.m8344.present"] = row["m8344_present"]
             for field in inventory_fields:
                 expected[f"{case_id}.inventory.{field}"] = row[field]
-            for field in status_fields:
+            for field in fingerprint_fields:
+                expected[f"{case_id}.{field}"] = row[field]
+            for field in module_status_fields:
                 if row[field]:
-                    expected[f"{case_id}.status.{field}"] = row[field]
+                    expected[f"{case_id}.module_status.{field}"] = row[field]
+            for field in interpretation_status_fields:
+                if row[field]:
+                    expected[f"{case_id}.interpretation_status.{field}"] = row[field]
             if row["m8344_alt_count"]:
                 for field in (
                     "m8344_callable_depth",
@@ -5899,7 +5912,7 @@ if any(
 ):
     raise SystemExit("raw_inputs.tsv identity or FASTQ-record evidence mismatch")
 
-frozen_oracle_sha256 = "1087bd2d0b6145dd06c75d184e1b93d8eb91e7068ad928e284524f011d5e75f4"
+frozen_oracle_sha256 = "a50852f92136d008d83e8fd86ca9888b1885c66a566f5cfb13ba30db696a68e4"
 oracle_path = root / "public_validation_oracle_v0.3.0.tsv"
 if digest(oracle_path) != frozen_oracle_sha256:
     raise SystemExit("public-validation oracle is not the frozen v0.3.0 table")
@@ -5946,7 +5959,7 @@ def expected_assertions():
         "min_base_quality", "min_mapping_quality", "min_read_mean_quality",
         "candidate_sites", "accepted_observations", "excluded_observations",
     )
-    statuses = (
+    module_statuses = (
         "mito_qc_module_status", "heteroplasmy_module_status",
         "deletions_module_status", "copy_number_module_status",
         "feature_annotation_module_status", "cosegregation_module_status",
@@ -5954,7 +5967,13 @@ def expected_assertions():
         "identity_qc_module_status", "variant_consequence_module_status",
         "circularity_qc_module_status", "methylation_exploratory_module_status",
         "phymer_haplogroup_module_status", "mvtool_annotation_module_status",
+    )
+    interpretation_statuses = (
         "numt_interpretation_status", "numt_interpretation_reason_code",
+    )
+    fingerprints = (
+        "candidate_table_sha256", "summary_inventory_sha256",
+        "summary_schema_sha256",
     )
     long_fields = (
         "mapped_reads", "primary_reads", "supplementary_reads", "mean_depth",
@@ -5973,9 +5992,14 @@ def expected_assertions():
             required[f"{case_id}.m8344.present"] = row["m8344_present"]
             for field in ("summary_tsv_count", "html_count", "png_count"):
                 required[f"{case_id}.inventory.{field}"] = row[field]
-            for field in statuses:
+            for field in fingerprints:
+                required[f"{case_id}.{field}"] = row[field]
+            for field in module_statuses:
                 if row[field]:
-                    required[f"{case_id}.status.{field}"] = row[field]
+                    required[f"{case_id}.module_status.{field}"] = row[field]
+            for field in interpretation_statuses:
+                if row[field]:
+                    required[f"{case_id}.interpretation_status.{field}"] = row[field]
             if row["m8344_alt_count"]:
                 for field in (
                     "m8344_callable_depth", "m8344_alt_count", "m8344_alt_forward",

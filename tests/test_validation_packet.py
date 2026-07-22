@@ -4073,6 +4073,17 @@ def test_oracle_checker_reports_three_run_shortread_derivation(tmp_path: Path) -
     )
 
 
+def test_packet_expected_status_ids_match_the_oracle_checker_contract() -> None:
+    expected = packet_builder.expected_oracle_assertions(frozen_oracle_rows())
+    case_id = "gm12878_default_run1"
+    for field, _ in packet_builder.PUBLIC_ORACLE_MODULE_STATUS_SPECS:
+        assert f"{case_id}.module_status.{field}" in expected
+        assert f"{case_id}.status.{field}" not in expected
+    for field, _, _ in packet_builder.PUBLIC_ORACLE_INTERPRETATION_SPECS:
+        assert f"{case_id}.interpretation_status.{field}" in expected
+        assert f"{case_id}.status.{field}" not in expected
+
+
 def test_cli_rejects_legacy_doi_argument(tmp_path: Path) -> None:
     completed = subprocess.run(
         [

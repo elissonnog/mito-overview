@@ -103,6 +103,15 @@ decoded-pixel agreement. Cross-platform validation requires identical
 normalized scientific values, schemas, and statuses; BAM and rendered-image
 byte identity is not required.
 
+For every dataset/filter profile, the frozen oracle records three versioned,
+canonical SHA-256 contracts: all rows and columns in
+`mito_heteroplasmy_candidates.tsv`, the complete summary-TSV path inventory,
+and the ordered header of every summary TSV. Candidate rows are sorted before
+hashing; summary paths and column order remain exact. These fingerprints detect
+row-level changes that preserve aggregate counts, schema drift, and same-count
+file substitutions. Default repeats and macOS/Ubuntu comparisons additionally
+gate all 44 normalized scientific TSVs byte-for-byte.
+
 Expected module states may be part of a passing case. In particular, targeted-
 mt copy number is `not_applicable`; absent mvTool or methylation inputs are
 `not_configured`; and mt-only NUMT interpretation is `not_evaluable` with
