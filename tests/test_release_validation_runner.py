@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -286,6 +288,8 @@ if args[0] == "api":
                     "html_url": "https://github.com/elissonnog",
                 }},
                 "author_association": "OWNER",
+                "created_at": f"2026-07-21T10:0{{index}}:00Z",
+                "updated_at": f"2026-07-21T10:0{{index}}:00Z",
                 "body": (
                     "<!-- mito-overview-read-only-audit-v1 -->\\n"
                     "```json\\n"
@@ -617,6 +621,22 @@ def test_resource_measurement_counts_exact_declared_and_changed_inventories(
         "Path(sys.argv[1]).write_bytes(b'12345'); "
         "Path(sys.argv[2]).write_bytes(b'1234567')"
     )
+    command_path = validation / "commands" / "probe.sh"
+    command_path.parent.mkdir()
+    command_argv = [
+        sys.executable,
+        "-c",
+        command_code,
+        str(cache_output),
+        str(validation_output),
+    ]
+    command_path.write_text(
+        "#!/usr/bin/env bash\nset -euo pipefail\n"
+        + " ".join(shlex.quote(value) for value in command_argv)
+        + "\n",
+        encoding="utf-8",
+    )
+    candidate_commit = "a" * 40
     completed = subprocess.run(
         [
             sys.executable,
@@ -627,11 +647,9 @@ def test_resource_measurement_counts_exact_declared_and_changed_inventories(
             str(repository),
             str(cache),
             str(validation),
-            sys.executable,
-            "-c",
-            command_code,
-            str(cache_output),
-            str(validation_output),
+            candidate_commit,
+            "bash",
+            str(command_path),
         ],
         check=False,
         capture_output=True,
@@ -645,7 +663,16 @@ def test_resource_measurement_counts_exact_declared_and_changed_inventories(
         observed["measurement_id"],
         flags=re.IGNORECASE,
     )
-    assert observed["broad_declared_input_inventory_bytes"] == 5
+    assert observed["candidate_commit"] == candidate_commit
+    assert observed["command_path"] == "commands/probe.sh"
+    assert observed["command_sha256"] == hashlib.sha256(
+        command_path.read_bytes()
+    ).hexdigest()
+    assert observed["log_path"] == "logs/probe.log"
+    assert observed["log_sha256"] == hashlib.sha256(log_path.read_bytes()).hexdigest()
+    assert observed["broad_declared_input_inventory_bytes"] == (
+        5 + command_path.stat().st_size
+    )
     assert observed["changed_or_new_output_inventory_bytes"] == 12
     assert observed["broad_declared_input_inventory_scope"] == (
         "repository_root;cache_root;validation_root"

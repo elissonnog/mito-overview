@@ -11,10 +11,12 @@ import os
 import re
 import shutil
 import stat
+import struct
 import subprocess
 import tarfile
 import tomllib
 import zipfile
+import zlib
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from pathlib import Path, PurePosixPath
@@ -29,6 +31,9 @@ PACKET_SCHEMA_VERSION = "2.0"
 VALIDATION_PROFILE = "github_release_validation_v1"
 PUBLIC_ENVIRONMENT_PACKET_PATH = "public_environment"
 PUBLIC_MATRIX_CASES_PACKET_PATH = "public_matrix_cases.tsv"
+RESOLVED_CI_ENVIRONMENTS_RELATIVE = "acceptance/resolved_ci_environments"
+RESOLVED_CI_PLATFORMS = ("linux-64", "osx-64", "osx-arm64")
+EXPECTED_PYTHON_VERSION = "3.12.13"
 DECODED_PIXEL_HASH_COLUMNS = (
     "path",
     "width_px",
@@ -38,12 +43,14 @@ DECODED_PIXEL_HASH_COLUMNS = (
 DECODED_PIXEL_REPORTS = {
     "GM11906": {
         "case_id": "gm11906_default_run1",
-        "source": "logs/GM11906_decoded_pixel_hashes.tsv",
+        "repeat_case_id": "gm11906_default_run2",
+        "source": "logs/gm11906_decoded_pixel_hashes.tsv",
         "packet": "decoded_pixel_hashes/GM11906.tsv",
     },
     "GM12878": {
         "case_id": "gm12878_default_run1",
-        "source": "logs/GM12878_decoded_pixel_hashes.tsv",
+        "repeat_case_id": "gm12878_default_run2",
+        "source": "logs/gm12878_decoded_pixel_hashes.tsv",
         "packet": "decoded_pixel_hashes/GM12878.tsv",
     },
 }
@@ -86,6 +93,11 @@ PUBLIC_RUNTIME_PLATFORMS = {
         "network_platform": "Darwin/arm64",
         "isolation_method": "macos_sandbox_exec_deny_network",
     },
+}
+RESOLVED_CI_RUNNER_IDENTITY = {
+    "linux-64": {"runner_os": "Linux", "runner_arch": "X64"},
+    "osx-64": {"runner_os": "macOS", "runner_arch": "X64"},
+    "osx-arm64": {"runner_os": "macOS", "runner_arch": "ARM64"},
 }
 NETWORK_ISOLATION_FIELDS = (
     "schema_version",
@@ -382,6 +394,7 @@ REQUIRED_TOP_LEVEL = (
     "release_identity.json",
     "cases.tsv",
     "acceptance",
+    "cross_platform_comparison.tsv",
     "claim_evidence_matrix.tsv",
     "module_status_matrix.tsv",
     "resource_usage.tsv",
@@ -399,6 +412,7 @@ REQUIRED_TOP_LEVEL = (
     "public_provenance",
     PUBLIC_ENVIRONMENT_PACKET_PATH,
     "figures",
+    "figures_repeat2",
     "decoded_pixel_hashes",
     "filter_profile_results.tsv",
     "inputs.sha256",
@@ -429,6 +443,11 @@ EVIDENCE_TABLES = {
     "resource_usage.tsv": (
         "measurement_id",
         "case_id",
+        "candidate_commit",
+        "command_path",
+        "command_sha256",
+        "log_path",
+        "log_sha256",
         "wall_seconds",
         "user_cpu_seconds",
         "system_cpu_seconds",
@@ -504,6 +523,21 @@ GITHUB_ACTIONS_LINUX_CASE_ID = "github_actions_linux_candidate_commit"
 GITHUB_ACTIONS_MACOS_CASE_ID = "github_actions_macos_candidate_commit"
 GITHUB_ACTIONS_MACOS_ARM64_CASE_ID = "github_actions_macos_arm64_candidate_commit"
 PR_HEAD_CI_CASE_ID = "pr_head_ci_candidate_commit"
+REQUIRED_RESOURCE_CASE_IDS = frozenset(
+    {
+        FRESH_CLONE_CASE_ID,
+        "package_build",
+        "unit_known_answer",
+        "cli_step_listing",
+        "strict_generic_dry_run",
+        "synthetic_longread_smoke",
+        "synthetic_shortread_smoke",
+        "synthetic_longread_nomethyl_smoke",
+        "standalone_minimal_smoke",
+        "public_cache_prepare",
+        "public_validation_matrix",
+    }
+)
 READ_ONLY_AUDIT_MARKER = "<!-- mito-overview-read-only-audit-v1 -->"
 READ_ONLY_AUDIT_SCHEMA_VERSION = "1.1"
 READ_ONLY_AUDIT_METHOD = "read_only_agent_role_audit"
@@ -525,6 +559,10 @@ REQUIRED_ACCEPTANCE_FILES = {
     "pull_request_github_actions_jobs.json",
     "cross_platform_comparison.tsv",
     "cross_platform_public_reproduction.json",
+}
+REQUIRED_ACCEPTANCE_DIRECTORIES = {
+    "resolved_ci_environments",
+    "ubuntu_public_validation",
 }
 REQUIRED_PUBLIC_VALIDATION_ACCEPTANCE_FILES = {
     "ubuntu_public_validation/workflow_run.json",
@@ -2737,6 +2775,18 @@ def positive_json_integer(value: object, label: str) -> int:
     return value
 
 
+def parse_github_timestamp(value: object, label: str) -> datetime:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{label} is missing")
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as error:
+        raise ValueError(f"{label} is not a valid ISO-8601 timestamp: {value!r}") from error
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ValueError(f"{label} must include a timezone offset")
+    return parsed.astimezone(timezone.utc)
+
+
 def validate_acceptance_inventory(validation_root: Path) -> None:
     acceptance_root = validation_root / "acceptance"
     if acceptance_root.is_symlink() or not acceptance_root.is_dir():
@@ -2756,6 +2806,17 @@ def validate_acceptance_inventory(validation_root: Path) -> None:
     if missing:
         raise ValueError(
             "Required acceptance evidence is missing: " + ", ".join(sorted(missing))
+        )
+    observed_directories = {
+        path.name
+        for path in acceptance_root.iterdir()
+        if path.is_dir() and not path.is_symlink()
+    }
+    missing_directories = REQUIRED_ACCEPTANCE_DIRECTORIES - observed_directories
+    if missing_directories:
+        raise ValueError(
+            "Required acceptance evidence directories are missing: "
+            + ", ".join(sorted(missing_directories))
         )
     for relative in sorted(REQUIRED_ACCEPTANCE_FILES):
         require_nonempty_evidence(validation_root, f"acceptance/{relative}")
@@ -2814,10 +2875,7 @@ def validate_pull_request_evidence(
             )
     if pull_request.get("state") != "closed" or pull_request.get("merged") is not True:
         raise ValueError("Pull-request metadata does not record a merged, closed PR")
-    if not isinstance(pull_request.get("merged_at"), str) or not str(
-        pull_request["merged_at"]
-    ).strip():
-        raise ValueError("Pull-request metadata lacks merged_at")
+    parse_github_timestamp(pull_request.get("merged_at"), "Pull-request merged_at")
     if pull_request.get("merge_commit_sha") != expected_commit:
         raise ValueError(
             "Pull-request merge_commit_sha does not match the final release commit"
@@ -3093,6 +3151,10 @@ def validate_read_only_audit_comments(
     pull_number = int(pull_request["number"])
     head_sha = str(pull_request["head_sha"])
     final_tree = str(pull_request["final_tree_sha"])
+    merged_at = parse_github_timestamp(
+        pull_request.get("merged_at"),
+        "Pull-request merged_at",
+    )
     observed: dict[str, dict[str, object]] = {}
     comment_ids: set[int] = set()
     for value in comments:
@@ -3127,6 +3189,22 @@ def validate_read_only_audit_comments(
         ):
             raise ValueError(
                 "Read-only audit comment was not authenticated as a repository-owner post"
+            )
+        created_at = parse_github_timestamp(
+            value.get("created_at"),
+            f"Read-only audit comment {comment_id} created_at",
+        )
+        updated_at = parse_github_timestamp(
+            value.get("updated_at"),
+            f"Read-only audit comment {comment_id} updated_at",
+        )
+        if created_at > updated_at:
+            raise ValueError(
+                f"Read-only audit comment {comment_id} was updated before it was created"
+            )
+        if updated_at > merged_at:
+            raise ValueError(
+                f"Read-only audit comment {comment_id} was posted or edited after merge"
             )
         payload = parse_read_only_audit_payload(body)
         if payload is None:  # Defensive: marker presence above must produce a payload.
@@ -3166,6 +3244,8 @@ def validate_read_only_audit_comments(
             "comment_url": expected_urls["html_url"],
             "posted_by": repository_owner,
             "author_association": "OWNER",
+            "created_at": value["created_at"],
+            "updated_at": value["updated_at"],
         }
 
     missing = sorted(set(READ_ONLY_AUDIT_CASE_IDS) - set(observed))
@@ -3174,7 +3254,8 @@ def validate_read_only_audit_comments(
             "Missing required read-only audit payloads: " + ", ".join(missing)
         )
     instance_ids = {
-        str(observed[role]["audit_instance_id"]) for role in READ_ONLY_AUDIT_CASE_IDS
+        str(observed[role]["audit_instance_id"]).lower()
+        for role in READ_ONLY_AUDIT_CASE_IDS
     }
     if len(instance_ids) != len(READ_ONLY_AUDIT_CASE_IDS):
         raise ValueError("Read-only audit instance IDs must be unique across roles")
@@ -3416,6 +3497,147 @@ def validate_github_actions_evidence(
             }
         )
     return rows
+
+
+def validate_resolved_ci_environments(
+    validation_root: Path,
+    repo_root: Path,
+    expected_commit: str,
+    expected_run_id: int,
+) -> list[dict[str, object]]:
+    evidence_root = validation_root / RESOLVED_CI_ENVIRONMENTS_RELATIVE
+    validate_regular_tree(evidence_root, label="Resolved CI environment evidence")
+    observed_entries = {path.name: path for path in evidence_root.iterdir()}
+    if set(observed_entries) != set(RESOLVED_CI_PLATFORMS) or any(
+        not path.is_dir() for path in observed_entries.values()
+    ):
+        raise ValueError(
+            "Resolved CI platform inventory mismatch: "
+            f"observed={sorted(observed_entries)}"
+        )
+
+    identities: list[dict[str, object]] = []
+    expected_record_fields = {
+        "schema_version",
+        "git_commit",
+        "github_run_id",
+        "job",
+        "platform_id",
+        "runner_os",
+        "runner_arch",
+        "machine",
+        "python",
+        "resolved_environment",
+        "evidence_files",
+        "evidence_manifest_sha256",
+        "source_lock_sha256",
+    }
+    for platform_id in RESOLVED_CI_PLATFORMS:
+        platform_root = evidence_root / platform_id
+        evidence_names = {
+            f"conda-{platform_id}.explicit.txt",
+            f"pip-{platform_id}.txt",
+            f"environment-{platform_id}.yml",
+            f"python-{platform_id}.txt",
+        }
+        record_name = f"platform-{platform_id}.json"
+        expected_files = evidence_names | {record_name}
+        observed_files = {
+            path.name for path in platform_root.iterdir() if path.is_file()
+        }
+        if observed_files != expected_files or any(
+            not path.is_file() for path in platform_root.iterdir()
+        ):
+            raise ValueError(
+                f"Resolved CI environment inventory mismatch for {platform_id}: "
+                f"missing={sorted(expected_files - observed_files)}, "
+                f"unexpected={sorted(observed_files - expected_files)}"
+            )
+        record = load_json_object(
+            platform_root / record_name,
+            f"Resolved CI environment identity for {platform_id}",
+        )
+        if set(record) != expected_record_fields:
+            raise ValueError(
+                f"Resolved CI environment identity schema mismatch for {platform_id}"
+            )
+        expected_identity = {
+            "schema_version": PACKET_SCHEMA_VERSION,
+            "git_commit": expected_commit,
+            "github_run_id": expected_run_id,
+            "job": "Unit and synthetic tests",
+            "platform_id": platform_id,
+            "runner_os": RESOLVED_CI_RUNNER_IDENTITY[platform_id]["runner_os"],
+            "runner_arch": RESOLVED_CI_RUNNER_IDENTITY[platform_id]["runner_arch"],
+            "machine": PUBLIC_RUNTIME_PLATFORMS[platform_id]["machine"],
+            "python": EXPECTED_PYTHON_VERSION,
+            "resolved_environment": True,
+        }
+        for field, expected in expected_identity.items():
+            if record.get(field) != expected:
+                raise ValueError(
+                    f"Resolved CI environment identity mismatch for {platform_id} "
+                    f"field {field}: {record.get(field)!r} != {expected!r}"
+                )
+        python_text = (platform_root / f"python-{platform_id}.txt").read_text(
+            encoding="utf-8"
+        ).strip()
+        if python_text != f"Python {EXPECTED_PYTHON_VERSION}":
+            raise ValueError(
+                f"Resolved CI Python evidence mismatch for {platform_id}: {python_text!r}"
+            )
+
+        evidence_files = record.get("evidence_files")
+        if not isinstance(evidence_files, dict) or set(evidence_files) != evidence_names:
+            raise ValueError(
+                f"Resolved CI evidence-file inventory mismatch for {platform_id}"
+            )
+        manifest_lines: list[str] = []
+        for name in sorted(evidence_names):
+            path = platform_root / name
+            payload_sha256 = sha256(path)
+            payload_size = path.stat().st_size
+            item = evidence_files.get(name)
+            if (
+                not isinstance(item, dict)
+                or set(item) != {"sha256", "size_bytes"}
+                or item.get("sha256") != payload_sha256
+                or item.get("size_bytes") != payload_size
+            ):
+                raise ValueError(
+                    f"Resolved CI evidence-file digest mismatch for {platform_id}/{name}"
+                )
+            manifest_lines.append(f"{name}\t{payload_sha256}\t{payload_size}\n")
+        manifest_sha256 = hashlib.sha256(
+            "".join(manifest_lines).encode("utf-8")
+        ).hexdigest()
+        if record.get("evidence_manifest_sha256") != manifest_sha256:
+            raise ValueError(
+                f"Resolved CI evidence-manifest digest mismatch for {platform_id}"
+            )
+        lock_name = f"environment-{platform_id}.yml"
+        lock_sha256 = str(evidence_files[lock_name]["sha256"])
+        if record.get("source_lock_sha256") != lock_sha256:
+            raise ValueError(
+                f"Resolved CI source-lock digest mismatch for {platform_id}"
+            )
+        tracked_lock = repo_root / "locks" / lock_name
+        validate_regular_file(
+            tracked_lock,
+            source_root=repo_root,
+            label=f"Tracked environment lock for {platform_id}",
+        )
+        if sha256(tracked_lock) != lock_sha256:
+            raise ValueError(
+                f"Resolved CI solver lock differs from the release commit for {platform_id}"
+            )
+        identities.append(
+            {
+                "path": f"{RESOLVED_CI_ENVIRONMENTS_RELATIVE}/{platform_id}",
+                **record,
+            }
+        )
+    return identities
 
 
 def validate_acceptance_evidence(
@@ -3994,8 +4216,9 @@ def validate_evidence_tables(validation_root: Path) -> None:
                 raise ValueError(f"Invalid module states in {name}: {invalid}")
         elif name == "resource_usage.tsv":
             measurement_ids: set[str] = set()
+            resource_case_ids: set[str] = set()
             for row in rows:
-                measurement_id = row["measurement_id"]
+                measurement_id = row["measurement_id"].lower()
                 if re.fullmatch(
                     r"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}",
                     measurement_id,
@@ -4009,11 +4232,37 @@ def validate_evidence_tables(validation_root: Path) -> None:
                         f"Duplicate resource measurement ID: {measurement_id}"
                     )
                 measurement_ids.add(measurement_id)
+                case_id = row["case_id"]
+                if case_id in resource_case_ids:
+                    raise ValueError(f"Duplicate resource case ID: {case_id}")
+                resource_case_ids.add(case_id)
+                if re.fullmatch(r"[0-9a-f]{40}", row["candidate_commit"]) is None:
+                    raise ValueError(
+                        f"Invalid resource candidate commit for {case_id}"
+                    )
+                expected_paths = {
+                    "command_path": f"commands/{case_id}.sh",
+                    "log_path": f"logs/{case_id}.log",
+                }
+                for field, expected_path in expected_paths.items():
+                    if row[field] != expected_path:
+                        raise ValueError(
+                            f"Resource {field} mismatch for {case_id}: {row[field]!r}"
+                        )
+                for field in ("command_sha256", "log_sha256"):
+                    if re.fullmatch(r"[0-9a-f]{64}", row[field]) is None:
+                        raise ValueError(
+                            f"Invalid resource {field} for {case_id}: {row[field]!r}"
+                        )
                 status = row["measurement_status"]
                 if status not in {"measured", "unavailable"}:
                     raise ValueError(f"Invalid resource measurement status: {status!r}")
                 if status == "unavailable" and not row["reason"].strip():
                     raise ValueError("Unavailable resource measurement lacks a reason")
+                if row["threads"] != "4":
+                    raise ValueError(
+                        f"Resource thread count must be 4 for {case_id}: {row['threads']!r}"
+                    )
                 if status == "measured":
                     for field in (
                         "wall_seconds",
@@ -4052,6 +4301,12 @@ def validate_evidence_tables(validation_root: Path) -> None:
                             "Invalid changed/new output inventory scope: "
                             + row["changed_or_new_output_inventory_scope"]
                         )
+            if resource_case_ids != REQUIRED_RESOURCE_CASE_IDS:
+                raise ValueError(
+                    "Resource case inventory mismatch: "
+                    f"missing={sorted(REQUIRED_RESOURCE_CASE_IDS - resource_case_ids)}, "
+                    f"unexpected={sorted(resource_case_ids - REQUIRED_RESOURCE_CASE_IDS)}"
+                )
         elif name in {"figure_provenance.tsv", "table_provenance.tsv"}:
             for row in rows:
                 relative = Path(row["packet_path"])
@@ -4059,6 +4314,181 @@ def validate_evidence_tables(validation_root: Path) -> None:
                     raise ValueError(f"Unsafe packet_path in {name}: {row['packet_path']!r}")
                 if re.fullmatch(r"[0-9a-f]{64}", row["sha256"]) is None:
                     raise ValueError(f"Invalid SHA-256 in {name}: {row['sha256']!r}")
+
+
+def validate_resource_bindings(root: Path, expected_commit: str) -> None:
+    rows = read_tsv_rows(
+        root / "resource_usage.tsv",
+        EVIDENCE_TABLES["resource_usage.tsv"],
+        "resource_usage.tsv",
+    )
+    for row in rows:
+        case_id = row["case_id"]
+        if row["candidate_commit"] != expected_commit:
+            raise ValueError(
+                f"Resource candidate commit mismatch for {case_id}: "
+                f"{row['candidate_commit']} != {expected_commit}"
+            )
+        for path_field, digest_field in (
+            ("command_path", "command_sha256"),
+            ("log_path", "log_sha256"),
+        ):
+            relative = PurePosixPath(row[path_field])
+            if relative.is_absolute() or ".." in relative.parts:
+                raise ValueError(f"Unsafe resource evidence path for {case_id}")
+            evidence_path = root / Path(*relative.parts)
+            validate_regular_file(
+                evidence_path,
+                source_root=root,
+                label=f"Resource {path_field} for {case_id}",
+            )
+            if sha256(evidence_path) != row[digest_field]:
+                raise ValueError(
+                    f"Resource {digest_field} does not match {path_field} for {case_id}"
+                )
+
+
+def rebind_packaged_resource_evidence(packet_root: Path, expected_commit: str) -> None:
+    table_path = packet_root / "resource_usage.tsv"
+    rows = read_tsv_rows(
+        table_path,
+        EVIDENCE_TABLES["resource_usage.tsv"],
+        "resource_usage.tsv",
+    )
+    for row in rows:
+        if row["candidate_commit"] != expected_commit:
+            raise ValueError(
+                f"Resource candidate commit changed during packaging: {row['case_id']}"
+            )
+        row["command_sha256"] = sha256(packet_root / row["command_path"])
+        row["log_sha256"] = sha256(packet_root / row["log_path"])
+    with table_path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=EVIDENCE_TABLES["resource_usage.tsv"],
+            delimiter="\t",
+            lineterminator="\n",
+        )
+        writer.writeheader()
+        writer.writerows(rows)
+    validate_resource_bindings(packet_root, expected_commit)
+
+
+def decoded_png_rgba(path: Path) -> tuple[int, int, bytes]:
+    """Decode a non-interlaced 8-bit PNG to canonical RGBA bytes."""
+
+    payload = path.read_bytes()
+    if not payload.startswith(b"\x89PNG\r\n\x1a\n"):
+        raise ValueError(f"Invalid PNG signature: {path}")
+    offset = 8
+    width = height = color_type = None
+    bit_depth = compression = filter_method = interlace = None
+    compressed = bytearray()
+    saw_iend = False
+    while offset < len(payload):
+        if offset + 12 > len(payload):
+            raise ValueError(f"Truncated PNG chunk header: {path}")
+        length = struct.unpack(">I", payload[offset : offset + 4])[0]
+        kind = payload[offset + 4 : offset + 8]
+        data_start = offset + 8
+        data_end = data_start + length
+        crc_end = data_end + 4
+        if crc_end > len(payload):
+            raise ValueError(f"Truncated PNG chunk payload: {path}")
+        data = payload[data_start:data_end]
+        expected_crc = struct.unpack(">I", payload[data_end:crc_end])[0]
+        if zlib.crc32(kind + data) & 0xFFFFFFFF != expected_crc:
+            raise ValueError(f"PNG chunk CRC mismatch: {path}")
+        offset = crc_end
+        if kind == b"IHDR":
+            if width is not None or length != 13:
+                raise ValueError(f"Invalid PNG IHDR inventory: {path}")
+            (
+                width,
+                height,
+                bit_depth,
+                color_type,
+                compression,
+                filter_method,
+                interlace,
+            ) = struct.unpack(">IIBBBBB", data)
+        elif kind == b"IDAT":
+            compressed.extend(data)
+        elif kind == b"IEND":
+            if length != 0:
+                raise ValueError(f"Invalid PNG IEND chunk: {path}")
+            saw_iend = True
+            break
+    if not saw_iend or offset != len(payload):
+        raise ValueError(f"PNG is missing a terminal IEND chunk: {path}")
+    if (
+        width is None
+        or height is None
+        or width <= 0
+        or height <= 0
+        or width * height > 100_000_000
+        or bit_depth != 8
+        or color_type not in {0, 2, 4, 6}
+        or compression != 0
+        or filter_method != 0
+        or interlace != 0
+        or not compressed
+    ):
+        raise ValueError(f"Unsupported PNG encoding for decoded-pixel evidence: {path}")
+    bytes_per_pixel = {0: 1, 2: 3, 4: 2, 6: 4}[color_type]
+    stride = width * bytes_per_pixel
+    try:
+        raw = zlib.decompress(bytes(compressed))
+    except zlib.error as error:
+        raise ValueError(f"Unable to decompress PNG pixels: {path}") from error
+    if len(raw) != height * (stride + 1):
+        raise ValueError(f"PNG scanline length mismatch: {path}")
+
+    def paeth(left: int, up: int, upper_left: int) -> int:
+        estimate = left + up - upper_left
+        distances = (
+            abs(estimate - left),
+            abs(estimate - up),
+            abs(estimate - upper_left),
+        )
+        return (left, up, upper_left)[distances.index(min(distances))]
+
+    previous = bytearray(stride)
+    rgba = bytearray()
+    cursor = 0
+    for _ in range(height):
+        filter_type = raw[cursor]
+        cursor += 1
+        scanline = bytearray(raw[cursor : cursor + stride])
+        cursor += stride
+        if filter_type not in {0, 1, 2, 3, 4}:
+            raise ValueError(f"Unsupported PNG row filter: {path}")
+        for index in range(stride):
+            left = scanline[index - bytes_per_pixel] if index >= bytes_per_pixel else 0
+            up = previous[index]
+            upper_left = previous[index - bytes_per_pixel] if index >= bytes_per_pixel else 0
+            if filter_type == 1:
+                scanline[index] = (scanline[index] + left) & 0xFF
+            elif filter_type == 2:
+                scanline[index] = (scanline[index] + up) & 0xFF
+            elif filter_type == 3:
+                scanline[index] = (scanline[index] + ((left + up) // 2)) & 0xFF
+            elif filter_type == 4:
+                scanline[index] = (
+                    scanline[index] + paeth(left, up, upper_left)
+                ) & 0xFF
+        for index in range(0, stride, bytes_per_pixel):
+            pixel = scanline[index : index + bytes_per_pixel]
+            if color_type == 0:
+                rgba.extend((pixel[0], pixel[0], pixel[0], 255))
+            elif color_type == 2:
+                rgba.extend((pixel[0], pixel[1], pixel[2], 255))
+            elif color_type == 4:
+                rgba.extend((pixel[0], pixel[0], pixel[0], pixel[1]))
+            else:
+                rgba.extend(pixel)
+        previous = scanline
+    return width, height, bytes(rgba)
 
 
 def validate_decoded_pixel_evidence(validation_root: Path) -> list[dict[str, object]]:
@@ -4072,8 +4502,19 @@ def validate_decoded_pixel_evidence(validation_root: Path) -> list[dict[str, obj
     validated: list[dict[str, object]] = []
     for dataset, specification in DECODED_PIXEL_REPORTS.items():
         case_id = str(specification["case_id"])
+        repeat_case_id = str(specification["repeat_case_id"])
         expected = {
-            Path(row["packet_path"]).name: (row["width"], row["height"])
+            Path(row["packet_path"]).name: (
+                row["width"],
+                row["height"],
+                validation_root / row["packet_path"],
+                validation_root
+                / "public"
+                / "outputs"
+                / repeat_case_id
+                / "figures"
+                / Path(row["packet_path"]).name,
+            )
             for row in figure_rows
             if row["dataset"] == dataset and row["case_id"] == case_id
         }
@@ -4091,7 +4532,7 @@ def validate_decoded_pixel_evidence(validation_root: Path) -> list[dict[str, obj
             DECODED_PIXEL_HASH_COLUMNS,
             f"{dataset} decoded-pixel evidence",
         )
-        observed: dict[str, tuple[str, str]] = {}
+        observed: dict[str, tuple[str, str, Path, Path]] = {}
         for row in rows:
             name = row["path"]
             if not name or Path(name).name != name or name in observed:
@@ -4109,7 +4550,30 @@ def validate_decoded_pixel_evidence(validation_root: Path) -> list[dict[str, obj
                 raise ValueError(
                     f"Invalid decoded-pixel SHA-256 for {dataset}: {name}"
                 )
-            observed[name] = (row["width_px"], row["height_px"])
+            figure_paths = expected.get(name, ("", "", Path(), Path()))[2:]
+            for repeat_index, figure_path in enumerate(figure_paths, start=1):
+                if not figure_path.is_file() or figure_path.is_symlink():
+                    raise ValueError(
+                        f"Decoded-pixel repeat-{repeat_index} figure is missing "
+                        f"for {dataset}: {name}"
+                    )
+                width, height, rgba = decoded_png_rgba(figure_path)
+                actual_digest = hashlib.sha256(rgba).hexdigest()
+                if (
+                    str(width) != row["width_px"]
+                    or str(height) != row["height_px"]
+                    or actual_digest != row["decoded_rgba_sha256"]
+                ):
+                    raise ValueError(
+                        f"Decoded-pixel hash does not match repeat-{repeat_index} "
+                        f"PNG for {dataset}: {name}"
+                    )
+            observed[name] = (
+                row["width_px"],
+                row["height_px"],
+                figure_paths[0],
+                figure_paths[1],
+            )
         if observed != expected:
             raise ValueError(
                 f"Decoded-pixel inventory does not match report-native figures for {dataset}"
@@ -4269,9 +4733,11 @@ import json
 import os
 import re
 import stat
+import struct
 import sys
 import tarfile
 import zipfile
+import zlib
 from collections import Counter
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
@@ -4320,12 +4786,13 @@ schema = "2.0"
 profile = "github_release_validation_v1"
 required_top_level = {
     "run.json", "release_identity.json", "cases.tsv", "acceptance",
+    "cross_platform_comparison.tsv",
     "claim_evidence_matrix.tsv", "module_status_matrix.tsv",
     "resource_usage.tsv", "figure_provenance.tsv", "table_provenance.tsv",
     "public_data_sources.tsv", "manuscript_handoff.tsv", "limitations.tsv",
     "environment.txt", "commands", "logs", "dist", "expected",
     "observed_normalized", "public_provenance", "public_environment", "figures",
-    "decoded_pixel_hashes",
+    "figures_repeat2", "decoded_pixel_hashes",
     "filter_profile_results.tsv", "inputs.sha256", "raw_inputs.tsv",
     "CACHE_SEAL.sha256", "public_validation_oracle_v0.3.0.tsv",
     "oracle_assertions.tsv", "public_matrix_cases.tsv", "artifacts.sha256",
@@ -4338,7 +4805,7 @@ if missing:
 for relative in (
     "acceptance", "commands", "commands/public", "logs", "logs/public",
     "dist", "expected", "observed_normalized", "public_provenance",
-    "public_environment", "figures", "decoded_pixel_hashes",
+    "public_environment", "figures", "figures_repeat2", "decoded_pixel_hashes",
 ):
     evidence_root = root / relative
     if not evidence_root.is_dir() or not any(
@@ -4371,6 +4838,10 @@ if missing_acceptance_files:
         "required acceptance evidence is missing: "
         f"{sorted(missing_acceptance_files)}"
     )
+for relative in ("resolved_ci_environments", "ubuntu_public_validation"):
+    evidence = acceptance_root / relative
+    if evidence.is_symlink() or not evidence.is_dir():
+        raise SystemExit(f"required acceptance directory is missing: {relative}")
 for relative in (
     "ubuntu_public_validation/workflow_run.json",
     "ubuntu_public_validation/artifacts.json",
@@ -4387,6 +4858,104 @@ def digest(path):
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             value.update(chunk)
     return value.hexdigest()
+
+def decoded_png_rgba(path):
+    payload = path.read_bytes()
+    if not payload.startswith(b"\x89PNG\r\n\x1a\n"):
+        raise SystemExit(f"invalid PNG signature: {path}")
+    offset = 8
+    width = height = bit_depth = color_type = None
+    compression = filter_method = interlace = None
+    compressed = bytearray()
+    saw_iend = False
+    while offset < len(payload):
+        if offset + 12 > len(payload):
+            raise SystemExit(f"truncated PNG chunk header: {path}")
+        length = struct.unpack(">I", payload[offset:offset + 4])[0]
+        kind = payload[offset + 4:offset + 8]
+        data_start = offset + 8
+        data_end = data_start + length
+        crc_end = data_end + 4
+        if crc_end > len(payload):
+            raise SystemExit(f"truncated PNG chunk payload: {path}")
+        data = payload[data_start:data_end]
+        expected_crc = struct.unpack(">I", payload[data_end:crc_end])[0]
+        if zlib.crc32(kind + data) & 0xFFFFFFFF != expected_crc:
+            raise SystemExit(f"PNG chunk CRC mismatch: {path}")
+        offset = crc_end
+        if kind == b"IHDR":
+            if width is not None or length != 13:
+                raise SystemExit(f"invalid PNG IHDR inventory: {path}")
+            (
+                width, height, bit_depth, color_type, compression,
+                filter_method, interlace,
+            ) = struct.unpack(">IIBBBBB", data)
+        elif kind == b"IDAT":
+            compressed.extend(data)
+        elif kind == b"IEND":
+            if length != 0:
+                raise SystemExit(f"invalid PNG IEND chunk: {path}")
+            saw_iend = True
+            break
+    if not saw_iend or offset != len(payload):
+        raise SystemExit(f"PNG is missing a terminal IEND chunk: {path}")
+    if (
+        width is None or height is None or width <= 0 or height <= 0
+        or width * height > 100_000_000 or bit_depth != 8
+        or color_type not in {0, 2, 4, 6} or compression != 0
+        or filter_method != 0 or interlace != 0 or not compressed
+    ):
+        raise SystemExit(f"unsupported PNG encoding: {path}")
+    bpp = {0: 1, 2: 3, 4: 2, 6: 4}[color_type]
+    stride = width * bpp
+    try:
+        raw = zlib.decompress(bytes(compressed))
+    except zlib.error as error:
+        raise SystemExit(f"unable to decompress PNG pixels: {path}") from error
+    if len(raw) != height * (stride + 1):
+        raise SystemExit(f"PNG scanline length mismatch: {path}")
+
+    def paeth(left, up, upper_left):
+        estimate = left + up - upper_left
+        distances = (
+            abs(estimate - left), abs(estimate - up), abs(estimate - upper_left),
+        )
+        return (left, up, upper_left)[distances.index(min(distances))]
+
+    previous = bytearray(stride)
+    rgba = bytearray()
+    cursor = 0
+    for _ in range(height):
+        filter_type = raw[cursor]
+        cursor += 1
+        scanline = bytearray(raw[cursor:cursor + stride])
+        cursor += stride
+        if filter_type not in {0, 1, 2, 3, 4}:
+            raise SystemExit(f"unsupported PNG row filter: {path}")
+        for index in range(stride):
+            left = scanline[index - bpp] if index >= bpp else 0
+            up = previous[index]
+            upper_left = previous[index - bpp] if index >= bpp else 0
+            if filter_type == 1:
+                scanline[index] = (scanline[index] + left) & 0xFF
+            elif filter_type == 2:
+                scanline[index] = (scanline[index] + up) & 0xFF
+            elif filter_type == 3:
+                scanline[index] = (scanline[index] + ((left + up) // 2)) & 0xFF
+            elif filter_type == 4:
+                scanline[index] = (scanline[index] + paeth(left, up, upper_left)) & 0xFF
+        for index in range(0, stride, bpp):
+            pixel = scanline[index:index + bpp]
+            if color_type == 0:
+                rgba.extend((pixel[0], pixel[0], pixel[0], 255))
+            elif color_type == 2:
+                rgba.extend((pixel[0], pixel[1], pixel[2], 255))
+            elif color_type == 4:
+                rgba.extend((pixel[0], pixel[0], pixel[0], pixel[1]))
+            else:
+                rgba.extend(pixel)
+        previous = scanline
+    return width, height, bytes(rgba)
 
 def safe_posix_relative(value, label):
     if not value or "\\" in value:
@@ -4540,7 +5109,8 @@ artifact_hashes = parse_manifest(root / "artifacts.sha256", packet_paths=True)
 actual_artifacts = {
     candidate.relative_to(root).as_posix()
     for candidate in root.rglob("*")
-    if candidate.is_file() and candidate.name != "artifacts.sha256"
+    if candidate.is_file()
+    and candidate.relative_to(root).as_posix() != "artifacts.sha256"
 }
 if set(artifact_hashes) != actual_artifacts:
     raise SystemExit(
@@ -5080,7 +5650,9 @@ table_headers = {
         "dataset", "case_id", "module", "status", "reason_code", "source_table",
     ),
     "resource_usage.tsv": (
-        "measurement_id", "case_id", "wall_seconds", "user_cpu_seconds",
+        "measurement_id", "case_id", "candidate_commit", "command_path",
+        "command_sha256", "log_path", "log_sha256",
+        "wall_seconds", "user_cpu_seconds",
         "system_cpu_seconds",
         "max_rss_kb", "broad_declared_input_inventory_bytes",
         "changed_or_new_output_inventory_bytes",
@@ -5472,8 +6044,10 @@ if (
     raise SystemExit("long-read deterministic subset derivation mismatch")
 
 measurement_ids = set()
+resource_case_ids = set()
+resource_candidate_commits = set()
 for row in evidence_rows["resource_usage.tsv"]:
-    measurement_id = row["measurement_id"]
+    measurement_id = row["measurement_id"].lower()
     if (
         not re.fullmatch(
             r"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}",
@@ -5484,11 +6058,39 @@ for row in evidence_rows["resource_usage.tsv"]:
     ):
         raise SystemExit(f"invalid or duplicate resource measurement ID: {measurement_id}")
     measurement_ids.add(measurement_id)
+    case_id = row["case_id"]
+    if case_id in resource_case_ids:
+        raise SystemExit(f"duplicate resource case ID: {case_id}")
+    resource_case_ids.add(case_id)
+    resource_candidate_commits.add(row["candidate_commit"])
+    expected_paths = {
+        "command_path": f"commands/{case_id}.sh",
+        "log_path": f"logs/{case_id}.log",
+    }
+    for path_field, expected_path in expected_paths.items():
+        if row[path_field] != expected_path:
+            raise SystemExit(f"resource {path_field} mismatch for {case_id}")
+    for path_field, digest_field in (
+        ("command_path", "command_sha256"),
+        ("log_path", "log_sha256"),
+    ):
+        evidence_path = root / row[path_field]
+        if (
+            not evidence_path.is_file()
+            or evidence_path.is_symlink()
+            or not re.fullmatch(r"[0-9a-f]{64}", row[digest_field])
+            or digest(evidence_path) != row[digest_field]
+        ):
+            raise SystemExit(
+                f"resource {digest_field} does not bind {path_field} for {case_id}"
+            )
     status = row["measurement_status"]
     if status not in {"measured", "unavailable"}:
         raise SystemExit(f"invalid resource status: {status}")
     if status == "unavailable" and not row["reason"].strip():
         raise SystemExit("unavailable resource measurement lacks a reason")
+    if row["threads"] != "4":
+        raise SystemExit(f"resource thread count must be 4: {case_id}")
     if status == "measured":
         for field in (
             "wall_seconds", "user_cpu_seconds", "system_cpu_seconds", "max_rss_kb",
@@ -5513,6 +6115,15 @@ for row in evidence_rows["resource_usage.tsv"]:
             "cache_root;validation_root"
         ):
             raise SystemExit("invalid changed/new output inventory scope")
+
+required_resource_cases = {
+    "fresh_clone_candidate_commit", "package_build", "unit_known_answer",
+    "cli_step_listing", "strict_generic_dry_run", "synthetic_longread_smoke",
+    "synthetic_shortread_smoke", "synthetic_longread_nomethyl_smoke",
+    "standalone_minimal_smoke", "public_cache_prepare", "public_validation_matrix",
+}
+if resource_case_ids != required_resource_cases:
+    raise SystemExit("resource case inventory mismatch")
 
 public_cache_resources = [
     row
@@ -5542,8 +6153,14 @@ for name in ("figure_provenance.tsv", "table_provenance.tsv"):
             raise SystemExit(f"provenance artifact mismatch in {name}: {relative}")
 
 pixel_reports = {
-    "GM11906": ("gm11906_default_run1", "decoded_pixel_hashes/GM11906.tsv"),
-    "GM12878": ("gm12878_default_run1", "decoded_pixel_hashes/GM12878.tsv"),
+    "GM11906": (
+        "gm11906_default_run1", "gm11906_default_run2",
+        "decoded_pixel_hashes/GM11906.tsv",
+    ),
+    "GM12878": (
+        "gm12878_default_run1", "gm12878_default_run2",
+        "decoded_pixel_hashes/GM12878.tsv",
+    ),
 }
 decoded_pixel_identity = []
 actual_pixel_files = {
@@ -5551,9 +6168,9 @@ actual_pixel_files = {
     for path in (root / "decoded_pixel_hashes").iterdir()
     if path.is_file() and not path.is_symlink()
 }
-if actual_pixel_files != {value[1] for value in pixel_reports.values()}:
+if actual_pixel_files != {value[2] for value in pixel_reports.values()}:
     raise SystemExit("decoded-pixel evidence inventory mismatch")
-for dataset, (case_id, relative) in pixel_reports.items():
+for dataset, (case_id, repeat_case_id, relative) in pixel_reports.items():
     with (root / relative).open(encoding="utf-8", newline="") as handle:
         reader = csv.DictReader(handle, delimiter="\t")
         if tuple(reader.fieldnames or ()) != (
@@ -5580,6 +6197,26 @@ for dataset, (case_id, relative) in pixel_reports.items():
             or not re.fullmatch(r"[0-9a-f]{64}", row["decoded_rgba_sha256"])
         ):
             raise SystemExit(f"invalid decoded-pixel evidence for {dataset}: {name}")
+        figure_paths = (
+            root / "figures" / case_id / name,
+            root / "figures_repeat2" / repeat_case_id / name,
+        )
+        for repeat_index, figure_path in enumerate(figure_paths, start=1):
+            if not figure_path.is_file() or figure_path.is_symlink():
+                raise SystemExit(
+                    f"decoded-pixel repeat-{repeat_index} figure is missing "
+                    f"for {dataset}: {name}"
+                )
+            width, height, rgba = decoded_png_rgba(figure_path)
+            if (
+                str(width) != row["width_px"]
+                or str(height) != row["height_px"]
+                or hashlib.sha256(rgba).hexdigest() != row["decoded_rgba_sha256"]
+            ):
+                raise SystemExit(
+                    f"decoded-pixel hash does not match repeat-{repeat_index} "
+                    f"PNG for {dataset}: {name}"
+                )
         observed_pixels[name] = (row["width_px"], row["height_px"])
     if not expected_pixels or observed_pixels != expected_pixels:
         raise SystemExit(
@@ -5690,8 +6327,104 @@ commit = identity.get("git_commit")
 repository = identity.get("repository")
 if not re.fullmatch(r"[0-9a-f]{40}", str(commit or "")):
     raise SystemExit("invalid release commit")
+if resource_candidate_commits != {commit}:
+    raise SystemExit("resource candidate commit does not match the release commit")
 if repository != "https://github.com/elissonnog/mito-overview":
     raise SystemExit("unexpected GitHub repository identity")
+
+resolved_ci_root = root / "acceptance/resolved_ci_environments"
+resolved_platforms = ("linux-64", "osx-64", "osx-arm64")
+resolved_entries = {path.name: path for path in resolved_ci_root.iterdir()}
+if set(resolved_entries) != set(resolved_platforms) or any(
+    not path.is_dir() for path in resolved_entries.values()
+):
+    raise SystemExit("resolved CI platform inventory mismatch")
+resolved_runner = {
+    "linux-64": ("Linux", "X64", "x86_64"),
+    "osx-64": ("macOS", "X64", "x86_64"),
+    "osx-arm64": ("macOS", "ARM64", "arm64"),
+}
+resolved_ci_identity = []
+for platform_id in resolved_platforms:
+    platform_root = resolved_ci_root / platform_id
+    evidence_names = {
+        f"conda-{platform_id}.explicit.txt",
+        f"pip-{platform_id}.txt",
+        f"environment-{platform_id}.yml",
+        f"python-{platform_id}.txt",
+    }
+    record_name = f"platform-{platform_id}.json"
+    expected_files = evidence_names | {record_name}
+    observed_files = {
+        path.name for path in platform_root.iterdir() if path.is_file()
+    }
+    if observed_files != expected_files or any(
+        not path.is_file() for path in platform_root.iterdir()
+    ):
+        raise SystemExit(f"resolved CI environment inventory mismatch: {platform_id}")
+    record = json.loads((platform_root / record_name).read_text(encoding="utf-8"))
+    expected_record_fields = {
+        "schema_version", "git_commit", "github_run_id", "job", "platform_id",
+        "runner_os", "runner_arch", "machine", "python", "resolved_environment",
+        "evidence_files", "evidence_manifest_sha256", "source_lock_sha256",
+    }
+    runner_os, runner_arch, machine = resolved_runner[platform_id]
+    if (
+        not isinstance(record, dict)
+        or set(record) != expected_record_fields
+        or record.get("schema_version") != schema
+        or record.get("git_commit") != commit
+        or record.get("github_run_id") != run.get("github_actions_run_id")
+        or record.get("job") != "Unit and synthetic tests"
+        or record.get("platform_id") != platform_id
+        or record.get("runner_os") != runner_os
+        or record.get("runner_arch") != runner_arch
+        or record.get("machine") != machine
+        or record.get("python") != "3.12.13"
+        or record.get("resolved_environment") is not True
+    ):
+        raise SystemExit(f"resolved CI environment identity mismatch: {platform_id}")
+    if (
+        (platform_root / f"python-{platform_id}.txt")
+        .read_text(encoding="utf-8").strip()
+        != "Python 3.12.13"
+    ):
+        raise SystemExit(f"resolved CI Python evidence mismatch: {platform_id}")
+    evidence_files = record.get("evidence_files")
+    if not isinstance(evidence_files, dict) or set(evidence_files) != evidence_names:
+        raise SystemExit(f"resolved CI evidence-file inventory mismatch: {platform_id}")
+    manifest_lines = []
+    for name in sorted(evidence_names):
+        path = platform_root / name
+        file_sha256 = digest(path)
+        file_size = path.stat().st_size
+        item = evidence_files.get(name)
+        if (
+            not isinstance(item, dict)
+            or set(item) != {"sha256", "size_bytes"}
+            or item.get("sha256") != file_sha256
+            or item.get("size_bytes") != file_size
+        ):
+            raise SystemExit(
+                f"resolved CI evidence-file digest mismatch: {platform_id}/{name}"
+            )
+        manifest_lines.append(f"{name}\t{file_sha256}\t{file_size}\n")
+    evidence_manifest_sha256 = hashlib.sha256(
+        "".join(manifest_lines).encode("utf-8")
+    ).hexdigest()
+    lock_name = f"environment-{platform_id}.yml"
+    if (
+        record.get("evidence_manifest_sha256") != evidence_manifest_sha256
+        or record.get("source_lock_sha256")
+        != evidence_files[lock_name]["sha256"]
+    ):
+        raise SystemExit(f"resolved CI manifest or lock mismatch: {platform_id}")
+    resolved_ci_identity.append({
+        "path": f"acceptance/resolved_ci_environments/{platform_id}",
+        **record,
+    })
+if identity.get("resolved_ci_environments") != resolved_ci_identity:
+    raise SystemExit("release identity resolved CI environment evidence mismatch")
 if len({
     run.get("git_commit"), commit, environment.get("git_commit"),
     identity.get("environment_git_commit"),
@@ -5770,6 +6503,17 @@ def positive_integer(value, label):
     if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
         raise SystemExit(f"{label} is not a positive integer")
     return value
+
+def github_timestamp(value, label):
+    if not isinstance(value, str) or not value.strip():
+        raise SystemExit(f"{label} is missing")
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as error:
+        raise SystemExit(f"{label} is not a valid ISO-8601 timestamp") from error
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise SystemExit(f"{label} must include a timezone offset")
+    return parsed
 
 def canonical_repository(value, label):
     if not isinstance(value, dict) or value.get("full_name") != repository_slug:
@@ -6095,6 +6839,7 @@ if (
     or pull_request.get("merge_commit_sha") != commit
 ):
     raise SystemExit("pull-request metadata identity mismatch")
+pull_merged_at = github_timestamp(pull_request["merged_at"], "pull-request merged_at")
 pull_base = pull_request.get("base")
 pull_head = pull_request.get("head")
 if not isinstance(pull_base, dict) or not isinstance(pull_head, dict):
@@ -6289,6 +7034,16 @@ for comment in comments:
         or comment.get("author_association") != "OWNER"
     ):
         raise SystemExit("pull-request comment identity mismatch")
+    created_at = github_timestamp(
+        comment.get("created_at"), f"read-only audit comment {comment_id} created_at"
+    )
+    updated_at = github_timestamp(
+        comment.get("updated_at"), f"read-only audit comment {comment_id} updated_at"
+    )
+    if created_at > updated_at or updated_at > pull_merged_at:
+        raise SystemExit(
+            f"read-only audit comment {comment_id} was posted or edited after merge"
+        )
     if body.count(audit_marker) != 1:
         raise SystemExit("read-only audit comment contains a duplicate marker")
     suffix = body.split(audit_marker, 1)[1]
@@ -6322,7 +7077,7 @@ for comment in comments:
             audit_instance_id,
             flags=re.IGNORECASE,
         )
-        or audit_instance_id in audit_instance_ids
+        or audit_instance_id.lower() in audit_instance_ids
         or payload.get("reviewed_commit") != head_sha
         or payload.get("reviewed_tree") != final_tree
         or payload.get("verdict") != "PASS"
@@ -6333,11 +7088,12 @@ for comment in comments:
         or not payload["summary"].strip()
     ):
         raise SystemExit(f"read-only audit payload mismatch for role: {role}")
-    audit_instance_ids.add(audit_instance_id)
+    audit_instance_ids.add(audit_instance_id.lower())
     audits[role] = {
         **payload, "summary": payload["summary"].strip(),
         "comment_id": comment_id, "comment_url": comment["html_url"],
         "posted_by": repository_owner, "author_association": "OWNER",
+        "created_at": comment["created_at"], "updated_at": comment["updated_at"],
     }
 if set(audits) != set(audit_roles):
     raise SystemExit("required read-only audit role inventory is incomplete")
@@ -6555,6 +7311,12 @@ def build_packet(args: argparse.Namespace) -> Path:
             "environment.txt final_push_github_actions_run_id does not match "
             "the final push GitHub Actions evidence"
         )
+    resolved_ci_environments = validate_resolved_ci_environments(
+        args.validation_root,
+        args.repo_root,
+        str(release_identity["git_commit"]),
+        int(ci_identity["run_id"]),
+    )
     public_validation_identity = validate_public_validation_github_actions_evidence(
         args.validation_root,
         str(release_identity["git_commit"]),
@@ -6593,6 +7355,10 @@ def build_packet(args: argparse.Namespace) -> Path:
         acceptance_rows,
     )
     validate_evidence_tables(args.validation_root)
+    validate_resource_bindings(
+        args.validation_root,
+        str(release_identity["git_commit"]),
+    )
     decoded_pixel_evidence = validate_decoded_pixel_evidence(args.validation_root)
     public_environment = validate_public_environment(
         public_root / "environment",
@@ -6647,6 +7413,11 @@ def build_packet(args: argparse.Namespace) -> Path:
             source_root=args.validation_root,
         )
     copy_tree(args.validation_root / "acceptance", args.packet_root / "acceptance")
+    copy_regular_file(
+        args.validation_root / "acceptance/cross_platform_comparison.tsv",
+        args.packet_root / "cross_platform_comparison.tsv",
+        source_root=args.validation_root,
+    )
     copy_tree(args.validation_root / "commands", args.packet_root / "commands")
     copy_tree(public_root / "commands", args.packet_root / "commands" / "public")
     copy_tree(args.validation_root / "logs", args.packet_root / "logs")
@@ -6654,6 +7425,12 @@ def build_packet(args: argparse.Namespace) -> Path:
     copy_tree(args.validation_root / "dist", args.packet_root / "dist")
     copy_tree(args.validation_root / "expected", args.packet_root / "expected")
     copy_tree(args.validation_root / "figures", args.packet_root / "figures")
+    for specification in DECODED_PIXEL_REPORTS.values():
+        repeat_case_id = str(specification["repeat_case_id"])
+        copy_tree(
+            public_root / "outputs" / repeat_case_id / "figures",
+            args.packet_root / "figures_repeat2" / repeat_case_id,
+        )
     for specification in DECODED_PIXEL_REPORTS.values():
         copy_regular_file(
             public_root / str(specification["source"]),
@@ -6714,6 +7491,7 @@ def build_packet(args: argparse.Namespace) -> Path:
     release_identity["dist_artifacts"] = dist_artifacts
     release_identity["acceptance_cases"] = [row["case_id"] for row in acceptance_rows]
     release_identity["github_actions"] = ci_identity
+    release_identity["resolved_ci_environments"] = resolved_ci_environments
     release_identity["public_validation_github_actions"] = public_validation_identity
     release_identity.update(pr_acceptance)
     release_identity["public_provenance"] = public_provenance
@@ -6789,6 +7567,10 @@ def build_packet(args: argparse.Namespace) -> Path:
         replacements,
         immutable_roots=(packaged_public_artifact,),
     )
+    rebind_packaged_resource_evidence(
+        args.packet_root,
+        str(release_identity["git_commit"]),
+    )
     validate_downloaded_public_artifact_identity(
         packaged_public_artifact,
         str(release_identity["git_commit"]),
@@ -6856,8 +7638,9 @@ def build_packet(args: argparse.Namespace) -> Path:
     validate_packet_hygiene(args.packet_root)
 
     artifact_rows: list[str] = []
+    root_manifest = args.packet_root / "artifacts.sha256"
     for artifact in sorted(args.packet_root.rglob("*")):
-        if not artifact.is_file() or artifact.name == "artifacts.sha256":
+        if not artifact.is_file() or artifact == root_manifest:
             continue
         artifact_rows.append(
             f"{sha256(artifact)}  {artifact.relative_to(args.packet_root).as_posix()}"

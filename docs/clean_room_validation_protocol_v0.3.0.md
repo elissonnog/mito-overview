@@ -108,6 +108,40 @@ mt copy number is `not_applicable`; absent mvTool or methylation inputs are
 `not_configured`; and mt-only NUMT interpretation is `not_evaluable` with
 `reference_scope_mt_only`. An unexpected state is a failure.
 
+## Evidence-integrity contracts
+
+Release evidence is bound to the exact candidate rather than accepted by
+filename alone.
+
+- `resource_usage.tsv` contains exactly one row for each of the 11 prescribed
+  measured commands. Every row records a case-insensitive unique UUID, the
+  full candidate commit, exact `commands/<case>.sh` and `logs/<case>.log`
+  paths, their SHA-256 values, the four-thread contract, and the declared
+  inventory-byte method. Missing, duplicated, relabeled, or hash-mismatched
+  rows fail validation.
+- The resolved CI environment root contains exactly five files for each of
+  `linux-64`, `osx-64`, and `osx-arm64`. The platform record binds the exact
+  commit and GitHub Actions run, Python 3.12.13, architecture, every evidence
+  file's size and SHA-256, the evidence-manifest SHA-256, and the tracked
+  platform-lock SHA-256.
+- Same-platform rendered-image repeatability is checked by decoding every
+  run-1 and run-2 PNG to canonical RGBA bytes and recomputing its pixel hash.
+  A syntactically valid replacement digest, changed run-2 image, missing
+  image, dimension mismatch, or duplicate basename fails validation.
+- Read-only audit comments must use the structured audit marker, be posted by
+  the repository owner, bind the reviewed PR-head commit and final tree, carry
+  unique case-insensitive audit-instance IDs, and include GitHub `created_at`
+  and `updated_at` timestamps no later than the PR merge time. Later edits do
+  not qualify as pre-merge release gates.
+- `cross_platform_comparison.tsv` is present both in acceptance evidence and
+  at the packet root for report consumption. The root artifact manifest covers
+  every other regular file, including nested files also named
+  `artifacts.sha256`; only the root manifest excludes itself.
+
+The packet builder validates these rules against the clean candidate checkout.
+The generated `verify_bundle.sh` independently repeats the portable semantic,
+inventory, timestamp, and hash checks after fresh ZIP extraction.
+
 ## Verdict rules
 
 `PASS` requires verified inputs and environment, successful execution, every

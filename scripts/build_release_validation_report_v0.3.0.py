@@ -113,6 +113,22 @@ REQUIRED_CASE_IDS = frozenset(
     }
 )
 
+REQUIRED_RESOURCE_CASE_IDS = frozenset(
+    {
+        "fresh_clone_candidate_commit",
+        "package_build",
+        "unit_known_answer",
+        "cli_step_listing",
+        "strict_generic_dry_run",
+        "synthetic_longread_smoke",
+        "synthetic_shortread_smoke",
+        "synthetic_longread_nomethyl_smoke",
+        "standalone_minimal_smoke",
+        "public_cache_prepare",
+        "public_validation_matrix",
+    }
+)
+
 ALLOWED_MODULE_STATES = frozenset(
     {
         "ok",
@@ -150,6 +166,11 @@ EVIDENCE_COLUMNS = {
     "resource_usage.tsv": (
         "measurement_id",
         "case_id",
+        "candidate_commit",
+        "command_path",
+        "command_sha256",
+        "log_path",
+        "log_sha256",
         "wall_seconds",
         "user_cpu_seconds",
         "system_cpu_seconds",
@@ -661,7 +682,7 @@ def validate_artifact_manifest(root: Path) -> None:
     actual = {
         path.relative_to(root).as_posix()
         for path in root.rglob("*")
-        if path.is_file() and path.name != "artifacts.sha256"
+        if path.is_file() and path.relative_to(root).as_posix() != "artifacts.sha256"
     }
     unmanifested = sorted(actual - set(manifest))
     if unmanifested:
@@ -1064,6 +1085,8 @@ def validate_oracles(rows: list[dict[str, str]]) -> None:
 
 
 def validate_resource_usage(
+    packet_root: Path,
+    expected_commit: str,
     rows: list[dict[str, str]],
     raw_inputs: list[dict[str, str]],
 ) -> None:
@@ -1077,8 +1100,9 @@ def validate_resource_usage(
         "threads",
     )
     measurement_ids: set[str] = set()
+    case_ids: set[str] = set()
     for row in rows:
-        measurement_id = row["measurement_id"]
+        measurement_id = row["measurement_id"].lower()
         if (
             re.fullmatch(
                 r"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}",
@@ -1092,6 +1116,37 @@ def validate_resource_usage(
                 f"Invalid or duplicate resource measurement ID: {measurement_id!r}"
             )
         measurement_ids.add(measurement_id)
+        case_id = row["case_id"]
+        if case_id in case_ids:
+            raise ReportValidationError(f"Duplicate resource case ID: {case_id}")
+        case_ids.add(case_id)
+        if row["candidate_commit"] != expected_commit:
+            raise ReportValidationError(
+                f"Resource candidate commit mismatch for {case_id}"
+            )
+        expected_paths = {
+            "command_path": f"commands/{case_id}.sh",
+            "log_path": f"logs/{case_id}.log",
+        }
+        for path_field, expected_path in expected_paths.items():
+            if row[path_field] != expected_path:
+                raise ReportValidationError(
+                    f"Resource {path_field} mismatch for {case_id}"
+                )
+        for path_field, digest_field in (
+            ("command_path", "command_sha256"),
+            ("log_path", "log_sha256"),
+        ):
+            relative = row[path_field]
+            evidence_path = packet_path(packet_root, relative)
+            require_plain_file(evidence_path, relative)
+            if (
+                SHA256_RE.fullmatch(row[digest_field]) is None
+                or sha256_file(evidence_path) != row[digest_field]
+            ):
+                raise ReportValidationError(
+                    f"Resource {digest_field} does not bind {path_field} for {case_id}"
+                )
         status = row["measurement_status"]
         if status not in {"measured", "unavailable"}:
             raise ReportValidationError(
@@ -1102,6 +1157,11 @@ def validate_resource_usage(
                 raise ReportValidationError(
                     f"Unavailable resource measurement lacks reason: {row['case_id']}"
                 )
+        if row["threads"] != "4":
+            raise ReportValidationError(
+                f"Resource thread count must be 4 for {case_id}"
+            )
+        if status == "unavailable":
             continue
         try:
             values = [float(row[field]) for field in numeric_fields]
@@ -1132,6 +1192,12 @@ def validate_resource_usage(
             raise ReportValidationError(
                 f"Invalid changed/new output inventory scope for {row['case_id']}"
             )
+    if case_ids != REQUIRED_RESOURCE_CASE_IDS:
+        raise ReportValidationError(
+            "Resource case inventory mismatch: "
+            f"missing={sorted(REQUIRED_RESOURCE_CASE_IDS - case_ids)}, "
+            f"unexpected={sorted(case_ids - REQUIRED_RESOURCE_CASE_IDS)}"
+        )
     cache_rows = [row for row in rows if row["case_id"] == "public_cache_prepare"]
     if len(cache_rows) != 1 or cache_rows[0]["measurement_status"] != "measured":
         raise ReportValidationError(
@@ -1306,7 +1372,12 @@ def load_and_validate_packet(
     validate_inputs(packet_root, raw_inputs)
     validate_module_states(tables["module_status_matrix.tsv"])
     validate_oracles(tables["oracle_assertions.tsv"])
-    validate_resource_usage(tables["resource_usage.tsv"], raw_inputs)
+    validate_resource_usage(
+        packet_root,
+        str(run["git_commit"]),
+        tables["resource_usage.tsv"],
+        raw_inputs,
+    )
     runtime_versions = validate_runtime_versions(
         packet_root / RUNTIME_VERSIONS_PACKET_PATH
     )

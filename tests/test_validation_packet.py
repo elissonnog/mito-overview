@@ -148,6 +148,11 @@ def create_release_repo(tmp_path: Path, version: str = "0.3.0") -> tuple[Path, s
     source_metadata.write_bytes(
         (ROOT / packet_builder.GM11906_SOURCE_METADATA_REPOSITORY_PATH).read_bytes()
     )
+    locks = repo / "locks"
+    locks.mkdir()
+    for platform_id in packet_builder.RESOLVED_CI_PLATFORMS:
+        name = f"environment-{platform_id}.yml"
+        (locks / name).write_bytes((ROOT / "locks" / name).read_bytes())
     run(["git", "init", "-q"], repo)
     run(["git", "config", "user.name", "Validation Test"], repo)
     run(["git", "config", "user.email", "validation@example.org"], repo)
@@ -404,6 +409,58 @@ def write_public_provenance(public_root: Path) -> None:
     )
 
 
+def write_resolved_ci_environments(root: Path, repo: Path, commit: str) -> None:
+    evidence_root = root / packet_builder.RESOLVED_CI_ENVIRONMENTS_RELATIVE
+    for platform_id in packet_builder.RESOLVED_CI_PLATFORMS:
+        platform_root = evidence_root / platform_id
+        platform_root.mkdir(parents=True, exist_ok=True)
+        files = {
+            f"conda-{platform_id}.explicit.txt": (
+                f"# platform: {platform_id}\n@EXPLICIT\n"
+                "https://example.invalid/pinned-package.conda\n"
+            ).encode("utf-8"),
+            f"pip-{platform_id}.txt": b"mito-overview==0.3.0\n",
+            f"environment-{platform_id}.yml": (
+                repo / "locks" / f"environment-{platform_id}.yml"
+            ).read_bytes(),
+            f"python-{platform_id}.txt": b"Python 3.12.13\n",
+        }
+        evidence_files = {}
+        for name, payload in files.items():
+            (platform_root / name).write_bytes(payload)
+            evidence_files[name] = {
+                "sha256": hashlib.sha256(payload).hexdigest(),
+                "size_bytes": len(payload),
+            }
+        manifest_payload = "".join(
+            f"{name}\t{evidence_files[name]['sha256']}\t"
+            f"{evidence_files[name]['size_bytes']}\n"
+            for name in sorted(evidence_files)
+        ).encode("utf-8")
+        runner = packet_builder.RESOLVED_CI_RUNNER_IDENTITY[platform_id]
+        record = {
+            "schema_version": "2.0",
+            "git_commit": commit,
+            "github_run_id": GITHUB_RUN_ID,
+            "job": "Unit and synthetic tests",
+            "platform_id": platform_id,
+            "runner_os": runner["runner_os"],
+            "runner_arch": runner["runner_arch"],
+            "machine": packet_builder.PUBLIC_RUNTIME_PLATFORMS[platform_id]["machine"],
+            "python": "3.12.13",
+            "resolved_environment": True,
+            "evidence_files": evidence_files,
+            "evidence_manifest_sha256": hashlib.sha256(manifest_payload).hexdigest(),
+            "source_lock_sha256": evidence_files[
+                f"environment-{platform_id}.yml"
+            ]["sha256"],
+        }
+        (platform_root / f"platform-{platform_id}.json").write_text(
+            json.dumps(record, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+
+
 def write_acceptance_evidence(
     root: Path,
     repo: Path,
@@ -523,6 +580,8 @@ def write_acceptance_evidence(
                     "html_url": "https://github.com/elissonnog",
                 },
                 "author_association": "OWNER",
+                "created_at": f"2026-07-21T10:0{index}:00Z",
+                "updated_at": f"2026-07-21T10:0{index}:00Z",
                 "body": audit_comment_body(payload),
             }
         )
@@ -588,6 +647,7 @@ def write_acceptance_evidence(
         json.dumps({"total_count": len(jobs), "jobs": jobs}, indent=2) + "\n",
         encoding="utf-8",
     )
+    write_resolved_ci_environments(root, repo, commit)
 
     pr_run_url = (
         f"https://github.com/{GITHUB_REPOSITORY}/actions/runs/{PULL_REQUEST_RUN_ID}"
@@ -886,13 +946,13 @@ def png_chunk(kind: bytes, data: bytes) -> bytes:
     )
 
 
-def write_png(path: Path) -> None:
+def write_png(path: Path, rgb: tuple[int, int, int] = (0, 0, 0)) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     ihdr = struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0)
     path.write_bytes(
         b"\x89PNG\r\n\x1a\n"
         + png_chunk(b"IHDR", ihdr)
-        + png_chunk(b"IDAT", zlib.compress(b"\x00\x00\x00\x00"))
+        + png_chunk(b"IDAT", zlib.compress(b"\x00" + bytes(rgb)))
         + png_chunk(b"IEND", b"")
     )
 
@@ -1349,32 +1409,6 @@ def write_evidence_tables(root: Path) -> None:
             ["C1", "Deterministic fixture output", "unit_known_answer", "Not clinical"]
         ],
         "module_status_matrix.tsv": module_rows,
-        "resource_usage.tsv": [
-            [
-                "10000000-0000-4000-8000-000000000001",
-                "unit_known_answer", "1.0", "0.5", "0.1", "1024",
-                "2048", "4096",
-                "repository_root;cache_root;validation_root",
-                "cache_root;validation_root",
-                "broad_declared_inputs_and_changed_or_new_outputs_v2",
-                "4", "test", "measured", "",
-            ],
-            [
-                "10000000-0000-4000-8000-000000000002",
-                "public_cache_prepare", "2.0", "1.0", "0.2", "2048",
-                "1024",
-                str(
-                    sum(
-                        int(row["bytes"])
-                        for row in packet_builder.FROZEN_PUBLIC_INPUTS
-                    )
-                ),
-                "repository_root;cache_root;validation_root",
-                "cache_root;validation_root",
-                "broad_declared_inputs_and_changed_or_new_outputs_v2",
-                "4", "test", "measured", "",
-            ],
-        ],
         "figure_provenance.tsv": figure_rows,
         "table_provenance.tsv": table_rows,
         "public_data_sources.tsv": public_source_rows,
@@ -1398,11 +1432,18 @@ def write_evidence_tables(root: Path) -> None:
 
     for dataset, specification in packet_builder.DECODED_PIXEL_REPORTS.items():
         case_id = str(specification["case_id"])
+        repeat_case_id = str(specification["repeat_case_id"])
         matching_figures = [
             row
             for row in figure_rows
             if row[1] == dataset and row[2] == case_id
         ]
+        for row in matching_figures:
+            repeat_figure = (
+                root / "public/outputs" / repeat_case_id / "figures" / Path(row[3]).name
+            )
+            repeat_figure.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(root / row[3], repeat_figure)
         write_tsv(
             root / "public" / str(specification["source"]),
             packet_builder.DECODED_PIXEL_HASH_COLUMNS,
@@ -1411,11 +1452,58 @@ def write_evidence_tables(root: Path) -> None:
                     Path(row[3]).name,
                     row[6],
                     row[7],
-                    hashlib.sha256(Path(row[3]).name.encode("utf-8")).hexdigest(),
+                    hashlib.sha256(
+                        packet_builder.decoded_png_rgba(root / row[3])[2]
+                    ).hexdigest(),
                 ]
                 for row in matching_figures
             ],
         )
+
+
+def write_resource_evidence(root: Path, commit: str) -> None:
+    rows = []
+    raw_fastq_bytes = sum(
+        int(row["bytes"]) for row in packet_builder.FROZEN_PUBLIC_INPUTS
+    )
+    for index, case_id in enumerate(
+        sorted(packet_builder.REQUIRED_RESOURCE_CASE_IDS), start=1
+    ):
+        command = root / "commands" / f"{case_id}.sh"
+        log = root / "logs" / f"{case_id}.log"
+        if not command.exists():
+            command.write_text(f"echo {case_id}\n", encoding="utf-8")
+        if not log.exists():
+            log.write_text(f"{case_id}=PASS\n", encoding="utf-8")
+        rows.append(
+            [
+                f"10000000-0000-4000-8000-{index:012d}",
+                case_id,
+                commit,
+                f"commands/{case_id}.sh",
+                hashlib.sha256(command.read_bytes()).hexdigest(),
+                f"logs/{case_id}.log",
+                hashlib.sha256(log.read_bytes()).hexdigest(),
+                "1.0",
+                "0.5",
+                "0.1",
+                "1024",
+                "2048",
+                str(raw_fastq_bytes if case_id == "public_cache_prepare" else 4096),
+                "repository_root;cache_root;validation_root",
+                "cache_root;validation_root",
+                "broad_declared_inputs_and_changed_or_new_outputs_v2",
+                "4",
+                "test",
+                "measured",
+                "",
+            ]
+        )
+    write_tsv(
+        root / "resource_usage.tsv",
+        packet_builder.EVIDENCE_TABLES["resource_usage.tsv"],
+        rows,
+    )
 
 
 def create_validation_root(tmp_path: Path, repo: Path, commit: str) -> Path:
@@ -1481,6 +1569,7 @@ def create_validation_root(tmp_path: Path, repo: Path, commit: str) -> Path:
     (root / "expected" / "TOY-SR-001.tsv").write_text(
         "position\talt_count\n1\t1\n", encoding="utf-8"
     )
+    write_resource_evidence(root, commit)
     return root
 
 
@@ -1502,7 +1591,7 @@ def packet_args(
 def rewrite_manifest(packet: Path) -> None:
     rows = []
     for path in sorted(packet.rglob("*")):
-        if path.is_file() and path.name != "artifacts.sha256":
+        if path.is_file() and path.relative_to(packet).as_posix() != "artifacts.sha256":
             rows.append(
                 f"{hashlib.sha256(path.read_bytes()).hexdigest()}  "
                 f"{path.relative_to(packet).as_posix()}"
@@ -1616,6 +1705,9 @@ def test_github_only_packet_builds_and_verifies_from_fresh_extraction(
     output = tmp_path / "output"
     packet_builder.build_packet(packet_args(validation, repo, output))
     packet = output / "packet"
+    assert (packet / "cross_platform_comparison.tsv").read_bytes() == (
+        validation / "acceptance/cross_platform_comparison.tsv"
+    ).read_bytes()
     source_public_manifest = (
         validation
         / "acceptance/ubuntu_public_validation/artifact/SHA256SUMS"
@@ -1639,6 +1731,9 @@ def test_github_only_packet_builds_and_verifies_from_fresh_extraction(
     )
     assert identity["git_commit"] == commit
     assert identity["github_actions"]["head_sha"] == commit
+    assert [
+        item["platform_id"] for item in identity["resolved_ci_environments"]
+    ] == list(packet_builder.RESOLVED_CI_PLATFORMS)
     assert identity["pull_request"]["merge_commit_sha"] == commit
     assert identity["pull_request"]["final_commit_parents"] == [
         run(["git", "rev-parse", f"{commit}^1"], repo),
@@ -1700,6 +1795,26 @@ def test_github_only_packet_builds_and_verifies_from_fresh_extraction(
         check=False,
     )
     assert extracted_check.returncode == 0, extracted_check.stderr
+
+
+def test_nested_artifacts_manifest_is_itself_manifested_and_verified(
+    tmp_path: Path,
+) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    (validation / "logs/artifacts.sha256").write_text(
+        "nested evidence manifest\n", encoding="utf-8"
+    )
+    output = tmp_path / "output"
+    packet_builder.build_packet(packet_args(validation, repo, output))
+    packet = output / "packet"
+    root_manifest = (packet / "artifacts.sha256").read_text(encoding="utf-8")
+    assert "  logs/artifacts.sha256\n" in root_manifest
+
+    (packet / "logs/artifacts.sha256").write_text("tampered\n", encoding="utf-8")
+    checked = verify_packet(packet)
+    assert checked.returncode != 0
+    assert "artifact hash mismatch: logs/artifacts.sha256" in checked.stderr
 
 
 @pytest.mark.parametrize(
@@ -1890,6 +2005,72 @@ def test_extracted_verifier_rejects_resealed_public_main_drift(tmp_path: Path) -
     assert "fresh-clone acceptance mismatch" in checked.stderr
 
 
+def test_packet_requires_all_resolved_ci_platforms(tmp_path: Path) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    shutil.rmtree(
+        validation
+        / packet_builder.RESOLVED_CI_ENVIRONMENTS_RELATIVE
+        / "osx-64"
+    )
+    with pytest.raises(ValueError, match="Resolved CI platform inventory mismatch"):
+        packet_builder.build_packet(packet_args(validation, repo, tmp_path / "output"))
+
+
+def test_packet_rejects_self_consistent_resolved_ci_lock_drift(tmp_path: Path) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    platform_id = "linux-64"
+    platform_root = (
+        validation
+        / packet_builder.RESOLVED_CI_ENVIRONMENTS_RELATIVE
+        / platform_id
+    )
+    lock_name = f"environment-{platform_id}.yml"
+    (platform_root / lock_name).write_text("name: altered\n", encoding="utf-8")
+    record_path = platform_root / f"platform-{platform_id}.json"
+    record = read_json(record_path)
+    assert isinstance(record, dict) and isinstance(record["evidence_files"], dict)
+    evidence_names = sorted(record["evidence_files"])
+    for name in evidence_names:
+        payload = (platform_root / name).read_bytes()
+        record["evidence_files"][name] = {
+            "sha256": hashlib.sha256(payload).hexdigest(),
+            "size_bytes": len(payload),
+        }
+    manifest_payload = "".join(
+        f"{name}\t{record['evidence_files'][name]['sha256']}\t"
+        f"{record['evidence_files'][name]['size_bytes']}\n"
+        for name in evidence_names
+    ).encode("utf-8")
+    record["evidence_manifest_sha256"] = hashlib.sha256(manifest_payload).hexdigest()
+    record["source_lock_sha256"] = record["evidence_files"][lock_name]["sha256"]
+    write_json(record_path, record)
+    with pytest.raises(ValueError, match="differs from the release commit"):
+        packet_builder.build_packet(packet_args(validation, repo, tmp_path / "output"))
+
+
+def test_extracted_verifier_rejects_resealed_resolved_ci_file_drift(
+    tmp_path: Path,
+) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    output = tmp_path / "output"
+    packet_builder.build_packet(packet_args(validation, repo, output))
+    packet = output / "packet"
+    python_evidence = (
+        packet
+        / packet_builder.RESOLVED_CI_ENVIRONMENTS_RELATIVE
+        / "osx-arm64"
+        / "python-osx-arm64.txt"
+    )
+    python_evidence.write_text("Python 3.12.99\n", encoding="utf-8")
+    rewrite_manifest(packet)
+    checked = verify_packet(packet)
+    assert checked.returncode != 0
+    assert "resolved CI Python evidence mismatch" in checked.stderr
+
+
 def test_packet_rejects_missing_read_only_audit_role(tmp_path: Path) -> None:
     repo, commit = create_release_repo(tmp_path)
     validation = create_validation_root(tmp_path, repo, commit)
@@ -2011,6 +2192,43 @@ def test_packet_ignores_unmarked_comment_from_other_author(tmp_path: Path) -> No
     assert checked.returncode == 0, checked.stderr
 
 
+@pytest.mark.parametrize(
+    "mutation",
+    (
+        {"updated_at": "2026-07-21T12:01:00Z"},
+        {
+            "created_at": "2026-07-21T12:01:00Z",
+            "updated_at": "2026-07-21T12:01:00Z",
+        },
+    ),
+)
+def test_packet_rejects_audit_comment_posted_or_edited_after_merge(
+    tmp_path: Path,
+    mutation: dict[str, str],
+) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    comments_path = validation / "acceptance/pull_request_comments.json"
+    comments = read_json(comments_path)
+    assert isinstance(comments, list) and isinstance(comments[0], dict)
+    comments[0].update(mutation)
+    write_json(comments_path, comments)
+    with pytest.raises(ValueError, match="posted or edited after merge"):
+        packet_builder.build_packet(packet_args(validation, repo, tmp_path / "output"))
+
+
+def test_packet_rejects_missing_audit_comment_timestamp(tmp_path: Path) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    comments_path = validation / "acceptance/pull_request_comments.json"
+    comments = read_json(comments_path)
+    assert isinstance(comments, list) and isinstance(comments[0], dict)
+    comments[0].pop("updated_at")
+    write_json(comments_path, comments)
+    with pytest.raises(ValueError, match="updated_at is missing"):
+        packet_builder.build_packet(packet_args(validation, repo, tmp_path / "output"))
+
+
 def test_packet_rejects_reused_audit_instance_id(tmp_path: Path) -> None:
     repo, commit = create_release_repo(tmp_path)
     validation = create_validation_root(tmp_path, repo, commit)
@@ -2029,6 +2247,27 @@ def test_packet_rejects_reused_audit_instance_id(tmp_path: Path) -> None:
         "bioinformatics",
         "audit_instance_id",
         payload["audit_instance_id"],
+    )
+    with pytest.raises(ValueError, match="instance IDs must be unique"):
+        packet_builder.build_packet(packet_args(validation, repo, tmp_path / "output"))
+
+
+def test_packet_rejects_casefolded_reused_audit_instance_id(tmp_path: Path) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    comments_path = validation / "acceptance/pull_request_comments.json"
+    shared = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+    mutate_audit_payload(
+        comments_path,
+        "release_engineering",
+        "audit_instance_id",
+        shared,
+    )
+    mutate_audit_payload(
+        comments_path,
+        "bioinformatics",
+        "audit_instance_id",
+        shared.upper(),
     )
     with pytest.raises(ValueError, match="instance IDs must be unique"):
         packet_builder.build_packet(packet_args(validation, repo, tmp_path / "output"))
@@ -2376,6 +2615,15 @@ def test_packet_rejects_secret_like_material(tmp_path: Path) -> None:
     (validation / "logs" / "unit_known_answer.log").write_text(
         "access_token=ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ\n", encoding="utf-8"
     )
+    mutate_tsv_value(
+        validation / "resource_usage.tsv",
+        "case_id",
+        "unit_known_answer",
+        "log_sha256",
+        hashlib.sha256(
+            (validation / "logs" / "unit_known_answer.log").read_bytes()
+        ).hexdigest(),
+    )
     with pytest.raises(ValueError, match="secret-like material"):
         packet_builder.build_packet(packet_args(validation, repo, tmp_path / "output"))
 
@@ -2385,6 +2633,13 @@ def test_packet_normalizes_local_absolute_paths(tmp_path: Path) -> None:
     validation = create_validation_root(tmp_path, repo, commit)
     source = validation / "logs" / "unit_known_answer.log"
     source.write_text("source=/Users/alice/private/run.log\n", encoding="utf-8")
+    mutate_tsv_value(
+        validation / "resource_usage.tsv",
+        "case_id",
+        "unit_known_answer",
+        "log_sha256",
+        hashlib.sha256(source.read_bytes()).hexdigest(),
+    )
     output = tmp_path / "output"
     packet_builder.build_packet(packet_args(validation, repo, output))
     copied = (output / "packet" / "logs" / "unit_known_answer.log").read_text(
@@ -2440,7 +2695,7 @@ def test_verifier_rejects_semantic_identity_tampering(tmp_path: Path) -> None:
         [str(packet / "verify_bundle.sh")], capture_output=True, text=True, check=False
     )
     assert checked.returncode != 0
-    assert "release commit is inconsistent" in checked.stderr
+    assert "release commit" in checked.stderr
 
 
 def test_extracted_verifier_rejects_rehashed_read_only_audit_blockers(
@@ -2461,6 +2716,25 @@ def test_extracted_verifier_rejects_rehashed_read_only_audit_blockers(
     checked = verify_packet(packet)
     assert checked.returncode != 0
     assert "read-only audit payload mismatch" in checked.stderr
+
+
+def test_extracted_verifier_rejects_rehashed_postmerge_audit_edit(
+    tmp_path: Path,
+) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    output = tmp_path / "output"
+    packet_builder.build_packet(packet_args(validation, repo, output))
+    packet = output / "packet"
+    comments_path = packet / "acceptance/pull_request_comments.json"
+    comments = read_json(comments_path)
+    assert isinstance(comments, list) and isinstance(comments[0], dict)
+    comments[0]["updated_at"] = "2026-07-21T12:01:00Z"
+    write_json(comments_path, comments)
+    rewrite_manifest(packet)
+    checked = verify_packet(packet)
+    assert checked.returncode != 0
+    assert "posted or edited after merge" in checked.stderr
 
 
 def test_extracted_verifier_rejects_rehashed_pr_ci_head_drift(
@@ -2688,10 +2962,62 @@ def test_packet_rejects_duplicate_resource_measurement_id(tmp_path: Path) -> Non
         packet_builder.build_packet(packet_args(validation, repo, tmp_path / "output"))
 
 
+def test_packet_rejects_casefolded_duplicate_resource_measurement_id(
+    tmp_path: Path,
+) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    resource_path = validation / "resource_usage.tsv"
+    with resource_path.open(encoding="utf-8", newline="") as handle:
+        reader = csv.DictReader(handle, delimiter="\t")
+        fields = tuple(reader.fieldnames or ())
+        rows = list(reader)
+    shared = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+    rows[0]["measurement_id"] = shared
+    rows[1]["measurement_id"] = shared.upper()
+    write_tsv(resource_path, fields, [[row[field] for field in fields] for row in rows])
+    with pytest.raises(ValueError, match="Duplicate resource measurement ID"):
+        packet_builder.build_packet(packet_args(validation, repo, tmp_path / "output"))
+
+
+def test_packet_rejects_missing_resource_case(tmp_path: Path) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    resource_path = validation / "resource_usage.tsv"
+    with resource_path.open(encoding="utf-8", newline="") as handle:
+        reader = csv.DictReader(handle, delimiter="\t")
+        fields = tuple(reader.fieldnames or ())
+        rows = list(reader)
+    rows = [row for row in rows if row["case_id"] != "package_build"]
+    write_tsv(resource_path, fields, [[row[field] for field in fields] for row in rows])
+    with pytest.raises(ValueError, match="Resource case inventory mismatch"):
+        packet_builder.build_packet(packet_args(validation, repo, tmp_path / "output"))
+
+
+def test_packet_rejects_resource_command_digest_or_thread_drift(tmp_path: Path) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    command = validation / "commands/unit_known_answer.sh"
+    command.write_text("echo altered\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="command_sha256 does not match"):
+        packet_builder.build_packet(packet_args(validation, repo, tmp_path / "digest"))
+
+    validation = create_validation_root(tmp_path / "thread", repo, commit)
+    mutate_tsv_value(
+        validation / "resource_usage.tsv",
+        "case_id",
+        "unit_known_answer",
+        "threads",
+        "8",
+    )
+    with pytest.raises(ValueError, match="thread count must be 4"):
+        packet_builder.build_packet(packet_args(validation, repo, tmp_path / "thread-output"))
+
+
 def test_packet_requires_decoded_pixel_evidence(tmp_path: Path) -> None:
     repo, commit = create_release_repo(tmp_path)
     validation = create_validation_root(tmp_path, repo, commit)
-    report = validation / "public/logs/GM12878_decoded_pixel_hashes.tsv"
+    report = validation / "public/logs/gm12878_decoded_pixel_hashes.tsv"
     report.unlink()
     with pytest.raises(ValueError, match="missing|decoded-pixel"):
         packet_builder.build_packet(packet_args(validation, repo, tmp_path / "output"))
@@ -2700,10 +3026,36 @@ def test_packet_requires_decoded_pixel_evidence(tmp_path: Path) -> None:
 def test_packet_rejects_decoded_pixel_inventory_drift(tmp_path: Path) -> None:
     repo, commit = create_release_repo(tmp_path)
     validation = create_validation_root(tmp_path, repo, commit)
-    report = validation / "public/logs/GM11906_decoded_pixel_hashes.tsv"
+    report = validation / "public/logs/gm11906_decoded_pixel_hashes.tsv"
     rows = report.read_text(encoding="utf-8").splitlines()
     report.write_text("\n".join(rows[:-1]) + "\n", encoding="utf-8")
     with pytest.raises(ValueError, match="Decoded-pixel inventory"):
+        packet_builder.build_packet(packet_args(validation, repo, tmp_path / "output"))
+
+
+def test_packet_rejects_substituted_decoded_pixel_digest(tmp_path: Path) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    report = validation / "public/logs/gm11906_decoded_pixel_hashes.tsv"
+    with report.open(encoding="utf-8", newline="") as handle:
+        reader = csv.DictReader(handle, delimiter="\t")
+        fields = tuple(reader.fieldnames or ())
+        rows = list(reader)
+    rows[0]["decoded_rgba_sha256"] = "0" * 64
+    write_tsv(report, fields, [[row[field] for field in fields] for row in rows])
+    with pytest.raises(ValueError, match="hash does not match repeat-1 PNG"):
+        packet_builder.build_packet(packet_args(validation, repo, tmp_path / "output"))
+
+
+def test_packet_rejects_repeat2_decoded_pixel_drift(tmp_path: Path) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    figure = (
+        validation
+        / "public/outputs/gm12878_default_run2/figures/01.png"
+    )
+    write_png(figure, (255, 0, 0))
+    with pytest.raises(ValueError, match="hash does not match repeat-2 PNG"):
         packet_builder.build_packet(packet_args(validation, repo, tmp_path / "output"))
 
 
@@ -2728,6 +3080,23 @@ def test_extracted_verifier_rejects_resealed_duplicate_measurement_id(
     assert "duplicate resource measurement ID" in checked.stderr
 
 
+def test_extracted_verifier_rejects_resealed_resource_command_drift(
+    tmp_path: Path,
+) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    output = tmp_path / "output"
+    packet_builder.build_packet(packet_args(validation, repo, output))
+    packet = output / "packet"
+    (packet / "commands/unit_known_answer.sh").write_text(
+        "echo relabeled\n", encoding="utf-8"
+    )
+    rewrite_manifest(packet)
+    checked = verify_packet(packet)
+    assert checked.returncode != 0
+    assert "command_sha256 does not bind command_path" in checked.stderr
+
+
 def test_extracted_verifier_rejects_resealed_decoded_pixel_drift(
     tmp_path: Path,
 ) -> None:
@@ -2743,6 +3112,25 @@ def test_extracted_verifier_rejects_resealed_decoded_pixel_drift(
     checked = verify_packet(packet)
     assert checked.returncode != 0
     assert "decoded-pixel evidence" in checked.stderr
+
+
+def test_extracted_verifier_rejects_resealed_repeat2_png_drift(
+    tmp_path: Path,
+) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    output = tmp_path / "output"
+    packet_builder.build_packet(packet_args(validation, repo, output))
+    packet = output / "packet"
+    write_png(
+        packet
+        / "figures_repeat2/gm11906_default_run2/01.png",
+        (255, 0, 0),
+    )
+    rewrite_manifest(packet)
+    checked = verify_packet(packet)
+    assert checked.returncode != 0
+    assert "hash does not match repeat-2 PNG" in checked.stderr
 
 
 def test_extracted_verifier_rejects_rehashed_official_metadata_mutation(

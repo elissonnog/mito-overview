@@ -54,7 +54,7 @@ def write_report_figure(path: Path, accent: str, label: str) -> None:
 def rewrite_artifact_manifest(packet: Path) -> None:
     rows = []
     for path in sorted(packet.rglob("*")):
-        if path.is_file() and path.name != "artifacts.sha256":
+        if path.is_file() and path.relative_to(packet).as_posix() != "artifacts.sha256":
             rows.append(f"{digest(path)}  {path.relative_to(packet).as_posix()}")
     (packet / "artifacts.sha256").write_text(
         "\n".join(rows) + "\n", encoding="utf-8"
@@ -196,10 +196,13 @@ def make_packet(tmp_path: Path) -> tuple[Path, Path, list[Path]]:
     for row in figure_rows:
         dataset = row[1]
         filename = Path(row[3]).name
+        with Image.open(packet / row[3]) as image:
+            image.load()
+            decoded_digest = hashlib.sha256(image.convert("RGBA").tobytes()).hexdigest()
         write_tsv(
             packet / "decoded_pixel_hashes" / f"{dataset}.tsv",
             ("path", "width_px", "height_px", "decoded_rgba_sha256"),
-            [[filename, row[6], row[7], hashlib.sha256(filename.encode()).hexdigest()]],
+            [[filename, row[6], row[7], decoded_digest]],
         )
     write_tsv(
         packet / "claim_evidence_matrix.tsv",
@@ -235,38 +238,44 @@ def make_packet(tmp_path: Path) -> tuple[Path, Path, list[Path]]:
             ],
         ],
     )
+    resource_rows = []
+    for index, case_id in enumerate(
+        sorted(report_builder.REQUIRED_RESOURCE_CASE_IDS), start=1
+    ):
+        command = packet / "commands" / f"{case_id}.sh"
+        log = packet / "logs" / f"{case_id}.log"
+        command.parent.mkdir(parents=True, exist_ok=True)
+        log.parent.mkdir(parents=True, exist_ok=True)
+        command.write_text(f"echo {case_id}\n", encoding="utf-8")
+        log.write_text(f"{case_id}=PASS\n", encoding="utf-8")
+        resource_rows.append(
+            [
+                f"20000000-0000-4000-8000-{index:012d}",
+                case_id,
+                COMMIT,
+                f"commands/{case_id}.sh",
+                digest(command),
+                f"logs/{case_id}.log",
+                digest(log),
+                "12.4",
+                "10.0",
+                "1.2",
+                "204800",
+                "2033558460",
+                "3000000000" if case_id == "public_cache_prepare" else "2097152",
+                "repository_root;cache_root;validation_root",
+                "cache_root;validation_root",
+                "broad_declared_inputs_and_changed_or_new_outputs_v2",
+                "4",
+                "osx-arm64",
+                "measured",
+                "",
+            ]
+        )
     write_tsv(
         packet / "resource_usage.tsv",
         report_builder.EVIDENCE_COLUMNS["resource_usage.tsv"],
-        [
-            [
-                "20000000-0000-4000-8000-000000000001",
-                "gm11906_default_run1", "12.4", "10.0", "1.2", "204800",
-                "59499334", "1048576",
-                "repository_root;cache_root;validation_root",
-                "cache_root;validation_root",
-                "broad_declared_inputs_and_changed_or_new_outputs_v2",
-                "4", "osx-arm64", "measured", "",
-            ],
-            [
-                "20000000-0000-4000-8000-000000000002",
-                "gm12878_default_run1", "31.8", "28.0", "2.0", "307200",
-                "2033558460", "2097152",
-                "repository_root;cache_root;validation_root",
-                "cache_root;validation_root",
-                "broad_declared_inputs_and_changed_or_new_outputs_v2",
-                "4", "linux-64", "measured", "",
-            ],
-            [
-                "20000000-0000-4000-8000-000000000003",
-                "public_cache_prepare", "40.0", "20.0", "3.0", "102400",
-                "0", "3000000000",
-                "repository_root;cache_root;validation_root",
-                "cache_root;validation_root",
-                "broad_declared_inputs_and_changed_or_new_outputs_v2",
-                "4", "osx-arm64", "measured", "",
-            ],
-        ],
+        resource_rows,
     )
     sha_short = hashlib.sha256(b"short-input").hexdigest()
     sha_long = hashlib.sha256(b"long-input").hexdigest()
@@ -691,6 +700,38 @@ def test_report_rejects_public_cache_output_inventory_below_raw_bytes(
         match="changed/new output inventory excludes raw downloads",
     ):
         report_builder.generate_report(packet, publication, tmp_path / "report")
+
+
+def test_report_rejects_resource_command_or_commit_drift(tmp_path: Path) -> None:
+    packet, publication, _ = make_packet(tmp_path)
+    command = packet / "commands/unit_known_answer.sh"
+    command.write_text("echo altered\n", encoding="utf-8")
+    rewrite_artifact_manifest(packet)
+    with pytest.raises(
+        report_builder.ReportValidationError,
+        match="command_sha256 does not bind command_path",
+    ):
+        report_builder.generate_report(packet, publication, tmp_path / "command-report")
+
+    commit_root = tmp_path / "commit"
+    commit_root.mkdir()
+    packet, publication, _ = make_packet(commit_root)
+    resource_path = packet / "resource_usage.tsv"
+    columns = report_builder.EVIDENCE_COLUMNS["resource_usage.tsv"]
+    with resource_path.open(encoding="utf-8", newline="") as handle:
+        rows = list(csv.DictReader(handle, delimiter="\t"))
+    rows[0]["candidate_commit"] = "f" * 40
+    write_tsv(
+        resource_path,
+        columns,
+        [[row[column] for column in columns] for row in rows],
+    )
+    rewrite_artifact_manifest(packet)
+    with pytest.raises(
+        report_builder.ReportValidationError,
+        match="candidate commit mismatch",
+    ):
+        report_builder.generate_report(packet, publication, tmp_path / "commit-report")
 
 
 def test_fails_closed_on_nonpass_case(tmp_path: Path) -> None:

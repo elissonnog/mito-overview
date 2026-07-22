@@ -213,11 +213,14 @@ measure_command() {
   shift 2
   "${PYTHON_BIN}" - \
     "${VALIDATION_ROOT}/resources/${case_id}.json" "${log_file}" \
-    "${REPO_ROOT}" "${CACHE_ROOT}" "${VALIDATION_ROOT}" "$@" <<'PY'
+    "${REPO_ROOT}" "${CACHE_ROOT}" "${VALIDATION_ROOT}" \
+    "${CANDIDATE_COMMIT}" "$@" <<'PY'
 # BEGIN RESOURCE_MEASUREMENT_PYTHON
+import hashlib
 import json
 import os
 import platform
+import re
 import resource
 import subprocess
 import sys
@@ -228,9 +231,25 @@ from pathlib import Path
 resource_path = Path(sys.argv[1])
 log_path = Path(sys.argv[2])
 repository_root, cache_root, validation_root = [Path(value) for value in sys.argv[3:6]]
+candidate_commit = sys.argv[6]
 input_roots = [repository_root, cache_root, validation_root]
 output_roots = [cache_root, validation_root]
-command = sys.argv[6:]
+command = sys.argv[7:]
+
+case_id = resource_path.stem
+expected_resource_path = validation_root / "resources" / f"{case_id}.json"
+expected_command_path = validation_root / "commands" / f"{case_id}.sh"
+expected_log_path = validation_root / "logs" / f"{case_id}.log"
+if (
+    resource_path != expected_resource_path
+    or log_path != expected_log_path
+    or command != ["bash", str(expected_command_path)]
+    or not expected_command_path.is_file()
+    or expected_command_path.is_symlink()
+    or not re.fullmatch(r"[0-9a-f]{40}", candidate_commit)
+):
+    raise SystemExit("Resource measurement command identity mismatch")
+command_sha256 = hashlib.sha256(expected_command_path.read_bytes()).hexdigest()
 
 EXCLUDED_NAMES = {".git", ".pytest_cache", "__pycache__"}
 
@@ -266,6 +285,9 @@ started = time.monotonic()
 with log_path.open("wb") as log:
     completed = subprocess.run(command, stdout=log, stderr=subprocess.STDOUT, check=False)
 elapsed = time.monotonic() - started
+if hashlib.sha256(expected_command_path.read_bytes()).hexdigest() != command_sha256:
+    raise SystemExit("Measured command file changed during execution")
+log_sha256 = hashlib.sha256(log_path.read_bytes()).hexdigest()
 after = resource.getrusage(resource.RUSAGE_CHILDREN)
 output_after = file_inventory(output_roots)
 changed_or_new_output_inventory_bytes = sum(
@@ -278,8 +300,13 @@ if sys.platform == "darwin":
     max_rss = max_rss / 1024.0
 record = {
     "schema_version": "2.0",
-    "measurement_id": str(uuid.uuid4()),
-    "case_id": resource_path.stem,
+    "measurement_id": str(uuid.uuid4()).lower(),
+    "case_id": case_id,
+    "candidate_commit": candidate_commit,
+    "command_path": f"commands/{case_id}.sh",
+    "command_sha256": command_sha256,
+    "log_path": f"logs/{case_id}.log",
+    "log_sha256": log_sha256,
     "wall_seconds": round(elapsed, 6),
     "user_cpu_seconds": round(after.ru_utime - before.ru_utime, 6),
     "system_cpu_seconds": round(after.ru_stime - before.ru_stime, 6),
@@ -960,7 +987,7 @@ EOF
   chmod +x "${command_file}"
 
   export -f measure_command
-  export PYTHON_BIN VALIDATION_ROOT REPO_ROOT CACHE_ROOT
+  export PYTHON_BIN VALIDATION_ROOT REPO_ROOT CACHE_ROOT CANDIDATE_COMMIT
   if measure_command "${FRESH_CLONE_CASE_ID}" "${log_file}" bash "${command_file}"; then
     "${PYTHON_BIN}" -       "${VALIDATION_ROOT}/acceptance/fresh_clone.json"       "${CANDIDATE_COMMIT}" "${REPOSITORY}" "${PUBLIC_REMOTE}" <<'PY'
 import json
@@ -1549,7 +1576,8 @@ for resource_path in sorted((validation_root / "resources").glob("*.json")):
         {
             key: value.get(key, "")
             for key in (
-                "measurement_id", "case_id", "wall_seconds", "user_cpu_seconds",
+                "measurement_id", "case_id", "candidate_commit", "command_path",
+                "command_sha256", "log_path", "log_sha256", "wall_seconds", "user_cpu_seconds",
                 "system_cpu_seconds",
                 "max_rss_kb", "broad_declared_input_inventory_bytes",
                 "changed_or_new_output_inventory_bytes",
@@ -1562,7 +1590,8 @@ for resource_path in sorted((validation_root / "resources").glob("*.json")):
 write_table(
     "resource_usage.tsv",
     [
-        "measurement_id", "case_id", "wall_seconds", "user_cpu_seconds",
+        "measurement_id", "case_id", "candidate_commit", "command_path",
+        "command_sha256", "log_path", "log_sha256", "wall_seconds", "user_cpu_seconds",
         "system_cpu_seconds",
         "max_rss_kb", "broad_declared_input_inventory_bytes",
         "changed_or_new_output_inventory_bytes",
