@@ -349,10 +349,12 @@ def test_assembler_builds_exact_semantically_bound_inventory(tmp_path: Path) -> 
 
 
 def test_assembler_archives_are_deterministic(tmp_path: Path) -> None:
-    first_inputs = _write_inputs(tmp_path / "first")
-    second_inputs = _write_inputs(tmp_path / "second")
-    first, first_output = _run(tmp_path / "first", first_inputs)
-    second, second_output = _run(tmp_path / "second", second_inputs)
+    # DOCX and ZIP writers may embed creation timestamps. Determinism therefore
+    # means reproducing an archive from the same immutable input bytes, not from
+    # two independently generated containers with different internal metadata.
+    inputs = _write_inputs(tmp_path / "inputs")
+    first, first_output = _run(tmp_path / "first", inputs)
+    second, second_output = _run(tmp_path / "second", inputs)
     assert first.returncode == second.returncode == 0
     for name in (
         f"{REPORT_STEM}_assets.tar.gz",
