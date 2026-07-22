@@ -43,6 +43,31 @@ def empty_rows_df() -> pd.DataFrame:
     return pd.DataFrame(columns=ROW_COLUMNS)
 
 
+def collapse_track_positions(df: pd.DataFrame) -> pd.DataFrame:
+    """Pool duplicate bedMethyl rows into one count-weighted track-position row."""
+
+    if df.empty:
+        return empty_rows_df()
+    pooled = (
+        df.groupby(["track", "position"], as_index=False, sort=False)
+        .agg(
+            valid_coverage=("valid_coverage", "sum"),
+            modified_count=("modified_count", "sum"),
+            canonical_count=("canonical_count", "sum"),
+        )
+        .reset_index(drop=True)
+    )
+    total_calls = pooled["modified_count"] + pooled["canonical_count"]
+    pooled["percent_modified"] = pd.Series(np.nan, index=pooled.index, dtype=float)
+    evaluable = total_calls > 0
+    pooled.loc[evaluable, "percent_modified"] = (
+        100.0
+        * pooled.loc[evaluable, "modified_count"]
+        / total_calls.loc[evaluable]
+    ).to_numpy(dtype=float)
+    return pooled[ROW_COLUMNS]
+
+
 def track_input_present(path: str | Path | None) -> int:
     """Return whether a configured track path points to an existing file."""
 
@@ -79,13 +104,16 @@ def load_bedmethyl_table(path: str | Path | None, track_label: str) -> pd.DataFr
                 continue
     if not rows:
         return empty_rows_df()
-    return pd.DataFrame(rows, columns=ROW_COLUMNS)
+    return collapse_track_positions(pd.DataFrame(rows, columns=ROW_COLUMNS))
 
 
 def track_summary(df: pd.DataFrame) -> pd.DataFrame:
     rows: list[dict[str, object]] = []
     for track, sub in df.groupby("track", sort=False):
-        total_cov = float(sub["valid_coverage"].sum())
+        percent_modified = pd.to_numeric(sub["percent_modified"], errors="coerce")
+        valid_coverage = pd.to_numeric(sub["valid_coverage"], errors="coerce")
+        coverage_evaluable_rows = percent_modified.notna() & valid_coverage.notna() & (valid_coverage > 0)
+        total_cov = float(valid_coverage.loc[coverage_evaluable_rows].sum())
         total_calls = float((sub["modified_count"] + sub["canonical_count"]).sum())
         coverage_evaluable = total_cov > 0
         calls_evaluable = total_calls > 0
@@ -93,10 +121,16 @@ def track_summary(df: pd.DataFrame) -> pd.DataFrame:
             {
                 "track": track,
                 "site_count": int(len(sub)),
-                "mean_percent_modified": round(float(sub["percent_modified"].mean()), 6),
-                "median_percent_modified": round(float(sub["percent_modified"].median()), 6),
+                "mean_percent_modified": round(float(percent_modified.mean()), 6),
+                "median_percent_modified": round(float(percent_modified.median()), 6),
                 "coverage_weighted_percent_modified": round(
-                    float((sub["percent_modified"] * sub["valid_coverage"]).sum() / total_cov),
+                    float(
+                        (
+                            percent_modified.loc[coverage_evaluable_rows]
+                            * valid_coverage.loc[coverage_evaluable_rows]
+                        ).sum()
+                        / total_cov
+                    ),
                     6,
                 )
                 if coverage_evaluable
@@ -113,8 +147,8 @@ def track_summary(df: pd.DataFrame) -> pd.DataFrame:
                 "count_weighted_denominator_calls": round(total_calls, 6),
                 "count_weighted_status": "ok" if calls_evaluable else "not_evaluable",
                 "count_weighted_reason_code": "" if calls_evaluable else "zero_modified_plus_canonical_count",
-                "mean_valid_coverage": round(float(sub["valid_coverage"].mean()), 6),
-                "median_valid_coverage": round(float(sub["valid_coverage"].median()), 6),
+                "mean_valid_coverage": round(float(valid_coverage.mean()), 6),
+                "median_valid_coverage": round(float(valid_coverage.median()), 6),
             }
         )
     return pd.DataFrame(rows)

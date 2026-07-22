@@ -235,6 +235,56 @@ def write_bedmethyl(path: Path, *, start: int, coverage: int, percent: float, mo
     )
 
 
+def bedmethyl_line(*, start: int, coverage: int, percent: float, modified: int, canonical: int) -> str:
+    return (
+        f"MT\t{start}\t{start + 1}\t.\t0\t+\t{start}\t{start + 1}\t0,0,0\t"
+        f"{coverage}\t{percent}\t{modified}\t{canonical}\n"
+    )
+
+
+def test_duplicate_track_coordinates_are_pooled_once_by_counts(tmp_path: Path) -> None:
+    np_path = tmp_path / "np-duplicates.bed"
+    hp1_path = tmp_path / "hp1.bed"
+    np_path.write_text(
+        bedmethyl_line(start=0, coverage=10, percent=20.0, modified=2, canonical=8)
+        + bedmethyl_line(start=0, coverage=10, percent=30.0, modified=3, canonical=7),
+        encoding="ascii",
+    )
+    hp1_path.write_text(
+        bedmethyl_line(start=0, coverage=10, percent=40.0, modified=4, canonical=6),
+        encoding="ascii",
+    )
+
+    outputs = run_step(
+        summary_dir=tmp_path / "summary",
+        figure_dir=tmp_path / "figures",
+        report_dir=tmp_path / "reports",
+        sample_id="DUPLICATE-POSITION",
+        mt_contig="MT",
+        mito_mods_np=np_path,
+        mito_mods_hp1=hp1_path,
+        mito_mods_hp2=tmp_path / "missing-hp2.bed",
+        mito_mods_ungrouped=tmp_path / "missing-ungrouped.bed",
+    )
+
+    combined = pd.read_csv(outputs["track_rows_path"], sep="\t")
+    comparison = pd.read_csv(outputs["cmp_path"], sep="\t")
+    metrics = metric_map(Path(outputs["cmp_summary_path"]))
+    np_rows = combined[combined["track"] == "NP_real_all_reads"]
+
+    assert len(np_rows) == 1
+    assert np_rows.iloc[0]["modified_count"] == 5
+    assert np_rows.iloc[0]["canonical_count"] == 15
+    assert np_rows.iloc[0]["percent_modified"] == 25.0
+    assert comparison[["position", "percent_modified_np", "percent_modified_proxy"]].values.tolist() == [
+        [1.0, 25.0, 40.0]
+    ]
+    assert metrics["np_rows"] == "1"
+    assert metrics["shared_np_proxy_positions"] == "1"
+    assert metrics["evaluable_np_proxy_positions"] == "1"
+    assert metrics["np_proxy_mean_abs_difference"] == "15.0"
+
+
 def test_run_step_serializes_undefined_comparison_as_na(tmp_path: Path) -> None:
     np_path = tmp_path / "np.bed"
     hp1_path = tmp_path / "hp1.bed"

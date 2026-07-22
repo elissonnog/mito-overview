@@ -224,6 +224,103 @@ def _count_overlapping_intervals(intervals_df: pd.DataFrame, feature_intervals: 
     return overlap_count, max_support
 
 
+def _extract_cluster_member_intervals(
+    deletion_events_df: pd.DataFrame,
+    deletion_clusters_df: pd.DataFrame,
+) -> pd.DataFrame:
+    """Join breakpoint clusters to their exact one-based member-event spans."""
+
+    columns = [
+        "cluster_bin_start",
+        "cluster_bin_end",
+        "start",
+        "end",
+        "support_fraction_primary",
+    ]
+    event_columns = {"event_start", "event_end", "event_bin_start", "event_bin_end"}
+    cluster_columns = {"event_bin_start", "event_bin_end"}
+    if (
+        deletion_events_df.empty
+        or deletion_clusters_df.empty
+        or not event_columns.issubset(deletion_events_df.columns)
+        or not cluster_columns.issubset(deletion_clusters_df.columns)
+    ):
+        return pd.DataFrame(columns=columns)
+
+    events = deletion_events_df[list(event_columns)].copy()
+    clusters = deletion_clusters_df[list(cluster_columns)].copy()
+    if "support_fraction_primary" in deletion_clusters_df.columns:
+        clusters["support_fraction_primary"] = pd.to_numeric(
+            deletion_clusters_df["support_fraction_primary"], errors="coerce"
+        ).fillna(0.0)
+    else:
+        clusters["support_fraction_primary"] = 0.0
+
+    for frame in (events, clusters):
+        for column in cluster_columns:
+            frame[column] = pd.to_numeric(frame[column], errors="coerce")
+    events["event_start"] = pd.to_numeric(events["event_start"], errors="coerce")
+    events["event_end"] = pd.to_numeric(events["event_end"], errors="coerce")
+    events = events.dropna(subset=list(event_columns)).copy()
+    clusters = clusters.dropna(subset=list(cluster_columns)).copy()
+    if events.empty or clusters.empty:
+        return pd.DataFrame(columns=columns)
+
+    for column in event_columns:
+        events[column] = events[column].astype(int)
+    for column in cluster_columns:
+        clusters[column] = clusters[column].astype(int)
+    clusters = (
+        clusters.groupby(["event_bin_start", "event_bin_end"], as_index=False)
+        .agg(support_fraction_primary=("support_fraction_primary", "max"))
+    )
+    members = events.merge(
+        clusters,
+        on=["event_bin_start", "event_bin_end"],
+        how="inner",
+        validate="many_to_one",
+    )
+    if members.empty:
+        return pd.DataFrame(columns=columns)
+
+    members["start"] = members[["event_start", "event_end"]].min(axis=1)
+    members["end"] = members[["event_start", "event_end"]].max(axis=1)
+    members = members.rename(
+        columns={
+            "event_bin_start": "cluster_bin_start",
+            "event_bin_end": "cluster_bin_end",
+        }
+    )
+    return members[columns].drop_duplicates().reset_index(drop=True)
+
+
+def _count_overlapping_clusters(
+    cluster_members_df: pd.DataFrame,
+    feature_intervals: list[tuple[int, int]],
+) -> tuple[int, float]:
+    """Count clusters when at least one exact member event overlaps a feature."""
+
+    if cluster_members_df.empty or not feature_intervals:
+        return 0, 0.0
+    overlap_count = 0
+    max_support = 0.0
+    for _, members in cluster_members_df.groupby(
+        ["cluster_bin_start", "cluster_bin_end"], sort=False
+    ):
+        overlaps = any(
+            _intervals_overlap(int(row.start), int(row.end), start, end)
+            for row in members.itertuples(index=False)
+            for start, end in feature_intervals
+        )
+        if overlaps:
+            overlap_count += 1
+            max_support = max(
+                max_support,
+                float(members["support_fraction_primary"].max()),
+            )
+    return overlap_count, max_support
+
+
 def _format_top_site(row: pd.Series) -> str:
     position = pd.to_numeric(row.get("position"), errors="coerce")
     ref_base = _normalize_label(row.get("ref_base"), default=".")
@@ -458,16 +555,21 @@ def run_step(
         start_candidates=["event_start", "event_bin_start"],
         end_candidates=["event_end", "event_bin_end"],
     )
-    deletion_cluster_intervals = _extract_interval_table(
+    deletion_cluster_members = _extract_cluster_member_intervals(
+        deletion_events_df,
         deletion_clusters_df,
-        start_candidates=["event_bin_start", "event_start"],
-        end_candidates=["event_bin_end", "event_end"],
-        support_column="support_fraction_primary",
+    )
+    evaluable_deletion_clusters = (
+        deletion_cluster_members[["cluster_bin_start", "cluster_bin_end"]]
+        .drop_duplicates()
+        .shape[0]
     )
     print(
         "[gene_summary] loaded "
         f"feature_rows={len(catalog_df)} candidate_rows={len(overlap_df)} "
-        f"deletion_events={len(deletion_event_intervals)} deletion_clusters={len(deletion_cluster_intervals)}",
+        f"deletion_events={len(deletion_event_intervals)} "
+        f"deletion_cluster_members={len(deletion_cluster_members)} "
+        f"evaluable_deletion_clusters={evaluable_deletion_clusters}",
         flush=True,
     )
 
@@ -498,8 +600,8 @@ def run_step(
             interval_text = "non-feature candidate positions"
         else:
             deletion_event_overlaps, _ = _count_overlapping_intervals(deletion_event_intervals, feature_intervals)
-            deletion_cluster_overlaps, max_cluster_support = _count_overlapping_intervals(
-                deletion_cluster_intervals,
+            deletion_cluster_overlaps, max_cluster_support = _count_overlapping_clusters(
+                deletion_cluster_members,
                 feature_intervals,
             )
             interval_text = _format_intervals(feature_intervals)
@@ -562,7 +664,18 @@ def run_step(
             {"metric": "candidate_site_rows", "value": len(site_detail_df)},
             {"metric": "selected_coseg_positions_loaded", "value": len(selected_positions)},
             {"metric": "deletion_event_intervals_loaded", "value": len(deletion_event_intervals)},
-            {"metric": "deletion_cluster_intervals_loaded", "value": len(deletion_cluster_intervals)},
+            {
+                "metric": "deletion_cluster_overlap_method",
+                "value": "exact_member_event_intervals",
+            },
+            {
+                "metric": "deletion_cluster_member_intervals_loaded",
+                "value": len(deletion_cluster_members),
+            },
+            {
+                "metric": "deletion_clusters_evaluable",
+                "value": evaluable_deletion_clusters,
+            },
         ]
     )
 
@@ -627,8 +740,10 @@ def run_step(
     intro_html = (
         '<p class="muted">This page aggregates mitochondrial candidate-site burden at the feature level. '
         "It highlights which genes or control-region features concentrate alternate-allele candidates, "
-        "whether selected co-segregation sites cluster in the same features, and whether deletion "
-        "intervals overlap those features.</p>"
+        "whether selected co-segregation sites cluster in the same features, and whether exact "
+        "one-based deletion-event spans overlap those features. Cluster-level overlap is counted "
+        "only when at least one exact member event overlaps; zero-based breakpoint-bin anchors are "
+        "not treated as biological deletion intervals.</p>"
         f"<div class='metrics-grid'>{metrics_html}</div>"
     )
 

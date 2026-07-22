@@ -734,8 +734,9 @@ def _run_heteroplasmy(config: PipelineConfig, paths: RunPaths, strict_files: boo
         exclude_flags=config.allele_exclude_flags,
         ignore_overlaps=config.allele_ignore_overlaps,
     )
-    (paths.log_dir / "heteroplasmy.done").write_text("ok\n", encoding="utf-8")
-    return StepResult("heteroplasmy", "ok", f"Wrote {outputs['report_path']}")
+    status = str(outputs.get("status", "ok"))
+    (paths.log_dir / f"heteroplasmy.{status}").write_text(status + "\n", encoding="utf-8")
+    return StepResult("heteroplasmy", status, f"Wrote {outputs['report_path']}")
 
 
 STEP_RUNNERS["mito_qc"] = _run_mito_qc

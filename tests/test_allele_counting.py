@@ -260,6 +260,38 @@ def test_all_reference_positions_have_no_fabricated_alternate_candidate(tmp_path
     assert candidates.empty
 
 
+def test_zero_callable_depth_has_undefined_fraction_not_observed_zero(tmp_path: Path) -> None:
+    ref = write_fasta(tmp_path / "empty.fa", {"MT": "AAAA"})
+    bam = write_alignment(tmp_path / "empty.bam", {"MT": 4}, [])
+    outputs = run_step(
+        bam=bam,
+        ref_fasta=ref,
+        summary_dir=tmp_path / "summary",
+        figure_dir=tmp_path / "figures",
+        report_dir=tmp_path / "report",
+        sample_id="NO-COVERAGE",
+        mt_contig="MT",
+        mt_length=4,
+        min_depth=0,
+        min_vaf=0.0,
+    )
+
+    all_sites = pd.read_csv(outputs["all_sites_path"], sep="\t")
+    candidates = pd.read_csv(outputs["candidate_path"], sep="\t")
+    summary = metric_map(outputs["summary_path"])
+
+    assert outputs["status"] == "not_evaluable"
+    assert (all_sites["callable_depth"] == 0).all()
+    assert all_sites["alt_allele_fraction"].isna().all()
+    assert all_sites["heteroplasmy_fraction"].isna().all()
+    assert candidates.empty
+    assert summary["status"] == "not_evaluable"
+    assert summary["reason_code"] == "no_callable_positions"
+    assert summary["callable_positions"] == "0"
+    assert summary["uncallable_positions"] == "4"
+    assert summary["max_alt_allele_fraction"] == "NA"
+
+
 def test_equal_candidate_metrics_are_ordered_by_position(tmp_path: Path) -> None:
     ref = write_fasta(tmp_path / "tie.fa", {"MT": "AAAA"})
     bam = write_alignment(

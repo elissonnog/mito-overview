@@ -147,7 +147,9 @@ def run_step(
             if base != ref_base and count > 0
         }
         alt_base, alt_count = max(non_ref.items(), key=lambda item: item[1]) if non_ref else (None, 0)
-        alt_fraction = (alt_count / callable_depth) if callable_depth else 0.0
+        # A zero-depth position has no observed allele fraction; it is not an
+        # observed reference-only site and must not be serialized as 0/0 = 0.
+        alt_fraction = (alt_count / callable_depth) if callable_depth else float("nan")
         alt_forward = counting.forward_counts[position - 1].get(alt_base or "", 0)
         alt_reverse = counting.reverse_counts[position - 1].get(alt_base or "", 0)
         row = {
@@ -167,7 +169,13 @@ def run_step(
             "T": base_counts["T"],
         }
         all_rows.append(row)
-        if callable_depth >= min_depth and alt_base and alt_count > 0 and alt_fraction >= min_vaf:
+        if (
+            callable_depth >= min_depth
+            and alt_base
+            and alt_count > 0
+            and pd.notna(alt_fraction)
+            and alt_fraction >= min_vaf
+        ):
             if ref_base in canonical_bases and alt_base in canonical_bases:
                 candidate_rows.append(row.copy())
             else:
@@ -188,17 +196,31 @@ def run_step(
     else:
         cand_df = pd.DataFrame(columns=OUTPUT_COLUMNS)
 
-    max_alt_fraction = float(all_df["alt_allele_fraction"].max()) if not all_df.empty else 0.0
+    callable_positions = int((all_df["callable_depth"] > 0).sum())
+    uncallable_positions = int(len(all_df) - callable_positions)
+    observed_fractions = pd.to_numeric(
+        all_df["alt_allele_fraction"], errors="coerce"
+    ).dropna()
+    max_alt_fraction = (
+        round(float(observed_fractions.max()), 6)
+        if not observed_fractions.empty
+        else float("nan")
+    )
+    module_status = "ok" if callable_positions else "not_evaluable"
+    module_reason = "" if callable_positions else "no_callable_positions"
     summary_rows: list[dict[str, object]] = [
-        {"metric": "status", "value": "ok"},
+        {"metric": "status", "value": module_status},
+        {"metric": "reason_code", "value": module_reason},
         {"metric": "positions_tested", "value": len(all_df)},
+        {"metric": "callable_positions", "value": callable_positions},
+        {"metric": "uncallable_positions", "value": uncallable_positions},
         {"metric": "candidate_sites", "value": len(cand_df)},
         {"metric": "min_callable_depth", "value": min_depth},
         {"metric": "min_alt_allele_fraction", "value": min_vaf},
         {"metric": "sites_alt_fraction_ge_0.10", "value": int((all_df["alt_allele_fraction"] >= 0.10).sum())},
         {"metric": "sites_alt_fraction_ge_0.05", "value": int((all_df["alt_allele_fraction"] >= 0.05).sum())},
         {"metric": "sites_alt_fraction_ge_0.02", "value": int((all_df["alt_allele_fraction"] >= 0.02).sum())},
-        {"metric": "max_alt_allele_fraction", "value": round(max_alt_fraction, 6)},
+        {"metric": "max_alt_allele_fraction", "value": max_alt_fraction},
         {"metric": "skipped_noncanonical_candidates", "value": skipped_noncanonical_candidates},
     ]
     summary_rows.extend(policy_rows(policy, counting.stats))
@@ -208,9 +230,9 @@ def run_step(
     cand_path = summary_dir / "mito_heteroplasmy_candidates.tsv"
     summary_path = summary_dir / "mito_heteroplasmy_summary.tsv"
     report_path = report_dir / "02_mito_heteroplasmy.html"
-    all_df.to_csv(all_path, sep="\t", index=False)
-    cand_df.to_csv(cand_path, sep="\t", index=False)
-    summary_df.to_csv(summary_path, sep="\t", index=False)
+    all_df.to_csv(all_path, sep="\t", index=False, na_rep="NA")
+    cand_df.to_csv(cand_path, sep="\t", index=False, na_rep="NA")
+    summary_df.to_csv(summary_path, sep="\t", index=False, na_rep="NA")
 
     plt.figure(figsize=(12, 4))
     plt.scatter(all_df["position"], all_df["alt_allele_fraction"], s=8, alpha=0.6)
@@ -239,7 +261,10 @@ def run_step(
     metrics_html = "".join(
         [
             metric_card("Candidate sites", len(cand_df)),
-            metric_card("Maximum alt fraction", round(max_alt_fraction, 4)),
+            metric_card(
+                "Maximum alt fraction",
+                "NA" if pd.isna(max_alt_fraction) else round(max_alt_fraction, 4),
+            ),
             metric_card("Minimum callable depth", min_depth),
             metric_card("Minimum alt fraction", min_vaf),
         ]
@@ -278,6 +303,7 @@ def run_step(
         flush=True,
     )
     return {
+        "status": module_status,
         "summary_path": summary_path,
         "candidate_path": cand_path,
         "all_sites_path": all_path,

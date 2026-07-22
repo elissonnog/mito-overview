@@ -209,11 +209,25 @@ def run_step(
             message="no mito_depth_per_base.tsv available; writing status-only outputs",
         )
 
+    in_range_mask = (depth_df["position"] >= 1) & (depth_df["position"] <= mt_length)
+    depth_in_range = depth_df.loc[in_range_mask].copy()
+    depth_unique_positions = int(depth_in_range["position"].nunique())
+    depth_duplicate_rows = int(len(depth_in_range) - depth_unique_positions)
+    depth_out_of_range_rows = int((~in_range_mask).sum())
+    depth_missing_positions = int(max(mt_length - depth_unique_positions, 0))
+    depth_profile_complete = (
+        len(depth_df) == mt_length
+        and depth_unique_positions == mt_length
+        and depth_duplicate_rows == 0
+        and depth_out_of_range_rows == 0
+    )
+
     edge = min(edge_window, max(1, mt_length // 10))
-    first_edge = depth_df[depth_df["position"] <= edge].copy()
-    last_edge = depth_df[depth_df["position"] > (mt_length - edge)].copy()
-    interior = depth_df[
-        (depth_df["position"] > edge) & (depth_df["position"] <= (mt_length - edge))
+    first_edge = depth_in_range[depth_in_range["position"] <= edge].copy()
+    last_edge = depth_in_range[depth_in_range["position"] > (mt_length - edge)].copy()
+    interior = depth_in_range[
+        (depth_in_range["position"] > edge)
+        & (depth_in_range["position"] <= (mt_length - edge))
     ].copy()
 
     edge_candidates = pd.DataFrame(columns=candidates_df.columns)
@@ -295,43 +309,42 @@ def run_step(
     first_edge_denominator = int(len(first_edge))
     last_edge_denominator = int(len(last_edge))
     interior_denominator = int(len(interior))
-    mean_depth_first_edge = (
-        round(float(first_edge["depth"].mean()), 3)
-        if first_edge_denominator
-        else np.nan
-    )
-    mean_depth_last_edge = (
-        round(float(last_edge["depth"].mean()), 3)
-        if last_edge_denominator
-        else np.nan
-    )
-    mean_depth_interior = (
-        round(float(interior["depth"].mean()), 3)
-        if interior_denominator
-        else np.nan
-    )
-    first_depth_status, first_depth_reason = _metric_status(
-        first_edge_denominator,
-        "no_positions_in_first_edge_window",
-    )
-    last_depth_status, last_depth_reason = _metric_status(
-        last_edge_denominator,
-        "no_positions_in_last_edge_window",
-    )
-    interior_depth_status, interior_depth_reason = _metric_status(
-        interior_denominator,
-        "no_positions_in_interior_window",
-    )
-    depth_complete = all(
-        denominator > 0
-        for denominator in [
+    if depth_profile_complete:
+        mean_depth_first_edge = (
+            round(float(first_edge["depth"].mean()), 3)
+            if first_edge_denominator
+            else np.nan
+        )
+        mean_depth_last_edge = (
+            round(float(last_edge["depth"].mean()), 3)
+            if last_edge_denominator
+            else np.nan
+        )
+        mean_depth_interior = (
+            round(float(interior["depth"].mean()), 3)
+            if interior_denominator
+            else np.nan
+        )
+        first_depth_status, first_depth_reason = _metric_status(
             first_edge_denominator,
+            "no_positions_in_first_edge_window",
+        )
+        last_depth_status, last_depth_reason = _metric_status(
             last_edge_denominator,
+            "no_positions_in_last_edge_window",
+        )
+        interior_depth_status, interior_depth_reason = _metric_status(
             interior_denominator,
-        ]
-    )
-    module_status = "ok" if depth_complete else "not_evaluable"
-    module_reason = "" if depth_complete else "incomplete_depth_region_evidence"
+            "no_positions_in_interior_window",
+        )
+    else:
+        mean_depth_first_edge = np.nan
+        mean_depth_last_edge = np.nan
+        mean_depth_interior = np.nan
+        first_depth_status = last_depth_status = interior_depth_status = "not_evaluable"
+        first_depth_reason = last_depth_reason = interior_depth_reason = "incomplete_depth_profile"
+    module_status = "ok" if depth_profile_complete else "not_evaluable"
+    module_reason = "" if depth_profile_complete else "incomplete_depth_profile"
     print(
         f"[circularity_qc] edge_bp={edge} first_edge_mean={mean_depth_first_edge:.3f} "
         f"last_edge_mean={mean_depth_last_edge:.3f} interior_mean={mean_depth_interior:.3f} "
@@ -347,6 +360,12 @@ def run_step(
             {"metric": "reason_code", "value": module_reason},
             {"metric": "edge_window_bp", "value": int(edge)},
             {"metric": "depth_positions_total", "value": int(len(depth_df))},
+            {"metric": "depth_positions_expected", "value": int(mt_length)},
+            {"metric": "depth_unique_positions_in_range", "value": depth_unique_positions},
+            {"metric": "depth_missing_positions", "value": depth_missing_positions},
+            {"metric": "depth_duplicate_rows", "value": depth_duplicate_rows},
+            {"metric": "depth_out_of_range_rows", "value": depth_out_of_range_rows},
+            {"metric": "depth_profile_complete", "value": int(depth_profile_complete)},
             {"metric": "mean_depth_first_edge", "value": _summary_value(mean_depth_first_edge)},
             {"metric": "mean_depth_first_edge_denominator_positions", "value": first_edge_denominator},
             {"metric": "mean_depth_first_edge_status", "value": first_depth_status},

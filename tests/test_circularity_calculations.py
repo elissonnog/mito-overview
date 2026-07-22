@@ -55,6 +55,12 @@ def test_exact_edge_boundaries_and_valid_zero_depth(tmp_path: Path) -> None:
     assert metrics["status"] == "ok"
     assert metrics["reason_code"] == ""
     assert metrics["edge_window_bp"] == "10"
+    assert metrics["depth_positions_expected"] == "100"
+    assert metrics["depth_unique_positions_in_range"] == "100"
+    assert metrics["depth_missing_positions"] == "0"
+    assert metrics["depth_duplicate_rows"] == "0"
+    assert metrics["depth_out_of_range_rows"] == "0"
+    assert metrics["depth_profile_complete"] == "1"
     assert metrics["mean_depth_first_edge"] == "0.0"
     assert metrics["mean_depth_first_edge_denominator_positions"] == "10"
     assert metrics["mean_depth_first_edge_status"] == "ok"
@@ -94,16 +100,21 @@ def test_unusable_or_missing_metric_evidence_is_na_not_zero(tmp_path: Path) -> N
 
     assert outputs["status"] == "not_evaluable"
     assert metrics["status"] == "not_evaluable"
-    assert metrics["reason_code"] == "incomplete_depth_region_evidence"
+    assert metrics["reason_code"] == "incomplete_depth_profile"
+    assert metrics["depth_positions_expected"] == "100"
+    assert metrics["depth_unique_positions_in_range"] == "1"
+    assert metrics["depth_missing_positions"] == "99"
+    assert metrics["depth_profile_complete"] == "0"
     assert metrics["mean_depth_first_edge"] == "NA"
     assert metrics["mean_depth_first_edge_denominator_positions"] == "0"
     assert metrics["mean_depth_first_edge_status"] == "not_evaluable"
-    assert metrics["mean_depth_first_edge_reason_code"] == "no_positions_in_first_edge_window"
+    assert metrics["mean_depth_first_edge_reason_code"] == "incomplete_depth_profile"
     assert metrics["mean_depth_last_edge"] == "NA"
     assert metrics["mean_depth_last_edge_status"] == "not_evaluable"
-    assert metrics["mean_depth_interior"] == "0.0"
+    assert metrics["mean_depth_interior"] == "NA"
     assert metrics["mean_depth_interior_denominator_positions"] == "1"
-    assert metrics["mean_depth_interior_status"] == "ok"
+    assert metrics["mean_depth_interior_status"] == "not_evaluable"
+    assert metrics["mean_depth_interior_reason_code"] == "incomplete_depth_profile"
     assert metrics["candidate_edge_fraction"] == "NA"
     assert metrics["candidate_edge_fraction_denominator_positions"] == "0"
     assert metrics["candidate_edge_fraction_status"] == "not_evaluable"
@@ -150,6 +161,32 @@ def test_valid_zero_fractions_remain_observed_zero(tmp_path: Path) -> None:
     assert metrics["primary_read_end_in_edge_fraction_status"] == "ok"
     assert metrics["edge_read_heavy_softclip_fraction"] == "0.0"
     assert metrics["edge_read_heavy_softclip_fraction_status"] == "ok"
+
+
+def test_sparse_region_spanning_depth_profile_is_not_complete(tmp_path: Path) -> None:
+    depth = pd.DataFrame({"position": [1, 50, 100], "depth": [10.0, 20.0, 30.0]})
+    write_tables(
+        tmp_path / "summary",
+        depth=depth,
+        reads=pd.DataFrame(),
+        candidates=pd.DataFrame(),
+    )
+
+    outputs, metrics = run_circularity(tmp_path)
+
+    assert outputs["status"] == "not_evaluable"
+    assert metrics["status"] == "not_evaluable"
+    assert metrics["reason_code"] == "incomplete_depth_profile"
+    assert metrics["depth_positions_total"] == "3"
+    assert metrics["depth_unique_positions_in_range"] == "3"
+    assert metrics["depth_missing_positions"] == "97"
+    assert metrics["depth_profile_complete"] == "0"
+    assert metrics["mean_depth_first_edge"] == "NA"
+    assert metrics["mean_depth_last_edge"] == "NA"
+    assert metrics["mean_depth_interior"] == "NA"
+    assert metrics["mean_depth_first_edge_denominator_positions"] == "1"
+    assert metrics["mean_depth_last_edge_denominator_positions"] == "1"
+    assert metrics["mean_depth_interior_denominator_positions"] == "1"
 
 
 def test_missing_depth_profile_has_explicit_module_status(tmp_path: Path) -> None:
