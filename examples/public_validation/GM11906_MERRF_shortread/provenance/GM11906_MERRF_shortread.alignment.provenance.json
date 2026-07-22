@@ -1,13 +1,13 @@
 {
   "alignment": {
-    "bytes": 46086800,
+    "bytes": 46086805,
     "name": "GM11906_MERRF_shortread.mt.bam",
-    "sha256": "a18f2194487dbbd0ce72eeeedcd6203d8675ec47b5fb351454b7f506ed014166"
+    "sha256": "677f815e11819f0a0eb9a40447ad5b5234002a3adf13b4a9effed1eec7d59851"
   },
   "alignment_index": {
     "bytes": 296,
     "name": "GM11906_MERRF_shortread.mt.bam.bai",
-    "sha256": "6c72ca88df03041f5eb91aee3133047b1e21805141733ac9c04e4bed5fe808c2"
+    "sha256": "5a63dc51d175520f85d043ae0bed120471745f472640e9b276c8defaa4d79fe5"
   },
   "dataset_id": "GM11906_pooled_scATAC",
   "derivation": {
@@ -21,7 +21,7 @@
       "samtools": "samtools 1.23.1"
     }
   },
-  "generated_utc": "2026-07-21T20:47:03.989685+00:00",
+  "generated_utc": "2026-07-22T11:30:46.741463+00:00",
   "provenance_type": "public_alignment",
   "public_inputs": [
     {
