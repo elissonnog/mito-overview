@@ -30,6 +30,8 @@ REPORT_STEM = "MitoOverview_v0.3.0_release_validation_report"
 ZIP_NAME = "mito-overview-v0.3.0-validation.zip"
 VERIFICATION_NAME = "mito-overview-v0.3.0-verification.json"
 REPORT_ASSET_ARCHIVE = f"{REPORT_STEM}_assets.tar.gz"
+BUILD_PROVENANCE_NAME = "report_build_provenance.json"
+FINAL_PROVENANCE_NAME = "report_provenance.json"
 ENVIRONMENT_NAME = "mito-overview-v0.3.0-environment.txt"
 ENVIRONMENT_ARCHIVE = "mito-overview-v0.3.0-environment-locks.tar.gz"
 RELEASE_NOTES_NAME = "RELEASE_NOTES_v0.3.0.md"
@@ -41,6 +43,7 @@ EXPECTED_LOCK_FILES = {
         ("pip", "txt"),
         ("environment", "yml"),
         ("platform", "json"),
+        ("python", "txt"),
     )
 }
 
@@ -196,19 +199,175 @@ def require_docx_identity(path: Path, final_sha: str) -> None:
             raise AssemblyError(f"report DOCX lacks release identity value: {value}")
 
 
+def validate_file_record(record: Any, path: Path, label: str) -> None:
+    if not isinstance(record, dict):
+        raise AssemblyError(f"{label} provenance record is malformed")
+    path = require_plain_file(path, label)
+    if record.get("bytes") != path.stat().st_size:
+        raise AssemblyError(f"{label} byte count does not match report provenance")
+    if record.get("sha256") != sha256(path):
+        raise AssemblyError(f"{label} SHA-256 does not match report provenance")
+
+
+def require_report_identity(payload: dict[str, Any], final_sha: str, label: str) -> None:
+    expected = {
+        "schema_version": "1.0",
+        "repository": REPOSITORY,
+        "release_version": VERSION,
+        "release_tag": VERSION,
+        "git_commit": final_sha,
+        "validation_profile": PROFILE,
+    }
+    for field, wanted in expected.items():
+        if payload.get(field) != wanted:
+            raise AssemblyError(
+                f"{label} identity mismatch for {field}: "
+                f"{payload.get(field)!r} != {wanted!r}"
+            )
+
+
+def validate_report_provenance(
+    report_root: Path,
+    report_assets: Path,
+    validation_zip: Path,
+    packet_verification: Path,
+    final_sha: str,
+) -> dict[str, Any]:
+    """Validate the report-to-packet-to-render chain before asset assembly."""
+
+    build_path = report_assets / BUILD_PROVENANCE_NAME
+    final_path = report_assets / FINAL_PROVENANCE_NAME
+    build = read_json(build_path, "report build provenance")
+    final = read_json(final_path, "final report provenance")
+    require_report_identity(build, final_sha, "report build provenance")
+    require_report_identity(final, final_sha, "final report provenance")
+    if build.get("provenance_type") != "mito_overview_release_report_build":
+        raise AssemblyError("report build provenance type is invalid")
+    if final.get("provenance_type") != "mito_overview_finalized_release_report":
+        raise AssemblyError("final report provenance type is invalid")
+
+    archive_record = final.get("validation_archive")
+    validate_file_record(archive_record, validation_zip, "validation ZIP")
+    if archive_record.get("name") != ZIP_NAME:
+        raise AssemblyError("final report provenance names the wrong validation ZIP")
+    validate_file_record(
+        final.get("packet_verification"),
+        packet_verification,
+        "packet verification JSON",
+    )
+    validate_file_record(
+        final.get("report_build_provenance"),
+        build_path,
+        "report build provenance",
+    )
+
+    outputs = final.get("report_outputs")
+    if not isinstance(outputs, dict) or set(outputs) != {"markdown", "docx", "pdf"}:
+        raise AssemblyError("final report provenance has an incomplete output inventory")
+    report_paths = {
+        "markdown": report_root / f"{REPORT_STEM}.md",
+        "docx": report_root / f"{REPORT_STEM}.docx",
+        "pdf": report_root / f"{REPORT_STEM}.pdf",
+    }
+    for label, path in report_paths.items():
+        validate_file_record(outputs[label], path, f"report {label}")
+        if outputs[label].get("name") != path.name:
+            raise AssemblyError(f"report {label} provenance names an unexpected file")
+
+    build_outputs = build.get("report_outputs")
+    if not isinstance(build_outputs, dict):
+        raise AssemblyError("report build provenance lacks report_outputs")
+    for label in ("markdown", "docx"):
+        if build_outputs.get(label) != outputs[label]:
+            raise AssemblyError(f"final report {label} is not the recorded build output")
+
+    figure_manifest = report_assets / "figure_manifest.tsv"
+    validate_file_record(final.get("figure_manifest"), figure_manifest, "figure manifest")
+    if final.get("figure_manifest") != build.get("figure_manifest"):
+        raise AssemblyError("final report figure manifest differs from build provenance")
+    figures = final.get("figures")
+    if not isinstance(figures, list) or not figures or figures != build.get("figures"):
+        raise AssemblyError("final report figures differ from build provenance")
+
+    expected_assets = {BUILD_PROVENANCE_NAME, FINAL_PROVENANCE_NAME, "figure_manifest.tsv"}
+    for row in figures:
+        if not isinstance(row, dict) or not isinstance(row.get("name"), str):
+            raise AssemblyError("final report provenance has a malformed figure record")
+        relative = Path(row["name"])
+        if relative.is_absolute() or relative.parts[:1] != (report_assets.name,):
+            raise AssemblyError(f"report figure path escapes report assets: {relative}")
+        path = report_root / relative
+        validate_file_record(row, path, f"report figure {relative.name}")
+        if row.get("sha256") != row.get("packet_sha256"):
+            raise AssemblyError(f"report figure is not byte-identical to packet source: {relative}")
+        expected_assets.add(relative.relative_to(report_assets.name).as_posix())
+
+    page_qa = final.get("rendered_page_qa")
+    if not isinstance(page_qa, dict):
+        raise AssemblyError("final report provenance lacks rendered_page_qa")
+    if page_qa.get("status") != "PASS" or page_qa.get("all_pages_inspected") is not True:
+        raise AssemblyError("final report rendered-page visual QA did not pass")
+    pages = page_qa.get("pages")
+    if not isinstance(pages, list) or not pages or page_qa.get("page_count") != len(pages):
+        raise AssemblyError("final report rendered-page inventory is incomplete")
+    if page_qa.get("source_docx_sha256") != outputs["docx"]["sha256"]:
+        raise AssemblyError("rendered-page QA is bound to a different DOCX")
+    if page_qa.get("rendered_pdf_sha256") != outputs["pdf"]["sha256"]:
+        raise AssemblyError("rendered-page QA is bound to a different PDF")
+    for expected_number, row in enumerate(pages, 1):
+        if not isinstance(row, dict) or row.get("page_number") != expected_number:
+            raise AssemblyError("rendered-page sequence is malformed")
+        if row.get("visual_review_status") != "PASS" or not isinstance(row.get("name"), str):
+            raise AssemblyError("rendered-page record lacks a PASS visual review")
+        relative = Path(row["name"])
+        expected_prefix = (report_assets.name, "rendered_pages")
+        if relative.is_absolute() or relative.parts[:2] != expected_prefix:
+            raise AssemblyError(f"rendered-page path escapes report assets: {relative}")
+        path = report_root / relative
+        validate_file_record(row, path, f"rendered page {expected_number}")
+        expected_assets.add(relative.relative_to(report_assets.name).as_posix())
+
+    observed_assets = {
+        path.relative_to(report_assets).as_posix()
+        for path in report_assets.rglob("*")
+        if path.is_file()
+    }
+    if observed_assets != expected_assets:
+        raise AssemblyError(
+            "report asset inventory mismatch; "
+            f"missing={sorted(expected_assets - observed_assets)!r}; "
+            f"unexpected={sorted(observed_assets - expected_assets)!r}"
+        )
+    if final.get("packet_verification_verdict") != "PASS" or final.get(
+        "packet_verifier_executed"
+    ) is not True:
+        raise AssemblyError("final report provenance lacks a successful packet verification")
+    return final
+
+
 def validate_environment_locks(root: Path, final_sha: str) -> None:
     relative_files = {
         path.relative_to(root).as_posix()
         for path in root.rglob("*")
         if path.is_file()
     }
-    missing = EXPECTED_LOCK_FILES - relative_files
-    if missing:
-        raise AssemblyError(f"environment locks are incomplete: {sorted(missing)!r}")
+    if relative_files != EXPECTED_LOCK_FILES:
+        raise AssemblyError(
+            "environment lock inventory mismatch; "
+            f"missing={sorted(EXPECTED_LOCK_FILES - relative_files)!r}; "
+            f"unexpected={sorted(relative_files - EXPECTED_LOCK_FILES)!r}"
+        )
     for platform in ("linux-64", "osx-64", "osx-arm64"):
         record = read_json(root / platform / f"platform-{platform}.json", "platform lock record")
         if record.get("git_commit") != final_sha:
             raise AssemblyError(f"{platform} lock record is not bound to FINAL_SHA")
+        if record.get("platform_id") != platform or record.get("resolved_environment") is not True:
+            raise AssemblyError(f"{platform} lock record lacks resolved platform identity")
+        python_text = (root / platform / f"python-{platform}.txt").read_text(
+            encoding="utf-8"
+        ).strip()
+        if python_text != "Python 3.12.13":
+            raise AssemblyError(f"{platform} Python evidence is not Python 3.12.13")
 
 
 def populate_and_verify_stage(
@@ -223,6 +382,7 @@ def populate_and_verify_stage(
     environment_text: Path,
     environment_locks: Path,
     receipt: dict[str, Any],
+    report_provenance: dict[str, Any],
     audit_digest: str,
     final_sha: str,
 ) -> dict[str, Any]:
@@ -255,6 +415,25 @@ def populate_and_verify_stage(
         }
         for name in sorted(report_asset_names)
     ]
+    report_provenance_path = report_assets / FINAL_PROVENANCE_NAME
+    receipt["report_build_provenance"] = {
+        "schema_version": "1.0",
+        "provenance_type": "release_report_provenance_binding",
+        "repository": REPOSITORY,
+        "release_version": VERSION,
+        "release_tag": VERSION,
+        "git_commit": final_sha,
+        "validation_zip_sha256": audit_digest,
+        "report_provenance_archive_path": (
+            f"{report_assets.name}/{FINAL_PROVENANCE_NAME}"
+        ),
+        "report_provenance_sha256": sha256(report_provenance_path),
+        "report_asset_archive_sha256": sha256(stage_root / REPORT_ASSET_ARCHIVE),
+        "report_outputs": report_provenance["report_outputs"],
+        "figure_count": len(report_provenance["figures"]),
+        "rendered_page_count": report_provenance["rendered_page_qa"]["page_count"],
+        "visual_review_status": report_provenance["rendered_page_qa"]["status"],
+    }
     receipt["report_asset_manifest"] = {
         "schema_version": "1.0",
         "manifest_type": "report_asset_manifest",
@@ -350,6 +529,10 @@ def assemble(
         raise AssemblyError("report figure assets contain no PNG figures")
     if report_pdf.read_bytes()[:5] != b"%PDF-":
         raise AssemblyError("report PDF does not have a PDF header")
+    with report_pdf.open("rb") as handle:
+        handle.seek(max(0, report_pdf.stat().st_size - 1024))
+        if b"%%EOF" not in handle.read():
+            raise AssemblyError("report PDF does not have a PDF trailer")
 
     audit_digest = sha256(validation_zip)
     receipt = read_json(packet_verification, "packet verification JSON")
@@ -359,6 +542,13 @@ def assemble(
     require_text_identity(release_notes, final_sha, "release notes")
     require_text_identity(environment_text, final_sha, "environment record")
     validate_environment_locks(environment_locks, final_sha)
+    report_provenance = validate_report_provenance(
+        report_root,
+        report_assets,
+        validation_zip,
+        packet_verification,
+        final_sha,
+    )
 
     with tempfile.TemporaryDirectory(
         prefix=f".{output_root.name}.", dir=output_root.parent
@@ -375,6 +565,7 @@ def assemble(
             environment_text=environment_text,
             environment_locks=environment_locks,
             receipt=receipt,
+            report_provenance=report_provenance,
             audit_digest=audit_digest,
             final_sha=final_sha,
         )

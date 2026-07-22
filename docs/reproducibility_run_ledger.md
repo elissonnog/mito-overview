@@ -87,12 +87,17 @@ The runner must reject legacy DOI/Zenodo arguments, require an absent raw-cache 
 7. Build and verify the audit ZIP, then tag exactly `FINAL_SHA` as annotated
    `v0.3.0`. Before any GitHub release exists, run the publisher's read-only
    `--verify-prepublication` phase and build/visually inspect the human-readable
-   MD/DOCX/PDF report from that exact main/tag identity.
+   MD/DOCX/PDF report from that exact main/tag identity. Preserve the builder's
+   `report_build_provenance.json`, render every DOCX page, inspect every page,
+   and run `scripts/finalize_release_validation_report_v0.3.0.py` to bind the
+   PDF and rendered-page PASS inventory to the exact validation ZIP.
 8. Assemble the non-distribution assets and run
    `scripts/assemble_release_assets_v0.3.0.py`; its atomic output is the only
    accepted input to `scripts/run_fresh_public_tag_validation_v0.3.0.sh`
-   against the public HTTPS tag. Retain the assembler's semantic identity
-   result plus the fresh-tag cases, commands, logs, environment, annotated-tag
+   against the public HTTPS tag. The assembler requires exactly five resolved
+   environment records per platform and revalidates the packet-to-figure-to-
+   DOCX-to-PDF-to-rendered-page provenance. Retain its semantic identity result
+   plus the fresh-tag cases, commands, logs, environment, annotated-tag
    identity, trusted 12-asset manifest, hashes, and PASS receipt.
 9. Supply the sealed assets and receipt to create the draft, enable immutable
    releases, upload and authenticated-redownload all assets, publish, and write

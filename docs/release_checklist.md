@@ -95,14 +95,25 @@ release date.
   annotated-tag receipt.
 - [ ] The report states that final asset publication is verified separately;
   it does not claim verification of its own upload.
+- [ ] `scripts/build_release_validation_report_v0.3.0.py` emits
+  `report_build_provenance.json`, binding the Markdown, DOCX, figure manifest,
+  copied report-native figures, packet manifest, and read-only GitHub identity.
+- [ ] Every DOCX page is rendered to `page-<N>.png` and inspected. The PDF and
+  page directory are passed to
+  `scripts/finalize_release_validation_report_v0.3.0.py` with an explicit PASS
+  review; the resulting `report_provenance.json` binds the final PDF and every
+  reviewed page to the source DOCX and validation ZIP.
 - [ ] `scripts/assemble_release_assets_v0.3.0.py` creates the exact nine-file
   prebuilt asset source atomically, executes the packet verifier, confirms the
-  Markdown/DOCX/release-note/environment identities, verifies all three
-  platform lock records, and embeds a size/SHA-256 report-asset manifest in
-  `mito-overview-v0.3.0-verification.json`.
+  Markdown/DOCX/PDF/figure/page provenance, release-note/environment
+  identities, verifies the exact five-file inventory for all three platform
+  lock records, and embeds both report provenance and a size/SHA-256
+  report-asset manifest in `mito-overview-v0.3.0-verification.json`.
 - [ ] The assembler rejects a stale commit, incomplete platform locks,
-  symlinks/special files, a failed packet verifier, and an existing output
-  root; the subsequent fresh-tag gate rejects any post-assembly asset mutation.
+  unexpected lock files, stale or replaced report artifacts, incomplete or
+  failed visual QA, symlinks/special files, a failed packet verifier, and an
+  existing output root; the subsequent fresh-tag gate reopens the report asset
+  archive and rejects any post-assembly mutation.
 - [ ] Fresh-tag evidence seals all 12 canonical asset names, sizes, and SHA-256
   values to `FINAL_SHA` and the annotated tag object before any release mutation.
 - [ ] Repository immutable releases are enabled before draft creation, and the

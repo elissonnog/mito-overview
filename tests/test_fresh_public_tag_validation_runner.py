@@ -268,15 +268,6 @@ def _build_release_asset_source(
                 archive.addfile(info, io.BytesIO(payload))
 
     write_tar(
-        source / "MitoOverview_v0.3.0_release_validation_report_assets.tar.gz",
-        {
-            "figure_manifest.tsv": (
-                f"asset\tgit_commit\nfigure01.png\t{bound_sha}\n"
-            ).encode("ascii"),
-            "figure01.png": b"\x89PNG\r\n\x1a\nfixture-figure\n",
-        },
-    )
-    write_tar(
         source / "mito-overview-v0.3.0-environment-locks.tar.gz",
         {
             "environment.yml": (
@@ -297,11 +288,13 @@ def _build_release_asset_source(
         "package_name": "mito-overview",
         "package_version": "0.3.0",
     }
+    figure_payload = b"\x89PNG\r\n\x1a\nfixture-figure\n"
     packet_files = {
         "run.json": (json.dumps(run, sort_keys=True) + "\n").encode("utf-8"),
         "release_identity.json": (
             json.dumps(release_identity, sort_keys=True) + "\n"
         ).encode("utf-8"),
+        "figures/source.png": figure_payload,
     }
     manifest_text = "".join(
         f"{_sha256_bytes(payload)}  {name}\n"
@@ -318,6 +311,137 @@ def _build_release_asset_source(
     with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         for name, payload in sorted(packet_files.items()):
             archive.writestr(name, payload)
+
+    report_root_name = "MitoOverview_v0.3.0_release_validation_report_assets"
+    report_md = source / "MitoOverview_v0.3.0_release_validation_report.md"
+    report_docx = source / "MitoOverview_v0.3.0_release_validation_report.docx"
+    report_pdf = source / "MitoOverview_v0.3.0_release_validation_report.pdf"
+
+    def content_record(path: Path, name: str) -> dict[str, object]:
+        return {
+            "name": name,
+            "bytes": path.stat().st_size,
+            "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+        }
+
+    figure_name = f"{report_root_name}/figure01.png"
+    figure_hash = _sha256_bytes(figure_payload)
+    manifest_name = f"{report_root_name}/figure_manifest.tsv"
+    manifest_payload = (
+        "figure_number\tdataset\tcase_id\treport_asset\tpacket_path\tsha256\twidth_px\theight_px\tsource_inventory\n"
+        f"1\tGM11906\tcase\t{figure_name}\tfigures/source.png\t{figure_hash}\t800\t450\tvisual.tsv\n"
+    ).encode("ascii")
+    figure_row = {
+        "name": figure_name,
+        "bytes": len(figure_payload),
+        "sha256": figure_hash,
+        "figure_number": 1,
+        "dataset": "GM11906",
+        "case_id": "case",
+        "packet_path": "figures/source.png",
+        "packet_sha256": figure_hash,
+        "width_px": 800,
+        "height_px": 450,
+        "source_inventory": "visual.tsv",
+    }
+    build = {
+        "schema_version": "1.0",
+        "provenance_type": "mito_overview_release_report_build",
+        "repository": PUBLIC_FIXTURE_URL,
+        "release_version": "v0.3.0",
+        "release_tag": "v0.3.0",
+        "git_commit": bound_sha,
+        "validation_profile": "github_release_validation_v1",
+        "packet_identity": {
+            name: {
+                "name": name,
+                "bytes": len(packet_files[name]),
+                "sha256": _sha256_bytes(packet_files[name]),
+            }
+            for name in ("run.json", "release_identity.json", "artifacts.sha256")
+        },
+        "publication_input": {"name": "fixture.json", "bytes": 1, "sha256": "0" * 64},
+        "report_outputs": {
+            "markdown": content_record(report_md, report_md.name),
+            "docx": content_record(report_docx, report_docx.name),
+        },
+        "figure_manifest": {
+            "name": manifest_name,
+            "bytes": len(manifest_payload),
+            "sha256": _sha256_bytes(manifest_payload),
+        },
+        "figures": [figure_row],
+        "pdf_included": False,
+        "rendered_page_qa_required": True,
+    }
+    build_name = f"{report_root_name}/report_build_provenance.json"
+    build_payload = (json.dumps(build, indent=2, sort_keys=True) + "\n").encode("utf-8")
+    page_name = f"{report_root_name}/rendered_pages/page-1.png"
+    page_payload = b"\x89PNG\r\n\x1a\nfixture-page\n"
+    page_row = {
+        "name": page_name,
+        "bytes": len(page_payload),
+        "sha256": _sha256_bytes(page_payload),
+        "page_number": 1,
+        "width_px": 1275,
+        "height_px": 1650,
+        "visual_review_status": "PASS",
+    }
+    report_outputs = {
+        "markdown": content_record(report_md, report_md.name),
+        "docx": content_record(report_docx, report_docx.name),
+        "pdf": content_record(report_pdf, report_pdf.name),
+    }
+    final_provenance = {
+        "schema_version": "1.0",
+        "provenance_type": "mito_overview_finalized_release_report",
+        "repository": PUBLIC_FIXTURE_URL,
+        "release_version": "v0.3.0",
+        "release_tag": "v0.3.0",
+        "git_commit": bound_sha,
+        "validation_profile": "github_release_validation_v1",
+        "validation_archive": {
+            "name": archive_path.name,
+            "bytes": archive_path.stat().st_size,
+            "sha256": hashlib.sha256(archive_path.read_bytes()).hexdigest(),
+        },
+        "packet_verification": {"name": "fixture.json", "bytes": 1, "sha256": "0" * 64},
+        "packet_verification_verdict": "PASS",
+        "packet_verifier_executed": True,
+        "packet_artifacts_manifest_sha256": _sha256_bytes(packet_files["artifacts.sha256"]),
+        "report_build_provenance": {
+            "name": build_name,
+            "bytes": len(build_payload),
+            "sha256": _sha256_bytes(build_payload),
+        },
+        "report_outputs": report_outputs,
+        "figure_manifest": build["figure_manifest"],
+        "figures": [figure_row],
+        "rendered_page_qa": {
+            "status": "PASS",
+            "all_pages_inspected": True,
+            "reviewer": "fixture-reviewer",
+            "page_count": 1,
+            "source_docx_sha256": report_outputs["docx"]["sha256"],
+            "rendered_pdf_sha256": report_outputs["pdf"]["sha256"],
+            "pages": [page_row],
+        },
+    }
+    provenance_name = f"{report_root_name}/report_provenance.json"
+    provenance_payload = (
+        json.dumps(final_provenance, indent=2, sort_keys=True) + "\n"
+    ).encode("utf-8")
+    report_archive = source / "MitoOverview_v0.3.0_release_validation_report_assets.tar.gz"
+    write_tar(
+        report_archive,
+        {
+            manifest_name: manifest_payload,
+            figure_name: figure_payload,
+            build_name: build_payload,
+            provenance_name: provenance_payload,
+            page_name: page_payload,
+        },
+    )
 
     report_assets = []
     for name in sorted(REPORT_ASSET_NAMES):
@@ -339,6 +463,22 @@ def _build_release_asset_source(
         "audit_zip": archive_path.name,
         "audit_zip_sha256": hashlib.sha256(archive_path.read_bytes()).hexdigest(),
         "verifier_runs": ["packet_root", "fresh_audit_zip_extraction"],
+        "report_build_provenance": {
+            "schema_version": "1.0",
+            "provenance_type": "release_report_provenance_binding",
+            "repository": PUBLIC_FIXTURE_URL,
+            "release_version": "v0.3.0",
+            "release_tag": "v0.3.0",
+            "git_commit": bound_sha,
+            "validation_zip_sha256": hashlib.sha256(archive_path.read_bytes()).hexdigest(),
+            "report_provenance_archive_path": provenance_name,
+            "report_provenance_sha256": _sha256_bytes(provenance_payload),
+            "report_asset_archive_sha256": hashlib.sha256(report_archive.read_bytes()).hexdigest(),
+            "report_outputs": report_outputs,
+            "figure_count": 1,
+            "rendered_page_count": 1,
+            "visual_review_status": "PASS",
+        },
         "report_asset_manifest": {
             "schema_version": "1.0",
             "manifest_type": "report_asset_manifest",

@@ -138,12 +138,31 @@ complete rerun from a new final commit.
    directory and a fresh extraction.
 7. Create annotated tag `v0.3.0` at `FINAL_SHA` and never move it. Capture
    `github_prepublication.json` through the publisher's read-only
-   `--verify-prepublication` phase before any GitHub release exists. Build and
-   visually inspect the report from that exact tag/repository identity, then
-   assemble the remaining non-distribution assets with the fail-closed command
-   below. The command requires an absent output directory, verifies the packet
-   ZIP and its embedded verifier, checks the report/release/environment commit
-   identities, and writes the manifest-bearing verification JSON atomically.
+   `--verify-prepublication` phase before any GitHub release exists. Build the
+   report from that exact tag/repository identity. Render its DOCX with the
+   documents workflow, inspect every `page-<N>.png`, and finalize the report
+   evidence before assembly:
+
+   ```bash
+   python scripts/finalize_release_validation_report_v0.3.0.py \
+     --report-root <rendered-report-directory> \
+     --validation-zip <mito-overview-v0.3.0-validation.zip> \
+     --packet-verification <packet-verification-json> \
+     --rendered-pdf <renderer-output.pdf> \
+     --rendered-pages <renderer-page-directory> \
+     --final-sha <FINAL_SHA> \
+     --visual-reviewer <reviewer-id> \
+     --visual-review-pass
+   ```
+
+   The finalizer verifies the packet ZIP and embedded verifier, the report
+   builder receipt, exact packet-native figure hashes, the final PDF, and a
+   contiguous PASS-reviewed page inventory. It writes
+   `report_provenance.json` beside the figure manifest. Then assemble the
+   remaining non-distribution assets with the fail-closed command below. The
+   assembler requires an absent output directory, rechecks the complete
+   provenance chain and exact environment-lock inventory, and writes the
+   manifest-bearing verification JSON atomically.
 
    ```bash
    python scripts/assemble_release_assets_v0.3.0.py \

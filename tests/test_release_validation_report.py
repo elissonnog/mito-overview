@@ -517,6 +517,7 @@ def test_builds_markdown_docx_and_embeds_verified_packet_figures(tmp_path: Path)
     assert generated["markdown"].is_file()
     assert generated["docx"].is_file()
     assert generated["assets"].is_dir()
+    assert generated["build_provenance"].is_file()
     markdown = generated["markdown"].read_text(encoding="utf-8")
     assert "Five v0.3.0 scientific corrections" in markdown
     assert "AF_alt = N_alt / (N_A + N_C + N_G + N_T)" in markdown
@@ -537,6 +538,24 @@ def test_builds_markdown_docx_and_embeds_verified_packet_figures(tmp_path: Path)
     rows = list(csv.DictReader(manifest.open(encoding="utf-8"), delimiter="\t"))
     assert len(rows) == 2
     assert {row["sha256"] for row in rows} == {digest(path) for path in source_figures}
+
+    provenance = json.loads(generated["build_provenance"].read_text())
+    assert provenance["provenance_type"] == "mito_overview_release_report_build"
+    assert provenance["git_commit"] == COMMIT
+    assert provenance["packet_identity"]["artifacts.sha256"]["sha256"] == digest(
+        packet / "artifacts.sha256"
+    )
+    assert provenance["report_outputs"]["markdown"]["sha256"] == digest(
+        generated["markdown"]
+    )
+    assert provenance["report_outputs"]["docx"]["sha256"] == digest(
+        generated["docx"]
+    )
+    assert provenance["figure_manifest"]["sha256"] == digest(manifest)
+    assert {row["packet_sha256"] for row in provenance["figures"]} == {
+        digest(path) for path in source_figures
+    }
+    assert provenance["rendered_page_qa_required"] is True
 
     with zipfile.ZipFile(generated["docx"]) as archive:
         media = [name for name in archive.namelist() if name.startswith("word/media/")]

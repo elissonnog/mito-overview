@@ -345,6 +345,7 @@ if args[:2] == ["run", "download"]:
         (destination / f"conda-{{platform}}.explicit.txt").write_text("fixture\\n")
         (destination / f"pip-{{platform}}.txt").write_text("fixture\\n")
         (destination / f"environment-{{platform}}.yml").write_text("fixture\\n")
+        (destination / f"python-{{platform}}.txt").write_text("Python 3.12.13\\n")
         (destination / f"platform-{{platform}}.json").write_text(
             json.dumps({{
                 "platform_id": platform,
@@ -575,6 +576,9 @@ def test_runner_binds_ci_evidence_and_receipt_to_all_explicit_ids() -> None:
     for platform in ("linux-64", "osx-64", "osx-arm64"):
         assert f"resolved-environment-${{platform}}" in text or platform in text
         assert f"platform-${{platform}}.json" in text
+        assert f"python-${{platform}}.txt" in text
+    assert "Resolved CI environment inventory mismatch" in text
+    assert "Python 3.12.13" in text
     assert 'gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${PUBLIC_RUN_ID}"' in text
     assert "actions/workflows/public-validation.yml/runs" not in text
     assert "cross_platform_comparison.tsv" in text

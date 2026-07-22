@@ -37,6 +37,7 @@ EXPECTED_SCHEMA = "2.0"
 EXPECTED_PROFILE = "github_release_validation_v1"
 EXPECTED_VERSION = "v0.3.0"
 OUTPUT_STEM = "MitoOverview_v0.3.0_release_validation_report"
+BUILD_PROVENANCE_NAME = "report_build_provenance.json"
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 SAFE_ID_RE = re.compile(r"[^A-Za-z0-9_.-]+")
@@ -378,6 +379,17 @@ def sha256_file(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def file_record(path: Path, *, name: str | None = None) -> dict[str, object]:
+    """Return a portable content-identity record for one report input/output."""
+
+    require_plain_file(path, name or path.name)
+    return {
+        "name": name or path.name,
+        "bytes": path.stat().st_size,
+        "sha256": sha256_file(path),
+    }
 
 
 def require_plain_file(path: Path, label: str) -> None:
@@ -2199,6 +2211,78 @@ def write_figure_manifest(figures: list[FigureBlock], path: Path) -> None:
             )
 
 
+def write_build_provenance(
+    evidence: ReportEvidence,
+    publication_json: Path,
+    report_md: Path,
+    report_docx: Path,
+    report_pdf: Path | None,
+    figures: list[FigureBlock],
+    asset_root: Path,
+) -> Path:
+    """Bind generated report sources and copied figures to validated packet evidence."""
+
+    manifest = asset_root / "figure_manifest.tsv"
+    outputs = {
+        "markdown": file_record(report_md),
+        "docx": file_record(report_docx),
+    }
+    if report_pdf is not None:
+        outputs["pdf"] = file_record(report_pdf)
+
+    figure_rows: list[dict[str, object]] = []
+    for figure in figures:
+        asset = asset_root / Path(figure.asset_relative).name
+        record = file_record(asset, name=figure.asset_relative)
+        if record["sha256"] != figure.sha256:
+            raise ReportValidationError(
+                f"Report figure changed before provenance capture: {figure.asset_relative}"
+            )
+        figure_rows.append(
+            {
+                **record,
+                "figure_number": figure.number,
+                "dataset": figure.dataset,
+                "case_id": figure.case_id,
+                "packet_path": figure.packet_path,
+                "packet_sha256": figure.sha256,
+                "width_px": figure.width,
+                "height_px": figure.height,
+                "source_inventory": figure.source_inventory,
+            }
+        )
+
+    packet_files = {
+        name: file_record(evidence.packet_root / name, name=name)
+        for name in ("run.json", "release_identity.json", "artifacts.sha256")
+    }
+    payload = {
+        "schema_version": "1.0",
+        "provenance_type": "mito_overview_release_report_build",
+        "repository": evidence.run["repository"],
+        "release_version": evidence.run["release_version"],
+        "release_tag": evidence.publication["release_tag"],
+        "git_commit": evidence.run["git_commit"],
+        "validation_profile": evidence.run["validation_profile"],
+        "packet_identity": packet_files,
+        "publication_input": file_record(
+            publication_json, name=publication_json.name
+        ),
+        "report_outputs": outputs,
+        "figure_manifest": file_record(
+            manifest, name=f"{asset_root.name}/figure_manifest.tsv"
+        ),
+        "figures": figure_rows,
+        "pdf_included": report_pdf is not None,
+        "rendered_page_qa_required": True,
+    }
+    destination = asset_root / BUILD_PROVENANCE_NAME
+    destination.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    return destination
+
+
 def emit_pdf(docx_path: Path, pdf_path: Path) -> None:
     soffice = shutil.which("soffice")
     if soffice is None:
@@ -2283,6 +2367,15 @@ def generate_report(
         stage_pdf = stage / pdf_path.name
         if include_pdf:
             emit_pdf(stage_docx, stage_pdf)
+        stage_provenance = write_build_provenance(
+            evidence,
+            publication_json,
+            stage_md,
+            stage_docx,
+            stage_pdf if include_pdf else None,
+            figures,
+            stage_assets,
+        )
 
         for path in existing:
             if path.is_dir():
@@ -2295,7 +2388,12 @@ def generate_report(
         if include_pdf:
             os.replace(stage_pdf, pdf_path)
 
-    outputs = {"markdown": md_path, "docx": docx_path, "assets": asset_path}
+    outputs = {
+        "markdown": md_path,
+        "docx": docx_path,
+        "assets": asset_path,
+        "build_provenance": asset_path / stage_provenance.name,
+    }
     if include_pdf:
         outputs["pdf"] = pdf_path
     return outputs

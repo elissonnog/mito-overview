@@ -326,18 +326,37 @@ PY
       test -s "${destination}/pip-${platform}.txt"
       test -s "${destination}/environment-${platform}.yml"
       test -s "${destination}/platform-${platform}.json"
+      test -s "${destination}/python-${platform}.txt"
       "${PYTHON_BIN}" - "${destination}/platform-${platform}.json" \
-        "${platform}" "${CANDIDATE_COMMIT}" "${GITHUB_RUN_ID}" <<'PY'
+        "${destination}" "${platform}" "${CANDIDATE_COMMIT}" "${GITHUB_RUN_ID}" <<'PY'
 import json
 import sys
 from pathlib import Path
 
 record = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-if record.get("platform_id") != sys.argv[2]:
+root = Path(sys.argv[2])
+platform_id = sys.argv[3]
+expected_files = {
+    f"conda-{platform_id}.explicit.txt",
+    f"pip-{platform_id}.txt",
+    f"environment-{platform_id}.yml",
+    f"platform-{platform_id}.json",
+    f"python-{platform_id}.txt",
+}
+observed_files = {path.name for path in root.iterdir() if path.is_file()}
+if observed_files != expected_files:
+    raise SystemExit(
+        "Resolved CI environment inventory mismatch: "
+        f"missing={sorted(expected_files - observed_files)}; "
+        f"unexpected={sorted(observed_files - expected_files)}"
+    )
+if (root / f"python-{platform_id}.txt").read_text(encoding="utf-8").strip() != "Python 3.12.13":
+    raise SystemExit("Resolved CI Python evidence mismatch")
+if record.get("platform_id") != platform_id:
     raise SystemExit("Resolved CI artifact platform identity mismatch")
-if record.get("git_commit") != sys.argv[3]:
+if record.get("git_commit") != sys.argv[4]:
     raise SystemExit("Resolved CI artifact commit identity mismatch")
-if record.get("github_run_id") != int(sys.argv[4]):
+if record.get("github_run_id") != int(sys.argv[5]):
     raise SystemExit("Resolved CI artifact run identity mismatch")
 if record.get("resolved_environment") is not True:
     raise SystemExit("Resolved CI artifact did not attest environment resolution")

@@ -1,6 +1,6 @@
-track	site_count	mean_percent_modified	median_percent_modified	coverage_weighted_percent_modified	coverage_weighted_denominator_valid_coverage	coverage_weighted_status	coverage_weighted_reason_code	count_weighted_percent_modified	count_weighted_denominator_calls	count_weighted_status	count_weighted_reason_code	mean_valid_coverage	median_valid_coverage
-NP_real_all_reads	2	50.0	50.0	50.0	20.0	ok		50.0	20.0	ok		10.0	10.0
-HP1	2	50.0	50.0	50.0	20.0	ok		50.0	20.0	ok		10.0	10.0
-HP2	2	50.0	50.0	50.0	20.0	ok		50.0	20.0	ok		10.0	10.0
-Ungrouped	2	50.0	50.0	50.0	20.0	ok		50.0	20.0	ok		10.0	10.0
-Phased_proxy_all_reads	2	50.0	50.0	50.0	60.0	ok		50.0	60.0	ok		30.0	30.0
+track	modification_code	strand	site_count	mean_percent_modified	median_percent_modified	coverage_weighted_percent_modified	coverage_weighted_denominator_valid_coverage	coverage_weighted_status	coverage_weighted_reason_code	count_weighted_percent_modified	count_weighted_denominator_calls	count_weighted_status	count_weighted_reason_code	mean_valid_coverage	median_valid_coverage
+NP_real_all_reads	m	+	2	50.0	50.0	50.0	20.0	ok		50.0	20.0	ok		10.0	10.0
+HP1	m	+	2	50.0	50.0	50.0	20.0	ok		50.0	20.0	ok		10.0	10.0
+HP2	m	+	2	50.0	50.0	50.0	20.0	ok		50.0	20.0	ok		10.0	10.0
+Ungrouped	m	+	2	50.0	50.0	50.0	20.0	ok		50.0	20.0	ok		10.0	10.0
+Phased_proxy_all_reads	m	+	2	50.0	50.0	50.0	60.0	ok		50.0	60.0	ok		30.0	30.0
