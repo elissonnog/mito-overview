@@ -127,6 +127,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--mt-length", type=int)
     parser.add_argument("--ref-fasta", required=True)
     parser.add_argument("--np-clinvar-vcf")
+    parser.add_argument("--feature-annotation-status")
+    parser.add_argument("--feature-annotation-reason-code")
     return parser
 
 
@@ -175,6 +177,40 @@ def _empty_class_summary_df() -> pd.DataFrame:
 
 def _empty_clinvar_summary_df() -> pd.DataFrame:
     return pd.DataFrame(columns=CLINVAR_SUMMARY_COLUMNS)
+
+
+def resolve_feature_annotation_state(
+    summary_dir: str | Path,
+    *,
+    explicit_status: str | None = None,
+    explicit_reason_code: str | None = None,
+) -> tuple[str, str]:
+    """Resolve the upstream feature-annotation state without inferring biology from missing data."""
+
+    if explicit_status is not None:
+        return validate_module_state(explicit_status), explicit_reason_code or ""
+
+    summary_dir = Path(summary_dir)
+    summary_path = summary_dir / "mito_feature_annotation_summary.tsv"
+    feature_summary = load_table(summary_path)
+    if {"metric", "value"}.issubset(feature_summary.columns):
+        metrics = {
+            str(row.metric): str(row.value)
+            for row in feature_summary[["metric", "value"]].itertuples(index=False)
+        }
+        if metrics.get("status"):
+            return validate_module_state(metrics["status"]), metrics.get("reason_code", "")
+
+    successful_summary_columns = {
+        "feature_class",
+        "feature_label",
+        "candidate_sites",
+        "mean_alt_allele_fraction",
+    }
+    if successful_summary_columns.issubset(feature_summary.columns):
+        return "ok", ""
+
+    return "not_evaluable", "feature_annotation_status_unavailable"
 
 
 def status_page(
@@ -346,7 +382,9 @@ def run_step(
     ref_fasta: str | Path,
     np_clinvar_vcf: str | Path | None = None,
     mt_length: int | None = None,
-) -> dict[str, Path]:
+    feature_annotation_status: str | None = None,
+    feature_annotation_reason_code: str | None = None,
+) -> dict[str, Path | str]:
     """Run the public mitochondrial variant consequence step."""
 
     print(
@@ -373,13 +411,37 @@ def run_step(
     candidates_df = ensure_alt_fraction_columns(load_table(candidates_path, CANDIDATE_COLUMNS))
     overlap_df = load_table(overlap_path, OVERLAP_COLUMNS)
     feature_catalog = load_table(catalog_path)
+    upstream_status, upstream_reason = resolve_feature_annotation_state(
+        summary_dir,
+        explicit_status=feature_annotation_status,
+        explicit_reason_code=feature_annotation_reason_code,
+    )
     print(
         f"[variant_consequence] loaded candidates_rows={len(candidates_df)} "
         f"overlap_rows={len(overlap_df)} catalog_rows={len(feature_catalog)} "
         f"candidates_exists={candidates_path.exists()} overlap_exists={overlap_path.exists()} "
-        f"catalog_exists={catalog_path.exists()}",
+        f"catalog_exists={catalog_path.exists()} feature_annotation_status={upstream_status} "
+        f"feature_annotation_reason={upstream_reason or 'none'}",
         flush=True,
     )
+
+    if upstream_status != "ok":
+        reason_code = upstream_reason or f"feature_annotation_{upstream_status}"
+        message = (
+            "Mitochondrial variant consequences were not interpreted because upstream feature annotation "
+            f"reported status={upstream_status} (reason={reason_code})."
+        )
+        print(f"[variant_consequence] {message}", flush=True)
+        return status_page(
+            summary_dir=summary_dir,
+            report_dir=report_dir,
+            sample_id=sample_id,
+            mt_contig=mt_contig,
+            mt_length=mt_length,
+            status=upstream_status,
+            reason_code=reason_code,
+            message=message,
+        )
 
     required_candidate_cols = {"position", "ref_base", "alt_base", "depth", "alt_allele_fraction"}
     missing_candidate_cols = sorted(required_candidate_cols - set(candidates_df.columns))
@@ -444,21 +506,30 @@ def run_step(
 
     missing_overlap_cols = sorted(set(OVERLAP_COLUMNS) - set(overlap_df.columns))
     if missing_overlap_cols:
-        print(
-            "[variant_consequence] feature-overlap table missing columns="
+        message = (
+            "The upstream feature-overlap table is missing required columns "
             + ",".join(missing_overlap_cols)
-            + "; defaulting missing feature labels to intergenic",
-            flush=True,
+            + "; no consequence interpretation was assigned."
         )
-        overlap_lookup = pd.DataFrame(columns=OVERLAP_COLUMNS)
-    else:
-        overlap_lookup = overlap_df[OVERLAP_COLUMNS].copy()
-        overlap_lookup["position"] = pd.to_numeric(overlap_lookup["position"], errors="coerce")
-        overlap_lookup["ref_base"] = overlap_lookup["ref_base"].astype(str).str.upper()
-        overlap_lookup["alt_base"] = overlap_lookup["alt_base"].astype(str).str.upper()
-        overlap_lookup = overlap_lookup.dropna(subset=["position"]).copy()
-        overlap_lookup["position"] = overlap_lookup["position"].astype(int)
-        overlap_lookup = overlap_lookup.drop_duplicates(subset=["position", "ref_base", "alt_base"]).reset_index(drop=True)
+        print(f"[variant_consequence] {message}", flush=True)
+        return status_page(
+            summary_dir=summary_dir,
+            report_dir=report_dir,
+            sample_id=sample_id,
+            mt_contig=mt_contig,
+            mt_length=resolved_mt_length,
+            status="not_evaluable",
+            reason_code="feature_overlap_table_missing_columns",
+            message=message,
+        )
+
+    overlap_lookup = overlap_df[OVERLAP_COLUMNS].copy()
+    overlap_lookup["position"] = pd.to_numeric(overlap_lookup["position"], errors="coerce")
+    overlap_lookup["ref_base"] = overlap_lookup["ref_base"].astype(str).str.upper()
+    overlap_lookup["alt_base"] = overlap_lookup["alt_base"].astype(str).str.upper()
+    overlap_lookup = overlap_lookup.dropna(subset=["position"]).copy()
+    overlap_lookup["position"] = overlap_lookup["position"].astype(int)
+    overlap_lookup = overlap_lookup.drop_duplicates(subset=["position", "ref_base", "alt_base"]).reset_index(drop=True)
 
     merged = filtered.merge(
         overlap_lookup,
@@ -693,6 +764,8 @@ def main() -> None:
         mt_length=args.mt_length,
         ref_fasta=args.ref_fasta,
         np_clinvar_vcf=args.np_clinvar_vcf,
+        feature_annotation_status=args.feature_annotation_status,
+        feature_annotation_reason_code=args.feature_annotation_reason_code,
     )
     for path in outputs.values():
         print(f"Wrote {path}")

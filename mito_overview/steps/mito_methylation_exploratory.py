@@ -17,10 +17,21 @@ from mito_overview.report_common import df_to_html_table, figure_html, metric_ca
 ROW_COLUMNS = [
     "track",
     "position",
+    "modification_code",
+    "strand",
     "valid_coverage",
     "percent_modified",
     "modified_count",
     "canonical_count",
+]
+IDENTITY_COLUMNS = ["modification_code", "strand"]
+COMPARISON_COLUMNS = [
+    "position",
+    "modification_code",
+    "strand",
+    "percent_modified_np",
+    "percent_modified_proxy",
+    "abs_difference",
 ]
 PROXY_TRACKS = {"HP1", "HP2", "Ungrouped"}
 
@@ -43,13 +54,40 @@ def empty_rows_df() -> pd.DataFrame:
     return pd.DataFrame(columns=ROW_COLUMNS)
 
 
+def normalize_modification_identity(df: pd.DataFrame) -> pd.DataFrame:
+    """Normalize legacy identity-free rows while rejecting invalid bedMethyl strands."""
+
+    normalized = df.copy()
+    for column in IDENTITY_COLUMNS:
+        if column not in normalized.columns:
+            normalized[column] = "."
+        normalized[column] = (
+            normalized[column]
+            .fillna(".")
+            .astype(str)
+            .str.strip()
+            .replace({"": ".", "nan": ".", "NA": "."})
+        )
+    invalid_strands = sorted(set(normalized["strand"]) - {"+", "-", "."})
+    if invalid_strands:
+        raise ValueError(
+            "Unsupported bedMethyl strand value(s): " + ",".join(invalid_strands)
+        )
+    return normalized
+
+
 def collapse_track_positions(df: pd.DataFrame) -> pd.DataFrame:
-    """Pool duplicate bedMethyl rows into one count-weighted track-position row."""
+    """Pool only duplicate bedMethyl rows with identical modification identity."""
 
     if df.empty:
         return empty_rows_df()
+    df = normalize_modification_identity(df)
     pooled = (
-        df.groupby(["track", "position"], as_index=False, sort=False)
+        df.groupby(
+            ["track", "position", "modification_code", "strand"],
+            as_index=False,
+            sort=False,
+        )
         .agg(
             valid_coverage=("valid_coverage", "sum"),
             modified_count=("modified_count", "sum"),
@@ -94,6 +132,8 @@ def load_bedmethyl_table(path: str | Path | None, track_label: str) -> pd.DataFr
                     {
                         "track": track_label,
                         "position": int(parts[1]) + 1,
+                        "modification_code": parts[3].strip() or ".",
+                        "strand": parts[5].strip() or ".",
                         "valid_coverage": float(parts[9]),
                         "percent_modified": float(parts[10]),
                         "modified_count": float(parts[11]),
@@ -108,8 +148,12 @@ def load_bedmethyl_table(path: str | Path | None, track_label: str) -> pd.DataFr
 
 
 def track_summary(df: pd.DataFrame) -> pd.DataFrame:
+    df = normalize_modification_identity(df)
     rows: list[dict[str, object]] = []
-    for track, sub in df.groupby("track", sort=False):
+    for (track, modification_code, strand), sub in df.groupby(
+        ["track", "modification_code", "strand"],
+        sort=False,
+    ):
         percent_modified = pd.to_numeric(sub["percent_modified"], errors="coerce")
         valid_coverage = pd.to_numeric(sub["valid_coverage"], errors="coerce")
         coverage_evaluable_rows = percent_modified.notna() & valid_coverage.notna() & (valid_coverage > 0)
@@ -120,6 +164,8 @@ def track_summary(df: pd.DataFrame) -> pd.DataFrame:
         rows.append(
             {
                 "track": track,
+                "modification_code": modification_code,
+                "strand": strand,
                 "site_count": int(len(sub)),
                 "mean_percent_modified": round(float(percent_modified.mean()), 6),
                 "median_percent_modified": round(float(percent_modified.median()), 6),
@@ -155,11 +201,16 @@ def track_summary(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def build_proxy(df: pd.DataFrame) -> pd.DataFrame:
+    df = normalize_modification_identity(df)
     phased = df[df["track"].isin(PROXY_TRACKS)].copy()
     if phased.empty:
         return empty_rows_df()
 
-    proxy = phased.groupby("position", as_index=False).agg(
+    proxy = phased.groupby(
+        ["position", "modification_code", "strand"],
+        as_index=False,
+        sort=False,
+    ).agg(
         valid_coverage=("valid_coverage", "sum"),
         modified_count=("modified_count", "sum"),
         canonical_count=("canonical_count", "sum"),
@@ -297,9 +348,7 @@ def render_no_data_report(
     )
     summary_df.to_csv(summary_path, sep="\t", index=False)
     empty_rows_df().to_csv(combined_path, sep="\t", index=False)
-    pd.DataFrame(
-        columns=["position", "percent_modified_np", "percent_modified_proxy", "abs_difference"]
-    ).to_csv(cmp_path, sep="\t", index=False)
+    pd.DataFrame(columns=COMPARISON_COLUMNS).to_csv(cmp_path, sep="\t", index=False)
     cmp_summary = np_proxy_comparison_summary(
         pd.DataFrame(),
         tracks_available=0,
@@ -407,17 +456,30 @@ def run_step(
     summary_df.to_csv(summary_path, sep="\t", index=False, na_rep="NA")
     print(f"[methylation] wrote track summary {summary_path}", flush=True)
 
-    np_proxy_cmp = pd.DataFrame(
-        columns=["position", "percent_modified_np", "percent_modified_proxy", "abs_difference"]
-    )
-    np_real = combined_df[combined_df["track"] == "NP_real_all_reads"][["position", "percent_modified"]].rename(
+    np_proxy_cmp = pd.DataFrame(columns=COMPARISON_COLUMNS)
+    np_real = combined_df[combined_df["track"] == "NP_real_all_reads"][[
+        "position",
+        "modification_code",
+        "strand",
+        "percent_modified",
+    ]].rename(
         columns={"percent_modified": "percent_modified_np"}
     )
-    proxy = combined_df[combined_df["track"] == "Phased_proxy_all_reads"][["position", "percent_modified"]].rename(
+    proxy = combined_df[combined_df["track"] == "Phased_proxy_all_reads"][[
+        "position",
+        "modification_code",
+        "strand",
+        "percent_modified",
+    ]].rename(
         columns={"percent_modified": "percent_modified_proxy"}
     )
     if not np_real.empty and not proxy.empty:
-        np_proxy_cmp = pd.merge(np_real, proxy, on="position", how="inner")
+        np_proxy_cmp = pd.merge(
+            np_real,
+            proxy,
+            on=["position", "modification_code", "strand"],
+            how="inner",
+        )
         if not np_proxy_cmp.empty:
             np_proxy_cmp["abs_difference"] = (
                 np_proxy_cmp["percent_modified_np"] - np_proxy_cmp["percent_modified_proxy"]
@@ -436,8 +498,20 @@ def run_step(
 
     summary_fig = figure_dir / "mito_methylation_weighted_summary.png"
     plot_df = summary_df.copy()
+    plot_df["track_identity"] = (
+        plot_df["track"].astype(str)
+        + " ("
+        + plot_df["modification_code"].astype(str)
+        + "/"
+        + plot_df["strand"].astype(str)
+        + ")"
+    )
     plt.figure(figsize=(9, 4))
-    plt.bar(plot_df["track"], plot_df["coverage_weighted_percent_modified"], color="#0f766e")
+    plt.bar(
+        plot_df["track_identity"],
+        plot_df["coverage_weighted_percent_modified"],
+        color="#0f766e",
+    )
     plt.xticks(rotation=30, ha="right")
     plt.ylabel("Coverage-weighted percent modified")
     plt.title(f"{sample_id} mitochondrial methylation track summary")
@@ -448,10 +522,14 @@ def run_step(
 
     profile_fig = figure_dir / "mito_methylation_profiles.png"
     plt.figure(figsize=(12, 4))
-    for track, sub in combined_df.groupby("track", sort=False):
+    for (track, modification_code, strand), sub in combined_df.groupby(
+        ["track", "modification_code", "strand"],
+        sort=False,
+    ):
         sub = sub.sort_values("position").copy()
         smooth = sub["percent_modified"].rolling(window=25, min_periods=1, center=True).mean()
-        plt.plot(sub["position"], smooth, linewidth=1.2, label=track)
+        identity = f"{modification_code}/{strand}"
+        plt.plot(sub["position"], smooth, linewidth=1.2, label=f"{track} ({identity})")
     plt.xlabel("Mitochondrial position")
     plt.ylabel("Rolling mean percent modified")
     plt.title(f"{sample_id} mitochondrial methylation profiles")
@@ -488,14 +566,15 @@ def run_step(
             metric_card("Tracks available", int(summary_df["track"].nunique())),
             metric_card("NP rows", int((combined_df["track"] == "NP_real_all_reads").sum())),
             metric_card("Proxy rows", int((combined_df["track"] == "Phased_proxy_all_reads").sum())),
-            metric_card("NP/proxy shared positions", int(len(np_proxy_cmp))),
+            metric_card("NP/proxy shared identity-position rows", int(len(np_proxy_cmp))),
         ]
     )
     intro_html = (
         '<p class="muted">This page provides an exploratory mitochondrial methylation summary using real '
         "mitochondrial bedmethyl rows from both the phased and no-phased workflows. The phased tracks are shown "
         "separately, a phased-derived all-read proxy is reconstructed from the phased tracks, and that proxy is "
-        "compared against the real no-phased all-read mitochondrial bedmethyl track. This page is intended for "
+        "compared against the real no-phased all-read mitochondrial bedmethyl track. Modification code and strand "
+        "are retained so that only scientifically compatible observations are pooled or compared. This page is intended for "
         "pattern-finding and QC context rather than strong biological claims about mtDNA methylation.</p>"
         f"<div class='metrics-grid'>{metrics_html}</div>"
     )

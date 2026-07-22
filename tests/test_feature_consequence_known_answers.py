@@ -1,16 +1,51 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pandas as pd
+import pysam
 import pytest
 
 from mito_overview.steps.mito_feature_annotation import (
     classify_position,
     load_human_mt_features,
+    run_step as run_feature_annotation,
 )
 from mito_overview.steps.mito_variant_consequence import (
+    ANNOTATION_COLUMNS,
     annotate_protein_change,
+    run_step as run_variant_consequence,
     translate_codon,
 )
+
+from ._helpers import metric_map
+
+
+def write_consequence_fixture(tmp_path: Path, *, position: int = 1000) -> tuple[Path, Path]:
+    summary_dir = tmp_path / "summary"
+    summary_dir.mkdir(parents=True)
+    (summary_dir / "mito_heteroplasmy_candidates.tsv").write_text(
+        "position\tref_base\talt_base\tdepth\talt_allele_fraction\theteroplasmy_fraction\n"
+        f"{position}\tA\tC\t100\t0.25\t0.25\n",
+        encoding="ascii",
+    )
+    fasta = tmp_path / "mt.fa"
+    fasta.write_text(">MT\n" + "A" * 2000 + "\n", encoding="ascii")
+    pysam.faidx(str(fasta))
+    return summary_dir, fasta
+
+
+def run_consequence(tmp_path: Path, summary_dir: Path, fasta: Path, **kwargs: str) -> dict[str, Path | str]:
+    return run_variant_consequence(
+        summary_dir=summary_dir,
+        figure_dir=tmp_path / "consequence-figures",
+        report_dir=tmp_path / "consequence-reports",
+        sample_id="STATE-TEST",
+        mt_contig="MT",
+        mt_length=2000,
+        ref_fasta=fasta,
+        **kwargs,
+    )
 
 
 def test_feature_annotation_inclusive_boundaries_and_control_region_precedence() -> None:
@@ -183,3 +218,103 @@ def test_nonzero_or_unknown_cds_phase_is_not_guessed(phase: str) -> None:
         "NA",
         "NA",
     )
+
+
+def test_consequence_propagates_nonhuman_feature_not_applicable(tmp_path: Path) -> None:
+    summary_dir, fasta = write_consequence_fixture(tmp_path)
+    feature_outputs = run_feature_annotation(
+        summary_dir=summary_dir,
+        figure_dir=tmp_path / "feature-figures",
+        report_dir=tmp_path / "feature-reports",
+        sample_id="MOUSE",
+        species="mouse",
+        build="custom",
+        mt_contig="MT",
+        mt_length=2000,
+        human_mt_gtf=None,
+    )
+
+    outputs = run_consequence(tmp_path, summary_dir, fasta)
+    metrics = metric_map(Path(outputs["summary_path"]))
+    annotations = pd.read_csv(outputs["annot_path"], sep="\t")
+
+    assert feature_outputs["status"] == "not_applicable"
+    assert outputs["status"] == "not_applicable"
+    assert metrics["status"] == "not_applicable"
+    assert metrics["reason_code"] == "non_human_sample"
+    assert list(annotations.columns) == ANNOTATION_COLUMNS
+    assert annotations.empty
+
+
+def test_consequence_propagates_missing_gtf_not_configured(tmp_path: Path) -> None:
+    summary_dir, fasta = write_consequence_fixture(tmp_path)
+    feature_outputs = run_feature_annotation(
+        summary_dir=summary_dir,
+        figure_dir=tmp_path / "feature-figures",
+        report_dir=tmp_path / "feature-reports",
+        sample_id="HUMAN",
+        species="human",
+        build="hg38",
+        mt_contig="MT",
+        mt_length=2000,
+        human_mt_gtf=tmp_path / "missing.gtf",
+    )
+
+    outputs = run_consequence(tmp_path, summary_dir, fasta)
+    metrics = metric_map(Path(outputs["summary_path"]))
+
+    assert feature_outputs["status"] == "not_configured"
+    assert outputs["status"] == "not_configured"
+    assert metrics["status"] == "not_configured"
+    assert metrics["reason_code"] == "human_mt_gtf_not_configured"
+
+
+def test_consequence_propagates_explicit_feature_not_evaluable(tmp_path: Path) -> None:
+    summary_dir, fasta = write_consequence_fixture(tmp_path)
+
+    outputs = run_consequence(
+        tmp_path,
+        summary_dir,
+        fasta,
+        feature_annotation_status="not_evaluable",
+        feature_annotation_reason_code="feature_catalog_unusable",
+    )
+    metrics = metric_map(Path(outputs["summary_path"]))
+
+    assert outputs["status"] == "not_evaluable"
+    assert metrics["status"] == "not_evaluable"
+    assert metrics["reason_code"] == "feature_catalog_unusable"
+
+
+def test_successful_feature_annotation_preserves_genuine_intergenic_result(tmp_path: Path) -> None:
+    summary_dir, fasta = write_consequence_fixture(tmp_path, position=1000)
+    gtf = tmp_path / "mt.gtf"
+    gtf.write_text(
+        'MT\ttest\tgene\t1200\t1202\t.\t+\t.\tgene_id "G"; gene_name "G"; '
+        'gene_biotype "protein_coding";\n'
+        'MT\ttest\tCDS\t1200\t1202\t.\t+\t0\tgene_id "G"; gene_name "G"; '
+        'gene_biotype "protein_coding";\n',
+        encoding="ascii",
+    )
+    feature_outputs = run_feature_annotation(
+        summary_dir=summary_dir,
+        figure_dir=tmp_path / "feature-figures",
+        report_dir=tmp_path / "feature-reports",
+        sample_id="HUMAN",
+        species="human",
+        build="hg38",
+        mt_contig="MT",
+        mt_length=2000,
+        human_mt_gtf=gtf,
+    )
+
+    outputs = run_consequence(tmp_path, summary_dir, fasta)
+    annotations = pd.read_csv(outputs["annot_path"], sep="\t", keep_default_na=False)
+    metrics = metric_map(Path(outputs["summary_path"]))
+
+    assert feature_outputs["status"] == "ok"
+    assert outputs["status"] == "ok"
+    assert metrics["status"] == "ok"
+    assert annotations[["position", "feature_class", "feature_label", "consequence_class"]].values.tolist() == [
+        [1000, "intergenic", "intergenic", "intergenic_variant"]
+    ]

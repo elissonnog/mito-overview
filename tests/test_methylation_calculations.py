@@ -8,6 +8,7 @@ import pytest
 from mito_overview.steps.mito_methylation_exploratory import (
     ROW_COLUMNS,
     build_proxy,
+    load_bedmethyl_table,
     np_proxy_comparison_summary,
     run_step,
     track_summary,
@@ -227,17 +228,38 @@ def test_np_proxy_summary_zero_variance_correlation_is_not_evaluable() -> None:
     assert observed["np_proxy_correlation_reason_code"] == "undefined_zero_variance"
 
 
-def write_bedmethyl(path: Path, *, start: int, coverage: int, percent: float, modified: int, canonical: int) -> None:
+def write_bedmethyl(
+    path: Path,
+    *,
+    start: int,
+    coverage: int,
+    percent: float,
+    modified: int,
+    canonical: int,
+    modification_code: str = "m",
+    strand: str = "+",
+) -> None:
     path.write_text(
-        f"MT\t{start}\t{start + 1}\t.\t0\t+\t{start}\t{start + 1}\t0,0,0\t"
+        f"MT\t{start}\t{start + 1}\t{modification_code}\t0\t{strand}\t"
+        f"{start}\t{start + 1}\t0,0,0\t"
         f"{coverage}\t{percent}\t{modified}\t{canonical}\n",
         encoding="ascii",
     )
 
 
-def bedmethyl_line(*, start: int, coverage: int, percent: float, modified: int, canonical: int) -> str:
+def bedmethyl_line(
+    *,
+    start: int,
+    coverage: int,
+    percent: float,
+    modified: int,
+    canonical: int,
+    modification_code: str = "m",
+    strand: str = "+",
+) -> str:
     return (
-        f"MT\t{start}\t{start + 1}\t.\t0\t+\t{start}\t{start + 1}\t0,0,0\t"
+        f"MT\t{start}\t{start + 1}\t{modification_code}\t0\t{strand}\t"
+        f"{start}\t{start + 1}\t0,0,0\t"
         f"{coverage}\t{percent}\t{modified}\t{canonical}\n"
     )
 
@@ -273,6 +295,8 @@ def test_duplicate_track_coordinates_are_pooled_once_by_counts(tmp_path: Path) -
     np_rows = combined[combined["track"] == "NP_real_all_reads"]
 
     assert len(np_rows) == 1
+    assert np_rows.iloc[0]["modification_code"] == "m"
+    assert np_rows.iloc[0]["strand"] == "+"
     assert np_rows.iloc[0]["modified_count"] == 5
     assert np_rows.iloc[0]["canonical_count"] == 15
     assert np_rows.iloc[0]["percent_modified"] == 25.0
@@ -283,6 +307,110 @@ def test_duplicate_track_coordinates_are_pooled_once_by_counts(tmp_path: Path) -
     assert metrics["shared_np_proxy_positions"] == "1"
     assert metrics["evaluable_np_proxy_positions"] == "1"
     assert metrics["np_proxy_mean_abs_difference"] == "15.0"
+
+
+def test_mixed_modification_identity_and_strand_are_never_silently_pooled(tmp_path: Path) -> None:
+    path = tmp_path / "mixed.bed"
+    path.write_text(
+        bedmethyl_line(
+            start=0,
+            coverage=10,
+            percent=20.0,
+            modified=2,
+            canonical=8,
+            modification_code="m",
+            strand="+",
+        )
+        + bedmethyl_line(
+            start=0,
+            coverage=10,
+            percent=30.0,
+            modified=3,
+            canonical=7,
+            modification_code="h",
+            strand="+",
+        )
+        + bedmethyl_line(
+            start=0,
+            coverage=10,
+            percent=40.0,
+            modified=4,
+            canonical=6,
+            modification_code="m",
+            strand="-",
+        ),
+        encoding="ascii",
+    )
+
+    observed = load_bedmethyl_table(path, "NP_real_all_reads")
+
+    assert observed[
+        ["position", "modification_code", "strand", "modified_count", "canonical_count"]
+    ].values.tolist() == [
+        [1, "m", "+", 2.0, 8.0],
+        [1, "h", "+", 3.0, 7.0],
+        [1, "m", "-", 4.0, 6.0],
+    ]
+
+
+def test_invalid_bedmethyl_strand_is_rejected(tmp_path: Path) -> None:
+    path = tmp_path / "invalid-strand.bed"
+    path.write_text(
+        bedmethyl_line(
+            start=0,
+            coverage=10,
+            percent=20.0,
+            modified=2,
+            canonical=8,
+            strand="?",
+        ),
+        encoding="ascii",
+    )
+
+    with pytest.raises(ValueError, match="Unsupported bedMethyl strand"):
+        load_bedmethyl_table(path, "NP_real_all_reads")
+
+
+def test_np_proxy_comparison_requires_matching_modification_identity(tmp_path: Path) -> None:
+    np_path = tmp_path / "np.bed"
+    hp1_path = tmp_path / "hp1.bed"
+    write_bedmethyl(
+        np_path,
+        start=0,
+        coverage=10,
+        percent=20.0,
+        modified=2,
+        canonical=8,
+        modification_code="m",
+    )
+    write_bedmethyl(
+        hp1_path,
+        start=0,
+        coverage=10,
+        percent=30.0,
+        modified=3,
+        canonical=7,
+        modification_code="h",
+    )
+
+    outputs = run_step(
+        summary_dir=tmp_path / "summary",
+        figure_dir=tmp_path / "figures",
+        report_dir=tmp_path / "reports",
+        sample_id="IDENTITY-MISMATCH",
+        mt_contig="MT",
+        mito_mods_np=np_path,
+        mito_mods_hp1=hp1_path,
+        mito_mods_hp2=tmp_path / "missing-hp2.bed",
+        mito_mods_ungrouped=tmp_path / "missing-ungrouped.bed",
+    )
+
+    comparison = pd.read_csv(outputs["cmp_path"], sep="\t")
+    metrics = metric_map(Path(outputs["cmp_summary_path"]))
+
+    assert comparison.empty
+    assert metrics["status"] == "not_evaluable"
+    assert metrics["reason_code"] == "no_shared_positions"
 
 
 def test_run_step_serializes_undefined_comparison_as_na(tmp_path: Path) -> None:

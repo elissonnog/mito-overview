@@ -929,7 +929,9 @@ def _run_identity_qc(config: PipelineConfig, paths: RunPaths, strict_files: bool
 
 def _run_variant_consequence(config: PipelineConfig, paths: RunPaths, strict_files: bool) -> StepResult:
     del strict_files
-    from .steps.mito_variant_consequence import run_step
+    from .steps.mito_variant_consequence import resolve_feature_annotation_state, run_step
+
+    feature_status, feature_reason = resolve_feature_annotation_state(paths.summary_dir)
 
     outputs = run_step(
         summary_dir=paths.summary_dir,
@@ -940,6 +942,8 @@ def _run_variant_consequence(config: PipelineConfig, paths: RunPaths, strict_fil
         mt_length=config.mt_length,
         ref_fasta=config.ref_fasta,
         np_clinvar_vcf=paths.np_clinvar_vcf,
+        feature_annotation_status=feature_status,
+        feature_annotation_reason_code=feature_reason,
     )
     status = str(outputs.get("status", "ok"))
     (paths.log_dir / f"variant_consequence.{status}").write_text(status + "\n", encoding="utf-8")
