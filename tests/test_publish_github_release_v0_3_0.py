@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any, Sequence
@@ -12,6 +13,7 @@ import pytest
 
 REPO_ROOT = Path(__file__).parents[1]
 SCRIPT = REPO_ROOT / "scripts" / "publish_github_release_v0.3.0.py"
+FRESH_TAG_RUNNER = REPO_ROOT / "scripts" / "run_fresh_public_tag_validation_v0.3.0.sh"
 SPEC = importlib.util.spec_from_file_location("publish_github_release_v030", SCRIPT)
 assert SPEC is not None and SPEC.loader is not None
 publication = importlib.util.module_from_spec(SPEC)
@@ -24,6 +26,22 @@ TAG_OBJECT_SHA = "a" * 40
 OTHER_TAG_OBJECT_SHA = "b" * 40
 REPOSITORY = "elissonnog/mito-overview"
 RUN_ID = 28819232067
+FRESH_TAG_RUNNER_CASE_CONTRACT = (
+    "public_https_tag_clone",
+    "annotated_tag_identity",
+    "locked_environment",
+    "wheel_sdist_build",
+    "installed_cli",
+    "unit_tests",
+    "smoke_longread",
+    "smoke_shortread",
+    "smoke_longread_nomethyl",
+    "smoke_standalone",
+    "example_builders",
+    "clean_tag_checkout",
+    "release_asset_semantic_identity",
+    "trusted_release_assets",
+)
 
 
 def _sha256(payload: bytes) -> str:
@@ -69,7 +87,7 @@ def _write_tag_validation_evidence(root: Path, asset_root: Path) -> Path:
         "case_id\tverdict\tdetail\n"
         + "".join(
             f"{case_id}\tPASS\tverified fixture evidence\n"
-            for case_id in sorted(publication.REQUIRED_TAG_VALIDATION_CASES)
+            for case_id in sorted(FRESH_TAG_RUNNER_CASE_CONTRACT)
         ),
         encoding="utf-8",
     )
@@ -169,7 +187,7 @@ def _write_tag_validation_evidence(root: Path, asset_root: Path) -> Path:
                 "clean_worktree": True,
                 "verdict": "PASS",
                 "verified": True,
-                "case_count": len(publication.REQUIRED_TAG_VALIDATION_CASES),
+                "case_count": len(FRESH_TAG_RUNNER_CASE_CONTRACT),
                 "cases_path": "cases.tsv",
                 "environment_path": "environment.txt",
                 "tag_identity_path": "tag_identity.json",
@@ -596,6 +614,63 @@ def test_missing_or_tampered_fresh_tag_evidence_blocks_before_github_mutation(
     with pytest.raises(publication.PublicationError, match="receipt is required"):
         publication.publish_github_release(config, runner)
     assert runner.calls == []
+
+
+def test_publisher_case_contract_matches_fresh_tag_runner_inventory() -> None:
+    assert len(FRESH_TAG_RUNNER_CASE_CONTRACT) == 14
+    assert len(set(FRESH_TAG_RUNNER_CASE_CONTRACT)) == 14
+    runner_cases = tuple(
+        re.findall(
+            r"^run_case ([A-Za-z0-9_]+) ",
+            FRESH_TAG_RUNNER.read_text(encoding="utf-8"),
+            flags=re.MULTILINE,
+        )
+    )
+    assert runner_cases == FRESH_TAG_RUNNER_CASE_CONTRACT
+    assert publication.REQUIRED_TAG_VALIDATION_CASES == frozenset(
+        FRESH_TAG_RUNNER_CASE_CONTRACT
+    )
+
+
+@pytest.mark.parametrize("phase", ["create-draft", "upload-verify", "publish"])
+@pytest.mark.parametrize("inventory_problem", ["missing", "extra"])
+def test_receipt_consuming_phases_reject_fresh_tag_case_inventory_drift(
+    tmp_path: Path,
+    phase: str,
+    inventory_problem: str,
+) -> None:
+    config = _config(tmp_path / "publication", phase)
+    receipt = config.tag_validation_receipt
+    assert receipt is not None
+    case_ids = list(FRESH_TAG_RUNNER_CASE_CONTRACT)
+    if inventory_problem == "missing":
+        case_ids.remove("release_asset_semantic_identity")
+    else:
+        case_ids.append("unexpected_release_case")
+
+    (receipt.parent / "cases.tsv").write_text(
+        "case_id\tverdict\tdetail\n"
+        + "".join(
+            f"{case_id}\tPASS\tverified fixture evidence\n"
+            for case_id in sorted(case_ids)
+        ),
+        encoding="utf-8",
+    )
+    payload = json.loads(receipt.read_text(encoding="utf-8"))
+    payload["case_count"] = len(case_ids)
+    receipt.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    _reseal_tag_validation_evidence(receipt)
+    runner = FakeGhRunner()
+
+    with pytest.raises(
+        publication.PublicationError,
+        match="validation cases are incomplete or non-PASS",
+    ):
+        publication.publish_github_release(config, runner)
+    assert runner.calls == []
+    assert runner.mutations == []
 
 
 def test_remote_tag_object_must_match_fresh_tag_evidence_before_mutation(

@@ -54,6 +54,7 @@ REQUIRED_TAG_VALIDATION_CASES = frozenset(
         "smoke_longread_nomethyl",
         "smoke_standalone",
         "example_builders",
+        "release_asset_semantic_identity",
         "trusted_release_assets",
     }
 )
