@@ -22,6 +22,9 @@ CONDITIONAL_UNIVERSE = "filtered_reads_spanning_both_sites"
 COSEGREGATION_METHOD = "alt_read_set_jaccard_conditioned_on_shared_spanning_reads"
 CANONICAL_JACCARD_COLUMN = "alt_jaccard_within_shared_spanning_reads"
 LEGACY_JACCARD_COLUMN = "jaccard_alt"
+JACCARD_STATUS_COLUMN = "alt_jaccard_status"
+FRACTION_I_STATUS_COLUMN = "fraction_alt_i_also_alt_j_status"
+FRACTION_J_STATUS_COLUMN = "fraction_alt_j_also_alt_i_status"
 SELECTED_SITE_COLUMNS = [
     "site_label",
     "position",
@@ -45,8 +48,11 @@ PAIRWISE_COLUMNS = [
     "co_alt_fraction_shared",
     CANONICAL_JACCARD_COLUMN,
     LEGACY_JACCARD_COLUMN,
+    JACCARD_STATUS_COLUMN,
     "fraction_alt_i_also_alt_j",
+    FRACTION_I_STATUS_COLUMN,
     "fraction_alt_j_also_alt_i",
+    FRACTION_J_STATUS_COLUMN,
 ]
 READ_BURDEN_COLUMNS = ["alt_selected_sites", "read_count"]
 
@@ -212,9 +218,19 @@ def _summarise_pairwise(
             co_alt_reads = len(shared_reads & alt_i & alt_j)
             union_alt = alt_i_shared + alt_j_shared - co_alt_reads
             co_alt_fraction_shared = round((co_alt_reads / shared_count) if shared_count else 0.0, 6)
-            conditional_alt_jaccard = round((co_alt_reads / union_alt) if union_alt else 0.0, 6)
-            fraction_alt_i_also_alt_j = round((co_alt_reads / alt_i_shared) if alt_i_shared else 0.0, 6)
-            fraction_alt_j_also_alt_i = round((co_alt_reads / alt_j_shared) if alt_j_shared else 0.0, 6)
+            conditional_alt_jaccard = (
+                round(co_alt_reads / union_alt, 6) if union_alt else float("nan")
+            )
+            fraction_alt_i_also_alt_j = (
+                round(co_alt_reads / alt_i_shared, 6)
+                if alt_i_shared
+                else float("nan")
+            )
+            fraction_alt_j_also_alt_i = (
+                round(co_alt_reads / alt_j_shared, 6)
+                if alt_j_shared
+                else float("nan")
+            )
             rows.append(
                 {
                     "site_i": site_i,
@@ -227,8 +243,17 @@ def _summarise_pairwise(
                     "co_alt_fraction_shared": co_alt_fraction_shared,
                     CANONICAL_JACCARD_COLUMN: conditional_alt_jaccard,
                     LEGACY_JACCARD_COLUMN: conditional_alt_jaccard,
+                    JACCARD_STATUS_COLUMN: (
+                        "ok" if union_alt else "not_evaluable_zero_alt_union"
+                    ),
                     "fraction_alt_i_also_alt_j": fraction_alt_i_also_alt_j,
+                    FRACTION_I_STATUS_COLUMN: (
+                        "ok" if alt_i_shared else "not_evaluable_zero_alt_i_denominator"
+                    ),
                     "fraction_alt_j_also_alt_i": fraction_alt_j_also_alt_i,
+                    FRACTION_J_STATUS_COLUMN: (
+                        "ok" if alt_j_shared else "not_evaluable_zero_alt_j_denominator"
+                    ),
                 }
             )
             heatmap.loc[site_i, site_j] = conditional_alt_jaccard
@@ -274,6 +299,7 @@ def _evaluation_status(
     *,
     selected_site_count: int,
     valid_pair_count: int,
+    evaluable_jaccard_pair_count: int,
     upstream_message: str | None,
 ) -> tuple[str, str, str, str | None]:
     if upstream_message:
@@ -296,6 +322,14 @@ def _evaluation_status(
             "no selected-site pair met the shared-read requirement",
             "no_pairs_meet_shared_read_threshold",
             "Pairwise statistics were not reported because no site pair met the configured shared-read floor.",
+        )
+    if evaluable_jaccard_pair_count == 0:
+        return (
+            "not_evaluable",
+            "shared-spanning read pairs lacked alternate support for a defined Jaccard denominator",
+            "no_pairs_with_alt_support",
+            "Pairs met the shared-read floor, but no pair had alternate support at either site; "
+            "the alt-read Jaccard and strongest pair are therefore undefined.",
         )
     return (
         "ok",
@@ -418,10 +452,13 @@ def run_step(
         flush=True,
     )
 
+    evaluable_pairwise_df = pairwise_df[
+        pd.to_numeric(pairwise_df[CANONICAL_JACCARD_COLUMN], errors="coerce").notna()
+    ]
     strongest_pair = "NA"
     strongest_pair_conditional_alt_jaccard: float | str = "NA"
-    if not pairwise_df.empty:
-        strongest_row = pairwise_df.sort_values(
+    if not evaluable_pairwise_df.empty:
+        strongest_row = evaluable_pairwise_df.sort_values(
             [CANONICAL_JACCARD_COLUMN, "co_alt_reads", "shared_reads", "site_i", "site_j"],
             ascending=[False, False, False, True, True],
         ).iloc[0]
@@ -431,6 +468,7 @@ def run_step(
     status, status_detail, reason_code, evaluation_message = _evaluation_status(
         selected_site_count=len(selected_df),
         valid_pair_count=len(pairwise_df),
+        evaluable_jaccard_pair_count=len(evaluable_pairwise_df),
         upstream_message=status_message,
     )
     summary_rows = [
@@ -447,6 +485,14 @@ def run_step(
         {
             "metric": "pairwise_edges_meeting_shared_threshold",
             "value": len(pairwise_df),
+        },
+        {
+            "metric": "pairwise_edges_with_evaluable_alt_jaccard",
+            "value": len(evaluable_pairwise_df),
+        },
+        {
+            "metric": "pairwise_edges_with_undefined_alt_jaccard",
+            "value": len(pairwise_df) - len(evaluable_pairwise_df),
         },
         {
             "metric": "reads_with_any_selected_site_coverage",
@@ -476,7 +522,7 @@ def run_step(
     summary_path = summary_dir / "mito_cosegregation_summary.tsv"
     report_path = report_dir / "06_mito_cosegregation.html"
     selected_df.to_csv(selected_path, sep="\t", index=False)
-    pairwise_df.to_csv(pairwise_path, sep="\t", index=False)
+    pairwise_df.to_csv(pairwise_path, sep="\t", index=False, na_rep="NA")
     read_burden_df.to_csv(read_burden_path, sep="\t", index=False)
     summary_df.to_csv(summary_path, sep="\t", index=False)
 
@@ -485,7 +531,8 @@ def run_step(
     metrics_html = "".join(
         [
             metric_card("Selected sites", len(selected_df)),
-            metric_card("Valid pairs", len(pairwise_df)),
+            metric_card("Pairs above shared-read floor", len(pairwise_df)),
+            metric_card("Jaccard-evaluable pairs", len(evaluable_pairwise_df)),
             metric_card("Reads represented", reads_with_any_coverage),
             metric_card(
                 "Strongest alt Jaccard within shared-spanning reads",

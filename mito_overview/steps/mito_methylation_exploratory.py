@@ -44,6 +44,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--report-dir", required=True)
     parser.add_argument("--sample-id", required=True)
     parser.add_argument("--mt-contig", required=True)
+    parser.add_argument("--mt-length", type=int)
     parser.add_argument("--mito-mods-np", required=True)
     parser.add_argument("--mito-mods-hp1", required=True)
     parser.add_argument("--mito-mods-hp2", required=True)
@@ -161,7 +162,13 @@ def track_input_present(path: str | Path | None) -> int:
     return int(path is not None and Path(path).is_file())
 
 
-def load_bedmethyl_table(path: str | Path | None, track_label: str) -> pd.DataFrame:
+def load_bedmethyl_table(
+    path: str | Path | None,
+    track_label: str,
+    *,
+    mt_contig: str | None = None,
+    mt_length: int | None = None,
+) -> pd.DataFrame:
     """Load a mitochondrial bedmethyl subset into a normalized table."""
 
     if not path:
@@ -182,7 +189,8 @@ def load_bedmethyl_table(path: str | Path | None, track_label: str) -> pd.DataFr
                     f"expected at least 13 tab-separated columns, found {len(parts)}"
                 )
             try:
-                position = int(parts[1]) + 1
+                start = int(parts[1])
+                end = int(parts[2])
                 valid_coverage = float(parts[9])
                 percent_modified = float(parts[10])
                 modified_count = float(parts[11])
@@ -192,6 +200,22 @@ def load_bedmethyl_table(path: str | Path | None, track_label: str) -> pd.DataFr
                 raise ValueError(
                     f"Malformed numeric value in bedMethyl source {src} at line {line_number}: {exc}"
                 ) from exc
+            if mt_contig is not None and parts[0] != mt_contig:
+                raise ValueError(
+                    f"Unexpected contig in bedMethyl source {src} at line {line_number}: "
+                    f"{parts[0]!r} != {mt_contig!r}"
+                )
+            if start < 0 or end != start + 1:
+                raise ValueError(
+                    f"Invalid single-base BED interval in bedMethyl source {src} at line "
+                    f"{line_number}: start={start}, end={end}"
+                )
+            if mt_length is not None and end > mt_length:
+                raise ValueError(
+                    f"Out-of-bounds interval in bedMethyl source {src} at line {line_number}: "
+                    f"end={end}, mitochondrial_length={mt_length}"
+                )
+            position = start + 1
             rows.append(
                 {
                     "track": track_label,
@@ -442,6 +466,7 @@ def run_step(
     report_dir: str | Path,
     sample_id: str,
     mt_contig: str,
+    mt_length: int | None = None,
     mito_mods_np: str | Path | None,
     mito_mods_hp1: str | Path,
     mito_mods_hp2: str | Path,
@@ -473,7 +498,12 @@ def run_step(
         raise ValueError("track_inputs_configured must define exactly the four methylation tracks")
     frames: list[pd.DataFrame] = []
     for track_label, path in track_paths.items():
-        frame = load_bedmethyl_table(path, track_label)
+        frame = load_bedmethyl_table(
+            path,
+            track_label,
+            mt_contig=mt_contig,
+            mt_length=mt_length,
+        )
         frames.append(frame)
         print(
             f"[methylation] loaded track={track_label} rows={len(frame)} "
@@ -687,6 +717,7 @@ def main() -> None:
         report_dir=args.report_dir,
         sample_id=args.sample_id,
         mt_contig=args.mt_contig,
+        mt_length=args.mt_length,
         mito_mods_np=args.mito_mods_np,
         mito_mods_hp1=args.mito_mods_hp1,
         mito_mods_hp2=args.mito_mods_hp2,

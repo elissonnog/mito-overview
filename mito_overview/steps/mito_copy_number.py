@@ -158,9 +158,13 @@ def run_step(
         status = "not_evaluable"
         reason_code = "no_valid_nuclear_windows"
         ratio = None
-    elif nuclear_mean is None or nuclear_mean <= 0:
+    elif nuclear_mean is None:
         status = "not_evaluable"
         reason_code = "no_valid_nuclear_windows"
+        ratio = None
+    elif nuclear_mean <= 0:
+        status = "not_evaluable"
+        reason_code = "zero_nuclear_depth_denominator"
         ratio = None
     else:
         status = "ok"

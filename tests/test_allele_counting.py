@@ -292,6 +292,39 @@ def test_zero_callable_depth_has_undefined_fraction_not_observed_zero(tmp_path: 
     assert summary["max_alt_allele_fraction"] == "NA"
 
 
+def test_no_position_meeting_minimum_depth_is_not_a_successful_zero_candidate_run(
+    tmp_path: Path,
+) -> None:
+    ref = write_fasta(tmp_path / "shallow.fa", {"MT": "AAAA"})
+    bam = write_alignment(
+        tmp_path / "shallow.bam",
+        {"MT": 4},
+        [ReadSpec("shallow-reference", "MT", 0, "AAAA")],
+    )
+    outputs = run_step(
+        bam=bam,
+        ref_fasta=ref,
+        summary_dir=tmp_path / "summary",
+        figure_dir=tmp_path / "figures",
+        report_dir=tmp_path / "report",
+        sample_id="SHALLOW",
+        mt_contig="MT",
+        mt_length=4,
+        min_depth=100,
+        min_vaf=0.02,
+    )
+
+    candidates = pd.read_csv(outputs["candidate_path"], sep="\t")
+    summary = metric_map(outputs["summary_path"])
+
+    assert outputs["status"] == "not_evaluable"
+    assert candidates.empty
+    assert summary["status"] == "not_evaluable"
+    assert summary["reason_code"] == "no_positions_meet_min_callable_depth"
+    assert summary["callable_positions"] == "4"
+    assert summary["candidate_evaluable_positions"] == "0"
+
+
 def test_equal_candidate_metrics_are_ordered_by_position(tmp_path: Path) -> None:
     ref = write_fasta(tmp_path / "tie.fa", {"MT": "AAAA"})
     bam = write_alignment(

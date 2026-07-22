@@ -43,6 +43,8 @@ AF_{alt}=\frac{n_{alt}}{D_{callable}}
 
 The public defaults are base quality 13, mapping quality 20, mean read quality 10, no pileup depth cap, excluded SAM flag mask 3844, and overlap suppression enabled. These are reporting defaults rather than clinically calibrated thresholds. `alt_allele_fraction` is canonical; `heteroplasmy_fraction` is retained as a deprecated 0.x compatibility alias.
 
+Candidate absence is interpretable only when at least one position reaches `MIN_CALLABLE_DEPTH`. If canonical observations exist but no position reaches that threshold, the layer emits `status=not_evaluable` and `reason_code=no_positions_meet_min_callable_depth`. Same-read co-occurrence ratios are also undefined when their set denominator is zero; those values are serialized as `NA` with per-statistic status fields, rather than as numerical zero.
+
 Deterministic tests verify:
 
 - more than 8,000 accepted observations without a hidden truncation;
@@ -67,6 +69,8 @@ The minimal required configuration is `WORK_ROOT`, `RUN_NAME`, `SAMPLE_ID`, `REF
 
 Normal execution checks the encoded alignment container, FASTA index, format-appropriate BAM/CRAM index, mitochondrial contig, configured or inferred length, and CRAM reference accessibility. Deterministic tests cover minimal BAM and CRAM configurations; explicit mode/suffix conflicts; renamed CRAM, renamed BAM, nonstandard-suffix mismatches, and unrecognized containers; sidecar precedence; legacy discovery; absent optional inputs; missing indexes; missing contigs; length mismatch; missing CRAM reference; and attempts to omit the validation step. Primary tests: `tests/test_config_and_inputs.py` and `tests/smoke_standalone_minimal.sh`.
 
+Exploratory bedMethyl sidecars are accepted only when each parsed record uses the configured mitochondrial contig and a nonnegative, single-base, zero-based interval (`end = start + 1`) contained within `MT_LENGTH`. Plain-text and gzip compression are detected from file content. Wrong-contig, non-single-base, negative, and out-of-bounds rows fail with source and line diagnostics rather than entering methylation summaries.
+
 ### 4. Within-sample mt:nuclear depth ratio
 
 The `mito_copy_number` module reports only the within-sample mt:nuclear depth ratio:
@@ -75,7 +79,7 @@ The `mito_copy_number` module reports only the within-sample mt:nuclear depth ra
 R_{mt:nuclear}=\frac{\overline{D}_{mt}}{\overline{D}_{nuclear}}
 \]
 
-The ratio is not multiplied by two and is not described as copies per diploid cell. Requested and valid nuclear-window counts are recorded. Missing or zero nuclear depth yields an empty ratio with `status=not_evaluable` and `reason_code=no_valid_nuclear_windows`; targeted-mt assays yield `not_applicable`.
+The ratio is not multiplied by two and is not described as copies per diploid cell. Requested and valid nuclear-window counts are recorded. An absent valid nuclear-window set yields an empty ratio with `status=not_evaluable` and `reason_code=no_valid_nuclear_windows`; valid windows with an exactly zero mean denominator yield `status=not_evaluable` and `reason_code=zero_nuclear_depth_denominator`. Targeted-mt assays yield `not_applicable`.
 
 The `TOY-WGS-001` known-answer test verifies mitochondrial depth 100, nuclear depth 10, and exact ratio 10.0. Negative tests verify missing mitochondrial evidence, missing and zero nuclear denominators, and targeted-mt gating. Primary tests: `tests/test_copy_number.py`.
 

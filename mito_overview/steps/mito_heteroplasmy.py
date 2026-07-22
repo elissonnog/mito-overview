@@ -198,6 +198,12 @@ def run_step(
 
     callable_positions = int((all_df["callable_depth"] > 0).sum())
     uncallable_positions = int(len(all_df) - callable_positions)
+    candidate_evaluable_positions = int(
+        (
+            (all_df["callable_depth"] > 0)
+            & (all_df["callable_depth"] >= min_depth)
+        ).sum()
+    )
     observed_fractions = pd.to_numeric(
         all_df["alt_allele_fraction"], errors="coerce"
     ).dropna()
@@ -206,14 +212,25 @@ def run_step(
         if not observed_fractions.empty
         else float("nan")
     )
-    module_status = "ok" if callable_positions else "not_evaluable"
-    module_reason = "" if callable_positions else "no_callable_positions"
+    if callable_positions == 0:
+        module_status = "not_evaluable"
+        module_reason = "no_callable_positions"
+    elif candidate_evaluable_positions == 0:
+        module_status = "not_evaluable"
+        module_reason = "no_positions_meet_min_callable_depth"
+    else:
+        module_status = "ok"
+        module_reason = ""
     summary_rows: list[dict[str, object]] = [
         {"metric": "status", "value": module_status},
         {"metric": "reason_code", "value": module_reason},
         {"metric": "positions_tested", "value": len(all_df)},
         {"metric": "callable_positions", "value": callable_positions},
         {"metric": "uncallable_positions", "value": uncallable_positions},
+        {
+            "metric": "candidate_evaluable_positions",
+            "value": candidate_evaluable_positions,
+        },
         {"metric": "candidate_sites", "value": len(cand_df)},
         {"metric": "min_callable_depth", "value": min_depth},
         {"metric": "min_alt_allele_fraction", "value": min_vaf},
@@ -261,6 +278,7 @@ def run_step(
     metrics_html = "".join(
         [
             metric_card("Candidate sites", len(cand_df)),
+            metric_card("Candidate-evaluable positions", candidate_evaluable_positions),
             metric_card(
                 "Maximum alt fraction",
                 "NA" if pd.isna(max_alt_fraction) else round(max_alt_fraction, 4),
@@ -275,6 +293,12 @@ def run_step(
         "confirmed heteroplasmies or clinical variant calls.</p>"
         f"<div class='metrics-grid'>{metrics_html}</div>"
     )
+    if module_status != "ok":
+        intro_html += (
+            "<p class='small-note'><strong>Evaluation status:</strong> "
+            f"{module_status} ({module_reason}). An empty candidate table under this status "
+            "does not establish an observed absence of alternate alleles above threshold.</p>"
+        )
     body_parts = [
         "<section><h2>Alternate-allele landscape</h2>"
         + figure_html(landscape_figure, "Observed alternate-allele fraction across mitochondrial positions")

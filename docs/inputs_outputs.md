@@ -11,7 +11,7 @@ This document is the v0.3.0 schema index for the public `mito-overview` workflow
 | mitochondrial contig length | inferred | bounds per-base summaries and report labels | inferred from FASTA index; an explicitly supplied conflicting value fails preflight |
 | mitochondrial gene annotation | optional | feature/gene/consequence summaries | public package includes a human mtDNA annotation resource; absence produces an explicit `not_configured` feature-annotation page |
 | run configuration env file | yes | sample ID, paths, canonical thresholds, species/build, read mode, assay type | consumed by `scripts/run_mito_pipeline.sh` and package CLI |
-| bedmethyl-derived mtDNA input | optional | exploratory methylation page | explicit sidecars may be plain text or gzip (detected from file content); malformed data rows fail with source and line diagnostics; absent inputs produce status-only output |
+| bedmethyl-derived mtDNA input | optional | exploratory methylation page | explicit sidecars may be plain text or gzip (detected from file content); rows must use the configured mtDNA contig and single-base zero-based intervals within `MT_LENGTH`; malformed data fail with source and line diagnostics; absent inputs produce status-only output |
 | phased/no-phased sidecar summaries | optional | identity QC | absent inputs produce status-only output or not-applicable page by mode |
 | ClinVar or annotation VCF | optional | variant consequence overlay | absent inputs leave ClinVar fields as `NA` |
 | Phy-Mer-style or mvTool-style inputs | optional | human-only enrichment interfaces | public repository validates report wiring with fixtures unless live external use is configured |
@@ -32,11 +32,11 @@ Whole-genome interpretation is enabled only when the FASTA index and alignment s
 | Page | Step | Principal TSV outputs | Principal figures | Status behavior |
 | --- | --- | --- | --- | --- |
 | `01_mito_qc.html` | `mito_qc` | `mito_qc_summary.tsv`, `mito_depth_per_base.tsv`, `mito_read_stats.tsv` | `mito_depth_profile.png`, `mito_read_length_hist.png` | active in supported modes |
-| `02_mito_heteroplasmy.html` | `heteroplasmy` | `mito_heteroplasmy_summary.tsv`, `mito_heteroplasmy_candidates.tsv`, `mito_heteroplasmy_all_sites.tsv` | `mito_heteroplasmy_landscape.png`, candidate bar plot when available | active in supported modes |
+| `02_mito_heteroplasmy.html` | `heteroplasmy` | `mito_heteroplasmy_summary.tsv`, `mito_heteroplasmy_candidates.tsv`, `mito_heteroplasmy_all_sites.tsv` | `mito_heteroplasmy_landscape.png`, candidate bar plot when available | active when at least one site reaches the callable-depth threshold; otherwise `not_evaluable` |
 | `03_mito_deletions.html` | `deletions` | `mito_deletion_summary.tsv`, `mito_deletion_events.tsv`, `mito_deletion_clusters.tsv`, `mito_deletion_read_flags.tsv` | `mito_deletion_clusters.png` when clusters exist | not applicable in reduced short-read mode |
 | `04_mito_copy_number.html` | `copy_number` | `mito_copy_number_summary.tsv`, `mito_copy_number_windows.tsv` | `mito_copy_number_proxy.png` | not applicable for targeted-mt modes without nuclear context |
 | `05_mito_feature_annotation.html` | `feature_annotation` | `mito_feature_catalog.tsv`, `mito_feature_overlap_candidates.tsv`, `mito_feature_annotation_summary.tsv` | `mito_feature_annotation.png` | active when candidate/feature data are available |
-| `06_mito_cosegregation.html` | `cosegregation` | `mito_cosegregation_selected_sites.tsv`, `mito_cosegregation_pairwise.tsv`, `mito_cosegregation_summary.tsv` | `mito_cosegregation_heatmap.png` | pair statistics use reads callable at both sites; not applicable in reduced short-read mode |
+| `06_mito_cosegregation.html` | `cosegregation` | `mito_cosegregation_selected_sites.tsv`, `mito_cosegregation_pairwise.tsv`, `mito_cosegregation_summary.tsv` | `mito_cosegregation_heatmap.png` | pair statistics use reads callable at both sites; zero-denominator statistics are `NA` with reason-bearing status fields; not applicable in reduced short-read mode |
 | `07_mito_gene_summary.html` | `gene_summary` | `mito_gene_summary.tsv`, `mito_gene_summary_overview.tsv` when generated | `mito_gene_summary_overview.png` | active when upstream summaries exist |
 | `08_mito_numt_qc.html` | `numt_qc` | `mito_numt_qc_summary.tsv` | `mito_numt_qc_mapq_vs_span.png`, `mito_numt_qc_metric_bars.png` | not applicable in reduced short-read mode; targeted-mt long-read interpretation can be `not_evaluable` |
 | `09_mito_identity_qc.html` | `identity_qc` | identity/fingerprint summary tables | concordance plot when sidecars exist | conditional or not applicable |
@@ -61,6 +61,8 @@ Whole-genome interpretation is enabled only when the FASTA index and alignment s
 | NUMT-warning MAPQ threshold | MAPQ | low `<20`, very low `<5` | `mito_numt_qc_summary.tsv` |
 | NUMT-warning span threshold | aligned fraction | short span `<0.50` | `mito_numt_qc_summary.tsv` |
 | copy-number window size | bp | default `100,000` | `mito_copy_number_windows.tsv` |
+
+For the experimental mt:nuclear depth ratio, a missing set of valid nuclear windows is `not_evaluable/no_valid_nuclear_windows`; valid windows whose mean nuclear depth is exactly zero are `not_evaluable/zero_nuclear_depth_denominator`. Neither condition is serialized as a numerical ratio.
 
 The v0.3.0 filter profiles are lenient BaseQ/MAPQ/readQ `0/0/0`, default `13/20/10`, and strict `20/30/15`. Candidate thresholds remain fixed within each dataset's profile comparison.
 

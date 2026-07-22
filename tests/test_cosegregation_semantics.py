@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pandas as pd
 import pytest
 
 from mito_overview.steps import mito_cosegregation as cosegregation
+
+from ._helpers import ReadSpec, metric_map, write_alignment
 
 
 @pytest.mark.parametrize(
@@ -45,21 +49,114 @@ def test_alt_jaccard_is_conditioned_on_shared_spanning_reads() -> None:
     assert row["alt_jaccard_within_shared_spanning_reads"] == pytest.approx(0.5)
     assert row["alt_jaccard_within_shared_spanning_reads"] != pytest.approx(global_set_jaccard)
     assert row["jaccard_alt"] == row["alt_jaccard_within_shared_spanning_reads"]
+    assert row["alt_jaccard_status"] == "ok"
+    assert row["fraction_alt_i_also_alt_j_status"] == "ok"
+    assert row["fraction_alt_j_also_alt_i_status"] == "ok"
     assert heatmap.loc["10:A>C", "20:A>G"] == row["alt_jaccard_within_shared_spanning_reads"]
 
 
+def test_pair_without_alternate_support_has_undefined_ratios() -> None:
+    selected_sites = pd.DataFrame({"site_label": ["10:A>C", "20:A>G"]})
+    shared_reference_reads = {f"ref-{index}" for index in range(25)}
+
+    pairwise, heatmap = cosegregation._summarise_pairwise(
+        selected_sites,
+        {
+            "10:A>C": shared_reference_reads,
+            "20:A>G": shared_reference_reads,
+        },
+        {"10:A>C": set(), "20:A>G": set()},
+        min_shared_reads=25,
+    )
+
+    row = pairwise.iloc[0]
+    assert row["shared_reads"] == 25
+    assert pd.isna(row["alt_jaccard_within_shared_spanning_reads"])
+    assert pd.isna(row["jaccard_alt"])
+    assert pd.isna(row["fraction_alt_i_also_alt_j"])
+    assert pd.isna(row["fraction_alt_j_also_alt_i"])
+    assert row["alt_jaccard_status"] == "not_evaluable_zero_alt_union"
+    assert row["fraction_alt_i_also_alt_j_status"] == (
+        "not_evaluable_zero_alt_i_denominator"
+    )
+    assert row["fraction_alt_j_also_alt_i_status"] == (
+        "not_evaluable_zero_alt_j_denominator"
+    )
+    assert pd.isna(heatmap.loc["10:A>C", "20:A>G"])
+
+
+def test_run_step_is_not_evaluable_when_shared_pairs_have_no_alt_support(
+    tmp_path: Path,
+) -> None:
+    summary_dir = tmp_path / "summary"
+    summary_dir.mkdir()
+    pd.DataFrame(
+        [
+            {
+                "position": 10,
+                "ref_base": "A",
+                "alt_base": "C",
+                "alt_allele_fraction": 0.2,
+                "callable_depth": 25,
+            },
+            {
+                "position": 20,
+                "ref_base": "A",
+                "alt_base": "G",
+                "alt_allele_fraction": 0.2,
+                "callable_depth": 25,
+            },
+        ]
+    ).to_csv(summary_dir / "mito_heteroplasmy_candidates.tsv", sep="\t", index=False)
+    bam = write_alignment(
+        tmp_path / "reference-only.bam",
+        {"MT": 30},
+        [
+            ReadSpec(f"reference-{index}", "MT", 0, "A" * 30)
+            for index in range(25)
+        ],
+    )
+
+    outputs = cosegregation.run_step(
+        bam=bam,
+        summary_dir=summary_dir,
+        figure_dir=tmp_path / "figures",
+        report_dir=tmp_path / "reports",
+        sample_id="REFERENCE-ONLY",
+        mt_contig="MT",
+    )
+
+    pairwise = pd.read_csv(outputs["pairwise_path"], sep="\t")
+    summary = metric_map(outputs["summary_path"])
+    assert outputs["status"] == "not_evaluable"
+    assert summary["reason_code"] == "no_pairs_with_alt_support"
+    assert summary["pairwise_edges_meeting_shared_threshold"] == "1"
+    assert summary["pairwise_edges_with_evaluable_alt_jaccard"] == "0"
+    assert pd.isna(pairwise.loc[0, "alt_jaccard_within_shared_spanning_reads"])
+    assert pairwise.loc[0, "alt_jaccard_status"] == "not_evaluable_zero_alt_union"
+
+
 @pytest.mark.parametrize(
-    ("selected_sites", "valid_pairs", "upstream_message", "status", "reason_code"),
+    (
+        "selected_sites",
+        "valid_pairs",
+        "evaluable_pairs",
+        "upstream_message",
+        "status",
+        "reason_code",
+    ),
     [
-        (0, 0, "candidate table empty", "not_evaluable", "no_candidate_sites_available"),
-        (1, 0, None, "not_evaluable", "fewer_than_two_selected_sites"),
-        (2, 0, None, "not_evaluable", "no_pairs_meet_shared_read_threshold"),
-        (2, 1, None, "ok", ""),
+        (0, 0, 0, "candidate table empty", "not_evaluable", "no_candidate_sites_available"),
+        (1, 0, 0, None, "not_evaluable", "fewer_than_two_selected_sites"),
+        (2, 0, 0, None, "not_evaluable", "no_pairs_meet_shared_read_threshold"),
+        (2, 1, 0, None, "not_evaluable", "no_pairs_with_alt_support"),
+        (2, 1, 1, None, "ok", ""),
     ],
 )
 def test_pairwise_status_requires_an_evaluable_pair(
     selected_sites: int,
     valid_pairs: int,
+    evaluable_pairs: int,
     upstream_message: str | None,
     status: str,
     reason_code: str,
@@ -67,6 +164,7 @@ def test_pairwise_status_requires_an_evaluable_pair(
     observed_status, _, observed_reason, _ = cosegregation._evaluation_status(
         selected_site_count=selected_sites,
         valid_pair_count=valid_pairs,
+        evaluable_jaccard_pair_count=evaluable_pairs,
         upstream_message=upstream_message,
     )
     assert observed_status == status

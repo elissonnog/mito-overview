@@ -115,7 +115,7 @@ def test_zero_nuclear_denominator_is_na(tmp_path: Path) -> None:
     )
     metrics = metric_map(outputs["summary_path"])
     assert outputs["status"] == "not_evaluable"
-    assert metrics["reason_code"] == "no_valid_nuclear_windows"
+    assert metrics["reason_code"] == "zero_nuclear_depth_denominator"
     assert metrics["nuclear_window_mean_depth"] == "0.0"
     assert metrics["mt_to_nuclear_depth_ratio"] == ""
     assert metrics["nuclear_windows_valid"] == "5"

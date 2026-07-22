@@ -513,6 +513,66 @@ def test_invalid_bedmethyl_strand_is_rejected(tmp_path: Path) -> None:
         load_bedmethyl_table(path, "NP_real_all_reads")
 
 
+@pytest.mark.parametrize(
+    ("start", "end"),
+    [(-1, 0), (0, 0), (0, 2)],
+)
+def test_invalid_bedmethyl_coordinates_are_rejected(
+    tmp_path: Path,
+    start: int,
+    end: int,
+) -> None:
+    path = tmp_path / "invalid-coordinate.bed"
+    path.write_text(
+        f"MT\t{start}\t{end}\tm\t0\t+\t{start}\t{end}\t0,0,0\t"
+        "10\t20\t2\t8\t0\t0\t0\t0\t0\n",
+        encoding="ascii",
+    )
+
+    with pytest.raises(ValueError, match="Invalid single-base BED interval"):
+        load_bedmethyl_table(path, "NP_real_all_reads", mt_contig="MT", mt_length=10)
+
+
+def test_bedmethyl_contig_and_mitochondrial_bounds_are_enforced(tmp_path: Path) -> None:
+    wrong_contig = tmp_path / "wrong-contig.bed"
+    wrong_contig.write_text(
+        bedmethyl_line(
+            start=0,
+            coverage=10,
+            percent=20.0,
+            modified=2,
+            canonical=8,
+        ).replace("MT\t", "chrM\t", 1),
+        encoding="ascii",
+    )
+    with pytest.raises(ValueError, match="Unexpected contig"):
+        load_bedmethyl_table(
+            wrong_contig,
+            "NP_real_all_reads",
+            mt_contig="MT",
+            mt_length=10,
+        )
+
+    out_of_bounds = tmp_path / "out-of-bounds.bed"
+    out_of_bounds.write_text(
+        bedmethyl_line(
+            start=10,
+            coverage=10,
+            percent=20.0,
+            modified=2,
+            canonical=8,
+        ),
+        encoding="ascii",
+    )
+    with pytest.raises(ValueError, match="Out-of-bounds interval"):
+        load_bedmethyl_table(
+            out_of_bounds,
+            "NP_real_all_reads",
+            mt_contig="MT",
+            mt_length=10,
+        )
+
+
 def test_np_proxy_comparison_requires_matching_modification_identity(tmp_path: Path) -> None:
     np_path = tmp_path / "np.bed"
     hp1_path = tmp_path / "hp1.bed"
