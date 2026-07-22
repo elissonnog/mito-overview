@@ -136,14 +136,19 @@ complete rerun from a new final commit.
    public HTTPS repository at `FINAL_SHA`.
 6. Build and verify the GitHub-only validation packet from both its source
    directory and a fresh extraction.
-7. Create annotated tag `v0.3.0` at `FINAL_SHA`, run
-   `scripts/run_fresh_public_tag_validation_v0.3.0.sh` from an absent work and
-   evidence root, verify its hash-manifested PASS receipt, and never move the
-   tag. Every publisher phase requires that exact receipt.
-8. Enable immutable releases through GitHub's repository setting, create a
-   draft release, build the report from
-   queried draft metadata, upload and redownload the complete asset inventory,
-   verify `SHA256SUMS` against every other asset, publish, and capture the
-   queried release/tag/asset receipt. Report construction rejects unverified,
-   transition-only, or internally inconsistent publication metadata.
-9. Stop before manuscript, bioRxiv, Notion, or MCW/HPC work.
+7. Create annotated tag `v0.3.0` at `FINAL_SHA` and never move it. Capture
+   `github_prepublication.json` through the publisher's read-only
+   `--verify-prepublication` phase before any GitHub release exists. Build and
+   visually inspect the report from that exact tag/repository identity, then
+   assemble the remaining non-distribution assets.
+8. Run `scripts/run_fresh_public_tag_validation_v0.3.0.sh` from absent work and
+   evidence roots with the assembled asset source. The runner clones the public
+   tag, builds wheel/sdist, verifies all package and synthetic gates, and seals
+   all 12 canonical assets into a tag/`FINAL_SHA`-bound trusted manifest.
+9. Supply that exact PASS receipt and asset directory to every mutation phase.
+   The publisher verifies all trusted hashes before enabling immutable releases
+   or creating the draft, uploads and authenticated-redownloads every asset,
+   publishes, and captures final release/tag/asset proof in
+   `github_publication.json`. The report is intentionally prepublication to
+   avoid hashing a document that claims verification of its own upload.
+10. Stop before manuscript, bioRxiv, Notion, or MCW/HPC work.

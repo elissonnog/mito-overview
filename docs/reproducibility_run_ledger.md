@@ -85,20 +85,20 @@ The runner must reject legacy DOI/Zenodo arguments, require an absent raw-cache 
 5. Merge to `main`; record `FINAL_SHA`; require successful push-event CI at that exact SHA.
 6. Run a fresh macOS public clean-room reproduction from an empty cache and the Ubuntu public workflow at `FINAL_SHA`; compare normalized outputs and module states.
 7. Build and verify the audit ZIP, then tag exactly `FINAL_SHA` as annotated
-   `v0.3.0`. Run `scripts/run_fresh_public_tag_validation_v0.3.0.sh` against
-   the public HTTPS tag; retain its cases, commands, logs, environment,
-   annotated-tag identity, hashes, and PASS receipt. The publisher requires
-   this receipt and fails before a GitHub mutation if it is absent or changed.
-8. Enable immutable releases through GitHub's repository setting, create the
-   draft GitHub release, query its actual metadata,
-   build and visually inspect the human-readable MD/DOCX/PDF report with
-   report-native figures, upload and redownload all prepared assets, verify
-   their hashes, publish, and record the queried publication receipt.
+   `v0.3.0`. Before any GitHub release exists, run the publisher's read-only
+   `--verify-prepublication` phase and build/visually inspect the human-readable
+   MD/DOCX/PDF report from that exact main/tag identity.
+8. Assemble the non-distribution assets and run
+   `scripts/run_fresh_public_tag_validation_v0.3.0.sh` against the public HTTPS
+   tag. Retain its cases, commands, logs, environment, annotated-tag identity,
+   trusted 12-asset manifest, hashes, and PASS receipt.
+9. Supply the sealed assets and receipt to create the draft, enable immutable
+   releases, upload and authenticated-redownload all assets, publish, and write
+   the independently queried post-publication proof to `github_publication.json`.
 
-The report builder accepts only a verified empty-draft receipt before asset
-upload or a fully verified published receipt afterward. It rejects
-transition-only receipts, incomplete post-publication checks, inconsistent tag
-or immutable-release state, and divergent local/remote/redownloaded asset
-inventories.
+The report builder accepts only a verified read-only prepublication receipt.
+This avoids self-reference because the report is itself a hashed release asset.
+Final upload hashes, tag identity, and immutable publication state are verified
+separately in `github_publication.json`.
 
 Any commit after `FINAL_SHA` invalidates the release evidence. Any defect after publication is corrected forward as `v0.3.1`; the `v0.3.0` tag is never moved.

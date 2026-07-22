@@ -26,7 +26,7 @@ TRUSTED_ASSET_MANIFEST_SCHEMA_VERSION = "1.0"
 TRUSTED_ASSET_MANIFEST_NAME = "trusted_release_assets.json"
 API_VERSION = "2026-03-10"
 ACCEPT_HEADER = "application/vnd.github+json"
-PHASES = ("create-draft", "upload-verify", "publish")
+PHASES = ("verify-prepublication", "create-draft", "upload-verify", "publish")
 REPOSITORY_PATTERN = re.compile(
     r"^[A-Za-z0-9](?:[A-Za-z0-9_.-]{0,98}[A-Za-z0-9])?/"
     r"[A-Za-z0-9](?:[A-Za-z0-9_.-]{0,98}[A-Za-z0-9])?$"
@@ -151,7 +151,7 @@ class PublicationConfig:
     output_directory: Path
     phase: str
     github_actions_run_id: int
-    tag_validation_receipt: Path
+    tag_validation_receipt: Path | None = None
     asset_directory: Path | None = None
 
 
@@ -194,29 +194,41 @@ def _validate_config(config: PublicationConfig) -> PublicationConfig:
         or config.github_actions_run_id <= 0
     ):
         raise PublicationError("GitHub Actions run ID must be a positive integer")
-    tag_validation_receipt = config.tag_validation_receipt.expanduser()
-    if tag_validation_receipt.is_symlink() or not tag_validation_receipt.is_file():
-        raise PublicationError("Fresh public-tag validation receipt is required")
-    tag_validation_receipt = tag_validation_receipt.resolve(strict=True)
+    prepublication = config.phase == "verify-prepublication"
+    tag_validation_receipt: Path | None = None
+    asset_directory: Path | None = None
+    if prepublication:
+        if config.tag_validation_receipt is not None or config.asset_directory is not None:
+            raise PublicationError(
+                "--verify-prepublication does not accept tag-validation or asset inputs"
+            )
+    else:
+        if config.tag_validation_receipt is None:
+            raise PublicationError("Fresh public-tag validation receipt is required")
+        receipt_candidate = config.tag_validation_receipt.expanduser()
+        if receipt_candidate.is_symlink() or not receipt_candidate.is_file():
+            raise PublicationError("Fresh public-tag validation receipt is required")
+        tag_validation_receipt = receipt_candidate.resolve(strict=True)
 
-    if config.asset_directory is None:
-        raise PublicationError("Every publication phase requires --asset-directory")
-    candidate = config.asset_directory.expanduser()
-    if candidate.is_symlink() or not candidate.is_dir():
-        raise PublicationError("Asset directory must be an existing non-symlink directory")
-    asset_directory = candidate.resolve(strict=True)
+        if config.asset_directory is None:
+            raise PublicationError("Release mutation phases require --asset-directory")
+        candidate = config.asset_directory.expanduser()
+        if candidate.is_symlink() or not candidate.is_dir():
+            raise PublicationError("Asset directory must be an existing non-symlink directory")
+        asset_directory = candidate.resolve(strict=True)
 
     output_directory = config.output_directory.expanduser()
     if output_directory.exists() and output_directory.is_symlink():
         raise PublicationError("Output directory cannot be a symlink")
     output_directory.mkdir(parents=True, exist_ok=True)
     output_directory = output_directory.resolve(strict=True)
-    if output_directory == asset_directory:
-        raise PublicationError("Asset and output directories must be different")
-    if output_directory.is_relative_to(asset_directory):
-        raise PublicationError("Output directory cannot be inside the asset directory")
-    if asset_directory.is_relative_to(output_directory):
-        raise PublicationError("Asset directory cannot be inside the output directory")
+    if asset_directory is not None:
+        if output_directory == asset_directory:
+            raise PublicationError("Asset and output directories must be different")
+        if output_directory.is_relative_to(asset_directory):
+            raise PublicationError("Output directory cannot be inside the asset directory")
+        if asset_directory.is_relative_to(output_directory):
+            raise PublicationError("Asset directory cannot be inside the output directory")
 
     return PublicationConfig(
         repository=config.repository,
@@ -816,6 +828,8 @@ def _safe_evidence_path(value: str) -> Path:
 def _validate_tag_validation_receipt(
     config: PublicationConfig,
 ) -> dict[str, Any]:
+    if config.tag_validation_receipt is None:
+        raise PublicationError("Fresh public-tag validation receipt is required")
     receipt_path = config.tag_validation_receipt
     payload = _load_json(receipt_path, "fresh public-tag validation receipt")
     expected = {
@@ -1040,6 +1054,62 @@ def _assert_inventory_matches_trusted_manifest(
             )
     if inventory.sha256sums_sha256 != trusted.get("sha256sums_sha256"):
         raise PublicationError("Trusted release-asset SHA256SUMS digest differs")
+
+
+def _verify_prepublication_mode(runner: Runner, config: PublicationConfig) -> Path:
+    """Capture read-only tag/repository identity before the report becomes an asset."""
+
+    output = config.output_directory / "github_prepublication.json"
+    if output.exists() or output.is_symlink():
+        raise PublicationError("github_prepublication.json must not already exist")
+    _require_remote_commit(runner, config)
+    ref_payload, tag_payload = _verify_tag(runner, config)
+    tag_ref, tag_object = _tag_record(ref_payload, tag_payload)
+    if _find_release(runner, config) is not None:
+        raise PublicationError(
+            "Prepublication identity must be captured before a GitHub release exists"
+        )
+    hosting_state = _query_hosting_protection_state(runner, config)
+    payload: dict[str, Any] = {
+        "schema_version": PUBLICATION_SCHEMA_VERSION,
+        "release_version": config.tag,
+        "git_commit": config.final_sha,
+        "repository": _repository_url(config),
+        "repository_url": _repository_url(config),
+        "repository_slug": config.repository,
+        "release_tag": config.tag,
+        "github_release_url": _release_url(config),
+        "github_actions_run_id": config.github_actions_run_id,
+        "publication_state": "prepublication",
+        "verification_state": "verified_prepublication_identity",
+        "verified": True,
+        "phase": "verify-prepublication",
+        "mode": "prepublication",
+        "generated_at": _utc_now(),
+        "github_api_read_only": True,
+        "mutations_performed": False,
+        "asset_publication_verified": False,
+        "release_absent": True,
+        "hosting_protection": hosting_state,
+        "immutable_releases": hosting_state,
+        "tag_ref": tag_ref,
+        "tag_object": tag_object,
+        "release": {
+            "id": None,
+            "api_url": None,
+            "url": _release_url(config),
+            "tag_name": config.tag,
+            "target_commitish": config.final_sha,
+            "name": f"MitoOverview {config.tag}",
+            "draft": None,
+            "prerelease": False,
+            "immutable": None,
+            "created_at": None,
+            "published_at": None,
+        },
+    }
+    _atomic_write_json(output, payload)
+    return output
 
 
 def _validate_receipt_identity(record: dict[str, Any], config: PublicationConfig) -> None:
@@ -1516,11 +1586,13 @@ def publish_github_release(
     """Execute one resumable publication phase and return its JSON receipt."""
 
     validated = _validate_config(config)
+    command_runner = runner or SubprocessRunner()
+    if validated.phase == "verify-prepublication":
+        return _verify_prepublication_mode(command_runner, validated)
     validation = _validate_tag_validation_receipt(validated)
     assert validated.asset_directory is not None
     inventory = inspect_asset_inventory(validated.asset_directory)
     _assert_inventory_matches_trusted_manifest(inventory, validation)
-    command_runner = runner or SubprocessRunner()
     if validated.phase == "create-draft":
         return _create_draft_mode(command_runner, validated, inventory)
     if validated.phase == "upload-verify":
@@ -1531,8 +1603,8 @@ def publish_github_release(
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Create or resume a tag-bound GitHub draft, verify canonical assets, "
-            "or publish the same verified v0.3.0 release."
+            "Capture read-only prepublication identity, create or resume a tag-bound "
+            "GitHub draft, verify canonical assets, or publish the same release."
         )
     )
     parser.add_argument("repository", help="GitHub repository slug, for example owner/repo")
@@ -1548,10 +1620,22 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--tag-validation-receipt",
         type=Path,
-        required=True,
-        help="Hash-manifested PASS receipt from a fresh public v0.3.0 tag clone",
+        help=(
+            "Hash-manifested PASS receipt from a fresh public v0.3.0 tag clone; "
+            "required for release mutation phases"
+        ),
     )
     phases = parser.add_mutually_exclusive_group(required=True)
+    phases.add_argument(
+        "--verify-prepublication",
+        dest="phase",
+        action="store_const",
+        const="verify-prepublication",
+        help=(
+            "Write read-only exact-main/tag metadata for report generation before "
+            "any GitHub release exists"
+        ),
+    )
     phases.add_argument(
         "--create-draft",
         dest="phase",
@@ -1576,8 +1660,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--asset-directory",
         type=Path,
-        required=True,
-        help="Flat tag-bound canonical release asset directory; required for every phase",
+        help="Flat tag-bound canonical release asset directory; required for mutation phases",
     )
     return parser
 

@@ -457,11 +457,6 @@ def make_packet(tmp_path: Path) -> tuple[Path, Path, list[Path]]:
     rewrite_artifact_manifest(packet)
 
     publication = tmp_path / "github_publication.json"
-    publication_asset = {
-        "name": "mito-overview-v0.3.0-validation.zip",
-        "size": 123,
-        "sha256": "c" * 64,
-    }
     publication.write_text(
         json.dumps(
             {
@@ -472,10 +467,13 @@ def make_packet(tmp_path: Path) -> tuple[Path, Path, list[Path]]:
                 "release_tag": "v0.3.0",
                 "github_release_url": f"{REPOSITORY}/releases/tag/v0.3.0",
                 "github_actions_run_id": RUN_ID,
-                "publication_state": "published",
-                "verification_state": "verified_published",
+                "publication_state": "prepublication",
+                "verification_state": "verified_prepublication_identity",
                 "verified": True,
-                "published_utc": "2026-07-21T18:00:00+00:00",
+                "github_api_read_only": True,
+                "mutations_performed": False,
+                "asset_publication_verified": False,
+                "release_absent": True,
                 "tag_ref": {
                     "ref": "refs/tags/v0.3.0",
                     "object_type": "tag",
@@ -489,36 +487,18 @@ def make_packet(tmp_path: Path) -> tuple[Path, Path, list[Path]]:
                 },
                 "hosting_protection": {
                     "supported": True,
-                    "enabled": True,
+                    "enabled": False,
+                    "reason": "disabled",
                 },
                 "release": {
-                    "id": 7,
+                    "id": None,
                     "url": f"{REPOSITORY}/releases/tag/v0.3.0",
                     "tag_name": "v0.3.0",
                     "target_commitish": COMMIT,
-                    "draft": False,
-                    "immutable": True,
-                    "published_at": "2026-07-21T18:00:00+00:00",
+                    "draft": None,
+                    "immutable": None,
+                    "published_at": None,
                 },
-                "asset_upload_verified": True,
-                "local_asset_manifest": {
-                    "manifest_name": "SHA256SUMS",
-                    "sha256sums_sha256": "d" * 64,
-                    "assets": [publication_asset],
-                },
-                "remote_assets": [
-                    {
-                        "name": publication_asset["name"],
-                        "size": publication_asset["size"],
-                        "verified_sha256": publication_asset["sha256"],
-                    }
-                ],
-                "published_redownload_verification": {
-                    "method": "authenticated_redownload_sha256",
-                    "verified": True,
-                    "assets": [publication_asset],
-                },
-                "post_publish_verification": {"complete": True},
             },
             indent=2,
         )
@@ -547,6 +527,8 @@ def test_builds_markdown_docx_and_embeds_verified_packet_figures(tmp_path: Path)
     assert "blocked" in markdown
     assert "Pinned Python packages" in markdown
     assert "publication state" not in markdown.lower()
+    assert "generated before GitHub release creation" in markdown
+    assert "github_publication.json" in markdown
     assert COMMIT in markdown
     assert "No simplified replacement chart is generated" in markdown
     assert markdown.count("![Figure") == 2
@@ -705,40 +687,38 @@ def test_fails_closed_on_invalid_os_level_network_isolation(
         report_builder.generate_report(packet, publication, tmp_path / "report")
 
 
-def test_report_scientific_content_is_independent_of_publication_state(
-    tmp_path: Path,
+@pytest.mark.parametrize(
+    ("state", "verification_state"),
+    [
+        ("draft", "verified_empty_draft"),
+        ("published", "verified_published"),
+    ],
+)
+def test_release_asset_report_rejects_self_referential_publication_states(
+    tmp_path: Path, state: str, verification_state: str
 ) -> None:
     packet, publication, _ = make_packet(tmp_path)
-    published = report_builder.generate_report(
-        packet, publication, tmp_path / "published-report"
-    )["markdown"].read_text(encoding="utf-8")
-
     payload = json.loads(publication.read_text(encoding="utf-8"))
-    payload["publication_state"] = "draft"
-    payload["verification_state"] = "verified_empty_draft"
-    payload.pop("published_utc")
-    payload["release"].update(
-        {"draft": True, "immutable": False, "published_at": None}
-    )
-    payload["remote_assets"] = []
-    payload["asset_upload_verified"] = False
-    payload.pop("local_asset_manifest")
-    payload.pop("published_redownload_verification")
-    payload.pop("post_publish_verification")
+    payload["publication_state"] = state
+    payload["verification_state"] = verification_state
     publication.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
-    draft = report_builder.generate_report(
-        packet, publication, tmp_path / "draft-report"
-    )["markdown"].read_text(encoding="utf-8")
 
-    assert draft == published
-    assert "publication state" not in draft.lower()
+    with pytest.raises(
+        report_builder.ReportValidationError,
+        match="require a prepublication identity receipt",
+    ):
+        report_builder.generate_report(packet, publication, tmp_path / "report")
 
 
 @pytest.mark.parametrize(
     ("field", "value", "message"),
     [
         ("verified", False, "not verified"),
-        ("verification_state", "published_transition_recorded", "not fully verified"),
+        (
+            "verification_state",
+            "published_transition_recorded",
+            "not read-only or has an invalid state",
+        ),
     ],
 )
 def test_report_rejects_unverified_publication_receipt(
@@ -750,6 +730,45 @@ def test_report_rejects_unverified_publication_receipt(
     publication.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
     with pytest.raises(report_builder.ReportValidationError, match=message):
+        report_builder.generate_report(packet, publication, tmp_path / "report")
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("github_api_read_only", False),
+        ("mutations_performed", True),
+        ("asset_publication_verified", True),
+        ("release_absent", False),
+    ],
+)
+def test_report_rejects_mutated_or_postpublication_preflight_state(
+    tmp_path: Path, field: str, value: object
+) -> None:
+    packet, publication, _ = make_packet(tmp_path)
+    payload = json.loads(publication.read_text(encoding="utf-8"))
+    payload[field] = value
+    publication.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+    with pytest.raises(
+        report_builder.ReportValidationError,
+        match="not read-only or has an invalid state",
+    ):
+        report_builder.generate_report(packet, publication, tmp_path / "report")
+
+
+def test_report_rejects_prepublication_receipt_when_release_already_exists(
+    tmp_path: Path,
+) -> None:
+    packet, publication, _ = make_packet(tmp_path)
+    payload = json.loads(publication.read_text(encoding="utf-8"))
+    payload["release"]["id"] = 7
+    publication.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+    with pytest.raises(
+        report_builder.ReportValidationError,
+        match="prepublication release identity is invalid",
+    ):
         report_builder.generate_report(packet, publication, tmp_path / "report")
 
 

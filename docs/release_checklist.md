@@ -84,15 +84,19 @@ release date.
   suite, four smoke workflows, and both example builders.
 - [ ] The fresh-tag evidence manifest verifies, contains no local absolute
   path, and its receipt is supplied to every publisher phase with
-  `--tag-validation-receipt`. Missing, failed, or tampered evidence blocks all
-  GitHub release mutations.
+  `--tag-validation-receipt` except the earlier read-only prepublication phase.
+  Missing, failed, or tampered evidence blocks all GitHub release mutations.
 
 ## Release asset gate
 
 - [ ] The draft GitHub release targets the existing `v0.3.0` tag.
-- [ ] Report generation uses either a verified empty-draft receipt or a fully
-  verified published receipt; transition-only or unverified metadata cannot
-  produce a passing report.
+- [ ] `github_prepublication.json` is captured read-only after tagging but
+  before any release exists; the report builder accepts only this exact-main,
+  annotated-tag receipt.
+- [ ] The report states that final asset publication is verified separately;
+  it does not claim verification of its own upload.
+- [ ] Fresh-tag evidence seals all 12 canonical asset names, sizes, and SHA-256
+  values to `FINAL_SHA` and the annotated tag object before any release mutation.
 - [ ] Repository immutable releases are enabled before draft creation, and the
   queried published release reports `immutable=true`.
 - [ ] Canonical assets include wheel, sdist, validation ZIP, Markdown/DOCX/PDF

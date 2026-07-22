@@ -420,6 +420,17 @@ def _config(
     )
 
 
+def _prepublication_config(output_dir: Path) -> Any:
+    return publication.PublicationConfig(
+        repository=REPOSITORY,
+        final_sha=FINAL_SHA,
+        tag=publication.EXPECTED_TAG,
+        output_directory=output_dir,
+        phase="verify-prepublication",
+        github_actions_run_id=RUN_ID,
+    )
+
+
 def _create_and_upload(
     tmp_path: Path, runner: FakeGhRunner
 ) -> tuple[Path, Path, dict[str, bytes]]:
@@ -443,6 +454,85 @@ def _all_strings(value: Any) -> list[str]:
     if isinstance(value, dict):
         return [text for item in value.values() for text in _all_strings(item)]
     return []
+
+
+def test_prepublication_receipt_is_read_only_and_precedes_release_assets(
+    tmp_path: Path,
+) -> None:
+    runner = FakeGhRunner()
+
+    output = publication.publish_github_release(
+        _prepublication_config(tmp_path / "publication"), runner
+    )
+
+    assert output.name == "github_prepublication.json"
+    payload = json.loads(output.read_text(encoding="utf-8"))
+    assert payload["publication_state"] == "prepublication"
+    assert payload["verification_state"] == "verified_prepublication_identity"
+    assert payload["github_api_read_only"] is True
+    assert payload["mutations_performed"] is False
+    assert payload["asset_publication_verified"] is False
+    assert payload["release_absent"] is True
+    assert payload["git_commit"] == FINAL_SHA
+    assert payload["tag_object"]["peeled_target_sha"] == FINAL_SHA
+    assert payload["release"]["id"] is None
+    assert runner.calls
+    assert runner.mutations == []
+    assert all(
+        command[:2] == ("gh", "api")
+        and command[command.index("--method") + 1] == "GET"
+        for command in runner.calls
+    )
+
+
+def test_prepublication_receipt_rejects_an_existing_release_without_mutation(
+    tmp_path: Path,
+) -> None:
+    runner = FakeGhRunner()
+    runner.release = {
+        "id": 7,
+        "url": "https://api.github.test/releases/7",
+        "html_url": f"https://github.com/{REPOSITORY}/releases/tag/v0.3.0",
+        "tag_name": publication.EXPECTED_TAG,
+        "target_commitish": FINAL_SHA,
+        "name": "MitoOverview v0.3.0",
+        "draft": True,
+        "immutable": False,
+        "prerelease": False,
+        "created_at": "2026-07-21T12:00:00Z",
+        "published_at": None,
+    }
+
+    with pytest.raises(
+        publication.PublicationError,
+        match="before a GitHub release exists",
+    ):
+        publication.publish_github_release(
+            _prepublication_config(tmp_path / "publication"), runner
+        )
+    assert runner.mutations == []
+
+
+def test_prepublication_rejects_asset_or_tag_receipt_inputs_before_calls(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path / "publication", "create-draft")
+    invalid = publication.PublicationConfig(
+        repository=config.repository,
+        final_sha=config.final_sha,
+        tag=config.tag,
+        output_directory=config.output_directory,
+        phase="verify-prepublication",
+        github_actions_run_id=config.github_actions_run_id,
+        tag_validation_receipt=config.tag_validation_receipt,
+        asset_directory=config.asset_directory,
+    )
+    runner = FakeGhRunner()
+
+    with pytest.raises(publication.PublicationError, match="does not accept"):
+        publication.publish_github_release(invalid, runner)
+    assert runner.calls == []
+    assert runner.mutations == []
 
 
 def test_create_draft_requires_existing_annotated_tag_and_records_report_identity(
@@ -967,3 +1057,14 @@ def test_cli_requires_phase_assets_run_id_and_tag_validation_receipt() -> None:
     assert upload.asset_directory == Path("assets")
     publish = parser.parse_args([*common, "--publish"])
     assert publish.phase == "publish"
+    prepublication = parser.parse_args(
+        [
+            *base,
+            "--github-actions-run-id",
+            str(RUN_ID),
+            "--verify-prepublication",
+        ]
+    )
+    assert prepublication.phase == "verify-prepublication"
+    assert prepublication.tag_validation_receipt is None
+    assert prepublication.asset_directory is None

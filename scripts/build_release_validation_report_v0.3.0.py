@@ -2,7 +2,7 @@
 """Build the human-readable MitoOverview v0.3.0 release-validation report.
 
 The input is a completed schema-2.0 ``github_release_validation_v1`` packet
-plus exact GitHub publication metadata. The builder is intentionally
+plus exact read-only GitHub prepublication metadata. The builder is intentionally
 fail-closed: identity drift, a non-PASS case or oracle assertion, an invalid
 cross-platform comparison, or a mismatched figure hash prevents report output.
 """
@@ -345,7 +345,10 @@ def parse_args() -> argparse.Namespace:
         "--publication-json",
         type=Path,
         required=True,
-        help="Exact GitHub release/publication metadata JSON.",
+        help=(
+            "Read-only github_prepublication.json captured before the report "
+            "becomes a release asset."
+        ),
     )
     parser.add_argument(
         "--output-dir",
@@ -676,12 +679,22 @@ def validate_publication(
         raise ReportValidationError("GitHub publication metadata schema must be 1.0")
     if publication["release_tag"] != EXPECTED_VERSION:
         raise ReportValidationError("GitHub release tag must be v0.3.0")
-    if publication["publication_state"] not in {"draft", "published"}:
+    if publication["publication_state"] != "prepublication":
         raise ReportValidationError(
-            "publication_state must be either 'draft' or 'published'"
+            "release-asset reports require a prepublication identity receipt"
         )
     if publication["verified"] is not True:
-        raise ReportValidationError("GitHub publication receipt is not verified")
+        raise ReportValidationError("GitHub prepublication receipt is not verified")
+    if (
+        publication["verification_state"] != "verified_prepublication_identity"
+        or publication.get("github_api_read_only") is not True
+        or publication.get("mutations_performed") is not False
+        or publication.get("asset_publication_verified") is not False
+        or publication.get("release_absent") is not True
+    ):
+        raise ReportValidationError(
+            "GitHub prepublication receipt is not read-only or has an invalid state"
+        )
 
     commit = str(run["git_commit"])
     tag_ref = publication["tag_ref"]
@@ -704,62 +717,24 @@ def validate_publication(
     if (
         not isinstance(hosting, dict)
         or hosting.get("supported") is not True
-        or hosting.get("enabled") is not True
+        or hosting.get("enabled") not in {True, False, None}
     ):
-        raise ReportValidationError("GitHub immutable-release protection is not verified")
+        raise ReportValidationError("GitHub prepublication hosting-state query is invalid")
 
     release_record = publication["release"]
     if not isinstance(release_record, dict):
-        raise ReportValidationError("GitHub publication release record is malformed")
+        raise ReportValidationError("GitHub prepublication release record is malformed")
     if (
-        not isinstance(release_record.get("id"), int)
+        release_record.get("id") is not None
         or release_record.get("tag_name") != EXPECTED_VERSION
         or release_record.get("target_commitish") != commit
         or release_record.get("url")
         != f"{str(run['repository']).rstrip('/')}/releases/tag/{EXPECTED_VERSION}"
+        or release_record.get("draft") is not None
+        or release_record.get("immutable") is not None
+        or release_record.get("published_at") is not None
     ):
-        raise ReportValidationError("GitHub publication release identity is invalid")
-
-    verification_state = publication["verification_state"]
-    publication_state = publication["publication_state"]
-    if publication_state == "draft":
-        if verification_state not in {"verified_empty_draft", "verified_draft_assets"}:
-            raise ReportValidationError("Draft GitHub receipt is not in a verified state")
-        if (
-            release_record.get("draft") is not True
-            or release_record.get("immutable") is not False
-            or release_record.get("published_at") is not None
-        ):
-            raise ReportValidationError("Verified draft release state is inconsistent")
-        if verification_state == "verified_empty_draft":
-            if publication.get("remote_assets") != []:
-                raise ReportValidationError("Verified empty draft unexpectedly contains assets")
-        else:
-            validate_publication_assets(publication, "redownload_verification")
-    else:
-        if verification_state != "verified_published":
-            raise ReportValidationError("Published GitHub receipt is not fully verified")
-        if (
-            release_record.get("draft") is not False
-            or release_record.get("immutable") is not True
-            or not release_record.get("published_at")
-        ):
-            raise ReportValidationError("Verified published release state is inconsistent")
-        post_publish = publication.get("post_publish_verification")
-        if not isinstance(post_publish, dict) or post_publish.get("complete") is not True:
-            raise ReportValidationError("Post-publication verification is incomplete")
-        validate_publication_assets(publication, "published_redownload_verification")
-
-    if publication["publication_state"] == "published":
-        published_utc = publication.get("published_utc")
-        if not isinstance(published_utc, str) or not published_utc:
-            raise ReportValidationError(
-                "Published GitHub metadata requires a nonempty published_utc"
-            )
-        try:
-            datetime.fromisoformat(published_utc.replace("Z", "+00:00"))
-        except ValueError as error:
-            raise ReportValidationError("published_utc is not ISO-8601") from error
+        raise ReportValidationError("GitHub prepublication release identity is invalid")
 
     repository = str(run["repository"]).rstrip("/")
     expected_url = f"{repository}/releases/tag/{EXPECTED_VERSION}"
@@ -1399,6 +1374,13 @@ def build_report_blocks(
                     "field": "GitHub release",
                     "value": str(evidence.publication["github_release_url"]),
                 },
+                {
+                    "field": "Publication evidence scope",
+                    "value": (
+                        "read-only prepublication tag/repository identity; final asset "
+                        "publication is verified separately in github_publication.json"
+                    ),
+                },
                 {"field": "Packet schema", "value": EXPECTED_SCHEMA},
                 {"field": "Validation profile", "value": EXPECTED_PROFILE},
             ),
@@ -1412,6 +1394,13 @@ def build_report_blocks(
             "sensitivity or specificity, a limit of detection, deletion-calling accuracy, "
             "absolute mtDNA copy number, formal NUMT classification, modality equivalence, "
             "or population generalizability."
+        ),
+        Paragraph(
+            "This report is generated before GitHub release creation because the report "
+            "is itself a hashed release asset. The separate post-publication receipt "
+            "github_publication.json verifies the uploaded asset inventory, authenticated "
+            "redownload hashes, annotated tag, and final immutable release state without "
+            "making this report self-referential."
         ),
         TableBlock(
             "Bounded claim-to-evidence mapping",
