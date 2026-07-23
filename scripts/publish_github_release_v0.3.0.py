@@ -541,6 +541,12 @@ def _require_release_identity(
             "GitHub release target drift: "
             f"expected {config.final_sha}, observed {release.get('target_commitish')!r}"
         )
+    expected_name = f"MitoOverview {config.tag}"
+    if release.get("name") != expected_name:
+        raise PublicationError(
+            "GitHub release name drift: "
+            f"expected {expected_name!r}, observed {release.get('name')!r}"
+        )
     if state == "draft":
         if release.get("draft") is not True or release.get("published_at") is not None:
             raise PublicationError("Expected an unpublished draft release")
@@ -1493,7 +1499,13 @@ def _publish_mode(
             config.repository,
             f"releases/{release_id}",
             method="PATCH",
-            fields=(("-F", "draft", "false"),),
+            fields=(
+                ("-f", "tag_name", config.tag),
+                ("-f", "target_commitish", config.final_sha),
+                ("-f", "name", f"MitoOverview {config.tag}"),
+                ("-F", "draft", "false"),
+                ("-F", "prerelease", "false"),
+            ),
         )
         if updated is None:
             raise PublicationError("GitHub did not return the published release transition")
@@ -1504,6 +1516,13 @@ def _publish_mode(
             require_immutable=False,
         )
         _assert_release_matches_receipt(draft, updated)
+        transition_assets = _normalized_remote_assets(
+            updated, inventory, allow_subset=False
+        )
+        if transition_assets != remote_assets:
+            raise PublicationError(
+                "Remote release assets drifted during the publication transition"
+            )
         release = updated
         # This receipt survives any failure in the optional post-publish queries.
         _atomic_write_json(
@@ -1515,7 +1534,7 @@ def _publish_mode(
                 tag_object,
                 hosting_before,
                 inventory,
-                remote_assets,
+                transition_assets,
                 prepublish_download,
             ),
         )

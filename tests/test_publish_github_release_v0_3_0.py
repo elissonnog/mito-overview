@@ -260,6 +260,9 @@ class FakeGhRunner:
         self.enumeration_pages: dict[int, list[dict[str, Any]]] | None = None
         self.fail_next_release_id_get = False
         self.immutable_after_publish = True
+        self.release_drift_before_publish_patch: dict[str, Any] = {}
+        self.asset_substitution_before_publish_patch: tuple[str, bytes] | None = None
+        self.release_before_publish_patch_fields: dict[str, Any] | None = None
         self.calls: list[tuple[str, ...]] = []
         self.mutations: list[str] = []
 
@@ -378,9 +381,20 @@ class FakeGhRunner:
         if route == "releases/7" and method == "PATCH":
             assert self.release is not None
             self.mutations.append("publish_release")
-            self.release["draft"] = False
-            self.release["immutable"] = self.immutable_after_publish
-            self.release["published_at"] = "2026-07-21T13:00:00Z"
+            self.release.update(self.release_drift_before_publish_patch)
+            if self.asset_substitution_before_publish_patch is not None:
+                name, payload = self.asset_substitution_before_publish_patch
+                self.remote_payloads[name] = payload
+            self.release_before_publish_patch_fields = self._release_payload()
+            for key in ("tag_name", "target_commitish", "name", "body"):
+                if key in fields:
+                    self.release[key] = fields[key]
+            for key in ("draft", "prerelease"):
+                if key in fields:
+                    self.release[key] = fields[key] == "true"
+            if self.release.get("draft") is False:
+                self.release["immutable"] = self.immutable_after_publish
+                self.release["published_at"] = "2026-07-21T13:00:00Z"
             return self._result(args, self._release_payload())
         raise AssertionError(f"Unexpected fake GitHub API call: {method} {route}")
 
@@ -747,7 +761,7 @@ def test_draft_lookup_enumerates_authenticated_release_pages(tmp_path: Path) -> 
         "html_url": f"https://github.com/{REPOSITORY}/releases/tag/v0.3.0",
         "tag_name": publication.EXPECTED_TAG,
         "target_commitish": FINAL_SHA,
-        "name": "existing",
+        "name": f"MitoOverview {publication.EXPECTED_TAG}",
         "draft": True,
         "immutable": False,
         "prerelease": False,
@@ -800,7 +814,7 @@ def test_existing_matching_draft_is_reused_without_release_mutation(tmp_path: Pa
         "html_url": f"https://github.com/{REPOSITORY}/releases/tag/v0.3.0",
         "tag_name": publication.EXPECTED_TAG,
         "target_commitish": FINAL_SHA,
-        "name": "existing",
+        "name": f"MitoOverview {publication.EXPECTED_TAG}",
         "draft": True,
         "prerelease": False,
         "created_at": "2026-07-21T12:00:00Z",
@@ -998,6 +1012,73 @@ def test_publish_validates_then_patches_once_and_writes_report_ready_receipt(
     assert {item["name"] for item in record["remote_assets"]} == set(payloads)
     assert "release_attestations" not in record
     assert runner.mutations.count("publish_release") == 1
+
+
+def test_publish_transition_atomically_restates_last_moment_release_identity(
+    tmp_path: Path,
+) -> None:
+    runner = FakeGhRunner(immutable_payload={"enabled": True})
+    asset_dir, output_dir, _ = _create_and_upload(tmp_path, runner)
+    runner.release_drift_before_publish_patch = {
+        "tag_name": "v9.9.9",
+        "target_commitish": OTHER_SHA,
+        "name": "Incorrect release",
+        "prerelease": True,
+    }
+
+    record_path = publication.publish_github_release(
+        _config(output_dir, "publish", asset_dir=asset_dir), runner
+    )
+
+    assert runner.release_before_publish_patch_fields is not None
+    assert runner.release_before_publish_patch_fields["tag_name"] == "v9.9.9"
+    assert runner.release_before_publish_patch_fields["target_commitish"] == OTHER_SHA
+    assert runner.release_before_publish_patch_fields["name"] == "Incorrect release"
+    assert runner.release_before_publish_patch_fields["prerelease"] is True
+    patch_call = next(
+        call
+        for call in runner.calls
+        if call[:3] == ("gh", "api", f"repos/{REPOSITORY}/releases/7")
+        and call[call.index("--method") + 1] == "PATCH"
+    )
+    assert runner._fields(patch_call) == {
+        "tag_name": publication.EXPECTED_TAG,
+        "target_commitish": FINAL_SHA,
+        "name": f"MitoOverview {publication.EXPECTED_TAG}",
+        "draft": "false",
+        "prerelease": "false",
+    }
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+    assert record["release"]["tag_name"] == publication.EXPECTED_TAG
+    assert record["release"]["target_commitish"] == FINAL_SHA
+    assert record["release"]["name"] == f"MitoOverview {publication.EXPECTED_TAG}"
+    assert record["release"]["draft"] is False
+    assert record["release"]["prerelease"] is False
+
+
+def test_publish_transition_asset_substitution_blocks_before_transition_receipt(
+    tmp_path: Path,
+) -> None:
+    runner = FakeGhRunner(immutable_payload={"enabled": True})
+    asset_dir, output_dir, payloads = _create_and_upload(tmp_path, runner)
+    target = next(iter(sorted(payloads)))
+    original = payloads[target]
+    substituted = bytes([original[0] ^ 1]) + original[1:]
+    assert len(substituted) == len(original)
+    runner.asset_substitution_before_publish_patch = (target, substituted)
+
+    with pytest.raises(
+        publication.PublicationError,
+        match=rf"Remote API digest mismatch for {re.escape(target)}",
+    ):
+        publication.publish_github_release(
+            _config(output_dir, "publish", asset_dir=asset_dir), runner
+        )
+
+    assert runner.release is not None
+    assert runner.release["draft"] is False
+    assert runner.mutations.count("publish_release") == 1
+    assert not (output_dir / "github_publication.json").exists()
 
 
 def test_published_transition_receipt_survives_query_failure_and_resumes_without_patch(
