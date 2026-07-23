@@ -71,8 +71,17 @@ COMPARE_COLUMNS = ["membership", "position", "ref", "alt"]
 CANONICAL_BASES = frozenset("ACGT")
 SNP_SELECTION_CONTRACT = (
     "canonical_single_nucleotide_ref_alt;filter_pass_or_dot;"
-    "called_alt_if_samples_present;site_only_pass_snv_allowed"
+    "called_alt_if_samples_present;site_only_pass_snv_allowed;"
+    "configured_reference_position_and_ref_match"
 )
+
+
+class VariantReferenceValidationError(ValueError):
+    """A VCF record that is incompatible with the configured mtDNA reference."""
+
+    def __init__(self, reason_code: str, message: str):
+        super().__init__(message)
+        self.reason_code = reason_code
 
 
 @dataclass
@@ -160,6 +169,8 @@ def _select_mt_snvs(
     *,
     contig: str,
     sample_columns: int,
+    mt_length: int,
+    reference_sequence: str,
 ) -> tuple[list[dict[str, object]], VariantSelectionCounts]:
     """Apply the identity-QC SNP contract and retain one row per called ALT."""
 
@@ -200,16 +211,43 @@ def _select_mt_snvs(
                 counts.excluded_uncalled_alt_alleles += 1
                 continue
 
+            position = int(record.pos)
+            if position < 1 or position > mt_length:
+                raise VariantReferenceValidationError(
+                    "variant_vcf_position_out_of_range",
+                    f"Retained VCF SNV {contig}:{position} is outside 1-{mt_length}",
+                )
+            expected_ref = reference_sequence[position - 1]
+            if ref != expected_ref:
+                raise VariantReferenceValidationError(
+                    "variant_vcf_ref_mismatch",
+                    f"Retained VCF SNV {contig}:{position} REF={ref} disagrees "
+                    f"with configured REF={expected_ref}",
+                )
+
             counts.retained_alt_alleles += 1
-            rows.append({"position": int(record.pos), "ref": ref, "alt": alt})
+            rows.append({"position": position, "ref": ref, "alt": alt})
 
     return rows, counts
 
 
 def load_mt_variants(
-    vcf_path: str | Path | None, contig: str
+    vcf_path: str | Path | None,
+    contig: str,
+    *,
+    mt_length: int,
+    reference_sequence: str,
 ) -> tuple[pd.DataFrame, str, str, VariantSelectionCounts]:
     """Load unique mtDNA SNVs under the explicit identity-QC selection contract."""
+
+    if not isinstance(mt_length, int) or isinstance(mt_length, bool) or mt_length <= 0:
+        raise ValueError("mt_length must be a positive integer")
+    reference_sequence = str(reference_sequence).strip().upper()
+    if len(reference_sequence) != mt_length:
+        raise ValueError(
+            "identity-QC reference length mismatch: "
+            f"expected {mt_length}, observed {len(reference_sequence)}"
+        )
 
     empty = pd.DataFrame(columns=VARIANT_COLUMNS)
     empty_counts = VariantSelectionCounts()
@@ -228,7 +266,11 @@ def load_mt_variants(
                     variant_file.fetch(contig),
                     contig=contig,
                     sample_columns=sample_columns,
+                    mt_length=mt_length,
+                    reference_sequence=reference_sequence,
                 )
+            except VariantReferenceValidationError:
+                raise
             except (OSError, ValueError):
                 # Generic standalone VCF inputs are allowed to be unindexed. Reopen the
                 # stream because a failed regional fetch may leave backend state unclear.
@@ -238,9 +280,13 @@ def load_mt_variants(
                     variant_file,
                     contig=contig,
                     sample_columns=len(variant_file.header.samples),
+                    mt_length=mt_length,
+                    reference_sequence=reference_sequence,
                 )
         finally:
             variant_file.close()
+    except VariantReferenceValidationError as exc:
+        return empty, "not_evaluable", exc.reason_code, empty_counts
     except (OSError, TypeError, ValueError):
         return empty, "not_evaluable", "variant_vcf_unreadable", empty_counts
 
@@ -299,17 +345,33 @@ def run_step(
     compare_path = summary_dir / "mito_identity_vcf_comparison.tsv"
     summary_path = summary_dir / "mito_identity_qc_summary.tsv"
     overlap_fig = figure_dir / "mito_identity_vcf_overlap.png"
+    fingerprint_fig_path = figure_dir / "mito_identity_major_variants.png"
     report_path = report_dir / "09_mito_identity_qc.html"
+    for owned_path in (
+        fingerprint_path,
+        compare_path,
+        summary_path,
+        overlap_fig,
+        fingerprint_fig_path,
+        report_path,
+    ):
+        owned_path.unlink(missing_ok=True)
 
     hetero_df = ensure_alt_fraction_columns(load_table(hetero_path, columns=FINGERPRINT_COLUMNS))
     heteroplasmy_status, heteroplasmy_reason = load_heteroplasmy_status(
         hetero_summary_path
     )
     phased_df, phased_vcf_status, phased_vcf_reason, phased_selection = load_mt_variants(
-        phased_snp_vcf, mt_contig
+        phased_snp_vcf,
+        mt_contig,
+        mt_length=mt_length,
+        reference_sequence=reference_sequence,
     )
     np_df, np_vcf_status, np_vcf_reason, np_selection = load_mt_variants(
-        np_snp_vcf, mt_contig
+        np_snp_vcf,
+        mt_contig,
+        mt_length=mt_length,
+        reference_sequence=reference_sequence,
     )
     phymer_summary = load_table(phymer_path, columns=SUMMARY_COLUMNS)
     print(
@@ -460,7 +522,9 @@ def run_step(
             failed_sources.append(f"phased:{phased_vcf_reason}")
         if np_vcf_status == "not_evaluable":
             failed_sources.append(f"unphased:{np_vcf_reason}")
-        comparison_reason = "paired_variant_vcf_unreadable[" + ",".join(failed_sources) + "]"
+        comparison_reason = (
+            "paired_variant_vcf_not_evaluable[" + ",".join(failed_sources) + "]"
+        )
     else:
         comparison_status = "not_configured"
         comparison_reason = "paired_variant_vcfs_not_configured"
@@ -736,7 +800,7 @@ def run_step(
     fingerprint_fig = None
     if not major_df.empty:
         top = major_df.head(20).copy()
-        fingerprint_fig = figure_dir / "mito_identity_major_variants.png"
+        fingerprint_fig = fingerprint_fig_path
         plt.figure(figsize=(10, 4))
         plt.bar(top["position"].astype(str), top["alt_allele_fraction"], color="#dc2626")
         plt.xticks(rotation=90)
@@ -777,6 +841,8 @@ def run_step(
         "sites, and exact overlap between retained canonical mtDNA SNVs from phased and unphased "
         "VCFs. Retained alleles require single-base A/C/G/T REF and ALT values plus FILTER PASS or '.'; "
         "when sample columns exist, at least one sample GT must call that ALT allele. When "
+        "retained, each SNV position and REF allele must match the configured mitochondrial reference. "
+        "When "
         "available, the best haplogroup match from the dedicated Phy-Mer page is also reported here "
         "as a compact identity-style label.</p>"
         f"<div class='metrics-grid'>{metrics_html}</div>"

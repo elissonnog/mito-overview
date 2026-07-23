@@ -49,7 +49,9 @@
 - bind external Phy-Mer execution to user-declared SHA-256 identities for the script, library, and motif definitions, and require a nonempty finite result before formal identity reporting
 - enforce configured mitochondrial length and REF-sequence agreement in every downstream candidate consumer
 - reject nonfinite or out-of-domain mvTool population allele frequencies rather than silently omitting or misbinning them
+- convert malformed supplied mvTool population frequencies to a nonfatal `unavailable` state before publishing results, and replace every mvTool-owned output so stale annotation tables or figures cannot survive a failed or mode-switched rerun
 - make identity QC independently compare page-13 Phy-Mer resource identities with the configured expected hashes before retaining a formal assignment
+- require every otherwise-retained identity-QC VCF SNV to be in range and REF-consistent with the configured mitochondrial FASTA before it can contribute to phased/unphased overlap
 - require indexed FASTA reference inputs in direct co-segregation, circularity, identity, and mvTool step invocations
 
 ## v0.2.1 - 2026-07-07

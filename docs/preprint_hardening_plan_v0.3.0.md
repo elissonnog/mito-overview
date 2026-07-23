@@ -91,7 +91,7 @@ Module states are `ok`, `not_configured`, `not_applicable`, `not_evaluable`, `un
 | ID | Deterministic proof |
 | --- | --- |
 | `F1` | More than 8,000 accepted observations; exact base/depth/strand counts; quality, flag, and overlap exclusions |
-| `F2` | Default mvTool mode cannot call HTTP; fixture and local mock modes work; malformed, timeout, missing, duplicate, and unexpected response rows are unavailable |
+| `F2` | Default mvTool mode cannot call HTTP; fixture and local mock modes work; malformed, timeout, missing, duplicate, unexpected, and invalid/nonfinite/out-of-range `AF_M1` response rows are unavailable and replace all stale mvTool-owned outputs |
 | `F3` | Minimal generic BAM and CRAM configs; explicit-sidecar precedence; legacy discovery; clear index/contig/length/reference failures; CRAM MD5 identity without relying on observed mtDNA records |
 | `F4` | Known ratio `10.0`; missing/zero denominator is NA rather than zero; targeted mtDNA is not applicable |
 | `F5` | mt-only or reduced-header NUMT interpretation is not evaluable; concordant exact whole-genome profiles enable warnings; augmented profiles are rejected; BED is zero-based half-open |

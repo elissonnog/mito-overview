@@ -224,6 +224,37 @@ def validate_mvtool_rows(
     return rows
 
 
+def validate_mvtool_population_frequencies(
+    rows: list[dict[str, object]],
+) -> None:
+    """Reject malformed supplied AF_M1 values before any output is published."""
+
+    invalid_rows: list[str] = []
+    for index, row in enumerate(rows):
+        if "AF_M1" not in row or row["AF_M1"] is None:
+            continue
+        raw_value = row["AF_M1"]
+        try:
+            value = float(raw_value)
+        except (TypeError, ValueError):
+            value = math.nan
+        if (
+            isinstance(raw_value, bool)
+            or not math.isfinite(value)
+            or value < 0
+            or value > 1
+        ):
+            row_identity = str(row.get("Input", f"row_{index}"))
+            invalid_rows.append(row_identity)
+
+    if invalid_rows:
+        raise MvtoolResponseValidationError(
+            "mvtool_invalid_af_m1",
+            "mvTool AF_M1 values must be finite numbers between 0 and 1; "
+            "invalid Inputs: " + ",".join(invalid_rows[:10]),
+        )
+
+
 def fetch_mvtool_rows(
     *,
     api_url: str,
@@ -309,8 +340,19 @@ def run_step(
     population_bins_path = summary_dir / "mito_mvtool_population_bins.tsv"
     status_figure_path = figure_dir / "mito_mvtool_status_counts.png"
     population_figure_path = figure_dir / "mito_mvtool_population_context.png"
-    for owned_figure in (status_figure_path, population_figure_path):
-        owned_figure.unlink(missing_ok=True)
+    owned_paths = (
+        report_path,
+        summary_path,
+        annot_path,
+        batch_log_path,
+        status_counts_path,
+        disease_summary_path,
+        population_bins_path,
+        status_figure_path,
+        population_figure_path,
+    )
+    for owned_path in owned_paths:
+        owned_path.unlink(missing_ok=True)
 
     mode = mode.strip().lower()
     if mode == "disabled":
@@ -520,6 +562,7 @@ def run_step(
                 entries,
                 submitted_inputs=subset["mvtool_input"].tolist(),
             )
+            validate_mvtool_population_frequencies(entries)
             batch_rows.append(
                 {
                     "batch": idx + 1,
@@ -649,7 +692,9 @@ def run_step(
             | (freq_df["AF_M1"] > 1)
         )
         if invalid_frequency.any():
-            raise ValueError("mvTool AF_M1 values must be finite and between 0 and 1")
+            raise RuntimeError(
+                "Internal mvTool invariant failed: AF_M1 was not validated before output assembly"
+            )
         freq_df = freq_df.dropna(subset=["AF_M1"])
         if not freq_df.empty:
             population_bin_summary = (

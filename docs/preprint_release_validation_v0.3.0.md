@@ -103,7 +103,7 @@ Deterministic tests verify exact-profile scope/species inference, rejection of s
 
 Canonical rCRS D-loop/control-region intervals are applied only when the configured mitochondrial sequence exactly matches bundled `NC_012920.1` across the full sequence. A mismatch or unavailable sequence suppresses those intervals and records the status, reason, sequence lengths, and SHA-256 values. A separate `synthetic_fixture_override` is accepted only as explicit test provenance. Deterministic tests use an exact rCRS fixture, a same-length mutated reference, an unavailable sequence, disabled mode, and the explicit synthetic override.
 
-Variant-consequence summaries count unique genomic positions, unique `(position, reference allele, alternate allele)` variants, and annotation rows separately. Consequently, overlapping features or multiple external annotation relationships can increase row counts without inflating site or variant counts. Identity QC retains only canonical single-nucleotide REF/ALT pairs with `FILTER=PASS` or `.`, excludes `REF=ALT`, and, for genotype-bearing VCFs, requires at least one sample genotype to call the specific ALT index. Site-only VCFs remain eligible under the same allele and filter rules. Tests cover multiallelic calls, uncalled alternate alleles, filtered records, indels, noncanonical bases, overlapping features, and duplicated annotation relationships.
+Variant-consequence summaries count unique genomic positions, unique `(position, reference allele, alternate allele)` variants, and annotation rows separately. Consequently, overlapping features or multiple external annotation relationships can increase row counts without inflating site or variant counts. Identity QC retains only canonical single-nucleotide REF/ALT pairs with `FILTER=PASS` or `.`, excludes `REF=ALT`, and, for genotype-bearing VCFs, requires at least one sample genotype to call the specific ALT index. Site-only VCFs remain eligible under the same allele and filter rules. Every otherwise-retained SNV must be in range and its REF must match the configured mitochondrial FASTA; an incompatible VCF source becomes `not_evaluable` and contributes no overlap counts. Tests cover multiallelic calls, uncalled alternate alleles, filtered records, indels, noncanonical bases, indexed and unindexed wrong-REF/out-of-range VCFs, stale-output cleanup, overlapping features, and duplicated annotation relationships.
 
 ## Local deterministic validation
 
@@ -411,3 +411,34 @@ hardening; its connected replacement suite passed `117/117`, so a new complete
 run was performed and passed `1075/1075` in 425.98 seconds with exit code zero.
 These remain working-tree checks pending a frozen successor commit, exact
 package/workflow gates, and three fresh role-separated audits.
+
+## Rejected candidate `00fd2dd`
+
+Candidate `00fd2dddcded2a2b742ed28bb5759528bf8b4cc3` (tree
+`9dcebc354667d112a829cd1bbbf6da58293a91b6`) was not pushed. Its exact source
+and source-distribution suites each passed `1075/1075`; separately installed
+wheel and source-distribution forms exposed all 18 steps, passed four synthetic
+workflow modes, and exactly rebuilt the tracked 88-file long-read and 74-file
+short-read bundles. Independent offline rebuilds were payload-equivalent across
+40 wheel and 422 source-distribution members. Reproducibility audit
+`MO-REPRO-00FD2DD-20260723T194159Z-080B7B8C-3398-41DA-A55D-182EE8529A7A`
+and release-engineering audit
+`MO-RELENG-00FD2DD-20260723T194347Z-E203DA96-8CF0-4BBE-A9B0-2EF5BD4C8809`
+returned bounded PASS verdicts. Scientific audit
+`MO-SCI-00FD2DD-20260723T194359Z-D85E8FA5` returned HOLD because malformed
+mvTool population frequencies could terminate after partial output publication,
+and retained identity-QC VCF SNVs were not checked against the configured
+mitochondrial coordinate and REF sequence.
+
+The successor validates supplied `AF_M1` values before publishing any mvTool
+output, converts malformed values to `unavailable/mvtool_invalid_af_m1`, and
+replaces all owned outputs so stale annotation tables or figures cannot survive.
+Identity-QC now marks an affected VCF source `not_evaluable` when an
+otherwise-retained SNV is out of range or has a REF mismatch; such a source
+contributes no overlap counts. Focused tests exercise fixture and mock-network
+malformed frequencies, stale mvTool outputs, indexed and unindexed VCF
+reference failures, and stale identity outputs. The initial focused suite passed
+`63/63`. After regenerating only the expected page-09 HTML and identity summary,
+the connected replacement suite passed `349/349` and the complete working-tree
+suite passed `1084/1084` in 446.27 seconds. A frozen exact candidate, package
+gates, and three fresh independent audits are still required.

@@ -17,7 +17,10 @@ from ._helpers import metric_map
 
 
 MT_LENGTH = 60
-REFERENCE_SEQUENCE = "A" * MT_LENGTH
+_reference_bases = list("A" * MT_LENGTH)
+for _position, _base in {17: "C", 18: "G", 20: "G", 30: "T", 55: "T"}.items():
+    _reference_bases[_position - 1] = _base
+REFERENCE_SEQUENCE = "".join(_reference_bases)
 PHYMER_RESOURCE_HASHES = {
     "phymer_script_sha256": "1f5231e6958ffd731c4c644aa69168824126c251f8b8129b74c47f87a68cbb22",
     "phymer_library_sha256": "8bd377e62052ec9145c7078fa0dd85eb071aa7977bd225baa6ede87031fea968",
@@ -106,7 +109,12 @@ def test_sample_vcf_retains_only_called_pass_canonical_snvs(tmp_path: Path) -> N
     vcf = tmp_path / "mixed_sample.vcf"
     write_mixed_sample_vcf(vcf)
 
-    variants, status, reason, counts = load_mt_variants(vcf, "MT")
+    variants, status, reason, counts = load_mt_variants(
+        vcf,
+        "MT",
+        mt_length=MT_LENGTH,
+        reference_sequence=REFERENCE_SEQUENCE,
+    )
 
     assert status == "ok"
     assert reason == ""
@@ -145,7 +153,12 @@ def test_site_only_vcf_retains_pass_canonical_snvs_without_genotypes(
     vcf = tmp_path / "mixed_site_only.vcf"
     write_mixed_site_only_vcf(vcf)
 
-    variants, status, reason, counts = load_mt_variants(vcf, "MT")
+    variants, status, reason, counts = load_mt_variants(
+        vcf,
+        "MT",
+        mt_length=MT_LENGTH,
+        reference_sequence=REFERENCE_SEQUENCE,
+    )
 
     assert status == "ok"
     assert reason == ""
@@ -858,10 +871,110 @@ def test_identity_qc_malformed_vcf_is_not_a_successful_zero_comparison(
 
     assert summary["variant_comparison_status"] == "not_evaluable"
     assert summary["variant_comparison_reason_code"].startswith(
-        "paired_variant_vcf_unreadable[phased:variant_vcf_unreadable"
+        "paired_variant_vcf_not_evaluable[phased:variant_vcf_unreadable"
     )
     assert summary["phased_mt_vcf_unique_retained_snvs"] == ""
     assert summary["shared_retained_mt_snvs"] == ""
     stdout = capsys.readouterr().out
     assert "variant comparison unavailable status=not_evaluable" in stdout
     assert "vcf_overlap shared=0" not in stdout
+
+
+@pytest.mark.parametrize("indexed", (False, True))
+@pytest.mark.parametrize(
+    ("record", "reason_code"),
+    [
+        ((10, "G", "C"), "variant_vcf_ref_mismatch"),
+        ((MT_LENGTH + 1, "A", "C"), "variant_vcf_position_out_of_range"),
+    ],
+)
+def test_identity_qc_rejects_reference_incompatible_vcfs(
+    tmp_path: Path,
+    indexed: bool,
+    record: tuple[int, str, str],
+    reason_code: str,
+) -> None:
+    incompatible = tmp_path / "incompatible.vcf"
+    valid = tmp_path / "valid.vcf"
+    write_vcf(incompatible, [record])
+    write_vcf(valid, [(10, "A", "C")])
+    if indexed:
+        incompatible = Path(
+            pysam.tabix_index(
+                str(incompatible), preset="vcf", force=True, keep_original=True
+            )
+        )
+        valid = Path(
+            pysam.tabix_index(str(valid), preset="vcf", force=True, keep_original=True)
+        )
+
+    outputs = run_step(
+        summary_dir=tmp_path / "summary",
+        figure_dir=tmp_path / "figures",
+        report_dir=tmp_path / "report",
+        sample_id="REFERENCE-INCOMPATIBLE",
+        mt_contig="MT",
+        phased_snp_vcf=incompatible,
+        np_snp_vcf=valid,
+    )
+    summary = metric_map(Path(outputs["summary_path"]))
+    comparison = pd.read_csv(outputs["compare_path"], sep="\t")
+
+    assert summary["variant_comparison_status"] == "not_evaluable"
+    assert (
+        summary["variant_comparison_reason_code"]
+        == f"paired_variant_vcf_not_evaluable[phased:{reason_code}]"
+    )
+    assert summary["phased_mt_vcf_unique_retained_snvs"] == ""
+    assert summary["shared_retained_mt_snvs"] == ""
+    assert comparison.empty
+
+
+def test_identity_qc_reference_failure_replaces_stale_owned_outputs(
+    tmp_path: Path,
+) -> None:
+    summary_dir = tmp_path / "summary"
+    figure_dir = tmp_path / "figures"
+    report_dir = tmp_path / "report"
+    for directory in (summary_dir, figure_dir, report_dir):
+        directory.mkdir()
+    stale_paths = (
+        summary_dir / "mito_identity_major_variant_fingerprint.tsv",
+        summary_dir / "mito_identity_vcf_comparison.tsv",
+        summary_dir / "mito_identity_qc_summary.tsv",
+        figure_dir / "mito_identity_vcf_overlap.png",
+        figure_dir / "mito_identity_major_variants.png",
+        report_dir / "09_mito_identity_qc.html",
+    )
+    for path in stale_paths:
+        path.write_text("STALE_IDENTITY_OUTPUT\n", encoding="utf-8")
+
+    incompatible = tmp_path / "incompatible.vcf"
+    valid = tmp_path / "valid.vcf"
+    write_vcf(incompatible, [(10, "G", "C")])
+    write_vcf(valid, [(10, "A", "C")])
+
+    outputs = run_step(
+        summary_dir=summary_dir,
+        figure_dir=figure_dir,
+        report_dir=report_dir,
+        sample_id="STALE-IDENTITY",
+        mt_contig="MT",
+        phased_snp_vcf=incompatible,
+        np_snp_vcf=valid,
+    )
+
+    assert metric_map(Path(outputs["summary_path"]))[
+        "variant_comparison_reason_code"
+    ] == "paired_variant_vcf_not_evaluable[phased:variant_vcf_ref_mismatch]"
+    assert pd.read_csv(outputs["compare_path"], sep="\t").empty
+    assert not (figure_dir / "mito_identity_major_variants.png").exists()
+    for path in (
+        outputs["summary_path"],
+        outputs["compare_path"],
+        outputs["fingerprint_path"],
+        outputs["report_path"],
+    ):
+        assert "STALE_IDENTITY_OUTPUT" not in Path(path).read_text(
+            encoding="utf-8"
+        )

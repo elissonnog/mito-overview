@@ -243,3 +243,39 @@ configured-hash comparison and repaired the four direct step CLI adapters; its
 connected replacement suite passed `117/117`. The clean complete replacement
 run passed `1075/1075` in 425.98 seconds with exit code zero. Exact-package
 gates and three new exact-SHA audits remain required.
+
+## Rejected candidate `00fd2dd` and external-response/reference remediation
+
+Exact commit `00fd2dddcded2a2b742ed28bb5759528bf8b4cc3` (tree
+`9dcebc354667d112a829cd1bbbf6da58293a91b6`) is rejected release evidence and
+was not pushed. Its Git archive and extracted source distribution each passed
+`1075/1075` tests. Separately installed wheel and source-distribution
+environments exposed all 18 steps, passed all four synthetic workflow modes,
+and reproduced the tracked 88-file long-read and 74-file reduced-short-read
+bundles exactly. Two offline builds had payload-equivalent 40-member wheels
+and 422-member source distributions. Reproducibility audit
+`MO-REPRO-00FD2DD-20260723T194159Z-080B7B8C-3398-41DA-A55D-182EE8529A7A`
+and release-engineering audit
+`MO-RELENG-00FD2DD-20260723T194347Z-E203DA96-8CF0-4BBE-A9B0-2EF5BD4C8809`
+returned bounded PASS verdicts. Scientific audit
+`MO-SCI-00FD2DD-20260723T194359Z-D85E8FA5` returned HOLD because malformed
+mvTool `AF_M1` values were validated after partial outputs were written and
+could terminate the optional step, while otherwise-retained identity VCF SNVs
+were not checked against the configured mitochondrial coordinate/REF sequence.
+
+The successor validates every supplied mvTool `AF_M1` value before publishing
+any owned output. Nonnumeric, nonfinite, negative, greater-than-one, or Boolean
+values produce `unavailable/mvtool_invalid_af_m1`; all mvTool-owned tables,
+figures, and the report are cleared before execution and replaced with a
+complete status result. Identity VCF selection now requires every
+otherwise-retained SNV to fall within `1..MT_LENGTH` and match the configured
+FASTA REF base. An incompatible source becomes `not_evaluable` and contributes
+no exact-overlap counts. Direct focused tests cover fixture and mock-network
+mvTool failures, stale-output replacement, indexed and unindexed wrong-REF and
+out-of-range VCFs, and stale identity output replacement. The initial focused
+remediation suite passed `63/63`. After regenerating only the expected page-09
+HTML and identity summary, the connected replacement suite passed `349/349`
+and the complete working-tree suite passed `1084/1084` in 446.27 seconds.
+These working-tree results do not approve a release candidate; a new exact
+commit, package/workflow gates, and three fresh role-separated audits remain
+mandatory.

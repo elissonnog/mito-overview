@@ -215,7 +215,8 @@ In long-read mode without ONT bedmethyl sidecars, page `12` is expected to be a 
   rechecks those recorded identities against the configured expected hashes
 - accepted Phy-Mer ranking scores must be finite and fall within the method's
   mathematical score domain `[0,1]`
-- mvTool is disabled by default; fixture or explicitly requested network success requires one unique returned row for every submitted candidate, with no missing, duplicate, or unexpected identifiers
+- identity-QC VCF overlap retains only eligible canonical SNVs whose positions and REF alleles match the configured mitochondrial FASTA; an incompatible VCF source is `not_evaluable` and contributes no overlap counts
+- mvTool is disabled by default; fixture or explicitly requested network success requires one unique returned row for every submitted candidate, with no missing, duplicate, or unexpected identifiers, and every supplied `AF_M1` value must be finite and within `[0,1]`; malformed responses produce a complete nonfatal `unavailable` output set
 - the repository's synthetic smoke-test path uses local fixtures to exercise these layers; real biological use should point to a true Phy-Mer vendor tree and an explicitly configured mvTool-compatible endpoint
 - `mito-overview` does not bundle external Phy-Mer code or mvTool data resources; see [`docs/license_notes.md`](docs/license_notes.md)
 

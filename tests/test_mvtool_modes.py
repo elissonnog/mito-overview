@@ -156,8 +156,8 @@ def test_population_frequency_bins_use_explicit_left_closed_boundaries(
     ]
 
 
-@pytest.mark.parametrize("frequency", (-0.1, 1.1, "not-a-number"))
-def test_population_frequency_rejects_invalid_domain_values(
+@pytest.mark.parametrize("frequency", (-0.1, 1.1, "not-a-number", float("nan"), True))
+def test_population_frequency_invalid_values_are_unavailable(
     tmp_path: Path,
     frequency: object,
 ) -> None:
@@ -177,19 +177,115 @@ def test_population_frequency_rejects_invalid_domain_values(
         encoding="utf-8",
     )
 
-    with pytest.raises(
-        ValueError,
-        match="AF_M1 values must be finite and between 0 and 1",
+    outputs = run_mvtool(
+        summary_dir=summary,
+        figure_dir=figures,
+        report_dir=reports,
+        sample_id="INVALID-AF",
+        species="human",
+        mode="fixture",
+        fixture_json=fixture,
+    )
+
+    assert outputs["status"] == "unavailable"
+    assert metric_map(outputs["summary_path"])["reason_code"] == "mvtool_invalid_af_m1"
+    for key in (
+        "annot_path",
+        "batch_log_path",
+        "status_counts_path",
+        "disease_summary_path",
+        "population_bins_path",
     ):
-        run_mvtool(
-            summary_dir=summary,
-            figure_dir=figures,
-            report_dir=reports,
-            sample_id="INVALID-AF",
-            species="human",
-            mode="fixture",
-            fixture_json=fixture,
+        assert pd.read_csv(outputs[key], sep="\t").empty
+
+
+def test_invalid_network_frequency_is_unavailable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    summary, figures, reports = prepare_case(tmp_path)
+    monkeypatch.setattr(
+        requests.Session,
+        "post",
+        lambda self, *args, **kwargs: FakeResponse(
+            {"mseqdr": [{"Input": "m.10A>C", "AF_M1": 1.5}]}
+        ),
+    )
+
+    outputs = run_mvtool(
+        summary_dir=summary,
+        figure_dir=figures,
+        report_dir=reports,
+        sample_id="INVALID-NETWORK-AF",
+        species="human",
+        mode="network",
+        api_url="https://mock.invalid/mvtool",
+    )
+
+    metrics = metric_map(outputs["summary_path"])
+    assert outputs["status"] == "unavailable"
+    assert metrics["reason_code"] == "mvtool_invalid_af_m1"
+    assert metrics["network_request_attempted"] == "1"
+    assert pd.read_csv(outputs["annot_path"], sep="\t").empty
+
+
+def test_invalid_frequency_replaces_all_stale_mvtool_outputs(tmp_path: Path) -> None:
+    summary, figures, reports = prepare_case(tmp_path)
+    figures.mkdir()
+    reports.mkdir()
+    stale_paths = (
+        summary / "mito_mvtool_annotation_summary.tsv",
+        summary / "mito_mvtool_annotation_candidates.tsv",
+        summary / "mito_mvtool_annotation_batches.tsv",
+        summary / "mito_mvtool_status_counts.tsv",
+        summary / "mito_mvtool_disease_summary.tsv",
+        summary / "mito_mvtool_population_bins.tsv",
+        figures / "mito_mvtool_status_counts.png",
+        figures / "mito_mvtool_population_context.png",
+        reports / "14_mito_mvtool_annotation.html",
+    )
+    for path in stale_paths:
+        path.write_text("STALE_MVTOOL_OUTPUT\n", encoding="utf-8")
+    fixture = tmp_path / "invalid-frequency.json"
+    fixture.write_text(
+        json.dumps(
+            {
+                "records": {
+                    "m.10A>C": {
+                        "Input": "m.10A>C",
+                        "AF_M1": "not-a-number",
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    outputs = run_mvtool(
+        summary_dir=summary,
+        figure_dir=figures,
+        report_dir=reports,
+        sample_id="STALE-MVTOOL",
+        species="human",
+        mode="fixture",
+        fixture_json=fixture,
+    )
+
+    assert outputs["status"] == "unavailable"
+    assert metric_map(outputs["summary_path"])["reason_code"] == "mvtool_invalid_af_m1"
+    for key in (
+        "summary_path",
+        "annot_path",
+        "batch_log_path",
+        "status_counts_path",
+        "disease_summary_path",
+        "population_bins_path",
+        "report_path",
+    ):
+        assert "STALE_MVTOOL_OUTPUT" not in Path(outputs[key]).read_text(
+            encoding="utf-8"
         )
+    assert not (figures / "mito_mvtool_status_counts.png").exists()
+    assert not (figures / "mito_mvtool_population_context.png").exists()
 
 
 @pytest.mark.parametrize(
