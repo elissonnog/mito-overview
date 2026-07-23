@@ -91,3 +91,71 @@ def test_ref_equal_alt_and_reference_disagreement_are_rejected() -> None:
             mt_length=4,
             reference_sequence="ACGT",
         )
+
+
+@pytest.mark.parametrize(
+    "column",
+    [
+        "position",
+        "ref_base",
+        "alt_base",
+        "callable_depth",
+        "depth",
+        "alt_count",
+        "alt_allele_fraction",
+        "heteroplasmy_fraction",
+        "alt_forward",
+        "alt_reverse",
+        "A",
+        "C",
+        "G",
+        "T",
+    ],
+)
+def test_every_generated_candidate_column_is_required(column: str) -> None:
+    candidate = valid_candidate().drop(columns=[column])
+
+    with pytest.raises(ValueError, match="lacks required columns"):
+        validate_candidate_table(candidate, table_name="incomplete")
+
+
+def test_non_numeric_legacy_fraction_is_not_silently_repaired() -> None:
+    candidate = valid_candidate()
+    candidate["heteroplasmy_fraction"] = candidate["heteroplasmy_fraction"].astype(object)
+    candidate.loc[0, "heteroplasmy_fraction"] = "garbage"
+
+    with pytest.raises(ValueError, match="heteroplasmy_fraction"):
+        validate_candidate_table(candidate, table_name="bad-legacy-alias")
+
+
+def test_fraction_alias_disagreement_is_rejected() -> None:
+    candidate = valid_candidate()
+    candidate.loc[0, "heteroplasmy_fraction"] = 0.2
+
+    with pytest.raises(ValueError, match="aliases conflict"):
+        validate_candidate_table(candidate, table_name="conflicting-aliases")
+
+
+def test_duplicate_variant_keys_are_rejected() -> None:
+    duplicated = pd.concat([valid_candidate(), valid_candidate()], ignore_index=True)
+
+    with pytest.raises(ValueError, match="duplicate variant keys"):
+        validate_candidate_table(duplicated, table_name="duplicate-key")
+
+
+def test_more_than_one_alternate_allele_per_position_is_rejected() -> None:
+    first = valid_candidate()
+    second = valid_candidate()
+    second.loc[0, "alt_base"] = "G"
+    second.loc[0, "alt_count"] = 2
+    second.loc[0, "alt_allele_fraction"] = 0.2
+    second.loc[0, "heteroplasmy_fraction"] = 0.2
+    second.loc[0, "alt_forward"] = 1
+    second.loc[0, "alt_reverse"] = 1
+    second.loc[0, "A"] = 0
+    second.loc[0, "C"] = 8
+    second.loc[0, "G"] = 2
+    combined = pd.concat([first, second], ignore_index=True)
+
+    with pytest.raises(ValueError, match="more than one alternate allele per position"):
+        validate_candidate_table(combined, table_name="multi-alt-position")

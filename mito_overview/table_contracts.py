@@ -111,18 +111,22 @@ def validate_candidate_table(
     filter, or reinterpret it as a valid candidate set.
     """
 
-    normalized = ensure_alt_fraction_columns(frame)
-    if "depth" not in normalized.columns and "callable_depth" in normalized.columns:
-        normalized["depth"] = normalized["callable_depth"]
-    if "callable_depth" not in normalized.columns and "depth" in normalized.columns:
-        normalized["callable_depth"] = normalized["depth"]
+    normalized = frame.copy()
     required = {
         "position",
         "ref_base",
         "alt_base",
         "depth",
         "callable_depth",
+        "alt_count",
         "alt_allele_fraction",
+        "heteroplasmy_fraction",
+        "alt_forward",
+        "alt_reverse",
+        "A",
+        "C",
+        "G",
+        "T",
     }
     missing = sorted(required - set(normalized.columns))
     if missing:
@@ -136,6 +140,11 @@ def validate_candidate_table(
         mt_length=mt_length,
         reference_sequence=reference_sequence,
     )
+    if normalized.duplicated(subset=["position", "ref_base", "alt_base"]).any():
+        raise ValueError(f"{table_name} contains duplicate variant keys")
+    if normalized.duplicated(subset=["position"]).any():
+        raise ValueError(f"{table_name} contains more than one alternate allele per position")
+
     normalized["depth"] = _strict_numeric_column(
         normalized, "depth", table_name=table_name, integer=True, minimum=1
     )
@@ -155,61 +164,69 @@ def validate_candidate_table(
         minimum=0,
         maximum=1,
     )
-    normalized["heteroplasmy_fraction"] = normalized["alt_allele_fraction"]
+    normalized["heteroplasmy_fraction"] = _strict_numeric_column(
+        normalized,
+        "heteroplasmy_fraction",
+        table_name=table_name,
+        minimum=0,
+        maximum=1,
+    )
+    if not np.isclose(
+        normalized["alt_allele_fraction"],
+        normalized["heteroplasmy_fraction"],
+        rtol=0,
+        atol=1e-9,
+    ).all():
+        raise ValueError(f"{table_name} alternate-fraction aliases conflict")
 
-    if "alt_count" in normalized.columns:
-        normalized["alt_count"] = _strict_numeric_column(
+    normalized["alt_count"] = _strict_numeric_column(
+        normalized,
+        "alt_count",
+        table_name=table_name,
+        integer=True,
+        minimum=1,
+    )
+    if (normalized["alt_count"] > normalized["callable_depth"]).any():
+        raise ValueError(f"{table_name} alt_count exceeds callable_depth")
+    expected_fraction = normalized["alt_count"] / normalized["callable_depth"]
+    if not np.isclose(
+        normalized["alt_allele_fraction"],
+        expected_fraction,
+        rtol=0,
+        atol=5.1e-7,
+    ).all():
+        raise ValueError(f"{table_name} alternate fraction conflicts with allele counts")
+
+    for column in ("alt_forward", "alt_reverse"):
+        normalized[column] = _strict_numeric_column(
             normalized,
-            "alt_count",
+            column,
             table_name=table_name,
             integer=True,
-            minimum=1,
+            minimum=0,
         )
-        if (normalized["alt_count"] > normalized["callable_depth"]).any():
-            raise ValueError(f"{table_name} alt_count exceeds callable_depth")
-        expected_fraction = normalized["alt_count"] / normalized["callable_depth"]
-        if not np.isclose(
-            normalized["alt_allele_fraction"],
-            expected_fraction,
-            rtol=0,
-            atol=5.1e-7,
-        ).all():
-            raise ValueError(f"{table_name} alternate fraction conflicts with allele counts")
-
-    strand_columns = {"alt_forward", "alt_reverse"}
-    if strand_columns.issubset(normalized.columns):
-        for column in sorted(strand_columns):
-            normalized[column] = _strict_numeric_column(
-                normalized,
-                column,
-                table_name=table_name,
-                integer=True,
-                minimum=0,
-            )
-        if "alt_count" in normalized.columns and not (
-            normalized["alt_count"]
-            == normalized["alt_forward"] + normalized["alt_reverse"]
-        ).all():
-            raise ValueError(f"{table_name} strand counts do not sum to alt_count")
+    if not (
+        normalized["alt_count"]
+        == normalized["alt_forward"] + normalized["alt_reverse"]
+    ).all():
+        raise ValueError(f"{table_name} strand counts do not sum to alt_count")
 
     base_columns = ["A", "C", "G", "T"]
-    if set(base_columns).issubset(normalized.columns):
-        for column in base_columns:
-            normalized[column] = _strict_numeric_column(
-                normalized,
-                column,
-                table_name=table_name,
-                integer=True,
-                minimum=0,
-            )
-        if not (normalized[base_columns].sum(axis=1) == normalized["callable_depth"]).all():
-            raise ValueError(f"{table_name} A/C/G/T counts do not sum to callable_depth")
-        if "alt_count" in normalized.columns:
-            observed_alt = normalized.apply(
-                lambda row: row[str(row["alt_base"])], axis=1
-            ).astype("int64")
-            if not (observed_alt == normalized["alt_count"]).all():
-                raise ValueError(f"{table_name} alt_count disagrees with the alternate-base count")
+    for column in base_columns:
+        normalized[column] = _strict_numeric_column(
+            normalized,
+            column,
+            table_name=table_name,
+            integer=True,
+            minimum=0,
+        )
+    if not (normalized[base_columns].sum(axis=1) == normalized["callable_depth"]).all():
+        raise ValueError(f"{table_name} A/C/G/T counts do not sum to callable_depth")
+    observed_alt = normalized.apply(
+        lambda row: row[str(row["alt_base"])], axis=1
+    ).astype("int64")
+    if not (observed_alt == normalized["alt_count"]).all():
+        raise ValueError(f"{table_name} alt_count disagrees with the alternate-base count")
     return normalized
 
 

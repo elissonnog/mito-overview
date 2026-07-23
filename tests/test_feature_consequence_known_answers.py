@@ -26,10 +26,61 @@ from ._helpers import metric_map
 RESOURCE_DIR = Path(__file__).resolve().parents[1] / "resources" / "annotations"
 HUMAN_MT_FASTA = RESOURCE_DIR / "NC_012920.1.fa"
 HUMAN_MT_GTF = RESOURCE_DIR / "human_mt_reference.gtf"
+CANDIDATE_EVIDENCE_COLUMNS = [
+    "position",
+    "ref_base",
+    "alt_base",
+    "callable_depth",
+    "depth",
+    "alt_count",
+    "alt_allele_fraction",
+    "heteroplasmy_fraction",
+    "alt_forward",
+    "alt_reverse",
+    "A",
+    "C",
+    "G",
+    "T",
+]
 
 
 def canonical_mt_sequence() -> str:
     return "".join(HUMAN_MT_FASTA.read_text(encoding="ascii").splitlines()[1:])
+
+
+def candidate_evidence_row(
+    position: int,
+    ref_base: str,
+    alt_base: str,
+    allele_fraction: float = 0.25,
+    depth: int = 100,
+) -> dict[str, object]:
+    alt_count = round(depth * allele_fraction)
+    assert alt_count / depth == pytest.approx(allele_fraction, abs=5e-7)
+    base_counts = {base: 0 for base in "ACGT"}
+    base_counts[ref_base] = depth - alt_count
+    base_counts[alt_base] = alt_count
+    return {
+        "position": position,
+        "ref_base": ref_base,
+        "alt_base": alt_base,
+        "callable_depth": depth,
+        "depth": depth,
+        "alt_count": alt_count,
+        "alt_allele_fraction": allele_fraction,
+        "heteroplasmy_fraction": allele_fraction,
+        "alt_forward": alt_count // 2,
+        "alt_reverse": alt_count - (alt_count // 2),
+        **base_counts,
+    }
+
+
+def write_candidate_evidence(summary_dir: Path, rows: list[dict[str, object]]) -> None:
+    pd.DataFrame(rows, columns=CANDIDATE_EVIDENCE_COLUMNS).to_csv(
+        summary_dir / "mito_heteroplasmy_candidates.tsv",
+        sep="\t",
+        index=False,
+    )
 
 
 def write_heteroplasmy_status(
@@ -49,11 +100,7 @@ def write_heteroplasmy_status(
 def write_consequence_fixture(tmp_path: Path, *, position: int = 1000) -> tuple[Path, Path]:
     summary_dir = tmp_path / "summary"
     summary_dir.mkdir(parents=True)
-    (summary_dir / "mito_heteroplasmy_candidates.tsv").write_text(
-        "position\tref_base\talt_base\tdepth\talt_allele_fraction\theteroplasmy_fraction\n"
-        f"{position}\tA\tC\t100\t0.25\t0.25\n",
-        encoding="ascii",
-    )
+    write_candidate_evidence(summary_dir, [candidate_evidence_row(position, "A", "C")])
     write_heteroplasmy_status(summary_dir)
     fasta = tmp_path / "mt.fa"
     fasta.write_text(">MT\n" + "A" * 2000 + "\n", encoding="ascii")
@@ -72,10 +119,9 @@ def write_feature_gating_fixture(
     summary_dir.mkdir(parents=True)
     ref_base = sequence[candidate_position - 1].upper()
     alt_base = "A" if ref_base != "A" else "C"
-    (summary_dir / "mito_heteroplasmy_candidates.tsv").write_text(
-        "position\tref_base\talt_base\tdepth\talt_allele_fraction\theteroplasmy_fraction\n"
-        f"{candidate_position}\t{ref_base}\t{alt_base}\t100\t0.25\t0.25\n",
-        encoding="ascii",
+    write_candidate_evidence(
+        summary_dir,
+        [candidate_evidence_row(candidate_position, ref_base, alt_base)],
     )
     write_heteroplasmy_status(summary_dir)
     fasta = tmp_path / "configured_reference.fa"
@@ -101,21 +147,15 @@ def run_canonical_consequence_fixture(
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, Path | str]]:
     summary_dir = tmp_path / "canonical-summary"
     summary_dir.mkdir(parents=True)
-    candidate_rows = [
-        "position\tref_base\talt_base\tdepth\talt_allele_fraction\theteroplasmy_fraction"
-    ]
     allele_fractions = allele_fractions or {}
+    candidate_rows: list[dict[str, object]] = []
     for position, ref_base, alt_base in candidates:
         key = (position, ref_base, alt_base)
         allele_fraction = allele_fractions.get(key, 0.25)
         candidate_rows.append(
-            f"{position}\t{ref_base}\t{alt_base}\t100\t"
-            f"{allele_fraction}\t{allele_fraction}"
+            candidate_evidence_row(position, ref_base, alt_base, allele_fraction)
         )
-    (summary_dir / "mito_heteroplasmy_candidates.tsv").write_text(
-        "\n".join(candidate_rows) + "\n",
-        encoding="ascii",
-    )
+    write_candidate_evidence(summary_dir, candidate_rows)
     write_heteroplasmy_status(summary_dir)
 
     fasta = tmp_path / "NC_012920.1.fa"
@@ -453,7 +493,7 @@ def test_overlapping_feature_summaries_distinguish_sites_variants_and_annotation
     assert float(missense["mean_alt_allele_fraction"]) == pytest.approx(0.3)
 
 
-def test_clinvar_summary_deduplicates_overlaps_and_distinguishes_variant_keys(
+def test_clinvar_summary_deduplicates_overlapping_feature_rows_across_sites(
     tmp_path: Path,
 ) -> None:
     clinvar_vcf = tmp_path / "clinvar.vcf"
@@ -463,13 +503,14 @@ def test_clinvar_summary_deduplicates_overlaps_and_distinguishes_variant_keys(
         '##INFO=<ID=CLNSIG,Number=.,Type=String,Description="Clinical significance">\n'
         '##INFO=<ID=CLNDN,Number=.,Type=String,Description="Disease name">\n'
         "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n"
-        "MT\t8530\t.\tA\tC,G\t.\tPASS\tCLNSIG=Pathogenic;CLNDN=Test_condition\n",
+        "MT\t8530\t.\tA\tC\t.\tPASS\tCLNSIG=Pathogenic;CLNDN=Test_condition\n"
+        "MT\t9207\t.\tA\tC\t.\tPASS\tCLNSIG=Pathogenic;CLNDN=Test_condition\n",
         encoding="ascii",
     )
 
     _, annotations, outputs = run_canonical_consequence_fixture(
         tmp_path,
-        [(8530, "A", "C"), (8530, "A", "G")],
+        [(8530, "A", "C"), (9207, "A", "C")],
         clinvar_vcf=clinvar_vcf,
     )
 
@@ -477,16 +518,16 @@ def test_clinvar_summary_deduplicates_overlaps_and_distinguishes_variant_keys(
     clinvar_summary = pd.read_csv(outputs["clinvar_path"], sep="\t")
 
     assert len(annotations) == 4
-    assert summary["candidate_sites_annotated"] == "1"
+    assert summary["candidate_sites_annotated"] == "2"
     assert summary["candidate_variants_annotated"] == "2"
     assert summary["annotation_rows"] == "4"
-    assert summary["sites_with_clinvar_annotation"] == "1"
+    assert summary["sites_with_clinvar_annotation"] == "2"
     assert summary["variants_with_clinvar_annotation"] == "2"
     assert summary["clinvar_annotation_rows"] == "4"
     assert clinvar_summary.to_dict(orient="records") == [
         {
             "clinvar_significance": "Pathogenic",
-            "candidate_sites": 1,
+            "candidate_sites": 2,
             "candidate_variants": 2,
             "annotation_rows": 4,
         }
@@ -749,12 +790,7 @@ def test_no_callable_positions_propagates_through_feature_and_consequence(
     summary_dir, fasta = write_consequence_fixture(tmp_path)
     pd.DataFrame(
         columns=[
-            "position",
-            "ref_base",
-            "alt_base",
-            "depth",
-            "alt_allele_fraction",
-            "heteroplasmy_fraction",
+            *CANDIDATE_EVIDENCE_COLUMNS,
         ]
     ).to_csv(summary_dir / "mito_heteroplasmy_candidates.tsv", sep="\t", index=False)
     write_heteroplasmy_status(

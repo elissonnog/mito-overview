@@ -10,6 +10,26 @@ from mito_overview.steps import mito_cosegregation as cosegregation
 from ._helpers import ReadSpec, metric_map, write_alignment
 
 
+def candidate_row(position: int, alt_base: str, *, depth: int = 25) -> dict[str, object]:
+    alt_count = 5
+    base_counts = {base: 0 for base in "ACGT"}
+    base_counts["A"] = depth - alt_count
+    base_counts[alt_base] = alt_count
+    return {
+        "position": position,
+        "ref_base": "A",
+        "alt_base": alt_base,
+        "callable_depth": depth,
+        "depth": depth,
+        "alt_count": alt_count,
+        "alt_allele_fraction": alt_count / depth,
+        "heteroplasmy_fraction": alt_count / depth,
+        "alt_forward": 2,
+        "alt_reverse": 3,
+        **base_counts,
+    }
+
+
 @pytest.mark.parametrize(
     ("value", "expected"),
     [(0.0, "white"), (0.59, "white"), (0.6, "black"), (1.0, "black")],
@@ -92,20 +112,8 @@ def test_run_step_is_not_evaluable_when_shared_pairs_have_no_alt_support(
     summary_dir.mkdir()
     pd.DataFrame(
         [
-            {
-                "position": 10,
-                "ref_base": "A",
-                "alt_base": "C",
-                "alt_allele_fraction": 0.2,
-                "callable_depth": 25,
-            },
-            {
-                "position": 20,
-                "ref_base": "A",
-                "alt_base": "G",
-                "alt_allele_fraction": 0.2,
-                "callable_depth": 25,
-            },
+            candidate_row(10, "C"),
+            candidate_row(20, "G"),
         ]
     ).to_csv(summary_dir / "mito_heteroplasmy_candidates.tsv", sep="\t", index=False)
     pd.DataFrame(
