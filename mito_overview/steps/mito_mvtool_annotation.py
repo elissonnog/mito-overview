@@ -402,7 +402,13 @@ def run_step(
             message="mvTool annotation is currently enabled only for human mitochondrial samples.",
         )
 
-    candidates = load_table(summary_dir / "mito_heteroplasmy_candidates.tsv")
+    candidates_path = summary_dir / "mito_heteroplasmy_candidates.tsv"
+    candidates = load_table(candidates_path)
+    if candidates_path.exists():
+        candidates = validate_candidate_table(
+            candidates,
+            table_name="mito_heteroplasmy_candidates.tsv",
+        )
     if candidates.empty:
         return write_status_page(
             report_path=report_path,
@@ -416,10 +422,6 @@ def run_step(
             ],
             message="No mitochondrial candidate variants were available for mvTool annotation.",
         )
-    candidates = validate_candidate_table(
-        candidates,
-        table_name="mito_heteroplasmy_candidates.tsv",
-    )
     candidates["mvtool_input"] = [to_hgvs(r) for r in candidates.itertuples(index=False)]
     unique_inputs = candidates[["mvtool_input"]].reset_index(drop=True)
     session = requests.Session()

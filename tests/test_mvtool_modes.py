@@ -235,6 +235,56 @@ def test_incomplete_internal_candidates_are_rejected_before_fixture_use(
         )
 
 
+def test_partial_header_only_candidates_are_rejected_before_fixture_use(
+    tmp_path: Path,
+) -> None:
+    summary, figures, reports = prepare_case(tmp_path)
+    candidate_path = summary / "mito_heteroplasmy_candidates.tsv"
+    pd.DataFrame(columns=["position"]).to_csv(candidate_path, sep="\t", index=False)
+    fixture = Path(__file__).parent / "fixtures" / "mock_mvtool_annotations.json"
+
+    with pytest.raises(ValueError, match="lacks required columns"):
+        mvtool.run_step(
+            summary_dir=summary,
+            figure_dir=figures,
+            report_dir=reports,
+            sample_id="S1",
+            species="human",
+            mode="fixture",
+            fixture_json=fixture,
+        )
+
+
+def test_valid_header_only_candidate_table_is_an_empty_result(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    summary, figures, reports = prepare_case(tmp_path)
+    candidate_path = summary / "mito_heteroplasmy_candidates.tsv"
+    columns = list(
+        complete_candidate({"position": 10, "ref_base": "A", "alt_base": "C"})
+    )
+    pd.DataFrame(columns=columns).to_csv(candidate_path, sep="\t", index=False)
+    monkeypatch.setattr(
+        mvtool.requests,
+        "Session",
+        lambda: (_ for _ in ()).throw(AssertionError("network session created")),
+    )
+    fixture = Path(__file__).parent / "fixtures" / "mock_mvtool_annotations.json"
+
+    outputs = mvtool.run_step(
+        summary_dir=summary,
+        figure_dir=figures,
+        report_dir=reports,
+        sample_id="S1",
+        species="human",
+        mode="fixture",
+        fixture_json=fixture,
+    )
+
+    assert outputs["status"] == "not_evaluable"
+    assert metric_map(outputs["summary_path"])["reason_code"] == "no_candidate_sites_available"
+
+
 @pytest.mark.parametrize(
     ("returned_rows", "reason_code"),
     [

@@ -97,6 +97,17 @@ def load_optional_table(path: Path, columns: list[str]) -> pd.DataFrame:
     return df
 
 
+def load_candidate_table(path: Path) -> pd.DataFrame:
+    """Load candidates without manufacturing a valid schema for malformed files."""
+
+    if not path.exists():
+        return pd.DataFrame(columns=CANDIDATE_COLUMNS)
+    try:
+        return pd.read_csv(path, sep="\t")
+    except pd.errors.EmptyDataError:
+        return pd.DataFrame()
+
+
 def render_status_page(
     *,
     summary_path: Path,
@@ -233,13 +244,20 @@ def run_step(
 
     depth_df = load_depth_table(depth_path)
     reads_df = load_optional_table(reads_path, READ_COLUMNS)
-    candidates_df = load_optional_table(candidates_path, CANDIDATE_COLUMNS)
+    candidates_df = load_candidate_table(candidates_path)
     print(
         f"[circularity_qc] loaded depth_rows={len(depth_df)} reads_rows={len(reads_df)} "
         f"candidate_rows={len(candidates_df)} depth_exists={depth_path.exists()} "
         f"reads_exists={reads_path.exists()} candidates_exists={candidates_path.exists()}",
         flush=True,
     )
+
+    if candidates_path.exists():
+        candidates_df = validate_candidate_table(
+            candidates_df,
+            table_name="mito_heteroplasmy_candidates.tsv",
+            mt_length=mt_length,
+        )
 
     if depth_df.empty:
         return render_status_page(
@@ -249,12 +267,6 @@ def run_step(
             mt_contig=mt_contig,
             message="no mito_depth_per_base.tsv available; writing status-only outputs",
         )
-
-    candidates_df = validate_candidate_table(
-        candidates_df,
-        table_name="mito_heteroplasmy_candidates.tsv",
-        mt_length=mt_length,
-    )
 
     position_values = depth_df["position"].to_numpy(dtype=float)
     depth_values = depth_df["depth"].to_numpy(dtype=float)

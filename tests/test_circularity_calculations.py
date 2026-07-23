@@ -5,7 +5,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from mito_overview.steps.mito_circularity_qc import run_step
+from mito_overview.steps.mito_circularity_qc import CANDIDATE_COLUMNS, run_step
 
 from ._helpers import metric_map
 
@@ -31,7 +31,7 @@ def candidate_table(positions: list[int]) -> pd.DataFrame:
                 "T": 0,
             }
         )
-    return pd.DataFrame(rows)
+    return pd.DataFrame(rows, columns=CANDIDATE_COLUMNS)
 
 
 def write_tables(
@@ -118,7 +118,7 @@ def test_unusable_or_missing_metric_evidence_is_na_not_zero(tmp_path: Path) -> N
             }
         ]
     )
-    candidates = pd.DataFrame()
+    candidates = candidate_table([])
     write_tables(tmp_path / "summary", depth=depth, reads=reads, candidates=candidates)
 
     outputs, metrics = run_circularity(tmp_path)
@@ -208,7 +208,7 @@ def test_malformed_optional_evidence_is_not_reported_as_observed_zero(
             }
         ]
     )
-    candidates = pd.DataFrame()
+    candidates = candidate_table([])
     write_tables(tmp_path / "summary", depth=depth, reads=reads, candidates=candidates)
 
     outputs, metrics = run_circularity(tmp_path)
@@ -238,9 +238,10 @@ def test_malformed_optional_evidence_is_not_reported_as_observed_zero(
     ("candidate", "message"),
     [
         (candidate_table([10]).drop(columns=["callable_depth"]), "callable_depth"),
+        (pd.DataFrame(columns=["position"]), "lacks required columns"),
         (pd.concat([candidate_table([10]), candidate_table([10])], ignore_index=True), "duplicate variant keys"),
     ],
-    ids=("missing-generated-column", "duplicate-variant-key"),
+    ids=("missing-generated-column", "partial-header-only", "duplicate-variant-key"),
 )
 def test_malformed_candidate_evidence_is_rejected_before_circularity_interpretation(
     tmp_path: Path,
@@ -278,7 +279,7 @@ def test_reversed_primary_read_coordinates_make_all_read_edge_metrics_undefined(
         tmp_path / "summary",
         depth=depth,
         reads=reads,
-        candidates=pd.DataFrame(),
+        candidates=candidate_table([]),
     )
 
     outputs, metrics = run_circularity(tmp_path)
@@ -311,7 +312,7 @@ def test_invalid_primary_indicator_suppresses_optional_read_metrics(tmp_path: Pa
         tmp_path / "summary",
         depth=depth,
         reads=reads,
-        candidates=pd.DataFrame(),
+        candidates=candidate_table([]),
     )
 
     outputs, metrics = run_circularity(tmp_path)
@@ -330,7 +331,7 @@ def test_sparse_region_spanning_depth_profile_is_not_complete(tmp_path: Path) ->
         tmp_path / "summary",
         depth=depth,
         reads=pd.DataFrame(),
-        candidates=pd.DataFrame(),
+        candidates=candidate_table([]),
     )
 
     outputs, metrics = run_circularity(tmp_path)
@@ -383,7 +384,7 @@ def test_malformed_full_length_depth_profile_is_not_evaluable(
         tmp_path / "summary",
         depth=depth,
         reads=pd.DataFrame(),
-        candidates=pd.DataFrame(),
+        candidates=candidate_table([]),
     )
 
     outputs, metrics = run_circularity(tmp_path)

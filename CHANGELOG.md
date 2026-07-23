@@ -33,6 +33,7 @@
 - make the final GitHub publication transition restate the exact tag, target commit, release name, draft state, and non-prerelease state, and validate the complete assets returned by that transition before recording publication success
 - require each selected candidate alternate to have a largest observed non-reference canonical-base count, and apply the complete candidate contract in mvTool and circularity without silent deduplication
 - require aligned-reference plus soft-clipped query-consuming bases not to exceed read query length before categorical whole-genome NUMT-warning interpretation
+- distinguish a valid complete-schema zero-candidate result from malformed zero-byte or partial-header candidate files in mvTool and circularity, validating every existing file before empty-result handling
 
 ## v0.2.1 - 2026-07-07
 - synchronized release metadata across `pyproject.toml`, `CITATION.cff`, README, release checklist, and manuscript source
