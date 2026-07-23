@@ -67,6 +67,23 @@ def run_circularity(tmp_path: Path) -> tuple[dict[str, Path | str], dict[str, st
     return outputs, metric_map(Path(outputs["summary_path"]))
 
 
+@pytest.mark.parametrize("edge_window", (0, -1, -500))
+def test_nonpositive_edge_window_fails_closed(
+    tmp_path: Path,
+    edge_window: int,
+) -> None:
+    with pytest.raises(ValueError, match="edge_window must be a positive integer"):
+        run_step(
+            summary_dir=tmp_path / "summary",
+            figure_dir=tmp_path / "figures",
+            report_dir=tmp_path / "reports",
+            sample_id="INVALID-EDGE",
+            mt_contig="MT",
+            mt_length=100,
+            edge_window=edge_window,
+        )
+
+
 def test_exact_edge_boundaries_and_valid_zero_depth(tmp_path: Path) -> None:
     depths = [0.0] * 10 + [5.0] * 80 + [10.0] * 10
     depth = pd.DataFrame({"position": range(1, 101), "depth": depths})

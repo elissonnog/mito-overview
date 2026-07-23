@@ -222,6 +222,13 @@ def run_step(
 ) -> dict[str, Path | str]:
     """Run the public mitochondrial circularity QC step."""
 
+    if (
+        not isinstance(edge_window, int)
+        or isinstance(edge_window, bool)
+        or edge_window <= 0
+    ):
+        raise ValueError("edge_window must be a positive integer")
+
     print(
         f"[circularity_qc] starting sample={sample_id} contig={mt_contig} "
         f"length={mt_length} edge_window={edge_window}",

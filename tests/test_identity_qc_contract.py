@@ -336,6 +336,45 @@ def test_identity_qc_without_any_evidence_is_not_evaluable(tmp_path: Path) -> No
     assert summary["shared_retained_mt_snvs"] == ""
 
 
+def test_identity_qc_does_not_treat_synthetic_phymer_fixture_as_formal_assignment(
+    tmp_path: Path,
+) -> None:
+    summary_dir = tmp_path / "summary"
+    summary_dir.mkdir()
+    pd.DataFrame(
+        [
+            {"metric": "status", "value": "ok"},
+            {"metric": "reason_code", "value": ""},
+            {"metric": "best_haplogroup", "value": "H1a1"},
+            {"metric": "phymer_result_scope", "value": "synthetic_wiring_fixture"},
+            {"metric": "biological_validation_status", "value": "not_applicable"},
+        ]
+    ).to_csv(
+        summary_dir / "mito_phymer_haplogroup_summary.tsv",
+        sep="\t",
+        index=False,
+    )
+
+    outputs = run_step(
+        summary_dir=summary_dir,
+        figure_dir=tmp_path / "figures",
+        report_dir=tmp_path / "report",
+        sample_id="SYNTHETIC-PHYMER",
+        mt_contig="MT",
+        phased_snp_vcf=None,
+        np_snp_vcf=None,
+    )
+    summary = metric_map(Path(outputs["summary_path"]))
+
+    assert outputs["status"] == "not_evaluable"
+    assert summary["formal_haplogroup_assignment_status"] == "not_evaluable"
+    assert (
+        summary["formal_haplogroup_reason_code"]
+        == "synthetic_phymer_fixture_not_biological"
+    )
+    assert summary["formal_haplogroup_best_match"] == "NA"
+
+
 def test_identity_qc_header_only_input_without_summary_is_not_evaluable(
     tmp_path: Path,
 ) -> None:

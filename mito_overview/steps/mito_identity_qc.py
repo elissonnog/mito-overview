@@ -466,6 +466,10 @@ def run_step(
         except ValueError:
             phymer_status = "not_evaluable"
             phymer_reason = "phymer_summary_status_invalid"
+        if str(metric_map.get("phymer_result_scope", "")).strip() == "synthetic_wiring_fixture":
+            phymer_status = "not_evaluable"
+            phymer_reason = "synthetic_phymer_fixture_not_biological"
+            phymer_best = "NA"
 
     phased_vcf_present = bool(phased_snp_vcf and Path(phased_snp_vcf).is_file())
     np_vcf_present = bool(np_snp_vcf and Path(np_snp_vcf).is_file())

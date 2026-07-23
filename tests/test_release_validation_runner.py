@@ -119,12 +119,6 @@ def create_fake_gh_harness(tmp_path: Path) -> tuple[Path, Path, dict[str, str]]:
     write_executable(
         fake_bin / "git",
         "#!/usr/bin/env bash\n"
-        "if [[ ${1:-} == -C && ${3:-} == rev-parse && ${4:-} == HEAD:paper ]]; then\n"
-        "  observed=bfb5664db9c8b43ed5de33ecbddef88071fc6378\n"
-        "  [[ ${FAKE_GH_MODE:-valid} == wrong_paper_tree ]] && observed=ffffffffffffffffffffffffffffffffffffffff\n"
-        "  printf '%s\\n' \"$observed\"\n"
-        "  exit 0\n"
-        "fi\n"
         "if [[ ${1:-} == ls-remote ]]; then\n"
         "  observed=${FAKE_CANDIDATE_COMMIT}\n"
         "  [[ ${FAKE_GH_MODE:-valid} == wrong_public_main ]] && observed=ffffffffffffffffffffffffffffffffffffffff\n"
@@ -517,13 +511,6 @@ def test_wrong_pull_request_repository_fails_before_cache_creation(tmp_path: Pat
     assert not cache.exists()
 
 
-def test_frozen_paper_tree_drift_fails_before_cache_creation(tmp_path: Path) -> None:
-    completed, _, cache = invoke_harness(tmp_path, mode="wrong_paper_tree")
-    assert completed.returncode != 0
-    assert "Frozen paper tree mismatch" in completed.stderr
-    assert not cache.exists()
-
-
 def test_pr_smoke_run_is_bound_to_exact_pr_head_not_merge_sha(tmp_path: Path) -> None:
     completed, _, cache = invoke_harness(tmp_path, mode="pr_run_uses_merge_sha")
     assert completed.returncode != 0
@@ -719,14 +706,11 @@ def test_resource_measurement_counts_exact_declared_and_changed_inventories(
     )
 
 
-def test_runner_machine_enforces_frozen_paper_tree() -> None:
+def test_runner_excludes_manuscript_state_from_release_acceptance() -> None:
     text = RUNNER.read_text(encoding="utf-8")
-    assert (
-        'FROZEN_PAPER_TREE="bfb5664db9c8b43ed5de33ecbddef88071fc6378"'
-        in text
-    )
-    assert "rev-parse HEAD:paper" in text
-    assert "Frozen paper tree mismatch" in text
+    assert "FROZEN_PAPER_TREE" not in text
+    assert "rev-parse HEAD:paper" not in text
+    assert "Frozen paper tree mismatch" not in text
 
 
 def test_public_matrix_is_bound_to_public_clone_and_force_installed_wheel() -> None:

@@ -1,6 +1,6 @@
 metric	value
 status	ok
-reason_code	
+reason_code	partial_identity_evidence
 fingerprint_status	ok
 fingerprint_reason_code	
 heteroplasmy_summary_status	ok
@@ -36,7 +36,7 @@ unphased_mt_vcf_alt_alleles_excluded_uncalled	0
 shared_retained_mt_snvs	1
 phased_only_retained_mt_snvs	0
 unphased_only_retained_mt_snvs	1
-formal_haplogroup_assignment_status	ok
-formal_haplogroup_reason_code	
-formal_haplogroup_best_match	H1a1
+formal_haplogroup_assignment_status	not_evaluable
+formal_haplogroup_reason_code	synthetic_phymer_fixture_not_biological
+formal_haplogroup_best_match	NA
 major_variant_fingerprint	NA
