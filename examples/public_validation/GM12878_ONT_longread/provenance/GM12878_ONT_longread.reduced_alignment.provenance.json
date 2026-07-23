@@ -42,11 +42,11 @@
       "sha256": "40e203ead1d621bfec8caa3c5d18cd1e7e70c08da27008a73364812b6871df33"
     },
     {
-      "bytes": 1133,
+      "bytes": 1180,
       "label": "deterministic_subset_manifest",
-      "md5": "6344a85674cf1df810c5db8cf3dca20f",
+      "md5": "6f513c649b42ff758e04410b60c988f5",
       "name": "SRR18110025.deterministic-qnames-1000.fastq.gz.provenance.json",
-      "sha256": "975276acb0f8c84150790a05cc504b61fc74e39cc95918685bdd8edd894b002a"
+      "sha256": "82b675b95b5a0123ed0b028168acae0b63c6d6cbadc46e13391adcb5fba675c5"
     },
     {
       "bytes": 18422,

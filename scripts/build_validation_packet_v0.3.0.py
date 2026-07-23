@@ -7032,6 +7032,12 @@ short_manifest_path = (
     root / "public_provenance/GM11906_MERRF_shortread.alignment.provenance.json"
 )
 short_manifest = json.loads(short_manifest_path.read_text(encoding="utf-8"))
+if (
+    short_manifest.get("schema_version") != "1.0"
+    or short_manifest.get("provenance_type") != "public_alignment"
+    or short_manifest.get("dataset_id") != "GM11906_pooled_scATAC"
+):
+    raise SystemExit("short-read alignment provenance identity mismatch")
 expected_short_derivation = {
     "derivation_id": "bwa-mem-samtools-sort-v1",
     "command_template": (
@@ -7044,10 +7050,7 @@ expected_short_derivation = {
         "samtools": "samtools 1.23.1",
     },
 }
-if (
-    short_manifest.get("dataset_id") != "GM11906_pooled_scATAC"
-    or short_manifest.get("derivation") != expected_short_derivation
-):
+if short_manifest.get("derivation") != expected_short_derivation:
     raise SystemExit("short-read alignment derivation mismatch")
 def unique_labeled_inputs(value, description):
     if not isinstance(value, list) or not value:
@@ -7144,6 +7147,13 @@ long_subset = json.loads(
     (root / "public_provenance/GM12878_ONT_longread.fastq_subset.provenance.json")
     .read_text(encoding="utf-8")
 )
+if (
+    long_subset.get("schema_version") != "1.0"
+    or long_subset.get("provenance_type")
+    != "deterministic_fastq_query_name_subset"
+    or long_subset.get("dataset_id") != "GM12878_SRR18110025_ONT"
+):
+    raise SystemExit("long-read subset provenance identity mismatch")
 long_source = long_subset.get("source_fastq", {})
 expected_long = raw_by_name["SRR18110025.fastq.gz"]
 if (
@@ -7191,6 +7201,13 @@ long_manifest_path = (
     root / "public_provenance/GM12878_ONT_longread.reduced_alignment.provenance.json"
 )
 long_manifest = json.loads(long_manifest_path.read_text(encoding="utf-8"))
+if (
+    long_manifest.get("schema_version") != "1.0"
+    or long_manifest.get("provenance_type") != "public_alignment"
+    or long_manifest.get("dataset_id")
+    != "GM12878_SRR18110025_ONT_reduced_qn1000"
+):
+    raise SystemExit("long-read alignment provenance identity mismatch")
 expected_long_derivation = {
     "derivation_id": "minimap2-map-ont-deterministic-fastq-subset-mapped-only-v1",
     "command_template": (
@@ -7209,11 +7226,7 @@ expected_long_derivation = {
         "samtools": "samtools 1.23.1",
     },
 }
-if (
-    long_manifest.get("dataset_id")
-    != "GM12878_SRR18110025_ONT_reduced_qn1000"
-    or long_manifest.get("derivation") != expected_long_derivation
-):
+if long_manifest.get("derivation") != expected_long_derivation:
     raise SystemExit("long-read alignment derivation mismatch")
 long_inputs = unique_labeled_inputs(
     long_manifest.get("public_inputs", []), "long-read"

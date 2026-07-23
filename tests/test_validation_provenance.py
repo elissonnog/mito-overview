@@ -331,7 +331,7 @@ def test_fastq_subset_verification_rejects_self_consistent_nonminimum_ledger(
         encoding="utf-8",
     )
     payload = json.loads(manifest.read_text(encoding="utf-8"))
-    payload["selected_query_names"] = digest_file(names)
+    payload["selected_query_names"] = digest_file(names, include_md5=True)
     manifest.write_text(json.dumps(payload), encoding="utf-8")
 
     with pytest.raises(ProvenanceError, match="minimum-score selection"):
@@ -343,6 +343,52 @@ def test_fastq_subset_verification_rejects_self_consistent_nonminimum_ledger(
             dataset_id="FASTQ-001",
             requested_count=5,
             seed=seed,
+        )
+
+
+@pytest.mark.parametrize(
+    ("record_name", "field"),
+    [
+        ("source_fastq", "md5"),
+        ("subset_fastq", "sha256"),
+        ("selected_query_names", "md5"),
+        ("selected_query_names", "sha256"),
+    ],
+)
+def test_fastq_subset_verification_requires_complete_digest_inventory(
+    tmp_path: Path,
+    record_name: str,
+    field: str,
+) -> None:
+    source = tmp_path / "source.fastq.gz"
+    with gzip.open(source, "wt", encoding="ascii", newline="") as handle:
+        for index in range(10):
+            handle.write(f"@read-{index:03d}\nAAAA\n+\nIIII\n")
+    subset = tmp_path / "subset.fastq.gz"
+    manifest = tmp_path / "subset.fastq.provenance.json"
+    names = tmp_path / "subset.fastq.selected_qnames.txt"
+    create_deterministic_fastq_subset(
+        source_fastq=source,
+        output_fastq=subset,
+        output_manifest=manifest,
+        selected_names_path=names,
+        dataset_id="FASTQ-001",
+        requested_count=5,
+        seed="fastq-test-seed",
+    )
+    payload = json.loads(manifest.read_text(encoding="utf-8"))
+    payload[record_name].pop(field)
+    manifest.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ProvenanceError, match="digest field inventory mismatch"):
+        verify_deterministic_fastq_subset(
+            source_fastq=source,
+            output_fastq=subset,
+            output_manifest=manifest,
+            selected_names_path=names,
+            dataset_id="FASTQ-001",
+            requested_count=5,
+            seed="fastq-test-seed",
         )
 
 

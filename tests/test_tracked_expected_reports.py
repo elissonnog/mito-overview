@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from pathlib import Path
 
 import pandas as pd
@@ -117,3 +119,28 @@ def test_tracked_gm12878_deletion_screen_scope_is_explicit() -> None:
     assert values["deletion_screen_method"] == (
         "CIGAR-deletion candidate screen; supplementary/SA evidence summarized separately"
     )
+
+
+def test_tracked_gm12878_alignment_manifest_binds_current_subset_manifest() -> None:
+    provenance_root = PUBLIC_ROOT / "GM12878_ONT_longread" / "provenance"
+    subset_manifest = provenance_root / "GM12878_ONT_longread.fastq_subset.provenance.json"
+    alignment_manifest = json.loads(
+        (
+            provenance_root
+            / "GM12878_ONT_longread.reduced_alignment.provenance.json"
+        ).read_text(encoding="utf-8")
+    )
+    matching = [
+        record
+        for record in alignment_manifest["public_inputs"]
+        if record.get("label") == "deterministic_subset_manifest"
+    ]
+    assert matching == [
+        {
+            "bytes": subset_manifest.stat().st_size,
+            "label": "deterministic_subset_manifest",
+            "md5": hashlib.md5(subset_manifest.read_bytes()).hexdigest(),
+            "name": "SRR18110025.deterministic-qnames-1000.fastq.gz.provenance.json",
+            "sha256": hashlib.sha256(subset_manifest.read_bytes()).hexdigest(),
+        }
+    ]

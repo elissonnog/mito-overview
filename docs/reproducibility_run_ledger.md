@@ -62,6 +62,10 @@ Candidate `95801108c9b26178c28bd7a6cd59d9c67121c4a3` was subsequently withdrawn 
 
 Post-remediation local evidence passed `783/783` complete tests and `226/226` directly affected tests. A force-installed external wheel passed all three helper import probes and all four workflow smokes. Temporary public derivatives were rebuilt without modifying the raw cache; GM11906 and GM12878 normalized scientific tables and visual structures matched prior reviewed outputs exactly, and the selected-name ledger was linked in both manifests as 18,422 bytes, MD5 `64d606e56bf8dd58ad68baad28898e18`, SHA-256 `3444cc7db3dcf78bea807d8bcc6686883a7759d128288c1d26aeae077a771a19`. These checks are still provisional until a new exact commit and fresh independent audits pass.
 
+Candidate `b639eec19f1e30add780eb4a74c48ab8aeebee8e` was then withdrawn before push. Independent audit showed that its tracked GM12878 alignment manifest still carried the old subset-manifest size and hashes, deterministic FASTQ verification could accept a manifest with omitted digest fields, and the fresh-extraction verifier did not independently enforce schema, provenance type, and dataset identity for all three nested public records. The successor working tree binds the current 1,180-byte subset manifest by MD5 and SHA-256, requires complete name/size/MD5/SHA-256 FASTQ records, and rejects rehashed identity drift for the GM11906 alignment, GM12878 subset, and GM12878 alignment records.
+
+The successor working tree passed `39/39` focused adversarial tests, `237/237` complete provenance/packet/tracked-report tests, and `797/797` mandatory repository tests. These tests establish fail-closed handling of the reproduced evidence defects; they do not replace exact-commit package isolation, workflow smokes, fresh read-only audits, PR/push CI, empty-cache cross-platform public reproduction, packet/report verification, or release publication.
+
 ## Public Input Provenance
 
 - `SRR10804585` / `GSM4238454`, `SRR10804590` / `GSM4238459`, and `SRR10804657` / `GSM4238526` are separate C1 single-cell ATAC-seq libraries from the GM11906 lymphoblastoid line.

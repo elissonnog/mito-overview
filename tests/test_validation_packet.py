@@ -4565,6 +4565,51 @@ def test_extracted_verifier_rejects_rehashed_duplicate_alignment_input_label(
     assert "duplicate input label" in checked.stderr
 
 
+@pytest.mark.parametrize(
+    ("manifest_kind", "filename", "expected_error"),
+    [
+        (
+            "short_alignment",
+            "GM11906_MERRF_shortread.alignment.provenance.json",
+            "short-read alignment provenance identity mismatch",
+        ),
+        (
+            "long_subset",
+            "GM12878_ONT_longread.fastq_subset.provenance.json",
+            "long-read subset provenance identity mismatch",
+        ),
+        (
+            "long_alignment",
+            "GM12878_ONT_longread.reduced_alignment.provenance.json",
+            "long-read alignment provenance identity mismatch",
+        ),
+    ],
+)
+@pytest.mark.parametrize("identity_field", ("schema_version", "provenance_type", "dataset_id"))
+def test_extracted_verifier_rejects_rehashed_provenance_identity_drift(
+    tmp_path: Path,
+    manifest_kind: str,
+    filename: str,
+    expected_error: str,
+    identity_field: str,
+) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    output = tmp_path / "output"
+    packet_builder.build_packet(packet_args(validation, repo, output))
+    packet = output / "packet"
+    path = packet / "public_provenance" / filename
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload[identity_field] = f"tampered-{manifest_kind}-{identity_field}"
+    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    rebind_packet_public_provenance(packet, path)
+    rewrite_manifest(packet)
+
+    checked = verify_packet(packet)
+    assert checked.returncode != 0
+    assert expected_error in checked.stderr
+
+
 def test_extracted_verifier_rejects_resealed_derivation_and_subset_semantic_drift(
     tmp_path: Path,
 ) -> None:

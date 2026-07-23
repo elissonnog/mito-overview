@@ -184,6 +184,34 @@ def _assert_record_matches(label: str, expected: Mapping[str, object], path: Pat
             )
 
 
+def _assert_complete_digest_record(
+    label: str,
+    expected: object,
+    path: Path,
+    *,
+    require_md5: bool,
+) -> None:
+    """Require the complete portable digest contract before comparing a file."""
+
+    if not isinstance(expected, Mapping):
+        raise ProvenanceError(f"{label} digest record must be an object")
+    required_fields = {"name", "bytes", "sha256"}
+    if require_md5:
+        required_fields.add("md5")
+    if set(expected) != required_fields:
+        raise ProvenanceError(
+            f"{label} digest field inventory mismatch: "
+            f"expected {sorted(required_fields)}, observed {sorted(expected)}"
+        )
+    resolved = path.resolve()
+    if expected.get("name") != resolved.name:
+        raise ProvenanceError(
+            f"{label} name mismatch for {resolved}: "
+            f"expected {expected.get('name')}, observed {resolved.name}"
+        )
+    _assert_record_matches(label, expected, resolved)
+
+
 def _expected_alignment_derivation(
     *,
     derivation_id: str,
@@ -468,7 +496,9 @@ def verify_deterministic_fastq_subset(
     selection = payload.get("selection")
     if not isinstance(selection, dict):
         raise ProvenanceError("Deterministic FASTQ selection metadata is missing")
-    _assert_record_matches("source FASTQ", payload["source_fastq"], source_fastq)
+    _assert_complete_digest_record(
+        "source FASTQ", payload.get("source_fastq"), source_fastq, require_md5=True
+    )
     expected_names, source_records_seen = select_fastq_query_names(
         source_fastq,
         requested_count=requested_count,
@@ -494,9 +524,14 @@ def verify_deterministic_fastq_subset(
             )
     if set(selection) != set(expected_selection):
         raise ProvenanceError("Deterministic FASTQ selection field inventory mismatch")
-    _assert_record_matches("subset FASTQ", payload["subset_fastq"], output_fastq)
-    _assert_record_matches(
-        "selected FASTQ query names", payload["selected_query_names"], selected_names_path
+    _assert_complete_digest_record(
+        "subset FASTQ", payload.get("subset_fastq"), output_fastq, require_md5=True
+    )
+    _assert_complete_digest_record(
+        "selected FASTQ query names",
+        payload.get("selected_query_names"),
+        selected_names_path,
+        require_md5=True,
     )
     selected_names = selected_names_path.read_text(encoding="utf-8").splitlines()
     if len(selected_names) != requested_count or selected_names != sorted(set(selected_names)):
