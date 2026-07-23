@@ -1,11 +1,11 @@
-feature_label	feature_class	feature_intervals	candidate_sites	selected_coseg_sites	max_heteroplasmy	mean_heteroplasmy	median_depth	deletion_event_overlaps	deletion_cluster_overlaps	max_cluster_support_fraction_primary	top_site
-D-loop/control region	control_region	1-576; 16024-16569	11	0	1.0	0.997818	1869.0	0	0	0.0	228:G>A
-MT-CYB	protein_coding	14747-15887	4	0	1.0	0.99825	2693.5	0	0	0.0	14798:T>C
-MT-RNR2	Mt_rRNA	1671-3229	3	0	0.999399	0.98696	3118.0	0	0	0.0	3010:G>A
-MT-ND4	protein_coding	10760-12137	3	0	0.99881	0.996443	2647.0	0	0	0.0	12127:G>A
-MT-CO1	protein_coding	5904-7445	3	0	0.997882	0.990875	4249.0	0	0	0.0	7028:C>T
-MT-RNR1	Mt_rRNA	648-1601	2	0	0.998324	0.997551	3043.5	0	0	0.0	1438:A>G
-MT-ND5	protein_coding	12337-14148	2	0	0.997791	0.997457	3027.5	0	0	0.0	12612:A>G
-MT-ND2	protein_coding	4470-5511	1	0	0.999039	0.999039	2082.0	0	0	0.0	4769:A>G
-MT-ND1	protein_coding	3307-4262	1	0	0.998725	0.998725	3138.0	0	0	0.0	4216:T>C
-MT-ATP6	protein_coding	8527-9207	1	0	0.9985	0.9985	2667.0	0	0	0.0	8860:A>G
+feature_label	feature_class	feature_intervals	candidate_sites	selected_coseg_sites	max_alt_allele_fraction	mean_alt_allele_fraction	max_heteroplasmy	mean_heteroplasmy	median_depth	deletion_event_overlaps	deletion_cluster_overlaps	max_cluster_support_fraction_primary	top_site
+D-loop/control region	control_region	1-576; 16024-16569	11		1.0	0.997754	1.0	0.997754	1762.0				228:G>A
+MT-CYB	protein_coding	14747-15887	4		1.0	0.998016	1.0	0.998016	2418.5				14798:T>C
+MT-ND4	protein_coding	10760-12137	3		0.999433	0.99663	0.999433	0.99663	2458.0				11251:A>G
+MT-CO1	protein_coding	5904-7445	3		0.998549	0.988993	0.998549	0.988993	3447.0				7028:C>T
+MT-RNR2	Mt_rRNA	1671-3229	2		0.999309	0.997623	0.999309	0.997623	2800.5				3010:G>A
+MT-ND5	protein_coding	12337-14148	2		0.998333	0.997772	0.998333	0.997772	2575.5				12612:A>G
+MT-RNR1	Mt_rRNA	648-1601	2		0.99815	0.997257	0.99815	0.997257	2589.0				1438:A>G
+MT-ND2	protein_coding	4470-5511	1		0.999481	0.999481	0.999481	0.999481	1925.0				4769:A>G
+MT-ATP6	protein_coding	8527-9207	1		0.999133	0.999133	0.999133	0.999133	2308.0				8860:A>G
+MT-ND1	protein_coding	3307-4262	1		0.998906	0.998906	0.998906	0.998906	2742.0				4216:T>C

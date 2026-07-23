@@ -1,8 +1,9 @@
-"""Whole-mitochondrion heteroplasmy summary for mito-overview."""
+"""Whole-mitochondrion alternate-allele summary for mito-overview."""
 
 from __future__ import annotations
 
 import argparse
+import math
 import time
 from pathlib import Path
 
@@ -13,54 +14,31 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import pysam
 
+from mito_overview.allele_counting import (
+    AlleleFilterPolicy,
+    AlleleFilterStats,
+    count_contig_alleles,
+    policy_rows,
+)
 from mito_overview.report_common import df_to_html_table, figure_html, metric_card, render_page
 
 
-def candidate_strand_support(bam_path: str | Path, contig: str, positions: dict[int, str]) -> dict[int, tuple[int, int]]:
-    """Compute forward/reverse alt support for candidate sites."""
-
-    support: dict[int, tuple[int, int]] = {}
-    if not positions:
-        return support
-    bam = pysam.AlignmentFile(str(bam_path), "rb")
-    total = len(positions)
-    start_time = time.time()
-    for idx, pos in enumerate(sorted(positions), start=1):
-        alt_forward = 0
-        alt_reverse = 0
-        alt_base = positions[pos]
-        for pileupcolumn in bam.pileup(
-            contig,
-            pos - 1,
-            pos,
-            truncate=True,
-            stepper="all",
-            min_base_quality=0,
-        ):
-            if pileupcolumn.reference_pos != pos - 1:
-                continue
-            for pileupread in pileupcolumn.pileups:
-                if pileupread.is_del or pileupread.is_refskip:
-                    continue
-                qpos = pileupread.query_position
-                if qpos is None:
-                    continue
-                base = pileupread.alignment.query_sequence[qpos].upper()
-                if base != alt_base:
-                    continue
-                if pileupread.alignment.is_reverse:
-                    alt_reverse += 1
-                else:
-                    alt_forward += 1
-        support[pos] = (alt_forward, alt_reverse)
-        if idx % 25 == 0 or idx == total:
-            print(
-                f"[heteroplasmy] candidate strand support {idx}/{total} "
-                f"elapsed_sec={round(time.time() - start_time, 1)}",
-                flush=True,
-            )
-    bam.close()
-    return support
+OUTPUT_COLUMNS = [
+    "position",
+    "ref_base",
+    "alt_base",
+    "callable_depth",
+    "depth",
+    "alt_count",
+    "alt_allele_fraction",
+    "heteroplasmy_fraction",
+    "alt_forward",
+    "alt_reverse",
+    "A",
+    "C",
+    "G",
+    "T",
+]
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -75,6 +53,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--mt-length", type=int, required=True)
     parser.add_argument("--min-depth", type=int, default=100)
     parser.add_argument("--min-vaf", type=float, default=0.02)
+    parser.add_argument("--min-base-quality", type=int, default=13)
+    parser.add_argument("--min-mapping-quality", type=int, default=20)
+    parser.add_argument("--min-read-mean-quality", type=float, default=10.0)
+    parser.add_argument("--max-depth", type=int, default=0)
+    parser.add_argument("--exclude-flags", type=lambda value: int(value, 0), default=3844)
+    parser.add_argument("--ignore-overlaps", type=int, choices=(0, 1), default=1)
     return parser
 
 
@@ -90,8 +74,19 @@ def run_step(
     mt_length: int,
     min_depth: int = 100,
     min_vaf: float = 0.02,
+    min_base_quality: int = 13,
+    min_mapping_quality: int = 20,
+    min_read_mean_quality: float = 10.0,
+    max_depth: int = 0,
+    exclude_flags: int = 3844,
+    ignore_overlaps: bool = True,
 ) -> dict[str, Path]:
-    """Run the public mitochondrial heteroplasmy step."""
+    """Count and report observed mtDNA alternate-allele fractions."""
+
+    if not isinstance(min_depth, int) or isinstance(min_depth, bool) or min_depth < 0:
+        raise ValueError("min_depth must be a nonnegative integer")
+    if not math.isfinite(min_vaf) or not 0 <= min_vaf <= 1:
+        raise ValueError("min_vaf must be finite and between 0 and 1")
 
     start_time = time.time()
     summary_dir = Path(summary_dir)
@@ -101,183 +96,319 @@ def run_step(
     figure_dir.mkdir(parents=True, exist_ok=True)
     report_dir.mkdir(parents=True, exist_ok=True)
 
-    fasta = pysam.FastaFile(str(ref_fasta))
-    ref_seq = fasta.fetch(mt_contig, 0, mt_length).upper()
-    bam_handle = pysam.AlignmentFile(str(bam), "rb")
+    all_path = summary_dir / "mito_heteroplasmy_all_sites.tsv"
+    cand_path = summary_dir / "mito_heteroplasmy_candidates.tsv"
+    summary_path = summary_dir / "mito_heteroplasmy_summary.tsv"
+    report_path = report_dir / "02_mito_heteroplasmy.html"
+    landscape_figure = figure_dir / "mito_heteroplasmy_landscape.png"
+    candidate_figure_path = figure_dir / "mito_heteroplasmy_top_candidates.png"
+    # A failed recomputation must not leave a prior run's allele evidence available
+    # to downstream annotation or circularity modules.
+    for owned_output in (
+        all_path,
+        cand_path,
+        summary_path,
+        report_path,
+        landscape_figure,
+        candidate_figure_path,
+    ):
+        owned_output.unlink(missing_ok=True)
+
+    policy = AlleleFilterPolicy(
+        min_base_quality=min_base_quality,
+        min_mapping_quality=min_mapping_quality,
+        min_read_mean_quality=min_read_mean_quality,
+        max_depth=max_depth,
+        exclude_flags=exclude_flags,
+        ignore_overlaps=ignore_overlaps,
+    )
     print(
-        f"[heteroplasmy] starting sample={sample_id} contig={mt_contig} "
-        f"length={mt_length} min_depth={min_depth} min_vaf={min_vaf}",
+        f"[heteroplasmy] starting sample={sample_id} contig={mt_contig} length={mt_length} "
+        f"min_callable_depth={min_depth} min_alt_fraction={min_vaf} "
+        f"baseq={min_base_quality} mapq={min_mapping_quality} readq={min_read_mean_quality} "
+        f"max_depth={max_depth} exclude_flags={exclude_flags} ignore_overlaps={int(ignore_overlaps)}",
         flush=True,
     )
 
-    print("[heteroplasmy] counting base coverage across mitochondrial genome", flush=True)
-    cov_a, cov_c, cov_g, cov_t = bam_handle.count_coverage(
-        mt_contig,
-        0,
-        mt_length,
-        quality_threshold=0,
-        read_callback="nofilter",
+    with pysam.FastaFile(str(ref_fasta)) as fasta:
+        ref_seq = fasta.fetch(mt_contig, 0, mt_length).upper()
+    print("[heteroplasmy] counting filtered observations across mitochondrial genome", flush=True)
+
+    def report_counting_progress(position: int, length: int, stats: AlleleFilterStats) -> None:
+        accepted = stats.accepted_observations
+        seen = stats.pileup_observations_seen
+        print(
+            f"[heteroplasmy] counted positions {position}/{length} "
+            f"accepted_observations={accepted} excluded_observations_accounted={seen - accepted} "
+            f"elapsed_sec={round(time.time() - start_time, 1)}",
+            flush=True,
+        )
+
+    counting = count_contig_alleles(
+        bam_path=bam,
+        contig=mt_contig,
+        length=mt_length,
+        policy=policy,
+        progress_callback=report_counting_progress,
     )
-    bam_handle.close()
-    fasta.close()
     print(
-        f"[heteroplasmy] coverage counting complete "
+        f"[heteroplasmy] observation counting complete accepted={counting.stats.accepted_observations} "
         f"elapsed_sec={round(time.time() - start_time, 1)}",
         flush=True,
     )
 
     canonical_bases = {"A", "C", "G", "T"}
-    all_rows = []
-    candidate_rows = []
+    all_rows: list[dict[str, object]] = []
+    candidate_rows: list[dict[str, object]] = []
     skipped_noncanonical_candidates = 0
-    for pos in range(1, mt_length + 1):
-        base_counts = {
-            "A": int(cov_a[pos - 1]),
-            "C": int(cov_c[pos - 1]),
-            "G": int(cov_g[pos - 1]),
-            "T": int(cov_t[pos - 1]),
+    for position in range(1, mt_length + 1):
+        base_counts = counting.base_counts[position - 1]
+        callable_depth = sum(base_counts.values())
+        ref_base = ref_seq[position - 1]
+        non_ref = {
+            base: count
+            for base, count in base_counts.items()
+            if base != ref_base and count > 0
         }
-        depth = sum(base_counts.values())
-        ref_base = ref_seq[pos - 1]
-        non_ref = {base: count for base, count in base_counts.items() if base != ref_base}
         alt_base, alt_count = max(non_ref.items(), key=lambda item: item[1]) if non_ref else (None, 0)
-        vaf = (alt_count / depth) if depth else 0.0
+        # A zero-depth position has no observed allele fraction; it is not an
+        # observed reference-only site and must not be serialized as 0/0 = 0.
+        alt_fraction = (alt_count / callable_depth) if callable_depth else float("nan")
+        alt_forward = counting.forward_counts[position - 1].get(alt_base or "", 0)
+        alt_reverse = counting.reverse_counts[position - 1].get(alt_base or "", 0)
         row = {
-            "position": pos,
+            "position": position,
             "ref_base": ref_base,
             "alt_base": alt_base or ".",
-            "depth": depth,
+            "callable_depth": callable_depth,
+            "depth": callable_depth,
             "alt_count": alt_count,
-            "heteroplasmy_fraction": round(vaf, 6),
+            "alt_allele_fraction": round(alt_fraction, 6),
+            "heteroplasmy_fraction": round(alt_fraction, 6),
+            "alt_forward": alt_forward,
+            "alt_reverse": alt_reverse,
             "A": base_counts["A"],
             "C": base_counts["C"],
             "G": base_counts["G"],
             "T": base_counts["T"],
         }
         all_rows.append(row)
-        if depth >= min_depth and alt_base and vaf >= min_vaf:
+        if (
+            callable_depth >= min_depth
+            and alt_base
+            and alt_count > 0
+            and pd.notna(alt_fraction)
+            and alt_fraction >= min_vaf
+        ):
             if ref_base in canonical_bases and alt_base in canonical_bases:
                 candidate_rows.append(row.copy())
             else:
                 skipped_noncanonical_candidates += 1
-        if pos % 4000 == 0 or pos == mt_length:
+        if position % 4000 == 0 or position == mt_length:
             print(
-                f"[heteroplasmy] summarised positions {pos}/{mt_length} "
+                f"[heteroplasmy] summarised positions {position}/{mt_length} "
                 f"elapsed_sec={round(time.time() - start_time, 1)}",
                 flush=True,
             )
-    if skipped_noncanonical_candidates:
-        print(
-            "[heteroplasmy] skipped "
-            f"{skipped_noncanonical_candidates} candidate-like positions with non-canonical bases",
-            flush=True,
-        )
 
+    all_df = pd.DataFrame(all_rows, columns=OUTPUT_COLUMNS)
     if candidate_rows:
-        strand_support = candidate_strand_support(
-            bam,
-            mt_contig,
-            {row["position"]: row["alt_base"] for row in candidate_rows},
-        )
-        for row in candidate_rows:
-            alt_forward, alt_reverse = strand_support.get(row["position"], (0, 0))
-            row["alt_forward"] = alt_forward
-            row["alt_reverse"] = alt_reverse
-
-    all_df = pd.DataFrame(all_rows)
-    if candidate_rows:
-        cand_df = pd.DataFrame(candidate_rows).sort_values(
-            ["heteroplasmy_fraction", "depth"],
-            ascending=[False, False],
+        cand_df = pd.DataFrame(candidate_rows, columns=OUTPUT_COLUMNS).sort_values(
+            ["alt_allele_fraction", "callable_depth", "position"],
+            ascending=[False, False, True],
         )
     else:
-        cand_df = pd.DataFrame(
-            columns=[
-                "position",
-                "ref_base",
-                "alt_base",
-                "depth",
-                "alt_count",
-                "heteroplasmy_fraction",
-                "alt_forward",
-                "alt_reverse",
-            ]
-        )
+        cand_df = pd.DataFrame(columns=OUTPUT_COLUMNS)
 
-    summary_df = pd.DataFrame(
-        [
-            {"metric": "positions_tested", "value": len(all_df)},
-            {"metric": f"candidate_sites_vaf>={min_vaf}", "value": len(cand_df)},
-            {"metric": "sites_vaf>=0.10", "value": int((all_df["heteroplasmy_fraction"] >= 0.10).sum())},
-            {"metric": "sites_vaf>=0.05", "value": int((all_df["heteroplasmy_fraction"] >= 0.05).sum())},
-            {"metric": "sites_vaf>=0.02", "value": int((all_df["heteroplasmy_fraction"] >= 0.02).sum())},
-            {"metric": "max_heteroplasmy_fraction", "value": round(float(all_df["heteroplasmy_fraction"].max()), 6)},
-        ]
+    callable_positions = int((all_df["callable_depth"] > 0).sum())
+    uncallable_positions = int(len(all_df) - callable_positions)
+    canonical_reference_mask = all_df["ref_base"].isin(canonical_bases)
+    canonical_reference_positions = int(canonical_reference_mask.sum())
+    noncanonical_reference_positions = int(len(all_df) - canonical_reference_positions)
+    candidate_evaluable_positions = int(
+        (
+            canonical_reference_mask
+            & (all_df["callable_depth"] > 0)
+            & (all_df["callable_depth"] >= min_depth)
+        ).sum()
     )
+    candidate_non_evaluable_positions = int(
+        len(all_df) - candidate_evaluable_positions
+    )
+    candidate_evaluable_fraction = (
+        candidate_evaluable_positions / len(all_df) if len(all_df) else float("nan")
+    )
+    if candidate_evaluable_positions == 0:
+        candidate_coverage_scope = "none"
+    elif candidate_evaluable_positions == len(all_df):
+        candidate_coverage_scope = "complete"
+    else:
+        candidate_coverage_scope = "partial"
+    observed_fractions = pd.to_numeric(
+        all_df["alt_allele_fraction"], errors="coerce"
+    ).dropna()
+    max_alt_fraction = (
+        round(float(observed_fractions.max()), 6)
+        if not observed_fractions.empty
+        else float("nan")
+    )
+    if callable_positions == 0:
+        module_status = "not_evaluable"
+        module_reason = "no_callable_positions"
+    elif canonical_reference_positions == 0:
+        module_status = "not_evaluable"
+        module_reason = "no_canonical_reference_positions"
+    elif candidate_evaluable_positions == 0:
+        module_status = "not_evaluable"
+        module_reason = "no_positions_meet_min_callable_depth"
+    else:
+        module_status = "ok"
+        module_reason = ""
 
-    all_path = summary_dir / "mito_heteroplasmy_all_sites.tsv"
-    cand_path = summary_dir / "mito_heteroplasmy_candidates.tsv"
-    summary_path = summary_dir / "mito_heteroplasmy_summary.tsv"
-    report_path = report_dir / "02_mito_heteroplasmy.html"
-    all_df.to_csv(all_path, sep="\t", index=False)
-    cand_df.to_csv(cand_path, sep="\t", index=False)
-    summary_df.to_csv(summary_path, sep="\t", index=False)
+    if len(cand_df) > 0:
+        whole_mtdna_zero_candidate_status = "not_applicable_candidates_observed"
+    elif candidate_coverage_scope == "complete":
+        whole_mtdna_zero_candidate_status = "supported_at_configured_thresholds"
+    elif candidate_coverage_scope == "partial":
+        whole_mtdna_zero_candidate_status = "not_supported_partial_candidate_coverage"
+    else:
+        whole_mtdna_zero_candidate_status = "not_supported_no_evaluable_positions"
+
+    summary_rows: list[dict[str, object]] = [
+        {"metric": "status", "value": module_status},
+        {"metric": "reason_code", "value": module_reason},
+        {"metric": "positions_tested", "value": len(all_df)},
+        {"metric": "callable_positions", "value": callable_positions},
+        {"metric": "uncallable_positions", "value": uncallable_positions},
+        {
+            "metric": "canonical_reference_positions",
+            "value": canonical_reference_positions,
+        },
+        {
+            "metric": "noncanonical_reference_positions",
+            "value": noncanonical_reference_positions,
+        },
+        {
+            "metric": "candidate_evaluable_positions",
+            "value": candidate_evaluable_positions,
+        },
+        {
+            "metric": "candidate_non_evaluable_positions",
+            "value": candidate_non_evaluable_positions,
+        },
+        {
+            "metric": "candidate_evaluable_fraction",
+            "value": round(candidate_evaluable_fraction, 6),
+        },
+        {"metric": "candidate_coverage_scope", "value": candidate_coverage_scope},
+        {
+            "metric": "whole_mtdna_zero_candidate_interpretation_status",
+            "value": whole_mtdna_zero_candidate_status,
+        },
+        {"metric": "candidate_sites", "value": len(cand_df)},
+        {"metric": "min_callable_depth", "value": min_depth},
+        {"metric": "min_alt_allele_fraction", "value": min_vaf},
+        {"metric": "sites_alt_fraction_ge_0.10", "value": int((all_df["alt_allele_fraction"] >= 0.10).sum())},
+        {"metric": "sites_alt_fraction_ge_0.05", "value": int((all_df["alt_allele_fraction"] >= 0.05).sum())},
+        {"metric": "sites_alt_fraction_ge_0.02", "value": int((all_df["alt_allele_fraction"] >= 0.02).sum())},
+        {"metric": "max_alt_allele_fraction", "value": max_alt_fraction},
+        {"metric": "skipped_noncanonical_candidates", "value": skipped_noncanonical_candidates},
+    ]
+    summary_rows.extend(policy_rows(policy, counting.stats))
+    summary_df = pd.DataFrame(summary_rows)
+
+    all_df.to_csv(all_path, sep="\t", index=False, na_rep="NA")
+    cand_df.to_csv(cand_path, sep="\t", index=False, na_rep="NA")
+    summary_df.to_csv(summary_path, sep="\t", index=False, na_rep="NA")
 
     plt.figure(figsize=(12, 4))
-    plt.scatter(all_df["position"], all_df["heteroplasmy_fraction"], s=8, alpha=0.6)
+    plt.scatter(all_df["position"], all_df["alt_allele_fraction"], s=8, alpha=0.6)
     plt.axhline(min_vaf, color="red", linestyle="--", linewidth=1)
     plt.xlabel("Mitochondrial position")
-    plt.ylabel("Alt fraction")
-    plt.title(f"{sample_id} mitochondrial heteroplasmy landscape")
+    plt.ylabel("Observed alternate allele fraction")
+    plt.title(f"{sample_id} mitochondrial alternate-allele landscape")
     plt.tight_layout()
-    fig1 = figure_dir / "mito_heteroplasmy_landscape.png"
-    plt.savefig(fig1, dpi=150)
+    plt.savefig(landscape_figure, dpi=150)
     plt.close()
 
-    fig2 = None
+    candidate_figure = None
     if not cand_df.empty:
         top = cand_df.head(20).copy()
         plt.figure(figsize=(10, 5))
-        plt.bar(top["position"].astype(str), top["heteroplasmy_fraction"], color="#dc2626")
+        plt.bar(top["position"].astype(str), top["alt_allele_fraction"], color="#dc2626")
         plt.xticks(rotation=90)
-        plt.ylabel("Alt fraction")
-        plt.title(f"{sample_id} top candidate heteroplasmies")
+        plt.ylabel("Observed alternate allele fraction")
+        plt.title(f"{sample_id} top candidate sites")
         plt.tight_layout()
-        fig2 = figure_dir / "mito_heteroplasmy_top_candidates.png"
-        plt.savefig(fig2, dpi=150)
+        candidate_figure = candidate_figure_path
+        plt.savefig(candidate_figure, dpi=150)
         plt.close()
 
     metrics_html = "".join(
         [
             metric_card("Candidate sites", len(cand_df)),
-            metric_card("Max heteroplasmy", round(float(all_df["heteroplasmy_fraction"].max()), 4)),
-            metric_card("Min depth threshold", min_depth),
-            metric_card("Min VAF threshold", min_vaf),
+            metric_card(
+                "Candidate-evaluable positions",
+                f"{candidate_evaluable_positions}/{len(all_df)}",
+            ),
+            metric_card("Candidate coverage scope", candidate_coverage_scope),
+            metric_card(
+                "Maximum alt fraction",
+                "NA" if pd.isna(max_alt_fraction) else round(max_alt_fraction, 4),
+            ),
+            metric_card("Minimum callable depth", min_depth),
+            metric_card("Minimum alt fraction", min_vaf),
         ]
     )
     intro_html = (
-        '<p class="muted">Site-wise mitochondrial heteroplasmy summary based on all mitochondrial reads. '
-        "Candidate sites are reported conservatively using user-level depth and VAF thresholds.</p>"
+        '<p class="muted">This page reports observed alternate allele fractions after explicit read, '
+        "mapping, and base-quality filters. Candidate sites are screening results, not independently "
+        "confirmed heteroplasmies or clinical variant calls.</p>"
         f"<div class='metrics-grid'>{metrics_html}</div>"
     )
+    if len(cand_df) > 0:
+        intro_html += (
+            "<p class='small-note'><strong>Zero-candidate interpretation:</strong> "
+            "Not applicable because one or more candidate sites were observed.</p>"
+        )
+    elif candidate_coverage_scope == "complete":
+        intro_html += (
+            "<p class='small-note'><strong>Zero-candidate interpretation:</strong> "
+            f"No candidate sites were observed above the configured thresholds across all "
+            f"{len(all_df)} tested mtDNA positions. This is a thresholded screening result "
+            "and does not establish the biological absence of heteroplasmy.</p>"
+        )
+    elif candidate_coverage_scope == "partial":
+        intro_html += (
+            "<p class='small-note'><strong>Zero-candidate interpretation:</strong> "
+            f"No candidate sites were observed among the {candidate_evaluable_positions} of "
+            f"{len(all_df)} positions that met the configured callable-depth threshold. "
+            f"The remaining {candidate_non_evaluable_positions} positions were not candidate-evaluable, "
+            "so this result must not be interpreted as a whole-mtDNA absence of candidates.</p>"
+        )
+    else:
+        intro_html += (
+            "<p class='small-note'><strong>Evaluation status:</strong> "
+            f"{module_status} ({module_reason}). An empty candidate table under this status "
+            "does not establish an observed absence of alternate alleles above threshold.</p>"
+        )
     body_parts = [
-        "<section><h2>Heteroplasmy landscape</h2>"
-        + figure_html(fig1, "Alt-fraction across mitochondrial positions")
+        "<section><h2>Alternate-allele landscape</h2>"
+        + figure_html(landscape_figure, "Observed alternate-allele fraction across mitochondrial positions")
         + "</section>",
-        "<section><h2>Summary metrics</h2>" + df_to_html_table(summary_df, max_rows=20) + "</section>",
-        "<section><h2>Candidate heteroplasmy sites</h2>" + df_to_html_table(cand_df, max_rows=30) + "</section>",
+        "<section><h2>Method and filter summary</h2>" + df_to_html_table(summary_df, max_rows=40) + "</section>",
+        "<section><h2>Candidate sites</h2>" + df_to_html_table(cand_df, max_rows=30) + "</section>",
     ]
-    if fig2:
+    if candidate_figure:
         body_parts.insert(
             1,
             "<section><h2>Top candidate sites</h2>"
-            + figure_html(fig2, "Highest-confidence mitochondrial heteroplasmy candidates")
+            + figure_html(candidate_figure, "Candidate sites with the highest observed alternate fractions")
             + "</section>",
         )
-
     render_page(
         report_path,
-        "Mitochondrial Heteroplasmy",
+        "Mitochondrial Alternate-Allele Screening",
         sample_id,
         f"{mt_contig}:1-{mt_length}",
         intro_html,
@@ -289,6 +420,7 @@ def run_step(
         flush=True,
     )
     return {
+        "status": module_status,
         "summary_path": summary_path,
         "candidate_path": cand_path,
         "all_sites_path": all_path,
@@ -309,6 +441,12 @@ def main() -> None:
         mt_length=args.mt_length,
         min_depth=args.min_depth,
         min_vaf=args.min_vaf,
+        min_base_quality=args.min_base_quality,
+        min_mapping_quality=args.min_mapping_quality,
+        min_read_mean_quality=args.min_read_mean_quality,
+        max_depth=args.max_depth,
+        exclude_flags=args.exclude_flags,
+        ignore_overlaps=bool(args.ignore_overlaps),
     )
     for path in outputs.values():
         print(f"Wrote {path}")

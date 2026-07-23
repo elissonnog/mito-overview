@@ -1,0 +1,34 @@
+{
+  "metadata": {
+    "title": "mito-overview v0.3.0",
+    "upload_type": "software",
+    "description": "Mode-gated mitochondrial DNA evidence reporting workflow for aligned sequencing data.",
+    "creators": [
+      {
+        "name": "Lopes, Elisson",
+        "affiliation": "Medical College of Wisconsin"
+      },
+      {
+        "name": "Gai, Xiaowu",
+        "affiliation": "Medical College of Wisconsin"
+      }
+    ],
+    "license": "mit",
+    "version": "0.3.0",
+    "publication_date": "2026-07-20",
+    "related_identifiers": [
+      {
+        "identifier": "https://github.com/elissonnog/mito-overview",
+        "relation": "isSupplementTo"
+      }
+    ],
+    "keywords": [
+      "mitochondrial DNA",
+      "mtDNA",
+      "Oxford Nanopore",
+      "bioinformatics workflow",
+      "report generation"
+    ],
+    "prereserve_doi": true
+  }
+}

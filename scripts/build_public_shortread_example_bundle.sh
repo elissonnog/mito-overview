@@ -14,6 +14,7 @@ trap 'rm -rf "${WORKDIR}"' EXIT
 
 source "${SCRIPT_DIR}/lib/prepare_synthetic_toy_sample.sh"
 source "${SCRIPT_DIR}/lib/mock_optional_integrations.sh"
+source "${SCRIPT_DIR}/lib/sanitize_synthetic_subset_bam.sh"
 
 echo "[example-short] repo root: ${REPO_ROOT}"
 echo "[example-short] workdir: ${WORKDIR}"
@@ -35,7 +36,7 @@ mkdir -p "${HV_DIR}" "${RUN_ROOT}"
 
 prepare_synthetic_shortread_toy_sample "${REPO_ROOT}" "${WORKDIR}"
 PHYMER_ROOT="$(mock_phymer_root "${REPO_ROOT}")"
-MVTOOL_API_URL="$(mock_mvtool_fixture_url "${REPO_ROOT}")"
+MVTOOL_FIXTURE_JSON="$(mock_mvtool_fixture_path "${REPO_ROOT}")"
 
 cat > "${WORKDIR}/toy_short.env" <<EOF
 PIPELINE_ROOT=${REPO_ROOT}
@@ -53,13 +54,16 @@ THREADS=1
 SPECIES=human
 READ_MODE=short
 ASSAY_TYPE=targeted_mt
-HET_MIN_DEPTH=2
-HET_MIN_VAF=0.2
+CONTROL_REGION_ANNOTATION_MODE=synthetic_fixture_override
+MIN_CALLABLE_DEPTH=2
+MIN_ALT_ALLELE_FRACTION=0.2
 HUMAN_MT_GTF=${WORKDIR}/tiny_mt.gtf
 PHYMER_ROOT=${PHYMER_ROOT}
+PHYMER_MODE=fixture
 PHYMER_MIN_DEPTH=2
 PHYMER_MAJOR_VAF=0.2
-MVTOOL_API_URL=${MVTOOL_API_URL}
+MVTOOL_MODE=fixture
+MVTOOL_FIXTURE_JSON=${MVTOOL_FIXTURE_JSON}
 MSEQDR_TIMEOUT=10
 FINAL_BIOINFO_DIR=${FINAL_DIR}
 EOF
@@ -73,5 +77,6 @@ cd "${REPO_ROOT}"
 rm -rf "${OUTPUT_DIR}"
 mkdir -p "$(dirname "${OUTPUT_DIR}")"
 cp -R "${FINAL_DIR}/output" "${OUTPUT_DIR}"
+sanitize_synthetic_subset_bam "${OUTPUT_DIR}/subset/TOY-SR-001.MT.bam" "MT"
 
 echo "[example-short] public short-read example bundle created at ${OUTPUT_DIR}"

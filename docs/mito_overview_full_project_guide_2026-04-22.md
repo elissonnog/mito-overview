@@ -1,5 +1,7 @@
 # mito-overview Full Project Guide and Validation Companion
 
+> **Historical v0.2.1 record.** This document preserves the April 2026 project state and its then-current outputs. It is not release evidence for v0.3.0. Use [clean_room_validation_protocol_v0.3.0.md](clean_room_validation_protocol_v0.3.0.md), [reproducibility_run_ledger.md](reproducibility_run_ledger.md), [methodology.md](methodology.md), and the current README for the active release contract and corrected methods. The dated [preprint_release_validation_v0.3.0.md](preprint_release_validation_v0.3.0.md) remains historical candidate evidence.
+
 ## Document purpose
 This guide is the detailed technical companion for the current `mito-overview` project state. It is written to support four practical goals:
 

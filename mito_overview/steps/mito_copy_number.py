@@ -1,4 +1,4 @@
-"""Mitochondrial copy-number proxy for mito-overview."""
+"""Experimental within-sample mitochondrial-to-nuclear depth ratio."""
 
 from __future__ import annotations
 
@@ -9,10 +9,20 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 import pysam
 
 from mito_overview.report_common import df_to_html_table, figure_html, metric_card, render_page
+
+WINDOW_COLUMNS = [
+    "contig",
+    "start",
+    "end",
+    "window_size",
+    "mean_depth",
+    "valid_for_denominator",
+]
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -27,6 +37,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--mt-contig", required=True)
     parser.add_argument("--mt-length", type=int, required=True)
     parser.add_argument("--species", required=True)
+    parser.add_argument("--reference-scope", default="whole_genome", choices=("whole_genome", "mt_only", "custom"))
     parser.add_argument("--window-size", type=int, default=100000)
     parser.add_argument("--window-count", type=int, default=5)
     return parser
@@ -66,13 +77,18 @@ def run_step(
     mt_contig: str,
     mt_length: int,
     species: str,
+    reference_scope: str = "whole_genome",
     window_size: int,
     window_count: int,
-) -> dict[str, Path]:
+) -> dict[str, Path | str]:
     """Estimate the mt:nuclear depth proxy from the original alignment source."""
 
+    for name, value in (("window_size", window_size), ("window_count", window_count)):
+        if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+            raise ValueError(f"{name} must be a positive integer")
+
     print(
-        f"[copy_number] starting sample={sample_id} species={species} "
+        f"[copy_number] starting sample={sample_id} species={species} reference_scope={reference_scope} "
         f"window_size={window_size} window_count={window_count}"
     )
     summary_dir = Path(summary_dir)
@@ -83,30 +99,68 @@ def run_step(
     report_dir.mkdir(parents=True, exist_ok=True)
 
     mito_depth_path = summary_dir / "mito_depth_per_base.tsv"
-    if mito_depth_path.exists():
-        mito_depth_df = pd.read_csv(mito_depth_path, sep="\t")
-        mt_mean_depth = float(mito_depth_df["depth"].mean()) if not mito_depth_df.empty else 0.0
-    else:
-        mt_mean_depth = 0.0
+    mt_mean_depth: float | None = None
+    mt_depth_reason_code = "no_mito_depth_evidence"
+    if mito_depth_path.exists() and mito_depth_path.stat().st_size > 0:
+        mt_depth_reason_code = "incomplete_mito_depth_profile"
+        try:
+            mito_depth_df = pd.read_csv(mito_depth_path, sep="\t")
+        except (OSError, pd.errors.EmptyDataError, pd.errors.ParserError):
+            mito_depth_df = pd.DataFrame()
+        if not mito_depth_df.empty and {"position", "depth"}.issubset(
+            mito_depth_df.columns
+        ):
+            positions = pd.to_numeric(
+                mito_depth_df["position"], errors="coerce"
+            ).to_numpy(dtype=float)
+            depths = pd.to_numeric(
+                mito_depth_df["depth"], errors="coerce"
+            ).to_numpy(dtype=float)
+            numeric_values_valid = bool(
+                np.isfinite(positions).all()
+                and np.isfinite(depths).all()
+                and (depths >= 0).all()
+                and (positions == np.floor(positions)).all()
+                and (positions >= 1).all()
+                and (positions <= mt_length).all()
+            )
+            expected_positions = np.arange(1, mt_length + 1, dtype=int)
+            position_inventory_valid = bool(
+                numeric_values_valid
+                and len(positions) == mt_length
+                and np.array_equal(np.sort(positions.astype(int)), expected_positions)
+            )
+            if position_inventory_valid:
+                with np.errstate(over="ignore", invalid="ignore"):
+                    candidate_mean_depth = float(depths.mean())
+                if np.isfinite(candidate_mean_depth):
+                    mt_mean_depth = candidate_mean_depth
+                    mt_depth_reason_code = ""
+        print(
+            f"[copy_number] mitochondrial depth profile rows={len(mito_depth_df)} "
+            f"expected={mt_length} status={'ok' if mt_mean_depth is not None else 'not_evaluable'} "
+            f"reason={mt_depth_reason_code or 'none'}"
+        )
 
     bam_handle = open_alignment(align_file, align_mode, ref_fasta)
     refs = {name: length for name, length in zip(bam_handle.references, bam_handle.lengths)}
     preferred = canonical_autosomes(species)
     selected: list[tuple[str, int]] = []
-    for contig in preferred:
-        if contig in refs and contig != mt_contig:
-            selected.append((contig, refs[contig]))
-        if len(selected) >= window_count:
-            break
-    if not selected:
-        for contig, length in refs.items():
-            if contig == mt_contig:
-                continue
-            if "_" in contig or "random" in contig.lower() or "un" in contig.lower():
-                continue
-            selected.append((contig, length))
+    if reference_scope == "whole_genome":
+        for contig in preferred:
+            if contig in refs and contig != mt_contig:
+                selected.append((contig, refs[contig]))
             if len(selected) >= window_count:
                 break
+        if not selected:
+            for contig, length in refs.items():
+                if contig == mt_contig:
+                    continue
+                if "_" in contig or "random" in contig.lower() or "un" in contig.lower():
+                    continue
+                selected.append((contig, length))
+                if len(selected) >= window_count:
+                    break
 
     window_rows: list[dict[str, object]] = []
     for idx, (contig, length) in enumerate(selected, start=1):
@@ -114,13 +168,15 @@ def run_step(
         cov = bam_handle.count_coverage(contig, start - 1, end, quality_threshold=0)
         depth = [sum(x) for x in zip(*cov)]
         mean_depth = float(sum(depth) / len(depth)) if depth else 0.0
+        expected_positions = end - start + 1
         window_rows.append(
             {
                 "contig": contig,
                 "start": start,
                 "end": end,
-                "window_size": end - start + 1,
+                "window_size": expected_positions,
                 "mean_depth": round(mean_depth, 6),
+                "valid_for_denominator": int(len(depth) == expected_positions),
             }
         )
         print(f"[copy_number] window {idx}/{len(selected)} contig={contig} mean_depth={mean_depth:.3f}")
@@ -128,16 +184,43 @@ def run_step(
 
     windows_df = pd.DataFrame(
         window_rows,
-        columns=["contig", "start", "end", "window_size", "mean_depth"],
+        columns=WINDOW_COLUMNS,
     )
-    nuclear_mean = float(windows_df["mean_depth"].mean()) if not windows_df.empty else 0.0
-    ratio = (mt_mean_depth / nuclear_mean) if nuclear_mean else 0.0
+    valid_windows_df = windows_df[windows_df["valid_for_denominator"] == 1]
+    nuclear_mean = (
+        float(valid_windows_df["mean_depth"].mean()) if not valid_windows_df.empty else None
+    )
+    if mt_mean_depth is None:
+        status = "not_evaluable"
+        reason_code = mt_depth_reason_code
+        ratio = None
+    elif reference_scope != "whole_genome":
+        status = "not_evaluable"
+        reason_code = "no_valid_nuclear_windows"
+        ratio = None
+    elif nuclear_mean is None:
+        status = "not_evaluable"
+        reason_code = "no_valid_nuclear_windows"
+        ratio = None
+    elif nuclear_mean <= 0:
+        status = "not_evaluable"
+        reason_code = "zero_nuclear_depth_denominator"
+        ratio = None
+    else:
+        status = "ok"
+        reason_code = ""
+        ratio = mt_mean_depth / nuclear_mean
     summary_df = pd.DataFrame(
         [
-            {"metric": "mt_mean_depth", "value": round(mt_mean_depth, 6)},
-            {"metric": "nuclear_window_mean_depth", "value": round(nuclear_mean, 6)},
-            {"metric": "mt_to_nuclear_depth_ratio", "value": round(ratio, 6)},
-            {"metric": "nuclear_windows_used", "value": len(windows_df)},
+            {"metric": "status", "value": status},
+            {"metric": "reason_code", "value": reason_code},
+            {"metric": "reference_scope", "value": reference_scope},
+            {"metric": "mt_mean_depth", "value": "" if mt_mean_depth is None else round(mt_mean_depth, 6)},
+            {"metric": "nuclear_window_mean_depth", "value": "" if nuclear_mean is None else round(nuclear_mean, 6)},
+            {"metric": "mt_to_nuclear_depth_ratio", "value": "" if ratio is None else round(ratio, 6)},
+            {"metric": "nuclear_windows_requested", "value": window_count},
+            {"metric": "nuclear_windows_valid", "value": len(valid_windows_df)},
+            {"metric": "nuclear_windows_used", "value": len(valid_windows_df)},
             {"metric": "window_size_bp", "value": window_size},
         ]
     )
@@ -149,7 +232,7 @@ def run_step(
 
     fig_path = figure_dir / "mito_copy_number_proxy.png"
     labels = ["mtDNA"] + windows_df["contig"].tolist()
-    values = [mt_mean_depth] + windows_df["mean_depth"].tolist()
+    values = [float("nan") if mt_mean_depth is None else mt_mean_depth] + windows_df["mean_depth"].tolist()
     plt.figure(figsize=(10, 5))
     plt.bar(labels, values, color=["#7c3aed"] + ["#2563eb"] * len(windows_df))
     plt.ylabel("Mean depth")
@@ -160,23 +243,30 @@ def run_step(
 
     metrics_html = "".join(
         [
-            metric_card("mt mean depth", round(mt_mean_depth, 3)),
-            metric_card("nuclear mean depth", round(nuclear_mean, 3)),
-            metric_card("mt:nuclear ratio", round(ratio, 3)),
-            metric_card("nuclear windows", len(windows_df)),
+            metric_card("mt mean depth", "NA" if mt_mean_depth is None else round(mt_mean_depth, 3)),
+            metric_card("nuclear mean depth", "NA" if nuclear_mean is None else round(nuclear_mean, 3)),
+            metric_card("mt:nuclear ratio", "NA" if ratio is None else round(ratio, 3)),
+            metric_card("valid nuclear windows", len(valid_windows_df)),
         ]
     )
-    if windows_df.empty:
+    if status != "ok":
+        missing_context_note = (
+            "Incomplete mitochondrial or nuclear depth evidence is represented as NA, not as zero."
+            if reason_code in {"no_mito_depth_evidence", "incomplete_mito_depth_profile"}
+            else "Missing nuclear context is represented as NA, not as zero."
+        )
         windows_note = (
-            '<p class="small-note">No suitable nuclear windows were available in the supplied alignment header. '
-            "The mt:nuclear ratio is therefore reported as 0.0 for this run.</p>"
+            '<p class="small-note">The mt:nuclear ratio is not evaluable for this run. '
+            f"Reason: {reason_code}. {missing_context_note}</p>"
         )
     else:
         windows_note = ""
     intro_html = (
-        '<p class="muted">Coverage-based mitochondrial copy-number proxy using whole-mitochondrion depth compared '
-        "with fixed nuclear windows from canonical autosomes. This is intended as a within-project proxy, not an "
-        "absolute mtDNA copy-number measurement.</p>"
+        '<p class="muted">Experimental within-sample mt:nuclear depth ratio using whole-mitochondrion depth '
+        "compared with fixed nuclear windows from canonical autosomes. This ratio is not a calibrated or absolute "
+        "mtDNA copy-number measurement. Every successfully measured fixed window contributes to the nuclear "
+        "mean, including windows with observed depth zero. An all-zero nuclear mean cannot define a ratio and is "
+        "reported as not evaluable rather than as zero or infinity.</p>"
         f"<div class='metrics-grid'>{metrics_html}</div>{windows_note}"
     )
     body_html = (
@@ -200,6 +290,7 @@ def run_step(
         body_html,
     )
     return {
+        "status": status,
         "summary_path": summary_path,
         "windows_path": windows_path,
         "report_path": report_path,
@@ -219,6 +310,7 @@ def main() -> None:
         mt_contig=args.mt_contig,
         mt_length=args.mt_length,
         species=args.species,
+        reference_scope=args.reference_scope,
         window_size=args.window_size,
         window_count=args.window_count,
     )

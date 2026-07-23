@@ -1,0 +1,213 @@
+name: public-validation
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit_sha:
+        description: Full 40-character commit SHA to validate
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: public-validation-${{ inputs.commit_sha }}
+  cancel-in-progress: false
+
+jobs:
+  public-validation:
+    name: Public validation (Ubuntu 24.04, ${{ inputs.commit_sha }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 300
+    defaults:
+      run:
+        shell: bash -el -o pipefail {0}
+    env:
+      MITO_OVERVIEW_REQUIRE_INSTALLED: "1"
+      PYTHONNOUSERSITE: "1"
+      TARGET_SHA: ${{ inputs.commit_sha }}
+
+    steps:
+      - name: Validate immutable commit input
+        run: |
+          if [[ ! "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "commit_sha must be a lowercase, full 40-character Git commit SHA" >&2
+            exit 1
+          fi
+
+      - name: Check out exact commit
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ inputs.commit_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify clean detached source identity
+        run: |
+          test "$GITHUB_SHA" = "$TARGET_SHA"
+          test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+          test "$(git cat-file -t "$TARGET_SHA")" = commit
+          test -z "$(git status --porcelain --untracked-files=all)"
+          git fsck --full
+
+      - name: Set up locked Linux environment
+        uses: conda-incubator/setup-miniconda@8ee1f361103df19b6f8c8655fd3967a8ecb162d5 # v4.0.1
+        with:
+          environment-file: locks/environment-linux-64.yml
+          activate-environment: mito-overview
+          auto-activate: false
+          conda-remove-defaults: true
+
+      - name: Build and install wheel outside checkout
+        run: |
+          python -m build --no-isolation
+          wheel_paths=("$GITHUB_WORKSPACE"/dist/mito_overview-*.whl)
+          test ${#wheel_paths[@]} -eq 1
+          python -m pip install --no-deps --force-reinstall "${wheel_paths[0]}"
+          cd "$RUNNER_TEMP"
+          mito-overview --list-steps > installed-cli-steps.tsv
+          MITO_OVERVIEW_PYTHON="$(command -v python)" \
+          MITO_OVERVIEW_REQUIRE_INSTALLED=1 \
+            "$GITHUB_WORKSPACE/scripts/run_mito_pipeline.sh" --list-steps \
+            > installed-launcher-steps.tsv
+          diff -u installed-cli-steps.tsv installed-launcher-steps.tsv
+
+      - name: Record execution environment
+        run: |
+          mkdir -p "$RUNNER_TEMP/public-validation-environment"
+          {
+            printf 'repository=%s\n' "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY"
+            printf 'git_commit=%s\n' "$TARGET_SHA"
+            printf 'runner_os=%s\n' "$RUNNER_OS"
+            printf 'runner_arch=%s\n' "$RUNNER_ARCH"
+            printf 'runner_image=%s\n' "${ImageOS:-unknown}"
+            printf 'runner_image_version=%s\n' "${ImageVersion:-unknown}"
+            printf 'github_run_id=%s\n' "$GITHUB_RUN_ID"
+          } > "$RUNNER_TEMP/public-validation-environment/identity.txt"
+          conda list --explicit \
+            > "$RUNNER_TEMP/public-validation-environment/conda-linux-64.explicit.txt"
+          python -m pip freeze --all \
+            > "$RUNNER_TEMP/public-validation-environment/pip-linux-64.txt"
+          cp locks/environment-linux-64.yml \
+            "$RUNNER_TEMP/public-validation-environment/"
+
+      - name: Prepare checksum-verified public input cache
+        run: |
+          RAW_CACHE="$RUNNER_TEMP/mito-overview-public-inputs-v0.3.0"
+          test ! -e "$RAW_CACHE"
+          /usr/bin/time -v -o "$RUNNER_TEMP/public-cache-resource-usage.txt" \
+            ./scripts/prepare_public_validation_cache_v0.3.0.sh \
+              --cache "$RAW_CACHE"
+
+      - name: Preflight fail-closed Linux network namespace
+        run: |
+          command -v sudo
+          command -v unshare
+          command -v setpriv
+          sudo -n true
+
+      - name: Run network-isolated sealed-cache matrix against frozen oracle
+        run: |
+          RAW_CACHE="$RUNNER_TEMP/mito-overview-public-inputs-v0.3.0"
+          VALIDATION_ROOT="$RUNNER_TEMP/mito-overview-public-validation-v0.3.0"
+          ISOLATION_EVIDENCE="$RUNNER_TEMP/mito-overview-public-network-isolation.tsv"
+          /usr/bin/time -v -o "$RUNNER_TEMP/public-matrix-resource-usage.txt" \
+            env \
+              MITO_OVERVIEW_PYTHON="$(command -v python)" \
+              MITO_OVERVIEW_REQUIRE_INSTALLED=1 \
+              MITO_OVERVIEW_EXPECTED_PLATFORM=linux-64 \
+              ./scripts/run_network_isolated_v0.3.0.sh \
+                --evidence "$ISOLATION_EVIDENCE" -- \
+                ./scripts/run_public_validation_matrix_v0.3.0.sh \
+                  --mode offline \
+                  --cache "$RAW_CACHE" \
+                  --work "$VALIDATION_ROOT/work" \
+                  --output "$VALIDATION_ROOT/results" \
+                  --oracle examples/public_validation/public_validation_oracle_v0.3.0.tsv
+          grep -Fqx $'network_isolation_verdict\tPASS' \
+            "$VALIDATION_ROOT/results/environment/network_isolation.tsv"
+          grep -Fq $'offline_isolation\tos_network_isolation\t1\t1\tPASS\t' \
+            "$VALIDATION_ROOT/results/cases.tsv"
+
+      - name: Stage derived evidence only
+        if: ${{ always() }}
+        run: |
+          VALIDATION_ROOT="$RUNNER_TEMP/mito-overview-public-validation-v0.3.0"
+          RESULTS_ROOT="$VALIDATION_ROOT/results"
+          ARTIFACT_ROOT="$RUNNER_TEMP/public-validation-derived-evidence"
+          mkdir -p "$ARTIFACT_ROOT/environment" "$ARTIFACT_ROOT/results"
+          cp -R "$RUNNER_TEMP/public-validation-environment/." "$ARTIFACT_ROOT/environment/"
+          for metrics in \
+            "$RUNNER_TEMP/public-cache-resource-usage.txt" \
+            "$RUNNER_TEMP/public-matrix-resource-usage.txt"; do
+            [[ -f "$metrics" ]] && cp "$metrics" "$ARTIFACT_ROOT/environment/"
+          done
+          if [[ -d "$RESULTS_ROOT" ]]; then
+            if find "$RESULTS_ROOT/outputs" -type f -name '*.svg' \
+              -print -quit 2>/dev/null | grep -q .; then
+              echo "SVG report artifacts are outside the v0.3.0 HTML/PNG evidence contract" >&2
+              exit 1
+            fi
+            for relative in \
+              cases.tsv filter_profile_results.tsv inputs.sha256 \
+              oracle_assertions.tsv raw_inputs.tsv CACHE_SEAL.sha256; do
+              [[ -f "$RESULTS_ROOT/$relative" ]] \
+                && cp "$RESULTS_ROOT/$relative" "$ARTIFACT_ROOT/results/"
+            done
+            for directory in commands logs observed_normalized observed_contracts environment; do
+              [[ -d "$RESULTS_ROOT/$directory" ]] \
+                && cp -R "$RESULTS_ROOT/$directory" "$ARTIFACT_ROOT/results/"
+            done
+            while IFS= read -r -d '' source; do
+              relative="${source#"$RESULTS_ROOT"/}"
+              destination="$ARTIFACT_ROOT/results/report_artifacts/$relative"
+              mkdir -p "$(dirname "$destination")"
+              cp "$source" "$destination"
+            done < <(
+              find "$RESULTS_ROOT/outputs" -type f \
+                \( -name '*.html' -o -name '*.png' \) \
+                -print0 2>/dev/null || true
+            )
+          fi
+          if find "$ARTIFACT_ROOT" -type f \
+            \( -iname '*.fastq' -o -iname '*.fastq.gz' -o -iname '*.fq' \
+               -o -iname '*.fq.gz' -o -iname '*.bam' -o -iname '*.bai' \
+               -o -iname '*.cram' -o -iname '*.crai' -o -iname '*.sam' \) \
+            -print -quit | grep -q .; then
+            echo "Raw genomic input or alignment entered artifact staging" >&2
+            exit 1
+          fi
+          python scripts/sanitize_validation_evidence.py "$ARTIFACT_ROOT" \
+            --replace "$GITHUB_WORKSPACE=\${REPOSITORY_CHECKOUT}" \
+            --replace "$RUNNER_TEMP=\${RUNNER_TEMP}" \
+            --replace "$HOME=\${HOME}"
+          while IFS= read -r -d '' inventory; do
+            case_id="$(basename "$(dirname "$inventory")")"
+            case_root="$ARTIFACT_ROOT/results/report_artifacts/outputs/$case_id"
+            structure="$RUNNER_TEMP/${case_id}-staged-visual-structure.tsv"
+            python scripts/inventory_visual_artifacts.py \
+              "$case_root" "$inventory" "$structure"
+            rm -f "$structure"
+          done < <(
+            find "$ARTIFACT_ROOT/results/observed_normalized" \
+              -type f -name visual_artifact_inventory.tsv -print0
+          )
+          (
+            cd "$ARTIFACT_ROOT"
+            find . -type f ! -name SHA256SUMS -print0 \
+              | sort -z \
+              | xargs -0 shasum -a 256 \
+              > SHA256SUMS
+            shasum -a 256 -c SHA256SUMS
+          )
+
+      - name: Upload derived validation evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: public-validation-derived-${{ inputs.commit_sha }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/public-validation-derived-evidence/
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 6

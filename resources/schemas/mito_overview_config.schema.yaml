@@ -1,0 +1,217 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+title: mito-overview environment configuration
+description: Schema for values after parsing a shell-style mito-overview KEY=VALUE file.
+type: object
+additionalProperties: true
+required: [WORK_ROOT, RUN_NAME, SAMPLE_ID, REF_FASTA, SOURCE_ALIGN_FILE, MT_CONTIG]
+$defs:
+  path:
+    type: string
+  nonemptyPath:
+    type: string
+    minLength: 1
+  integerLike:
+    oneOf:
+      - type: integer
+      - type: string
+        pattern: "^[0-9]+$"
+  numberLike:
+    oneOf:
+      - type: number
+      - type: string
+        pattern: "^(?:[0-9]+(?:\\.[0-9]*)?|\\.[0-9]+)$"
+  booleanLike:
+    oneOf:
+      - type: boolean
+      - type: integer
+        enum: [0, 1]
+      - type: string
+        enum: ["0", "1", "true", "false", "yes", "no", "on", "off"]
+properties:
+  WORK_ROOT:
+    $ref: "#/$defs/nonemptyPath"
+  RUN_NAME:
+    type: string
+    minLength: 1
+  SAMPLE_ID:
+    type: string
+    minLength: 1
+  REF_FASTA:
+    $ref: "#/$defs/nonemptyPath"
+  SOURCE_ALIGN_FILE:
+    type: string
+    minLength: 1
+    pattern: "\\.(bam|cram)$"
+  SOURCE_ALIGN_MODE:
+    type: string
+    enum: ["", bam, cram]
+    description: Optional compatibility key; when set, it must match the filename extension and encoded BAM/CRAM container.
+  MT_CONTIG:
+    type: string
+    minLength: 1
+  MT_LENGTH:
+    oneOf:
+      - const: ""
+      - $ref: "#/$defs/integerLike"
+  PIPELINE_ROOT:
+    $ref: "#/$defs/path"
+  SOURCE_SAMPLE_DIR:
+    $ref: "#/$defs/path"
+  SOURCE_HV_DIR:
+    $ref: "#/$defs/path"
+  SOURCE_HV_NP_DIR:
+    $ref: "#/$defs/path"
+  FINAL_BIOINFO_DIR:
+    $ref: "#/$defs/path"
+  CONDA_BASE:
+    $ref: "#/$defs/path"
+  CONDA_ENV_PREFIX:
+    $ref: "#/$defs/path"
+  DEBUG:
+    $ref: "#/$defs/booleanLike"
+  THREADS:
+    $ref: "#/$defs/integerLike"
+    default: "4"
+  SPECIES:
+    type: string
+    default: auto
+  READ_MODE:
+    type: string
+    enum: [long, short]
+    default: long
+  ASSAY_TYPE:
+    type: string
+    enum: [wgs, targeted_mt]
+    default: wgs
+  REFERENCE_SCOPE:
+    type: string
+    enum: [auto, mt_only, whole_genome, custom]
+    default: auto
+  CONTROL_REGION_ANNOTATION_MODE:
+    type: string
+    enum: [auto, disabled, synthetic_fixture_override]
+    default: auto
+    description: >-
+      Canonical human control-region coordinates require exact NC_012920.1 sequence
+      identity in auto mode. The synthetic fixture override is explicit provenance for
+      tiny test references and must not be used for biological samples.
+  MIN_CALLABLE_DEPTH:
+    $ref: "#/$defs/integerLike"
+    default: "100"
+  MIN_ALT_ALLELE_FRACTION:
+    $ref: "#/$defs/numberLike"
+    default: "0.02"
+  HET_MIN_DEPTH:
+    $ref: "#/$defs/integerLike"
+    deprecated: true
+  HET_MIN_VAF:
+    $ref: "#/$defs/numberLike"
+    deprecated: true
+  ALLELE_MIN_BASE_QUALITY:
+    $ref: "#/$defs/integerLike"
+    default: "13"
+  ALLELE_MIN_MAPPING_QUALITY:
+    $ref: "#/$defs/integerLike"
+    default: "20"
+  ALLELE_MIN_READ_MEAN_QUALITY:
+    $ref: "#/$defs/numberLike"
+    default: "10"
+  ALLELE_MAX_DEPTH:
+    $ref: "#/$defs/integerLike"
+    default: "0"
+  ALLELE_EXCLUDE_FLAGS:
+    oneOf:
+      - $ref: "#/$defs/integerLike"
+      - type: string
+        pattern: "^0[xX][0-9a-fA-F]+$"
+    default: "3844"
+  ALLELE_IGNORE_OVERLAPS:
+    $ref: "#/$defs/booleanLike"
+    default: "1"
+  DELETION_MIN_SIZE:
+    $ref: "#/$defs/integerLike"
+    default: "100"
+  NUCLEAR_WINDOW_SIZE:
+    $ref: "#/$defs/integerLike"
+    default: "100000"
+  NUCLEAR_WINDOW_COUNT:
+    $ref: "#/$defs/integerLike"
+    default: "5"
+  HUMAN_MT_GTF:
+    $ref: "#/$defs/path"
+  PHYMER_ROOT:
+    $ref: "#/$defs/path"
+  PHYMER_MODE:
+    type: string
+    enum: [external, fixture]
+    default: external
+  PHYMER_SCRIPT_SHA256:
+    type: string
+    pattern: "^(?:|[0-9a-f]{64})$"
+    default: ""
+  PHYMER_LIBRARY_SHA256:
+    type: string
+    pattern: "^(?:|[0-9a-f]{64})$"
+    default: ""
+  PHYMER_DEFINITIONS_SHA256:
+    type: string
+    pattern: "^(?:|[0-9a-f]{64})$"
+    default: ""
+  PHYMER_MIN_DEPTH:
+    $ref: "#/$defs/integerLike"
+    default: "100"
+  PHYMER_MAJOR_VAF:
+    $ref: "#/$defs/numberLike"
+    default: "0.90"
+  PHYMER_MIN_CALLABLE_FRACTION:
+    $ref: "#/$defs/numberLike"
+    default: "0.95"
+  MVTOOL_MODE:
+    type: string
+    enum: [disabled, fixture, network]
+    default: disabled
+  MVTOOL_API_URL:
+    type: string
+    default: ""
+  MVTOOL_FIXTURE_JSON:
+    $ref: "#/$defs/path"
+  MSEQDR_TIMEOUT:
+    $ref: "#/$defs/integerLike"
+    default: "120"
+  SOURCE_VARIANT_VCF:
+    $ref: "#/$defs/path"
+  SOURCE_CLINVAR_VCF:
+    $ref: "#/$defs/path"
+  SOURCE_VARIANT_VCF_UNPHASED:
+    $ref: "#/$defs/path"
+  SOURCE_CLINVAR_VCF_UNPHASED:
+    $ref: "#/$defs/path"
+  SOURCE_BEDMETHYL:
+    $ref: "#/$defs/path"
+  SOURCE_BEDMETHYL_HP1:
+    $ref: "#/$defs/path"
+  SOURCE_BEDMETHYL_HP2:
+    $ref: "#/$defs/path"
+  SOURCE_BEDMETHYL_UNGROUPED:
+    $ref: "#/$defs/path"
+allOf:
+  - if:
+      properties:
+        MVTOOL_MODE:
+          const: network
+      required: [MVTOOL_MODE]
+    then:
+      required: [MVTOOL_API_URL]
+      properties:
+        MVTOOL_API_URL:
+          minLength: 1
+  - if:
+      properties:
+        MVTOOL_MODE:
+          const: fixture
+      required: [MVTOOL_MODE]
+    then:
+      required: [MVTOOL_FIXTURE_JSON]
+      properties:
+        MVTOOL_FIXTURE_JSON:
+          minLength: 1

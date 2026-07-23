@@ -14,18 +14,37 @@ if [[ -z "${MITO_OVERVIEW_LONGREAD_WORKDIR:-}" ]]; then
   trap 'rm -rf "${WORKDIR}"' EXIT
 fi
 
+source "${SCRIPT_DIR}/lib/mock_optional_integrations.sh"
+source "${SCRIPT_DIR}/lib/test_assertions.sh"
+
 echo "[longread-gm12878] repo root: ${REPO_ROOT}"
 echo "[longread-gm12878] workdir: ${WORKDIR}"
 echo "[longread-gm12878] output dir: ${OUTPUT_DIR}"
 echo "[longread-gm12878] python: ${MITO_OVERVIEW_PYTHON:-python3}"
 
+INPUT_MODE="${MITO_OVERVIEW_PUBLIC_INPUT_MODE:-download}"
+case "${INPUT_MODE}" in
+  download|offline) ;;
+  *)
+    echo "MITO_OVERVIEW_PUBLIC_INPUT_MODE must be download or offline" >&2
+    exit 1
+    ;;
+esac
+
 if [[ -n "${MITO_OVERVIEW_PYTHON:-}" ]]; then
   TOOL_BIN="$(cd "$(dirname "${MITO_OVERVIEW_PYTHON}")" && pwd)"
-  export PATH="${TOOL_BIN}${PATH:+:${PATH}}"
+  case ":${PATH}:" in
+    *":${TOOL_BIN}:"*) ;;
+    *) export PATH="${PATH:+${PATH}:}${TOOL_BIN}" ;;
+  esac
 fi
 PYTHON_BIN="${MITO_OVERVIEW_PYTHON:-python3}"
 
-for tool in curl minimap2 samtools; do
+required_tools=(minimap2 samtools)
+if [[ "${INPUT_MODE}" == download ]]; then
+  required_tools+=(curl)
+fi
+for tool in "${required_tools[@]}"; do
   if ! command -v "${tool}" >/dev/null 2>&1; then
     echo "Required tool not found in PATH: ${tool}" >&2
     exit 1
@@ -37,18 +56,23 @@ mkdir -p "${MPLCONFIGDIR}"
 export XDG_CACHE_HOME="${WORKDIR}/.cache"
 mkdir -p "${XDG_CACHE_HOME}"
 
-DATA_DIR="${WORKDIR}/downloads"
+RAW_DATA_DIR="${MITO_OVERVIEW_LONGREAD_RAW_DATA_DIR:-${MITO_OVERVIEW_LONGREAD_DATA_DIR:-${WORKDIR}/downloads}}"
+DERIVED_DIR="${MITO_OVERVIEW_LONGREAD_DERIVED_DIR:-${WORKDIR}/derived}"
 REF_DIR="${WORKDIR}/reference"
 SAMPLE_DIR="${WORKDIR}/sample"
 HV_DIR="${SAMPLE_DIR}/human_variation"
 RUN_ROOT="${WORKDIR}/runs"
 FINAL_DIR="${WORKDIR}/final_bundle"
-mkdir -p "${DATA_DIR}" "${REF_DIR}" "${HV_DIR}" "${RUN_ROOT}"
+mkdir -p "${RAW_DATA_DIR}" "${DERIVED_DIR}" "${REF_DIR}" "${HV_DIR}" "${RUN_ROOT}"
 
 download_if_missing() {
   local url="$1"
   local dest="$2"
   if [[ ! -s "${dest}" ]]; then
+    if [[ "${INPUT_MODE}" == offline ]]; then
+      echo "Offline public validation input is missing: ${dest}" >&2
+      exit 1
+    fi
     echo "[longread-gm12878] downloading ${url}"
     curl \
       --fail \
@@ -58,6 +82,15 @@ download_if_missing() {
       --max-time "${MITO_OVERVIEW_LONGREAD_CURL_MAX_TIME:-1200}" \
       -L "${url}" \
       -o "${dest}"
+  fi
+}
+
+file_md5() {
+  local path="$1"
+  if command -v md5sum >/dev/null 2>&1; then
+    md5sum "${path}" | awk '{print $1}'
+  else
+    md5 -q "${path}"
   fi
 }
 
@@ -78,17 +111,28 @@ copy_if_exists() {
   fi
 }
 
-THREADS="${MITO_OVERVIEW_LONGREAD_THREADS:-2}"
-ALIGN_BAM="${MITO_OVERVIEW_LONGREAD_ALIGN_BAM:-${HV_DIR}/GM12878_ONT_longread.mt.bam}"
-FASTQ_GZ="${MITO_OVERVIEW_LONGREAD_FASTQ_GZ:-${DATA_DIR}/SRR18110025.fastq.gz}"
+THREADS="${MITO_OVERVIEW_LONGREAD_THREADS:-4}"
+FASTQ_GZ="${MITO_OVERVIEW_LONGREAD_FASTQ_GZ:-${RAW_DATA_DIR}/SRR18110025.fastq.gz}"
+SUBSET_READ_NAMES="${MITO_OVERVIEW_LONGREAD_SUBSET_READ_NAMES:-1000}"
+SUBSET_SEED="${MITO_OVERVIEW_LONGREAD_SUBSET_SEED:-mito-overview-v0.3.0-GM12878-SRR18110025}"
+SUBSET_FASTQ="${MITO_OVERVIEW_LONGREAD_SUBSET_FASTQ:-${DERIVED_DIR}/SRR18110025.deterministic-qnames-${SUBSET_READ_NAMES}.fastq.gz}"
+SUBSET_FASTQ_PROVENANCE="${MITO_OVERVIEW_LONGREAD_SUBSET_FASTQ_PROVENANCE:-${SUBSET_FASTQ}.provenance.json}"
+SUBSET_NAMES="${MITO_OVERVIEW_LONGREAD_SUBSET_NAMES:-${SUBSET_FASTQ}.selected_qnames.txt}"
+ALIGN_BAM="${MITO_OVERVIEW_LONGREAD_ALIGN_BAM:-${HV_DIR}/GM12878_ONT_longread.deterministic-qnames-${SUBSET_READ_NAMES}.mt.bam}"
+ALIGN_PROVENANCE="${MITO_OVERVIEW_LONGREAD_ALIGN_PROVENANCE:-${ALIGN_BAM}.provenance.json}"
 
-if [[ ! -s "${ALIGN_BAM}" || ! -s "${ALIGN_BAM}.bai" ]]; then
-  if [[ "${FASTQ_GZ}" == "${DATA_DIR}/SRR18110025.fastq.gz" ]]; then
-    download_if_missing \
-      "https://ftp.sra.ebi.ac.uk/vol1/fastq/SRR181/025/SRR18110025/SRR18110025_1.fastq.gz" \
-      "${FASTQ_GZ}"
-  elif [[ ! -s "${FASTQ_GZ}" ]]; then
-    echo "Requested MITO_OVERVIEW_LONGREAD_FASTQ_GZ does not exist or is empty: ${FASTQ_GZ}" >&2
+if [[ "${FASTQ_GZ}" == "${RAW_DATA_DIR}/SRR18110025.fastq.gz" ]]; then
+  download_if_missing \
+    "https://ftp.sra.ebi.ac.uk/vol1/fastq/SRR181/025/SRR18110025/SRR18110025_1.fastq.gz" \
+    "${FASTQ_GZ}"
+elif [[ ! -s "${FASTQ_GZ}" ]]; then
+  echo "Requested MITO_OVERVIEW_LONGREAD_FASTQ_GZ does not exist or is empty: ${FASTQ_GZ}" >&2
+  exit 1
+fi
+if [[ "${FASTQ_GZ}" == "${RAW_DATA_DIR}/SRR18110025.fastq.gz" ]]; then
+  observed_md5="$(file_md5 "${FASTQ_GZ}")"
+  if [[ "${observed_md5}" != "d5bfb9aeba04cae5f3dd79462a42e5b0" ]]; then
+    echo "ENA MD5 mismatch for ${FASTQ_GZ}: expected d5bfb9aeba04cae5f3dd79462a42e5b0, observed ${observed_md5}" >&2
     exit 1
   fi
 fi
@@ -100,37 +144,127 @@ if [[ ! -f "${REF_FASTA}.mmi" ]]; then
   minimap2 -d "${REF_FASTA}.mmi" "${REF_FASTA}"
 fi
 
-if [[ -s "${ALIGN_BAM}" && -s "${ALIGN_BAM}.bai" ]]; then
-  echo "[longread-gm12878] reusing existing aligned BAM ${ALIGN_BAM}"
+if ! [[ "${SUBSET_READ_NAMES}" =~ ^[0-9]+$ ]] || [[ "${SUBSET_READ_NAMES}" -lt 1 ]]; then
+  echo "MITO_OVERVIEW_LONGREAD_SUBSET_READ_NAMES must be a positive integer" >&2
+  exit 1
+fi
+subset_component_count=0
+for component in "${SUBSET_FASTQ}" "${SUBSET_FASTQ_PROVENANCE}" "${SUBSET_NAMES}"; do
+  [[ -s "${component}" ]] && subset_component_count=$((subset_component_count + 1))
+done
+if [[ "${subset_component_count}" -eq 3 ]]; then
+  subset_action=verify
+elif [[ "${subset_component_count}" -eq 0 ]]; then
+  subset_action=create
+  echo "[longread-gm12878] selecting ${SUBSET_READ_NAMES} deterministic FASTQ query names"
 else
-  echo "[longread-gm12878] aligning public ONT mtDNA data to ${REF_FASTA}"
+  echo "Incomplete cached GM12878 deterministic FASTQ provenance. Refusing unsafe reuse:" >&2
+  echo "  subset FASTQ: ${SUBSET_FASTQ}" >&2
+  echo "  subset manifest: ${SUBSET_FASTQ_PROVENANCE}" >&2
+  echo "  selected names: ${SUBSET_NAMES}" >&2
+  exit 1
+fi
+"${PYTHON_BIN}" "${REPO_ROOT}/scripts/select_deterministic_fastq_subset.py" "${subset_action}" \
+  --source-fastq "${FASTQ_GZ}" \
+  --output-fastq "${SUBSET_FASTQ}" \
+  --output-manifest "${SUBSET_FASTQ_PROVENANCE}" \
+  --selected-names "${SUBSET_NAMES}" \
+  --dataset GM12878_SRR18110025_ONT \
+  --count "${SUBSET_READ_NAMES}" \
+  --seed "${SUBSET_SEED}"
+
+ALIGN_DERIVATION_ID="minimap2-map-ont-deterministic-fastq-subset-mapped-only-v1"
+ALIGNMENT_INPUTS=(
+  --input "SRR18110025_full_fastq=${FASTQ_GZ}"
+  --input "deterministic_subset_fastq=${SUBSET_FASTQ}"
+  --input "deterministic_subset_manifest=${SUBSET_FASTQ_PROVENANCE}"
+  --input "selected_query_names=${SUBSET_NAMES}"
+)
+alignment_component_count=0
+for component in "${ALIGN_BAM}" "${ALIGN_BAM}.bai" "${ALIGN_PROVENANCE}"; do
+  [[ -s "${component}" ]] && alignment_component_count=$((alignment_component_count + 1))
+done
+if [[ "${alignment_component_count}" -eq 3 ]]; then
+  "${PYTHON_BIN}" "${REPO_ROOT}/scripts/public_alignment_provenance.py" verify \
+    --manifest "${ALIGN_PROVENANCE}" \
+    --dataset GM12878_SRR18110025_ONT_reduced_qn${SUBSET_READ_NAMES} \
+    --alignment "${ALIGN_BAM}" \
+    --reference "${REF_FASTA}" \
+    --derivation-id "${ALIGN_DERIVATION_ID}" \
+    --command-template 'minimap2 -t {threads} -ax map-ont {reference_mmi} {deterministic_subset_fastq} | samtools view -@ {threads} -b -F 4 | samtools sort -@ {threads} -o {alignment_bam}' \
+    --parameter "threads=${THREADS}" \
+    --parameter "unmapped_filter_flag=4" \
+    --parameter "selected_query_names=${SUBSET_READ_NAMES}" \
+    --parameter "selection_seed=${SUBSET_SEED}" \
+    --tool minimap2 \
+    --tool samtools \
+    "${ALIGNMENT_INPUTS[@]}"
+  echo "[longread-gm12878] reusing provenance-verified reduced BAM ${ALIGN_BAM}"
+elif [[ "${alignment_component_count}" -eq 0 ]]; then
+  echo "[longread-gm12878] aligning deterministic reduced FASTQ to ${REF_FASTA}"
   mkdir -p "$(dirname "${ALIGN_BAM}")"
-  minimap2 -t "${THREADS}" -ax map-ont "${REF_FASTA}.mmi" "${FASTQ_GZ}" \
+  minimap2 -t "${THREADS}" -ax map-ont "${REF_FASTA}.mmi" "${SUBSET_FASTQ}" \
+    | samtools view -@ "${THREADS}" -b -F 4 \
     | samtools sort -@ "${THREADS}" -o "${ALIGN_BAM}"
   samtools index -@ "${THREADS}" "${ALIGN_BAM}"
+  "${PYTHON_BIN}" "${REPO_ROOT}/scripts/public_alignment_provenance.py" record \
+    --manifest "${ALIGN_PROVENANCE}" \
+    --dataset GM12878_SRR18110025_ONT_reduced_qn${SUBSET_READ_NAMES} \
+    --alignment "${ALIGN_BAM}" \
+    --reference "${REF_FASTA}" \
+    --derivation-id "${ALIGN_DERIVATION_ID}" \
+    --command-template 'minimap2 -t {threads} -ax map-ont {reference_mmi} {deterministic_subset_fastq} | samtools view -@ {threads} -b -F 4 | samtools sort -@ {threads} -o {alignment_bam}' \
+    --parameter "threads=${THREADS}" \
+    --parameter "unmapped_filter_flag=4" \
+    --parameter "selected_query_names=${SUBSET_READ_NAMES}" \
+    --parameter "selection_seed=${SUBSET_SEED}" \
+    --tool minimap2 \
+    --tool samtools \
+    "${ALIGNMENT_INPUTS[@]}"
+else
+  echo "Incomplete cached GM12878 reduced-alignment provenance. Refusing unsafe reuse:" >&2
+  echo "  BAM: ${ALIGN_BAM}" >&2
+  echo "  BAI: ${ALIGN_BAM}.bai" >&2
+  echo "  manifest: ${ALIGN_PROVENANCE}" >&2
+  exit 1
 fi
+echo "[longread-gm12878] analysis input is deterministic reduced BAM ${ALIGN_BAM}"
 samtools flagstat "${ALIGN_BAM}" > "${WORKDIR}/GM12878_ONT_longread.flagstat.txt"
 
+MVTOOL_MODE="${MITO_OVERVIEW_LONGREAD_MVTOOL_MODE:-disabled}"
+MVTOOL_FIXTURE_JSON="${MITO_OVERVIEW_LONGREAD_MVTOOL_FIXTURE_JSON:-}"
+if [[ "${MVTOOL_MODE}" == "fixture" && -z "${MVTOOL_FIXTURE_JSON}" ]]; then
+  MVTOOL_FIXTURE_JSON="$(mock_mvtool_fixture_path "${REPO_ROOT}")"
+fi
+MIN_CALLABLE_DEPTH="${MITO_OVERVIEW_LONGREAD_MIN_CALLABLE_DEPTH:-${MITO_OVERVIEW_LONGREAD_HET_MIN_DEPTH:-100}}"
+MIN_ALT_ALLELE_FRACTION="${MITO_OVERVIEW_LONGREAD_MIN_ALT_ALLELE_FRACTION:-${MITO_OVERVIEW_LONGREAD_HET_MIN_VAF:-0.10}}"
+ALLELE_MIN_BASE_QUALITY="${MITO_OVERVIEW_LONGREAD_ALLELE_MIN_BASE_QUALITY:-13}"
+ALLELE_MIN_MAPPING_QUALITY="${MITO_OVERVIEW_LONGREAD_ALLELE_MIN_MAPPING_QUALITY:-20}"
+ALLELE_MIN_READ_MEAN_QUALITY="${MITO_OVERVIEW_LONGREAD_ALLELE_MIN_READ_MEAN_QUALITY:-10}"
 cat > "${WORKDIR}/gm12878_longread.env" <<EOF
-PIPELINE_ROOT=${REPO_ROOT}
 WORK_ROOT=${RUN_ROOT}
-RUN_NAME=mito_GM12878_ONT_longread
-SAMPLE_ID=GM12878_ONT_longread
-SOURCE_SAMPLE_DIR=${SAMPLE_DIR}
-SOURCE_HV_DIR=${HV_DIR}
+RUN_NAME=mito_GM12878_ONT_longread_reduced_qn${SUBSET_READ_NAMES}
+SAMPLE_ID=GM12878_ONT_longread_reduced_qn${SUBSET_READ_NAMES}
 REF_FASTA=${REF_FASTA}
 SOURCE_ALIGN_FILE=${ALIGN_BAM}
-SOURCE_ALIGN_MODE=bam
 MT_CONTIG=NC_012920.1
-MT_LENGTH=16569
 THREADS=${THREADS}
 SPECIES=human
 READ_MODE=long
 ASSAY_TYPE=targeted_mt
-HET_MIN_DEPTH=${MITO_OVERVIEW_LONGREAD_HET_MIN_DEPTH:-100}
-HET_MIN_VAF=${MITO_OVERVIEW_LONGREAD_HET_MIN_VAF:-0.10}
+REFERENCE_SCOPE=auto
+MIN_CALLABLE_DEPTH=${MIN_CALLABLE_DEPTH}
+MIN_ALT_ALLELE_FRACTION=${MIN_ALT_ALLELE_FRACTION}
+ALLELE_MIN_BASE_QUALITY=${ALLELE_MIN_BASE_QUALITY}
+ALLELE_MIN_MAPPING_QUALITY=${ALLELE_MIN_MAPPING_QUALITY}
+ALLELE_MIN_READ_MEAN_QUALITY=${ALLELE_MIN_READ_MEAN_QUALITY}
+ALLELE_MAX_DEPTH=0
+ALLELE_EXCLUDE_FLAGS=3844
+ALLELE_IGNORE_OVERLAPS=1
 DELETION_MIN_SIZE=${MITO_OVERVIEW_LONGREAD_DELETION_MIN_SIZE:-100}
 HUMAN_MT_GTF=${REPO_ROOT}/resources/annotations/human_mt_reference.gtf
+MVTOOL_MODE=${MVTOOL_MODE}
+MVTOOL_FIXTURE_JSON=${MVTOOL_FIXTURE_JSON}
 FINAL_BIOINFO_DIR=${FINAL_DIR}
 EOF
 
@@ -138,18 +272,66 @@ cd "${REPO_ROOT}"
 ./scripts/run_mito_pipeline.sh \
   --config "${WORKDIR}/gm12878_longread.env" \
   --strict-files \
-  --steps validate,stage,extract,mito_qc,heteroplasmy,deletions,copy_number,feature_annotation,cosegregation,gene_summary,numt_qc,phymer_haplogroup,variant_consequence,circularity_qc,methylation_exploratory,sync_bioinfo
+  --steps validate,stage,extract,mito_qc,heteroplasmy,deletions,copy_number,feature_annotation,cosegregation,gene_summary,numt_qc,phymer_haplogroup,identity_qc,variant_consequence,mvtool_annotation,circularity_qc,methylation_exploratory,sync_bioinfo
+
+SUMMARY_DIR="${FINAL_DIR}/output/summary"
+assert_allele_table_invariants "${SUMMARY_DIR}/mito_heteroplasmy_all_sites.tsv"
+assert_tsv_metric "${SUMMARY_DIR}/mito_copy_number_summary.tsv" status not_applicable
+assert_tsv_metric "${SUMMARY_DIR}/mito_phymer_haplogroup_summary.tsv" status not_applicable
+assert_tsv_metric "${SUMMARY_DIR}/mito_numt_qc_summary.tsv" reference_scope mt_only
+assert_tsv_metric "${SUMMARY_DIR}/mito_numt_qc_summary.tsv" numt_interpretation_status not_evaluable
+assert_tsv_metric "${SUMMARY_DIR}/mito_numt_qc_summary.tsv" reason_code reference_scope_mt_only
+assert_tsv_metric "${SUMMARY_DIR}/mito_mvtool_annotation_summary.tsv" status \
+  "$([[ "${MVTOOL_MODE}" == "disabled" ]] && printf not_configured || printf ok)"
+"${PYTHON_BIN}" - "${SUMMARY_DIR}/mito_numt_qc_summary.tsv" <<'PY'
+import sys
+
+import pandas as pd
+
+summary = pd.read_csv(sys.argv[1], sep="\t", dtype=str, keep_default_na=False)
+metrics = dict(zip(summary["metric"], summary["value"]))
+risk = metrics.get("heuristic_numt_risk", "")
+if risk.lower() in {"low", "moderate", "high"}:
+    raise SystemExit(
+        "GM12878 release gate failed: mt-only reference produced categorical NUMT risk " + risk
+    )
+if metrics.get("numt_interpretation_status") != "not_evaluable":
+    raise SystemExit("GM12878 release gate failed: NUMT interpretation was not suppressed")
+print("[longread-gm12878] release gate confirmed mt-only NUMT interpretation is not evaluable")
+PY
 
 rm -rf "${OUTPUT_DIR}"
 mkdir -p "$(dirname "${OUTPUT_DIR}")"
-cp -R "${FINAL_DIR}/output" "${OUTPUT_DIR}"
+OUTPUT_MODE="${MITO_OVERVIEW_PUBLIC_OUTPUT_MODE:-full}"
+case "${OUTPUT_MODE}" in
+  full)
+    cp -R "${FINAL_DIR}/output" "${OUTPUT_DIR}"
+    ;;
+  evidence)
+    mkdir -p "${OUTPUT_DIR}"
+    for component in summary report figures methylation; do
+      if [[ -d "${FINAL_DIR}/output/${component}" ]]; then
+        cp -R "${FINAL_DIR}/output/${component}" "${OUTPUT_DIR}/"
+      fi
+    done
+    ;;
+  *)
+    echo "Unsupported MITO_OVERVIEW_PUBLIC_OUTPUT_MODE: ${OUTPUT_MODE}" >&2
+    exit 1
+    ;;
+esac
+mkdir -p "${OUTPUT_DIR}/provenance"
+copy_if_needed "${ALIGN_PROVENANCE}" "${OUTPUT_DIR}/provenance/GM12878_ONT_longread.reduced_alignment.provenance.json"
+copy_if_needed "${SUBSET_FASTQ_PROVENANCE}" "${OUTPUT_DIR}/provenance/GM12878_ONT_longread.fastq_subset.provenance.json"
+copy_if_needed "${SUBSET_NAMES}" "${OUTPUT_DIR}/provenance/GM12878_ONT_longread.selected_qnames.txt"
 copy_if_needed "${WORKDIR}/GM12878_ONT_longread.flagstat.txt" "$(dirname "${OUTPUT_DIR}")/GM12878_ONT_longread.flagstat.txt"
 
 if [[ -n "${MITO_OVERVIEW_LONGREAD_ASSET_DIR:-}" ]]; then
   ASSET_DIR="${MITO_OVERVIEW_LONGREAD_ASSET_DIR}"
   FIG_DIR="${ASSET_DIR}/figures"
   SUMMARY_DIR="${ASSET_DIR}/summary"
-  mkdir -p "${FIG_DIR}" "${SUMMARY_DIR}"
+  PROVENANCE_DIR="${ASSET_DIR}/provenance"
+  mkdir -p "${FIG_DIR}" "${SUMMARY_DIR}" "${PROVENANCE_DIR}"
 
   copy_if_exists "${OUTPUT_DIR}/figures/mito_heteroplasmy_landscape.png" "${FIG_DIR}"
   copy_if_exists "${OUTPUT_DIR}/figures/mito_cosegregation_heatmap.png" "${FIG_DIR}"
@@ -175,21 +357,31 @@ if [[ -n "${MITO_OVERVIEW_LONGREAD_ASSET_DIR:-}" ]]; then
   copy_if_exists "${OUTPUT_DIR}/summary/mito_phymer_haplogroup_summary.tsv" "${SUMMARY_DIR}"
   copy_if_exists "${OUTPUT_DIR}/summary/mito_methylation_exploratory_summary.tsv" "${SUMMARY_DIR}"
   copy_if_exists "${OUTPUT_DIR}/summary/mito_circularity_qc_summary.tsv" "${SUMMARY_DIR}"
+  copy_if_exists "${OUTPUT_DIR}/summary/mito_mvtool_annotation_summary.tsv" "${SUMMARY_DIR}"
+  copy_if_exists "${OUTPUT_DIR}/summary/mito_identity_qc_summary.tsv" "${SUMMARY_DIR}"
   copy_if_needed "${WORKDIR}/GM12878_ONT_longread.flagstat.txt" "${ASSET_DIR}/GM12878_ONT_longread.flagstat.txt"
+  copy_if_needed "${ALIGN_PROVENANCE}" \
+    "${PROVENANCE_DIR}/GM12878_ONT_longread.reduced_alignment.provenance.json"
+  copy_if_needed "${SUBSET_FASTQ_PROVENANCE}" \
+    "${PROVENANCE_DIR}/GM12878_ONT_longread.fastq_subset.provenance.json"
+  copy_if_needed "${SUBSET_NAMES}" \
+    "${PROVENANCE_DIR}/GM12878_ONT_longread.selected_qnames.txt"
 
   if [[ -f "${OUTPUT_DIR}/figures/mito_heteroplasmy_landscape.png" \
      && -f "${OUTPUT_DIR}/figures/mito_cosegregation_heatmap.png" \
      && -f "${OUTPUT_DIR}/figures/mito_gene_summary_overview.png" \
      && -f "${OUTPUT_DIR}/figures/mito_numt_qc_mapq_vs_span.png" ]]; then
     "${PYTHON_BIN}" scripts/build_report_montage.py \
+      --profile long \
       --source-dir "${OUTPUT_DIR}/figures" \
       --output "${FIG_DIR}/GM12878_ONT_longread_montage.png" \
-      --title "GM12878 public ONT long-read proof-of-principle"
+      --title "GM12878 public ONT ${SUBSET_READ_NAMES}-query-name workflow proof-of-principle"
   else
     echo "[longread-gm12878] skipping montage build because one or more expected long-read panels were not produced"
   fi
 
   "${PYTHON_BIN}" - <<'PY' "${OUTPUT_DIR}" "${ASSET_DIR}"
+import json
 import sys
 from pathlib import Path
 import pandas as pd
@@ -197,6 +389,7 @@ import pandas as pd
 output_dir = Path(sys.argv[1])
 asset_dir = Path(sys.argv[2])
 summary_dir = output_dir / "summary"
+provenance_dir = output_dir / "provenance"
 
 def load_metric_table(name: str) -> pd.DataFrame:
     path = summary_dir / name
@@ -206,6 +399,7 @@ def load_metric_table(name: str) -> pd.DataFrame:
 
 qc = load_metric_table("mito_qc_summary.tsv")
 het = load_metric_table("mito_heteroplasmy_candidates.tsv")
+het_summary = load_metric_table("mito_heteroplasmy_summary.tsv")
 deletions = load_metric_table("mito_deletion_summary.tsv")
 clusters = load_metric_table("mito_deletion_clusters.tsv")
 gene = load_metric_table("mito_gene_summary.tsv")
@@ -214,35 +408,81 @@ phymer = load_metric_table("mito_phymer_haplogroup_summary.tsv")
 methyl = load_metric_table("mito_methylation_exploratory_summary.tsv")
 coseg = load_metric_table("mito_cosegregation_summary.tsv")
 numt = load_metric_table("mito_numt_qc_summary.tsv")
+mvtool = load_metric_table("mito_mvtool_annotation_summary.tsv")
 vc_class = load_metric_table("mito_variant_consequence_class_summary.tsv")
 
+subset_provenance = json.loads(
+    (provenance_dir / "GM12878_ONT_longread.fastq_subset.provenance.json").read_text(
+        encoding="utf-8"
+    )
+)
+alignment_provenance = json.loads(
+    (provenance_dir / "GM12878_ONT_longread.reduced_alignment.provenance.json").read_text(
+        encoding="utf-8"
+    )
+)
+selection = subset_provenance["selection"]
+source_fastq = subset_provenance["source_fastq"]
+subset_fastq = subset_provenance["subset_fastq"]
+selected_names = subset_provenance["selected_query_names"]
+selected_count = int(selection["selected_query_names"])
+source_count = int(selection["source_records_seen"])
+selection_fraction = selected_count / source_count if source_count else float("nan")
+
 qc_map = dict(zip(qc.get("metric", []), qc.get("value", [])))
+het_map = dict(zip(het_summary.get("metric", []), het_summary.get("value", [])))
 del_map = dict(zip(deletions.get("metric", []), deletions.get("value", [])))
 copy_map = dict(zip(copy_number.get("metric", []), copy_number.get("value", [])))
 phymer_map = dict(zip(phymer.get("metric", []), phymer.get("value", [])))
 methyl_map = dict(zip(methyl.get("metric", []), methyl.get("value", [])))
 coseg_map = dict(zip(coseg.get("metric", []), coseg.get("value", [])))
 numt_map = dict(zip(numt.get("metric", []), numt.get("value", [])))
+mvtool_map = dict(zip(mvtool.get("metric", []), mvtool.get("value", [])))
 
 findings = pd.DataFrame(
     [
-        {"metric": "sample_id", "value": "GM12878_ONT_longread"},
+        {"metric": "sample_id", "value": f"GM12878_ONT_longread_reduced_qn{selected_count}"},
+        {"metric": "source_accession", "value": "SRR18110025"},
+        {"metric": "input_scope", "value": "resource-limited deterministic query-name subset"},
+        {"metric": "complete_run_analyzed", "value": 0},
+        {"metric": "statistical_representativeness_claimed", "value": 0},
+        {"metric": "selector_algorithm", "value": selection["algorithm"]},
+        {"metric": "selection_seed", "value": selection["seed"]},
+        {"metric": "source_fastq_records", "value": source_count},
+        {"metric": "selected_query_names", "value": selected_count},
+        {"metric": "selection_fraction", "value": round(selection_fraction, 8)},
+        {"metric": "source_fastq_sha256", "value": source_fastq["sha256"]},
+        {"metric": "subset_fastq_sha256", "value": subset_fastq["sha256"]},
+        {"metric": "selected_query_names_sha256", "value": selected_names["sha256"]},
+        {"metric": "alignment_bam_sha256", "value": alignment_provenance["alignment"]["sha256"]},
+        {"metric": "alignment_bai_sha256", "value": alignment_provenance["alignment_index"]["sha256"]},
         {"metric": "read_mode", "value": "long"},
         {"metric": "assay_type", "value": "targeted_mt"},
-        {"metric": "heteroplasmy_min_vaf", "value": "0.10"},
-        {"metric": "mapped_reads", "value": qc_map.get("mapped_reads", "NA")},
+        {"metric": "min_callable_depth", "value": het_map.get("min_callable_depth", "NA")},
+        {"metric": "min_alt_allele_fraction", "value": het_map.get("min_alt_allele_fraction", "NA")},
+        {"metric": "mapped_alignment_records", "value": qc_map.get("mapped_reads", "NA")},
+        {"metric": "primary_alignment_records", "value": qc_map.get("primary_reads", "NA")},
+        {"metric": "supplementary_alignment_records", "value": qc_map.get("supplementary_reads", "NA")},
+        {"metric": "secondary_alignment_records", "value": qc_map.get("secondary_reads", "NA")},
+        {"metric": "allele_engine_unique_query_names_seen", "value": het_map.get("unique_reads_seen", "NA")},
         {"metric": "mean_depth", "value": qc_map.get("mean_depth", "NA")},
         {"metric": "median_depth", "value": qc_map.get("median_depth", "NA")},
         {"metric": "full_length_fraction", "value": qc_map.get("full_length_fraction", "NA")},
         {"metric": "candidate_site_count", "value": len(het)},
         {"metric": "selected_cosegregation_sites", "value": coseg_map.get("selected_sites", "NA")},
         {"metric": "candidate_deletion_clusters", "value": del_map.get("candidate_deletion_clusters", "NA")},
+        {
+            "metric": "deletion_screen_method",
+            "value": "CIGAR-deletion candidate screen; supplementary/SA evidence summarized separately",
+        },
         {"metric": "largest_median_deletion", "value": del_map.get("largest_median_deletion", "NA")},
         {"metric": "max_deletion_support_fraction_primary", "value": del_map.get("max_support_fraction_primary", "NA")},
-        {"metric": "numt_risk", "value": numt_map.get("heuristic_numt_risk", "NA")},
+        {"metric": "numt_interpretation_status", "value": numt_map.get("numt_interpretation_status", "NA")},
+        {"metric": "numt_reason_code", "value": numt_map.get("reason_code", "NA")},
         {"metric": "copy_number_status", "value": copy_map.get("status", "NA")},
         {"metric": "phymer_status", "value": phymer_map.get("status", "NA")},
         {"metric": "methylation_status", "value": methyl_map.get("status", "NA")},
+        {"metric": "mvtool_status", "value": mvtool_map.get("status", "NA")},
     ]
 )
 findings.to_csv(asset_dir / "GM12878_ONT_longread_key_findings.tsv", sep="\t", index=False)
@@ -258,16 +498,19 @@ if not vc_class.empty and {"consequence_class", "candidate_sites"}.issubset(vc_c
     top_class_count = top_class_row["candidate_sites"]
 
 readme_lines = [
-    "# GM12878 public ONT long-read proof-of-principle example",
+    "# GM12878 public ONT deterministic reduced proof-of-principle example",
     "",
-    "This directory contains light-weight public example assets derived from a real ONT targeted-mt dataset processed with the `mito-overview` long-read profile.",
+    "This directory contains lightweight public example assets from a seeded deterministic query-name subset of a real ONT targeted-mt run processed with the `mito-overview` long-read profile.",
     "",
     "Example context:",
     "- source BioProject: `PRJNA809571`",
     "- run used: `SRR18110025`",
     "- public assay description: `Long read mitochondrial genome sequencing using Cas9-guided adaptor ligation`",
+    "- source publication: Vandiver et al., Mitochondrion 2022 (PMID 35787470; DOI 10.1016/j.mito.2022.06.003)",
+    "- validation scope: deterministic reduced public proof-of-principle, not the complete run",
     "- profile used: `READ_MODE=long`, `ASSAY_TYPE=targeted_mt`",
-    "- packaged proof-of-principle heteroplasmy threshold: `HET_MIN_VAF=0.10`",
+    f"- minimum callable depth: `{het_map.get('min_callable_depth', 'NA')}`",
+    f"- minimum observed alternate allele fraction: `{het_map.get('min_alt_allele_fraction', 'NA')}`",
     "",
     "Included assets:",
     "- representative report-native figures used for GitHub/manuscript panels",
@@ -277,13 +520,13 @@ readme_lines = [
     "",
     "What these assets support:",
     "- real public ONT long-read execution of the core long-read workflow",
-    "- report-native QC, heteroplasmy, deletion-screening, co-segregation, gene-summary, NUMT-QC, circularity-QC, and consequence outputs",
+    "- report-native QC, alternate-allele screening, CIGAR-deletion candidate screening, co-segregation, gene-summary, alignment-ambiguity QC, circularity-QC, and consequence outputs",
     "- explicit assay-mode gating for targeted-mt layers that remain uninterpretable here (`copy_number` and `phymer_haplogroup`)",
     "- explicit status-only methylation reporting when mitochondrial bedmethyl rows are unavailable",
     "",
     "What these assets do not claim:",
     "- clinical interpretation",
-    "- low-VAF heteroplasmy benchmarking",
+    "- calibrated low-allele-fraction detection benchmarking",
     "- validated deletion truth benchmarking",
     "- formal mtDNA-versus-NUMT classification",
     "- biological methylation conclusions",
@@ -293,17 +536,18 @@ readme_lines = [
     f"- mean depth: `{qc_map.get('mean_depth', 'NA')}`",
     f"- median depth: `{qc_map.get('median_depth', 'NA')}`",
     f"- full-length fraction: `{qc_map.get('full_length_fraction', 'NA')}`",
-    f"- candidate heteroplasmy sites (`VAF>=0.10`): `{len(het)}`",
+    f"- alternate-allele candidate sites: `{len(het)}`",
     f"- selected co-segregation sites: `{coseg_map.get('selected_sites', 'NA')}`",
     f"- top consequence class: `{top_class}` (`{top_class_count}` sites)",
-    f"- candidate deletion clusters: `{del_map.get('candidate_deletion_clusters', 'NA')}` with max support fraction `{del_map.get('max_support_fraction_primary', 'NA')}`",
-    f"- NUMT heuristic risk: `{numt_map.get('heuristic_numt_risk', 'NA')}`",
-    f"- copy-number status: `{copy_map.get('status', 'NA')}`",
+    f"- singleton CIGAR-deletion bins: `{del_map.get('candidate_deletion_clusters', 'NA')}`; each packaged bin has one supporting query name",
+    f"- query names with supplementary/SA evidence, summarized separately: `{del_map.get('reads_with_supplementary_or_SA', 'NA')}`",
+    f"- NUMT interpretation status: `{numt_map.get('numt_interpretation_status', 'NA')}` (`{numt_map.get('reason_code', 'NA')}`)",
+    f"- within-sample mt:nuclear depth-ratio status: `{copy_map.get('status', 'NA')}`",
     f"- Phy-Mer status: `{phymer_map.get('status', 'NA')}`",
     f"- methylation status: `{methyl_map.get('status', 'NA')}`",
     "",
     "Important note:",
-    "- this light-weight public pack is intentionally focused on the real-data long-read proof-of-principle outputs and does not include `identity_qc` or `mvtool_annotation` pages",
+    "- optional network-backed mvTool annotation is disabled unless explicitly configured",
 ]
 (asset_dir / "README.md").write_text("\n".join(readme_lines) + "\n", encoding="utf-8")
 PY

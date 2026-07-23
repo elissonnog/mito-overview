@@ -1,6 +1,11 @@
 metric	value
+status	not_evaluable
+reason_code	no_valid_nuclear_windows
+reference_scope	mt_only
 mt_mean_depth	3.333333
-nuclear_window_mean_depth	0.0
-mt_to_nuclear_depth_ratio	0.0
-nuclear_windows_used	0.0
-window_size_bp	100000.0
+nuclear_window_mean_depth	
+mt_to_nuclear_depth_ratio	
+nuclear_windows_requested	5
+nuclear_windows_valid	0
+nuclear_windows_used	0
+window_size_bp	100000

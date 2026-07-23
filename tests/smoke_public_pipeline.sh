@@ -8,6 +8,7 @@ trap 'rm -rf "${WORKDIR}"' EXIT
 
 source "${REPO_ROOT}/scripts/lib/prepare_synthetic_toy_sample.sh"
 source "${REPO_ROOT}/scripts/lib/mock_optional_integrations.sh"
+source "${REPO_ROOT}/scripts/lib/test_assertions.sh"
 
 echo "[smoke] repo root: ${REPO_ROOT}"
 echo "[smoke] workdir: ${WORKDIR}"
@@ -29,10 +30,10 @@ mkdir -p "${HV_DIR}" "${HV_NP_DIR}" "${RUN_ROOT}"
 
 prepare_synthetic_toy_sample "${REPO_ROOT}" "${WORKDIR}"
 PHYMER_ROOT="$(mock_phymer_root "${REPO_ROOT}")"
-MVTOOL_API_URL="$(mock_mvtool_fixture_url "${REPO_ROOT}")"
+MVTOOL_FIXTURE_JSON="$(mock_mvtool_fixture_path "${REPO_ROOT}")"
 
 echo "[smoke] phymer root: ${PHYMER_ROOT}"
-echo "[smoke] mock mvtool api: ${MVTOOL_API_URL}"
+echo "[smoke] mvTool fixture: ${MVTOOL_FIXTURE_JSON}"
 
 cat > "${WORKDIR}/toy.env" <<EOF
 PIPELINE_ROOT=${REPO_ROOT}
@@ -49,13 +50,17 @@ MT_CONTIG=MT
 MT_LENGTH=60
 THREADS=1
 SPECIES=human
-HET_MIN_DEPTH=2
-HET_MIN_VAF=0.2
+CONTROL_REGION_ANNOTATION_MODE=synthetic_fixture_override
+MIN_CALLABLE_DEPTH=2
+MIN_ALT_ALLELE_FRACTION=0.2
 HUMAN_MT_GTF=${WORKDIR}/tiny_mt.gtf
 PHYMER_ROOT=${PHYMER_ROOT}
+PHYMER_MODE=fixture
 PHYMER_MIN_DEPTH=2
 PHYMER_MAJOR_VAF=0.2
-MVTOOL_API_URL=${MVTOOL_API_URL}
+PHYMER_MIN_CALLABLE_FRACTION=0.30
+MVTOOL_MODE=fixture
+MVTOOL_FIXTURE_JSON=${MVTOOL_FIXTURE_JSON}
 MSEQDR_TIMEOUT=10
 FINAL_BIOINFO_DIR=${FINAL_DIR}
 EOF
@@ -82,6 +87,28 @@ test -f "${FINAL_DIR}/output/report/13_mito_phymer_haplogroup.html"
 test -f "${FINAL_DIR}/output/report/14_mito_mvtool_annotation.html"
 test -f "${FINAL_DIR}/sync_manifest.tsv"
 grep -q $'^status\tok$' "${FINAL_DIR}/output/summary/mito_phymer_haplogroup_summary.tsv"
+assert_tsv_metric "${FINAL_DIR}/output/summary/mito_phymer_haplogroup_summary.tsv" phymer_min_callable_fraction 0.3
+assert_tsv_metric "${FINAL_DIR}/output/summary/mito_phymer_haplogroup_summary.tsv" phymer_mode fixture
+assert_tsv_metric "${FINAL_DIR}/output/summary/mito_phymer_haplogroup_summary.tsv" phymer_result_scope synthetic_wiring_fixture
+assert_tsv_metric "${FINAL_DIR}/output/summary/mito_phymer_haplogroup_summary.tsv" biological_validation_status not_applicable
 grep -q "rows_returned_by_mvtool" "${FINAL_DIR}/output/summary/mito_mvtool_annotation_summary.tsv"
+test "$(cat "${FINAL_DIR}/output/subset/TOY-001.MT.bed")" = $'MT\t0\t60'
+assert_tsv_header_field "${FINAL_DIR}/output/summary/mito_heteroplasmy_candidates.tsv" alt_allele_fraction
+assert_tsv_header_field "${FINAL_DIR}/output/summary/mito_heteroplasmy_candidates.tsv" heteroplasmy_fraction
+assert_allele_table_invariants "${FINAL_DIR}/output/summary/mito_heteroplasmy_all_sites.tsv"
+assert_allele_site "${FINAL_DIR}/output/summary/mito_heteroplasmy_candidates.tsv" 10 A C 10 3 0.3
+assert_tsv_metric "${FINAL_DIR}/output/summary/mito_heteroplasmy_summary.tsv" allele_min_base_quality 13
+assert_tsv_metric "${FINAL_DIR}/output/summary/mito_heteroplasmy_summary.tsv" allele_min_mapping_quality 20
+assert_tsv_metric "${FINAL_DIR}/output/summary/mito_heteroplasmy_summary.tsv" allele_min_read_mean_quality 10.0
+assert_tsv_metric "${FINAL_DIR}/output/summary/mito_heteroplasmy_summary.tsv" allele_max_depth 0
+assert_tsv_metric "${FINAL_DIR}/output/summary/mito_copy_number_summary.tsv" status not_evaluable
+assert_tsv_metric "${FINAL_DIR}/output/summary/mito_copy_number_summary.tsv" reason_code no_valid_nuclear_windows
+assert_tsv_metric "${FINAL_DIR}/output/summary/mito_copy_number_summary.tsv" mt_to_nuclear_depth_ratio ""
+assert_tsv_metric "${FINAL_DIR}/output/summary/mito_numt_qc_summary.tsv" numt_interpretation_status not_evaluable
+assert_tsv_metric "${FINAL_DIR}/output/summary/mito_numt_qc_summary.tsv" heuristic_numt_risk not_evaluable
+assert_tsv_metric "${FINAL_DIR}/output/summary/mito_mvtool_annotation_summary.tsv" status ok
+assert_tsv_metric "${FINAL_DIR}/output/summary/mito_mvtool_annotation_summary.tsv" mvtool_mode fixture
+assert_tsv_metric "${FINAL_DIR}/output/summary/mito_mvtool_annotation_summary.tsv" network_request_attempted 0
+assert_tsv_metric "${FINAL_DIR}/output/summary/mito_mvtool_annotation_summary.tsv" rows_returned_by_mvtool 1
 
 echo "[smoke] public pipeline smoke test completed successfully"

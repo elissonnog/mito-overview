@@ -1,6 +1,5 @@
-consequence_class	candidate_sites	mean_heteroplasmy
-missense_variant	10	0.409175
-synonymous_variant	8	0.759562
-rRNA_variant	4	0.7583
-control_region_variant	4	0.578511
-tRNA_variant	2	0.361601
+consequence_class	candidate_sites	candidate_variants	annotation_rows	mean_alt_allele_fraction	mean_heteroplasmy
+synonymous_variant	6	6	6	0.991934	0.991934
+rRNA_variant	5	5	5	0.517401	0.517401
+missense_variant	4	4	4	0.813273	0.813273
+tRNA_variant	1	1	1	0.509278	0.509278

@@ -45,7 +45,7 @@ def run_step(
     assay_type: str = "wgs",
     mt_contig: str,
     mt_length: int,
-) -> dict[str, Path]:
+) -> dict[str, Path | str]:
     """Run the public mitochondrial QC step."""
 
     summary_dir = Path(summary_dir)
@@ -59,13 +59,14 @@ def run_step(
     read_rows = []
     strand_counts = {"forward": 0, "reverse": 0}
     primary = supplementary = secondary = mapped = 0
-    full_length = 0
+    primary_full_length = 0
     high_alignment_fraction_reads = 0
 
     for read in bam_handle.fetch(mt_contig):
         if read.is_unmapped:
             continue
         mapped += 1
+        is_primary = (not read.is_secondary) and (not read.is_supplementary)
         if read.is_secondary:
             secondary += 1
         elif read.is_supplementary:
@@ -76,17 +77,21 @@ def run_step(
         read_len = read.query_length or 0
         ref_start = read.reference_start + 1
         ref_end = read.reference_end or ref_start
-        aligned_span = max(0, ref_end - ref_start + 1)
-        aligned_fraction = (aligned_span / mt_length) if mt_length else 0.0
-        query_aligned_fraction = (aligned_span / read_len) if read_len else 0.0
+        reference_span = max(0, ref_end - ref_start + 1)
+        aligned_reference_bases = sum(
+            length for op, length in (read.cigartuples or []) if op in (0, 7, 8)
+        )
+        query_aligned_bases = read.query_alignment_length or 0
+        aligned_fraction = (aligned_reference_bases / mt_length) if mt_length else 0.0
+        query_aligned_fraction = (query_aligned_bases / read_len) if read_len else 0.0
         softclip_bases = 0
         if read.cigartuples:
             for op, length in read.cigartuples:
                 if op == 4:
                     softclip_bases += length
         softclip_fraction = (softclip_bases / read_len) if read_len else 0.0
-        if aligned_span >= 0.9 * mt_length:
-            full_length += 1
+        if is_primary and aligned_reference_bases >= 0.9 * mt_length:
+            primary_full_length += 1
         if query_aligned_fraction >= 0.9:
             high_alignment_fraction_reads += 1
         read_rows.append(
@@ -96,13 +101,16 @@ def run_step(
                 "query_length": read_len,
                 "read_start": ref_start,
                 "read_end": ref_end,
-                "aligned_span": aligned_span,
+                "reference_span": reference_span,
+                "aligned_reference_bases": aligned_reference_bases,
+                "aligned_span": aligned_reference_bases,
                 "aligned_fraction_mt": round(aligned_fraction, 6),
+                "query_aligned_bases": query_aligned_bases,
                 "query_aligned_fraction": round(query_aligned_fraction, 6),
                 "softclip_bases": softclip_bases,
                 "softclip_fraction": round(softclip_fraction, 6),
                 "has_sa_tag": int(read.has_tag("SA")),
-                "is_primary": int((not read.is_secondary) and (not read.is_supplementary)),
+                "is_primary": int(is_primary),
                 "is_supplementary": int(read.is_supplementary),
                 "is_secondary": int(read.is_secondary),
                 "is_reverse": int(read.is_reverse),
@@ -120,22 +128,71 @@ def run_step(
     median_depth = round(statistics.median(depth), 3) if depth else 0.0
     breadth_1x = round(sum(d >= 1 for d in depth) / len(depth), 4) if depth else 0.0
     breadth_10x = round(sum(d >= 10 for d in depth) / len(depth), 4) if depth else 0.0
-    full_length_fraction = round(full_length / mapped, 4) if mapped else 0.0
-    high_alignment_fraction = round(high_alignment_fraction_reads / mapped, 4) if mapped else 0.0
+    module_status = "ok" if mapped else "not_evaluable"
+    module_reason = "" if mapped else "no_mapped_reads"
+    if read_mode == "long":
+        primary_full_length_reads: int | object = primary_full_length
+        primary_full_length_fraction: float | object = (
+            round(primary_full_length / primary, 4) if primary else pd.NA
+        )
+        primary_full_length_status = "ok" if primary else "not_evaluable"
+        primary_full_length_reason = "" if primary else "no_primary_reads"
+        primary_full_length_denominator: str | object = "primary_alignment_records"
+    else:
+        primary_full_length_reads = pd.NA
+        primary_full_length_fraction = pd.NA
+        primary_full_length_status = "not_applicable"
+        primary_full_length_reason = "read_mode_short"
+        primary_full_length_denominator = pd.NA
+    high_alignment_fraction: float | object = (
+        round(high_alignment_fraction_reads / mapped, 4) if mapped else pd.NA
+    )
 
     summary_rows = [
+        {"metric": "status", "value": module_status},
+        {"metric": "reason_code", "value": module_reason},
         {"metric": "mapped_reads", "value": mapped},
         {"metric": "primary_reads", "value": primary},
+        {"metric": "primary_full_length_reads", "value": primary_full_length_reads},
+        {
+            "metric": "primary_full_length_fraction",
+            "value": primary_full_length_fraction,
+        },
+        {
+            "metric": "primary_full_length_fraction_status",
+            "value": primary_full_length_status,
+        },
+        {
+            "metric": "primary_full_length_fraction_reason_code",
+            "value": primary_full_length_reason,
+        },
+        {
+            "metric": "primary_full_length_fraction_denominator",
+            "value": primary_full_length_denominator,
+        },
+        {
+            "metric": "primary_full_length_fraction_basis",
+            "value": "aligned_reference_bases_excluding_cigar_D_N",
+        },
+        {
+            "metric": "full_length_fraction",
+            "value": primary_full_length_fraction,
+        },
+        {
+            "metric": "full_length_fraction_compatibility_alias_of",
+            "value": "primary_full_length_fraction",
+        },
         {"metric": "supplementary_reads", "value": supplementary},
         {"metric": "secondary_reads", "value": secondary},
         {"metric": "mean_depth", "value": mean_depth},
         {"metric": "median_depth", "value": median_depth},
         {"metric": "breadth_1x", "value": breadth_1x},
         {"metric": "breadth_10x", "value": breadth_10x},
-        {
-            "metric": "full_length_fraction" if read_mode == "long" else "high_query_alignment_fraction",
-            "value": full_length_fraction if read_mode == "long" else high_alignment_fraction,
-        },
+        *(
+            []
+            if read_mode == "long"
+            else [{"metric": "high_query_alignment_fraction", "value": high_alignment_fraction}]
+        ),
         {"metric": "forward_reads", "value": strand_counts["forward"]},
         {"metric": "reverse_reads", "value": strand_counts["reverse"]},
     ]
@@ -171,10 +228,18 @@ def run_step(
         plt.savefig(readlen_fig, dpi=150)
         plt.close()
 
-    span_metric_label = "Full-length fraction" if read_mode == "long" else "High query-alignment fraction"
-    span_metric_value = full_length_fraction if read_mode == "long" else high_alignment_fraction
+    span_metric_label = (
+        "Primary near-complete aligned-reference fraction"
+        if read_mode == "long"
+        else "High query-alignment fraction"
+    )
+    span_metric_value = (
+        primary_full_length_fraction if read_mode == "long" else high_alignment_fraction
+    )
+    span_metric_display = "NA" if pd.isna(span_metric_value) else span_metric_value
     metrics_html = "".join(
         [
+            metric_card("Evaluation status", module_status),
             metric_card("Species", species),
             metric_card("Build", build),
             metric_card("Read mode", read_mode),
@@ -182,11 +247,11 @@ def run_step(
             metric_card("Mito contig", mt_contig),
             metric_card("Mapped reads", mapped),
             metric_card("Mean depth", mean_depth),
-            metric_card(span_metric_label, span_metric_value),
+            metric_card(span_metric_label, span_metric_display),
         ]
     )
     structure_phrase = (
-        "whole-molecule length structure and alignment quality"
+        "near-complete aligned-reference coverage and alignment quality"
         if read_mode == "long"
         else "fragment coverage, read-level alignment completeness, and alignment quality"
     )
@@ -207,7 +272,11 @@ def run_step(
             + figure_html(readlen_fig, "Distribution of mitochondrial read lengths")
             + "</section>"
         )
-    body_parts.append("<section><h2>QC metrics table</h2>" + df_to_html_table(summary_df, max_rows=20) + "</section>")
+    body_parts.append(
+        "<section><h2>QC metrics table</h2>"
+        + df_to_html_table(summary_df.fillna("NA"), max_rows=20)
+        + "</section>"
+    )
     body_parts.append("<section><h2>Read-level table</h2>" + df_to_html_table(reads_df, max_rows=20) + "</section>")
 
     render_page(
@@ -219,6 +288,7 @@ def run_step(
         "".join(body_parts),
     )
     return {
+        "status": module_status,
         "summary_path": summary_path,
         "depth_path": depth_path,
         "reads_path": reads_path,

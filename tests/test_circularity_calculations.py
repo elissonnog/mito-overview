@@ -1,0 +1,493 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+import pandas as pd
+import pytest
+
+from mito_overview.steps.mito_circularity_qc import (
+    CANDIDATE_COLUMNS,
+    run_step as _run_step,
+)
+
+from ._helpers import metric_map
+
+
+def run_step(**kwargs: object) -> dict[str, Path | str]:
+    kwargs.setdefault("reference_sequence", "A" * int(kwargs.get("mt_length", 100)))
+    return _run_step(**kwargs)
+
+
+def candidate_table(positions: list[int]) -> pd.DataFrame:
+    rows = []
+    for position in positions:
+        rows.append(
+            {
+                "position": position,
+                "ref_base": "A",
+                "alt_base": "C",
+                "callable_depth": 10,
+                "depth": 10,
+                "alt_count": 3,
+                "alt_allele_fraction": 0.3,
+                "heteroplasmy_fraction": 0.3,
+                "alt_forward": 1,
+                "alt_reverse": 2,
+                "A": 7,
+                "C": 3,
+                "G": 0,
+                "T": 0,
+            }
+        )
+    return pd.DataFrame(rows, columns=CANDIDATE_COLUMNS)
+
+
+def write_tables(
+    summary_dir: Path,
+    *,
+    depth: pd.DataFrame,
+    reads: pd.DataFrame,
+    candidates: pd.DataFrame,
+) -> None:
+    summary_dir.mkdir(parents=True, exist_ok=True)
+    depth.to_csv(summary_dir / "mito_depth_per_base.tsv", sep="\t", index=False)
+    reads.to_csv(summary_dir / "mito_read_stats.tsv", sep="\t", index=False)
+    candidates.to_csv(summary_dir / "mito_heteroplasmy_candidates.tsv", sep="\t", index=False)
+    pd.DataFrame(
+        [
+            {"metric": "status", "value": "ok"},
+            {"metric": "reason_code", "value": ""},
+            {"metric": "candidate_sites", "value": len(candidates)},
+        ]
+    ).to_csv(summary_dir / "mito_heteroplasmy_summary.tsv", sep="\t", index=False)
+
+
+def run_circularity(tmp_path: Path) -> tuple[dict[str, Path | str], dict[str, str]]:
+    outputs = run_step(
+        summary_dir=tmp_path / "summary",
+        figure_dir=tmp_path / "figures",
+        report_dir=tmp_path / "reports",
+        sample_id="S1",
+        mt_contig="MT",
+        mt_length=100,
+        edge_window=10,
+    )
+    return outputs, metric_map(Path(outputs["summary_path"]))
+
+
+@pytest.mark.parametrize("edge_window", (0, -1, -500))
+def test_nonpositive_edge_window_fails_closed(
+    tmp_path: Path,
+    edge_window: int,
+) -> None:
+    with pytest.raises(ValueError, match="edge_window must be a positive integer"):
+        run_step(
+            summary_dir=tmp_path / "summary",
+            figure_dir=tmp_path / "figures",
+            report_dir=tmp_path / "reports",
+            sample_id="INVALID-EDGE",
+            mt_contig="MT",
+            mt_length=100,
+            edge_window=edge_window,
+        )
+
+
+def test_exact_edge_boundaries_and_valid_zero_depth(tmp_path: Path) -> None:
+    depths = [0.0] * 10 + [5.0] * 80 + [10.0] * 10
+    depth = pd.DataFrame({"position": range(1, 101), "depth": depths})
+    reads = pd.DataFrame(
+        [
+            {"read_name": "start-edge", "read_start": 1, "read_end": 50, "softclip_fraction": 0.0, "is_primary": 1},
+            {"read_name": "end-edge", "read_start": 20, "read_end": 100, "softclip_fraction": 0.3, "is_primary": 1},
+            {"read_name": "interior", "read_start": 20, "read_end": 80, "softclip_fraction": 0.0, "is_primary": 1},
+            {"read_name": "secondary", "read_start": 1, "read_end": 100, "softclip_fraction": 1.0, "is_primary": 0},
+        ]
+    )
+    candidates = candidate_table([10, 11, 90, 91])
+    write_tables(tmp_path / "summary", depth=depth, reads=reads, candidates=candidates)
+
+    outputs, metrics = run_circularity(tmp_path)
+
+    assert outputs["status"] == "ok"
+    assert metrics["status"] == "ok"
+    assert metrics["reason_code"] == ""
+    assert metrics["edge_window_bp"] == "10"
+    assert metrics["depth_positions_expected"] == "100"
+    assert metrics["depth_unique_positions_in_range"] == "100"
+    assert metrics["depth_missing_positions"] == "0"
+    assert metrics["depth_duplicate_rows"] == "0"
+    assert metrics["depth_out_of_range_rows"] == "0"
+    assert metrics["depth_profile_complete"] == "1"
+    assert metrics["mean_depth_first_edge"] == "0.0"
+    assert metrics["mean_depth_first_edge_denominator_positions"] == "10"
+    assert metrics["mean_depth_first_edge_status"] == "ok"
+    assert metrics["mean_depth_interior"] == "5.0"
+    assert metrics["mean_depth_interior_denominator_positions"] == "80"
+    assert metrics["mean_depth_last_edge"] == "10.0"
+    assert metrics["mean_depth_last_edge_denominator_positions"] == "10"
+    assert metrics["candidate_sites_total"] == "4"
+    assert metrics["candidate_sites_in_edges"] == "2"
+    assert metrics["candidate_edge_fraction_denominator_positions"] == "4"
+    assert metrics["candidate_edge_fraction"] == "0.5"
+    assert metrics["candidate_edge_fraction_status"] == "ok"
+    assert metrics["primary_read_rows"] == "3"
+    assert metrics["primary_read_start_in_edge_fraction_denominator_reads"] == "3"
+    assert metrics["primary_read_start_in_edge_fraction"] == "0.333333"
+    assert metrics["primary_read_end_in_edge_fraction"] == "0.333333"
+    assert metrics["edge_read_heavy_softclip_fraction"] == "0.333333"
+
+
+def test_unusable_or_missing_metric_evidence_is_na_not_zero(tmp_path: Path) -> None:
+    depth = pd.DataFrame({"position": [50], "depth": [0.0]})
+    reads = pd.DataFrame(
+        [
+            {
+                "read_name": "unusable",
+                "read_start": "bad",
+                "read_end": "bad",
+                "softclip_fraction": "bad",
+                "is_primary": 1,
+            }
+        ]
+    )
+    candidates = candidate_table([])
+    write_tables(tmp_path / "summary", depth=depth, reads=reads, candidates=candidates)
+
+    outputs, metrics = run_circularity(tmp_path)
+
+    assert outputs["status"] == "not_evaluable"
+    assert metrics["status"] == "not_evaluable"
+    assert metrics["reason_code"] == "incomplete_depth_profile"
+    assert metrics["depth_positions_expected"] == "100"
+    assert metrics["depth_unique_positions_in_range"] == "1"
+    assert metrics["depth_missing_positions"] == "99"
+    assert metrics["depth_profile_complete"] == "0"
+    assert metrics["mean_depth_first_edge"] == "NA"
+    assert metrics["mean_depth_first_edge_denominator_positions"] == "0"
+    assert metrics["mean_depth_first_edge_status"] == "not_evaluable"
+    assert metrics["mean_depth_first_edge_reason_code"] == "incomplete_depth_profile"
+    assert metrics["mean_depth_last_edge"] == "NA"
+    assert metrics["mean_depth_last_edge_status"] == "not_evaluable"
+    assert metrics["mean_depth_interior"] == "NA"
+    assert metrics["mean_depth_interior_denominator_positions"] == "1"
+    assert metrics["mean_depth_interior_status"] == "not_evaluable"
+    assert metrics["mean_depth_interior_reason_code"] == "incomplete_depth_profile"
+    assert metrics["candidate_edge_fraction"] == "NA"
+    assert metrics["candidate_edge_fraction_denominator_positions"] == "0"
+    assert metrics["candidate_edge_fraction_status"] == "not_applicable"
+    assert metrics["candidate_edge_fraction_reason_code"] == "no_candidate_sites_observed"
+    assert metrics["primary_read_start_in_edge_fraction"] == "NA"
+    assert metrics["primary_read_start_in_edge_fraction_denominator_reads"] == "0"
+    assert metrics["primary_read_start_in_edge_fraction_status"] == "not_evaluable"
+    assert metrics["primary_read_end_in_edge_fraction"] == "NA"
+    assert metrics["edge_read_heavy_softclip_fraction"] == "NA"
+    assert "NA" in Path(outputs["report_path"]).read_text(encoding="utf-8")
+
+
+def test_valid_zero_fractions_remain_observed_zero(tmp_path: Path) -> None:
+    depth = pd.DataFrame(
+        {
+            "position": range(1, 101),
+            "depth": [10.0] * 100,
+        }
+    )
+    reads = pd.DataFrame(
+        [
+            {
+                "read_name": "interior",
+                "read_start": 20,
+                "read_end": 80,
+                "softclip_fraction": 0.0,
+                "is_primary": 1,
+            }
+        ]
+    )
+    candidates = candidate_table([11, 90])
+    write_tables(tmp_path / "summary", depth=depth, reads=reads, candidates=candidates)
+
+    outputs, metrics = run_circularity(tmp_path)
+
+    assert outputs["status"] == "ok"
+    assert metrics["candidate_edge_fraction"] == "0.0"
+    assert metrics["candidate_edge_fraction_denominator_positions"] == "2"
+    assert metrics["candidate_edge_fraction_status"] == "ok"
+    assert metrics["primary_read_start_in_edge_fraction"] == "0.0"
+    assert metrics["primary_read_start_in_edge_fraction_denominator_reads"] == "1"
+    assert metrics["primary_read_start_in_edge_fraction_status"] == "ok"
+    assert metrics["primary_read_end_in_edge_fraction"] == "0.0"
+    assert metrics["primary_read_end_in_edge_fraction_status"] == "ok"
+    assert metrics["edge_read_heavy_softclip_fraction"] == "0.0"
+    assert metrics["edge_read_heavy_softclip_fraction_status"] == "ok"
+
+
+def test_malformed_optional_evidence_is_not_reported_as_observed_zero(
+    tmp_path: Path,
+) -> None:
+    depth = pd.DataFrame(
+        {
+            "position": range(1, 101),
+            "depth": [10.0] * 100,
+        }
+    )
+    reads = pd.DataFrame(
+        [
+            {
+                "read_name": "malformed",
+                "read_start": -100,
+                "read_end": 1000,
+                "softclip_fraction": 2.0,
+                "is_primary": 1,
+            }
+        ]
+    )
+    candidates = candidate_table([])
+    write_tables(tmp_path / "summary", depth=depth, reads=reads, candidates=candidates)
+
+    outputs, metrics = run_circularity(tmp_path)
+
+    assert outputs["status"] == "ok"
+    assert metrics["status"] == "ok"
+    assert metrics["depth_profile_complete"] == "1"
+    assert metrics["candidate_edge_fraction"] == "NA"
+    assert metrics["candidate_edge_fraction_denominator_positions"] == "0"
+    assert metrics["candidate_edge_fraction_status"] == "not_applicable"
+    assert metrics["candidate_edge_fraction_reason_code"] == "no_candidate_sites_observed"
+    assert metrics["primary_read_start_in_edge_fraction"] == "NA"
+    assert metrics["primary_read_start_in_edge_fraction_status"] == "not_evaluable"
+    assert metrics["primary_read_start_in_edge_fraction_reason_code"] == "invalid_primary_read_coordinate_pairs"
+    assert metrics["primary_read_end_in_edge_fraction"] == "NA"
+    assert metrics["primary_read_end_in_edge_fraction_status"] == "not_evaluable"
+    assert metrics["primary_read_end_in_edge_fraction_reason_code"] == "invalid_primary_read_coordinate_pairs"
+    assert metrics["edge_read_heavy_softclip_fraction"] == "NA"
+    assert metrics["edge_read_heavy_softclip_fraction_status"] == "not_evaluable"
+    assert (
+        metrics["edge_read_heavy_softclip_fraction_reason_code"]
+        == "invalid_primary_read_coordinate_pairs"
+    )
+
+
+@pytest.mark.parametrize(
+    ("candidate", "message"),
+    [
+        (candidate_table([10]).drop(columns=["callable_depth"]), "callable_depth"),
+        (pd.DataFrame(columns=["position"]), "lacks required columns"),
+        (pd.concat([candidate_table([10]), candidate_table([10])], ignore_index=True), "duplicate variant keys"),
+    ],
+    ids=("missing-generated-column", "partial-header-only", "duplicate-variant-key"),
+)
+def test_malformed_candidate_evidence_is_rejected_before_circularity_interpretation(
+    tmp_path: Path,
+    candidate: pd.DataFrame,
+    message: str,
+) -> None:
+    depth = pd.DataFrame({"position": range(1, 101), "depth": [10.0] * 100})
+    write_tables(
+        tmp_path / "summary",
+        depth=depth,
+        reads=pd.DataFrame(),
+        candidates=candidate,
+    )
+
+    with pytest.raises(ValueError, match=message):
+        run_circularity(tmp_path)
+
+
+def test_failed_upstream_status_suppresses_stale_candidate_metrics(tmp_path: Path) -> None:
+    depth = pd.DataFrame({"position": range(1, 101), "depth": [10.0] * 100})
+    write_tables(
+        tmp_path / "summary",
+        depth=depth,
+        reads=pd.DataFrame(),
+        candidates=candidate_table([20]),
+    )
+    pd.DataFrame(
+        [
+            {"metric": "status", "value": "failed"},
+            {"metric": "reason_code", "value": "allele_counting_failed"},
+        ]
+    ).to_csv(
+        tmp_path / "summary" / "mito_heteroplasmy_summary.tsv",
+        sep="\t",
+        index=False,
+    )
+
+    outputs, metrics = run_circularity(tmp_path)
+
+    assert outputs["status"] == "ok"
+    assert metrics["upstream_heteroplasmy_status"] == "failed"
+    assert metrics["upstream_heteroplasmy_reason_code"] == "allele_counting_failed"
+    assert metrics["candidate_evidence_trusted"] == "0"
+    assert metrics["candidate_sites_total"] == "NA"
+    assert metrics["candidate_sites_in_edges"] == "NA"
+    assert metrics["candidate_edge_fraction"] == "NA"
+    assert metrics["candidate_edge_fraction_status"] == "failed"
+    assert metrics["candidate_edge_fraction_reason_code"] == "upstream_heteroplasmy_failed"
+
+
+def test_missing_candidate_table_is_distinct_from_observed_zero(tmp_path: Path) -> None:
+    depth = pd.DataFrame({"position": range(1, 101), "depth": [10.0] * 100})
+    write_tables(
+        tmp_path / "summary",
+        depth=depth,
+        reads=pd.DataFrame(),
+        candidates=candidate_table([]),
+    )
+    (tmp_path / "summary" / "mito_heteroplasmy_candidates.tsv").unlink()
+
+    _, metrics = run_circularity(tmp_path)
+
+    assert metrics["upstream_heteroplasmy_status"] == "ok"
+    assert metrics["candidate_table_present"] == "0"
+    assert metrics["candidate_evidence_trusted"] == "0"
+    assert metrics["candidate_sites_total"] == "NA"
+    assert metrics["candidate_edge_fraction_status"] == "not_evaluable"
+    assert metrics["candidate_edge_fraction_reason_code"] == "candidate_table_missing"
+
+
+def test_reversed_primary_read_coordinates_make_all_read_edge_metrics_undefined(
+    tmp_path: Path,
+) -> None:
+    depth = pd.DataFrame({"position": range(1, 101), "depth": [10.0] * 100})
+    reads = pd.DataFrame(
+        [
+            {
+                "read_name": "reversed",
+                "read_start": 90,
+                "read_end": 10,
+                "softclip_fraction": 0.0,
+                "is_primary": 1,
+            }
+        ]
+    )
+    write_tables(
+        tmp_path / "summary",
+        depth=depth,
+        reads=reads,
+        candidates=candidate_table([]),
+    )
+
+    outputs, metrics = run_circularity(tmp_path)
+
+    assert outputs["status"] == "ok"
+    for prefix in (
+        "primary_read_start_in_edge_fraction",
+        "primary_read_end_in_edge_fraction",
+        "edge_read_heavy_softclip_fraction",
+    ):
+        assert metrics[prefix] == "NA"
+        assert metrics[f"{prefix}_status"] == "not_evaluable"
+        assert metrics[f"{prefix}_reason_code"] == "invalid_primary_read_coordinate_pairs"
+
+
+def test_invalid_primary_indicator_suppresses_optional_read_metrics(tmp_path: Path) -> None:
+    depth = pd.DataFrame({"position": range(1, 101), "depth": [10.0] * 100})
+    reads = pd.DataFrame(
+        [
+            {
+                "read_name": "invalid-indicator",
+                "read_start": 1,
+                "read_end": 100,
+                "softclip_fraction": 0.5,
+                "is_primary": 2,
+            }
+        ]
+    )
+    write_tables(
+        tmp_path / "summary",
+        depth=depth,
+        reads=reads,
+        candidates=candidate_table([]),
+    )
+
+    outputs, metrics = run_circularity(tmp_path)
+
+    assert outputs["status"] == "ok"
+    assert metrics["primary_read_rows"] == "0"
+    assert metrics["primary_read_start_in_edge_fraction"] == "NA"
+    assert metrics["primary_read_start_in_edge_fraction_reason_code"] == "invalid_primary_read_indicator"
+    assert metrics["primary_read_end_in_edge_fraction_reason_code"] == "invalid_primary_read_indicator"
+    assert metrics["edge_read_heavy_softclip_fraction_reason_code"] == "invalid_primary_read_indicator"
+
+
+def test_sparse_region_spanning_depth_profile_is_not_complete(tmp_path: Path) -> None:
+    depth = pd.DataFrame({"position": [1, 50, 100], "depth": [10.0, 20.0, 30.0]})
+    write_tables(
+        tmp_path / "summary",
+        depth=depth,
+        reads=pd.DataFrame(),
+        candidates=candidate_table([]),
+    )
+
+    outputs, metrics = run_circularity(tmp_path)
+
+    assert outputs["status"] == "not_evaluable"
+    assert metrics["status"] == "not_evaluable"
+    assert metrics["reason_code"] == "incomplete_depth_profile"
+    assert metrics["depth_positions_total"] == "3"
+    assert metrics["depth_unique_positions_in_range"] == "3"
+    assert metrics["depth_missing_positions"] == "97"
+    assert metrics["depth_profile_complete"] == "0"
+    assert metrics["mean_depth_first_edge"] == "NA"
+    assert metrics["mean_depth_last_edge"] == "NA"
+    assert metrics["mean_depth_interior"] == "NA"
+    assert metrics["mean_depth_first_edge_denominator_positions"] == "1"
+    assert metrics["mean_depth_last_edge_denominator_positions"] == "1"
+    assert metrics["mean_depth_interior_denominator_positions"] == "1"
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("position", 10.9),
+        ("position", "not-a-position"),
+        ("depth", -1),
+        ("depth", float("inf")),
+        ("depth", "not-a-depth"),
+    ),
+    ids=(
+        "fractional-position",
+        "nonnumeric-position",
+        "negative-depth",
+        "nonfinite-depth",
+        "nonnumeric-depth",
+    ),
+)
+def test_malformed_full_length_depth_profile_is_not_evaluable(
+    tmp_path: Path,
+    field: str,
+    value: object,
+) -> None:
+    depth = pd.DataFrame(
+        {
+            "position": pd.Series(range(1, 101), dtype=object),
+            "depth": pd.Series([10.0] * 100, dtype=object),
+        }
+    )
+    depth.at[9, field] = value
+    write_tables(
+        tmp_path / "summary",
+        depth=depth,
+        reads=pd.DataFrame(),
+        candidates=candidate_table([]),
+    )
+
+    outputs, metrics = run_circularity(tmp_path)
+
+    assert outputs["status"] == "not_evaluable"
+    assert metrics["status"] == "not_evaluable"
+    assert metrics["reason_code"] == "incomplete_depth_profile"
+    assert metrics["depth_positions_total"] == "100"
+    assert metrics["depth_profile_complete"] == "0"
+    assert metrics["mean_depth_first_edge"] == "NA"
+    assert metrics["mean_depth_last_edge"] == "NA"
+    assert metrics["mean_depth_interior"] == "NA"
+
+
+def test_missing_depth_profile_has_explicit_module_status(tmp_path: Path) -> None:
+    outputs, metrics = run_circularity(tmp_path)
+
+    assert outputs["status"] == "not_evaluable"
+    assert metrics == {
+        "status": "not_evaluable",
+        "reason_code": "no_depth_profile_available",
+    }

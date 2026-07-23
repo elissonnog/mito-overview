@@ -1,84 +1,176 @@
-# Release Checklist
+# MitoOverview v0.3.0 Release Checklist
 
-This checklist defines what must be true before tagging `mito-overview` as a manuscript-supporting release. It is intentionally stricter than a development snapshot because the manuscript frames the repository as a reproducible workflow/resource artifact.
+This checklist governs the GitHub-primary v0.3.0 software release. The
+validation protocol is defined in
+[`clean_room_validation_protocol_v0.3.0.md`](clean_room_validation_protocol_v0.3.0.md).
+The prior `v0.2.1` tag remains immutable at
+`2ba62b775a7204c0dc61f5408989603f536c78da`.
 
-## Scientific Release Goals
+Zenodo, a DOI, bioRxiv submission, manuscript revision, Notion, and MCW/HPC
+deployment are outside this release gate. Repository-only archive helpers and
+their tests are excluded from default pytest, CI acceptance, and the source
+distribution. `CITATION.cff` may omit a DOI. The
+GitHub release timestamp is authoritative; tracked files do not prerecord a
+release date.
 
-- Preserve the biological logic of the internal mitochondrial reporting workflow while keeping the public package portable outside the MCW HPC layout.
-- Separate core mtDNA report generation from optional human-only or external enrichment layers.
-- Keep all public claims at workflow/resource level unless additional analytical validation is added.
-- Provide enough documentation, examples, and scripts for a reviewer to repeat the public proof-of-principle checks from a clean checkout.
+## Scope gate
 
-## Current Release-Candidate Status
+- [ ] Work only in the public Mac repository.
+- [ ] Confirm no internal paths, private sample identifiers, credentials, or
+  secret-like values are tracked.
+- [ ] Keep claims limited to workflow execution, output contracts,
+  fixed-input repeatability, public marker representation, and descriptive
+  filter dependence.
 
-| Area | Status | Notes |
-| --- | --- | --- |
-| package structure | present | Python package, CLI, shell wrapper, public configs |
-| synthetic long-read smoke test | present | `tests/smoke_public_pipeline.sh` |
-| synthetic short-read smoke test | present | `tests/smoke_public_pipeline_shortread.sh` |
-| long-read no-methylation smoke test | present | `tests/smoke_public_pipeline_longread_nomethyl.sh` |
-| public GM12878 ONT proof-of-principle assets | present | report-native figures and summary tables under `examples/public_validation/GM12878_ONT_longread/` |
-| public GM11906 reduced short-read proof-of-principle assets | present | marker-focused assets under `examples/public_validation/GM11906_MERRF_shortread/` |
-| manuscript-supporting version | `v0.2.1` tagged; current figure update unreleased | use `v0.2.2` for the next manuscript-supporting release |
-| release DOI or Software Heritage archive | not yet assigned | GitHub tag archive is the active release identifier until an external archive identifier is minted |
-| exact `v0.2.1` release commit | recorded | `2ba62b775a7204c0dc61f5408989603f536c78da` |
-| clean-checkout rerun transcript | pending release freeze | record in `docs/release_validation_audit_2026-07-07.md` |
-| independent reproducibility re-check | pending release freeze | record reviewer/separate-thread outcome in the validation audit |
+## Package and environment gate
 
-## Must-Pass Commands Before Tagging
+- [ ] `pyproject.toml`, `mito_overview.__version__`, `CITATION.cff`, README,
+  and CHANGELOG agree on version `0.3.0`.
+- [ ] Python support is `>=3.12,<3.13` and platform locks exist for Linux
+  x86-64, macOS x86-64, and macOS arm64.
+- [ ] Wheel and sdist build successfully and are installed into separate clean
+  environments outside the repository.
+- [ ] Fresh-clone evidence records each installed wheel/sdist relative path,
+  kind, byte count, SHA-256, and PEP 610 `direct_url` archive SHA-256. Those
+  values exactly match `release_identity.json` and the packet `dist/` bytes
+  before and after tests and after fresh ZIP extraction.
+- [ ] The installed module and schema resolve inside the environment rather
+  than through checkout `PYTHONPATH` shadowing.
+- [ ] CLI listing, strict dry-run, unit tests, four smoke workflows, and both
+  example builders pass.
+- [ ] Strict dry-run creates no run artifacts; normal execution rejects an
+  existing run directory, an existing final destination, and overlapping run
+  and final paths before modification.
+- [ ] Phy-Mer external mode rejects a callable-genome threshold below `0.95`,
+  requires matching expected SHA-256 identities for the script, library, and
+  motif definitions, and accepts only a nonempty result with a finite score in
+  `[0,1]`. Fixture mode verifies the exact bundled mock hashes and labels its
+  output non-biological. Direct rerun failures clear all prior owned outputs.
+  The exact callable-fraction boundary and `N` masking have deterministic
+  known-answer tests.
 
-Run these from a fresh clone or a clean worktree:
+## Public-data gate
 
-```bash
-python -m mito_overview.cli --list-steps
-python -m mito_overview.cli --config examples/configs/human_example.env --dry-run
-./tests/smoke_public_pipeline.sh
-./tests/smoke_public_pipeline_shortread.sh
-./tests/smoke_public_pipeline_longread_nomethyl.sh
-```
+- [ ] The raw cache starts empty and contains only the seven locked FASTQs plus
+  its manifest and seal.
+- [ ] Every FASTQ passes byte-count, MD5, SHA-256, gzip, and structural checks.
+- [ ] GM11906 pairing and accession/sample identities pass.
+- [ ] GM12878 selection is rebuilt from the full source FASTQ with the locked
+  1,000-name seed and exact selected-name/subset identities.
+- [ ] BWA and minimap2 alignments are regenerated with the locked tools and
+  four threads under the validation workspace.
+- [ ] The six public filter profiles, two default repeats per dataset, exact
+  scientific oracle, module statuses, and output inventories pass.
+- [ ] Offline execution records zero network-canary events.
+- [ ] `public_oracle`, `raw_cache_seal`, and
+  `project_network_entrypoints` are present and `PASS`.
 
-Optional but manuscript-relevant public proof-of-principle reruns:
+## Evidence gate
 
-```bash
-./scripts/run_public_longread_validation_gm12878.sh /tmp/GM12878_ONT_longread_output
-./scripts/run_public_shortread_validation_gm11906.sh /tmp/GM11906_reduced_shortread_output
-```
+- [ ] `run.json`, `cases.tsv`, commands, logs, environment records, resource
+  usage (including declared-input inventory bytes and validation-output delta
+  bytes), input/output hashes, expected-versus-observed results, normalized
+  outputs, module statuses, figure/table provenance, claim evidence,
+  limitations, public sources, and manuscript handoff values are complete.
+- [ ] Every required case is `PASS`; no required case is missing, `SKIP`,
+  `BLOCKED`, or `XFAIL`, and `cases.tsv` contains no unexpected case IDs.
+- [ ] Every macOS visual-inventory row is bound to an actual packaged UTF-8
+  HTML or decodable PNG under `report_artifacts/macos/outputs`; the collection
+  has no missing, unlisted, unsupported, raw/alignment, or symlink entries.
+- [ ] Bound macOS report bytes contain no private absolute paths. Sanitization
+  must fail rather than rewrite those bytes and invalidate their inventory.
+- [ ] Before any extraction or packet-owned verification, the ZIP matches an
+  expected SHA-256 supplied outside the ZIP through the release-identity
+  receipt, an independently obtained sidecar/`SHA256SUMS`, or an explicit
+  trusted digest.
+- [ ] Only after the external digest gate passes, `verify_bundle.sh` passes in
+  the packet root and after safe extraction of
+  `mito-overview-v0.3.0-validation.zip`. This verifier proves internal
+  consistency, not authenticity against coordinated archive resealing.
+- [ ] The ZIP SHA-256 and verification JSON are recorded outside the ZIP. A
+  sidecar generated by the same build is a local integrity receipt until it is
+  published and obtained through an independently trusted release channel.
+- [ ] The human-readable Markdown, DOCX, and PDF reports use exact-final-
+  commit report-native figures and pass visual review.
 
-## Evidence to Capture
+## GitHub identity gate
 
-- Git commit hash and tag.
-- Conda environment export or exact package versions.
-- Command transcripts for each must-pass command.
-- Runtime and maximum memory when feasible.
-- Checksums or file inventories for public output bundles.
-- FASTQ/source retrieval date for public examples.
-- Expected-file and TSV-schema checks for active and `not_applicable` pages.
-- Independent reviewer or separate-thread re-check of the clean checkout.
+- [ ] PR 3 contains current `main`, is no longer draft, and has green Ubuntu
+  and macOS checks at its exact final head.
+- [ ] Three role-separated read-only agent executions (release engineering,
+  bioinformatics, and reproducibility) have no unresolved blockers. Each
+  record has a unique audit-instance ID and is bound to the reviewed PR-head
+  tree. The repository owner may post all three structured GitHub records;
+  this is execution separation, not external peer review or three distinct
+  GitHub reviewers.
+- [ ] The merged `main` commit is frozen as `FINAL_SHA`.
+- [ ] Push-event Ubuntu and macOS CI both report `head_sha=FINAL_SHA`.
+- [ ] Independent macOS and Ubuntu clean-room public runs start from public
+  HTTPS clones at `FINAL_SHA` and pass.
+- [ ] Annotated tag `v0.3.0` peels to `FINAL_SHA` and is never rewritten.
+- [ ] `scripts/run_fresh_public_tag_validation_v0.3.0.sh` clones the public
+  annotated tag through HTTPS, verifies its peeled `FINAL_SHA`, and records
+  `PASS` for its pinned environment, wheel and sdist installed in separate
+  environments, both installed CLIs, complete unit suite, four smoke workflows,
+  and both example builders.
+- [ ] The fresh-tag evidence manifest verifies, contains no local absolute
+  path, and its receipt is supplied to every publisher phase with
+  `--tag-validation-receipt` except the earlier read-only prepublication phase.
+  Missing, failed, or tampered evidence blocks all GitHub release mutations.
 
-## Release Archive Steps
+## Release asset gate
 
-1. Ensure the working tree contains only intended release files.
-2. Run the must-pass commands from a clean checkout.
-3. Commit all release files.
-4. Tag the next release as `v0.2.2` after its release freeze.
-5. Archive the tag through Zenodo or Software Heritage.
-6. Update `CITATION.cff`, `README.md`, and the manuscript with the tag, commit, and archive DOI or persistent identifier.
+- [ ] The draft GitHub release targets the existing `v0.3.0` tag.
+- [ ] `github_prepublication.json` is captured read-only after tagging but
+  before any release exists; the report builder accepts only this exact-main,
+  annotated-tag receipt.
+- [ ] The report states that final asset publication is verified separately;
+  it does not claim verification of its own upload.
+- [ ] `scripts/build_release_validation_report_v0.3.0.py` emits
+  `report_build_provenance.json`, binding the Markdown, DOCX, figure manifest,
+  copied report-native figures, packet manifest, and read-only GitHub identity.
+- [ ] Every DOCX page is rendered to `page-<N>.png` and inspected. The PDF and
+  page directory are passed to
+  `scripts/finalize_release_validation_report_v0.3.0.py` with an explicit PASS
+  review; the resulting `report_provenance.json` binds the final PDF and every
+  reviewed page to the source DOCX and validation ZIP. The PDF page-tree count
+  must equal both the contiguous PNG inventory and its recorded QA count.
+- [ ] `scripts/assemble_release_assets_v0.3.0.py` creates the exact eleven-file
+  prebuilt asset source atomically, including the exact packet-bound wheel and
+  source distribution. It executes the packet verifier, confirms the
+  Markdown/DOCX/PDF/figure/page provenance, release-note/environment
+  identities, verifies the exact five-file inventory for all three platform
+  lock records, and embeds both report provenance and a size/SHA-256
+  report-asset manifest in `mito-overview-v0.3.0-verification.json`.
+- [ ] The assembler rejects a stale commit, incomplete platform locks,
+  unexpected lock files, stale or replaced report artifacts, incomplete or
+  failed visual QA, symlinks/special files, a failed packet verifier, and an
+  existing output root; the subsequent fresh-tag gate reopens the report asset
+  archive and rejects any post-assembly mutation.
+- [ ] Fresh-tag evidence seals all 12 canonical asset names, sizes, and SHA-256
+  values to `FINAL_SHA` and the annotated tag object before any release mutation.
+- [ ] Repository native immutable releases are enabled and confirmed by a
+  second authenticated query before draft creation; an initial `404` means
+  disabled and triggers `PUT`, not an annotated-tag fallback. Any failed
+  enablement or failed confirmation stops publication. The queried published
+  release reports `immutable=true`.
+- [ ] Fresh-tag validation installs the exact packet-bound wheel and source
+  distribution. Its independently rebuilt tag distributions are retained only
+  as evidence that canonical member paths, payloads, sizes, and executable
+  states are equivalent; rebuilt container bytes never replace release assets.
+- [ ] Canonical assets include wheel, sdist, validation ZIP, Markdown/DOCX/PDF
+  report, the Markdown report's sibling figure directory as a tar archive,
+  machine-readable verification record, release notes, environment records,
+  and `SHA256SUMS`.
+- [ ] `SHA256SUMS` covers every other uploaded asset; the downloaded manifest
+  is byte-identical to the prepared manifest and verifies every listed asset.
+- [ ] The published release, tag target, asset inventory, hashes, and confirmed
+  enabled native hosting-immutability state are queried from GitHub and captured
+  in `github_publication.json`.
 
-## Claims Allowed for This Release
+## Stop rules
 
-- The package exposes the declared workflow steps.
-- Synthetic long- and short-read smoke tests exercise the public output contract.
-- Public GM12878 ONT targeted-mt data can be converted into synchronized report-native long-read outputs under stated thresholds.
-- Public GM11906 short-read/scATAC-derived mtDNA reads can be represented in the reduced short-read report profile under stated thresholds.
-- Unsupported assay layers are emitted as stable status or `not_applicable` pages rather than silent failures.
-
-## Claims Not Allowed Without Additional Validation
-
-- Clinical diagnosis or pathogenicity classification.
-- Calibrated low-VAF heteroplasmy sensitivity.
-- Deletion-truth benchmarking or deletion burden accuracy.
-- Absolute mtDNA copy-number truth.
-- Formal mtDNA-versus-NUMT classifier performance.
-- Biological mtDNA methylation conclusions.
-- Live Phy-Mer or mvTool interoperability unless a documented live run is added.
-- Equivalence between long-read and short-read assays.
+Do not tag or publish while any required gate is nonpassing. A scientific
+oracle mismatch requires investigation and a new reviewed commit; it is never
+accepted by silently changing expected values. A defect discovered after
+publication is corrected forward as `v0.3.1`, never by moving `v0.3.0`.

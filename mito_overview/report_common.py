@@ -119,7 +119,7 @@ def render_page(
   <footer class='page-footer'><p>Author: Elisson Lopes, PhD</p></footer>
 </body>
 </html>
-    """
+    """.strip() + "\n"
     output_path.write_text(doc, encoding="utf-8")
 
 

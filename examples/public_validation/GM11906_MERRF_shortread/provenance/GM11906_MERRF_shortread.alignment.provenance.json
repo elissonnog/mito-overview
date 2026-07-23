@@ -1,0 +1,95 @@
+{
+  "alignment": {
+    "bytes": 46086802,
+    "name": "GM11906_MERRF_shortread.mt.bam",
+    "sha256": "1504542d2fc8aa72d62402b9ac3d94ef48312e338d9d89cf4371a4ae45a9e4b2"
+  },
+  "alignment_index": {
+    "bytes": 296,
+    "name": "GM11906_MERRF_shortread.mt.bam.bai",
+    "sha256": "bc6acd22a3fbeb07be72c06fc67eeb5989d807efe16747a903915d01f0d8394b"
+  },
+  "dataset_id": "GM11906_pooled_scATAC",
+  "derivation": {
+    "command_template": "bwa mem -t {threads} {reference_fasta} {combined_r1} {combined_r2} | samtools sort -@ {threads} -o {alignment_bam}",
+    "derivation_id": "bwa-mem-samtools-sort-v1",
+    "parameters": {
+      "threads": "4"
+    },
+    "tool_versions": {
+      "bwa": "0.7.19-r1273",
+      "samtools": "samtools 1.23.1"
+    }
+  },
+  "generated_utc": "2026-07-22T19:08:29.692947+00:00",
+  "provenance_type": "public_alignment",
+  "public_inputs": [
+    {
+      "bytes": 8795676,
+      "label": "SRR10804585_R1",
+      "md5": "3f5ea26a5791894071462d4970bc9e5a",
+      "name": "SRR10804585_1.fastq.gz",
+      "sha256": "b69746cb61d8bf3bc25887d6ece3c60db3acc7baaefd84a9a8b5d6ffce33288d"
+    },
+    {
+      "bytes": 8817420,
+      "label": "SRR10804585_R2",
+      "md5": "c5b408425612f63b33cefd2d49c157d1",
+      "name": "SRR10804585_2.fastq.gz",
+      "sha256": "1fca2c35a955a4ed232465d8392bc04683828229178aee7915929e67b2aac961"
+    },
+    {
+      "bytes": 1006749,
+      "label": "SRR10804590_R1",
+      "md5": "e8b5132a8be8c179bfc6dbc0f3e1bee9",
+      "name": "SRR10804590_1.fastq.gz",
+      "sha256": "e47ceceb03d44483b4948fe9c631ebff307f5ec68a1deec978f1122695fa58fc"
+    },
+    {
+      "bytes": 795885,
+      "label": "SRR10804590_R2",
+      "md5": "4d6977526136739de2d90baa8d45b484",
+      "name": "SRR10804590_2.fastq.gz",
+      "sha256": "05b2375b30b02c02e9206981eb2fe2d08babbc2a5809f8354ef56d0ac1550776"
+    },
+    {
+      "bytes": 21510555,
+      "label": "SRR10804657_R1",
+      "md5": "8f082f73cb64bf56ea8a053fe80eeb06",
+      "name": "SRR10804657_1.fastq.gz",
+      "sha256": "1afaf310ce9ffa77e1c3d61a0714e839d21000941d414cc7bf6fb590c3b665f2"
+    },
+    {
+      "bytes": 21573731,
+      "label": "SRR10804657_R2",
+      "md5": "62b7d1b2294a580c021f5fa1f52609be",
+      "name": "SRR10804657_2.fastq.gz",
+      "sha256": "bfc555c7e722695b02110027757bba4d7fc88f487798423cd6809e8a771a5184"
+    },
+    {
+      "bytes": 31312980,
+      "label": "combined_R1",
+      "md5": "f442c0a21fe1cc4c366dd3791723d73b",
+      "name": "GM11906_MERRF_R1.fastq.gz",
+      "sha256": "1c279307c0e9a131f579429296721ab66d0752cd711f8d0ac5f261e84b44e18d"
+    },
+    {
+      "bytes": 31187036,
+      "label": "combined_R2",
+      "md5": "9ae016af6198b9b5ea82b3697c5270b4",
+      "name": "GM11906_MERRF_R2.fastq.gz",
+      "sha256": "650868801848ae7c692cb1a2060dc4449f1ef5181e2175b359f6132f4a788aa1"
+    }
+  ],
+  "reference": {
+    "bytes": 16864,
+    "name": "NC_012920.1.fa",
+    "sha256": "fc392cde8e63b4d2e3a870bb97cc0626dea33d46dfb8abdebffada040f42ec92"
+  },
+  "reference_index": {
+    "bytes": 27,
+    "name": "NC_012920.1.fa.fai",
+    "sha256": "38e4cd6941e7dca67cfc91f9f11db4f9aed29eb809a530796f75f3a94b6ac7e0"
+  },
+  "schema_version": "1.0"
+}

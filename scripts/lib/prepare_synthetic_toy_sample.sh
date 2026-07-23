@@ -39,7 +39,7 @@ prepare_synthetic_shortread_toy_sample() {
   local repo_root="$1"
   local workdir="$2"
 
-  local dataset_root="${repo_root}/examples/synthetic_data/TOY-001"
+  local dataset_root="${repo_root}/examples/synthetic_data/TOY-SR-001"
   local hv_dir="${workdir}/sample/human_variation"
 
   mkdir -p "${hv_dir}"
@@ -52,4 +52,17 @@ prepare_synthetic_shortread_toy_sample() {
   samtools index "${hv_dir}/TOY-SR-001.input.bam"
 
   cp "${dataset_root}/tiny_mt.gtf" "${workdir}/tiny_mt.gtf"
+}
+
+
+prepare_synthetic_wgs_toy_sample() {
+  local repo_root="$1"
+  local workdir="$2"
+
+  local dataset_root="${repo_root}/examples/synthetic_data/TOY-WGS-001"
+  cp "${dataset_root}/tiny_GRCh38_wgs.fa" "${workdir}/tiny_GRCh38_wgs.fa"
+  samtools faidx "${workdir}/tiny_GRCh38_wgs.fa"
+  samtools view -bS "${dataset_root}/tiny_wgs.sam" | \
+    samtools sort -o "${workdir}/TOY-WGS-001.input.bam"
+  samtools index "${workdir}/TOY-WGS-001.input.bam"
 }

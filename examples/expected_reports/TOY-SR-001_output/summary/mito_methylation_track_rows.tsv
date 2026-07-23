@@ -1,1 +1,1 @@
-track	position	valid_coverage	percent_modified	modified_count	canonical_count
+track	position	modification_code	strand	valid_coverage	percent_modified	modified_count	canonical_count	other_modified_count

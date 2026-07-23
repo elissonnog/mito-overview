@@ -1,1 +1,1 @@
-site_label	position	ref_base	alt_base	heteroplasmy_fraction	depth	covered_reads	alt_reads
+site_label	position	ref_base	alt_base	alt_allele_fraction	heteroplasmy_fraction	callable_depth	depth	covered_reads	alt_reads

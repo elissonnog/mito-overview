@@ -9,6 +9,7 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 
 from mito_overview.report_common import df_to_html_table, figure_html, metric_card, render_page
@@ -20,6 +21,8 @@ READ_TABLE_COLUMNS = [
     "query_length",
     "read_start",
     "read_end",
+    "reference_span",
+    "aligned_reference_bases",
     "aligned_span",
     "aligned_fraction_mt",
     "softclip_bases",
@@ -31,6 +34,28 @@ READ_TABLE_COLUMNS = [
     "is_reverse",
 ]
 FRACTION_PLOT_COLUMNS = ["metric", "fraction"]
+REQUIRED_NUMT_READ_COLUMNS = frozenset(
+    {
+        "mapq",
+        "query_length",
+        "aligned_fraction_mt",
+        "aligned_reference_bases",
+        "softclip_bases",
+        "softclip_fraction",
+        "has_sa_tag",
+        "is_primary",
+        "is_supplementary",
+        "is_secondary",
+    }
+)
+REQUIRED_NUMT_SUMMARY_METRICS = frozenset(
+    {
+        "status",
+        "primary_full_length_fraction",
+        "primary_full_length_fraction_status",
+        "primary_full_length_fraction_denominator",
+    }
+)
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -41,6 +66,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--sample-id", required=True)
     parser.add_argument("--mt-contig", required=True)
     parser.add_argument("--mt-length", type=int, required=True)
+    parser.add_argument("--reference-scope", default="custom", choices=("whole_genome", "mt_only", "custom"))
     return parser
 
 
@@ -82,27 +108,101 @@ def load_reads_table(path: Path) -> pd.DataFrame:
     return df
 
 
-def column_fraction(df: pd.DataFrame, column: str, predicate) -> float:
-    """Return the fraction of rows matching a predicate for a column."""
+def validated_numeric_series(
+    df: pd.DataFrame,
+    column: str,
+    *,
+    minimum: float | None = None,
+    maximum: float | None = None,
+    integer: bool = False,
+    allowed_values: tuple[float, ...] | None = None,
+) -> pd.Series | None:
+    """Return numeric evidence only when every row satisfies its declared domain."""
 
     if df.empty or column not in df.columns:
-        return 0.0
-    series = df[column]
-    return float(predicate(series).mean()) if not series.empty else 0.0
+        return None
+    series = pd.to_numeric(df[column], errors="coerce")
+    values = series.to_numpy(dtype=float)
+    valid = np.isfinite(values)
+    if minimum is not None:
+        valid &= values >= minimum
+    if maximum is not None:
+        valid &= values <= maximum
+    if integer:
+        with np.errstate(invalid="ignore"):
+            valid &= values == np.floor(values)
+    if allowed_values is not None:
+        valid &= np.isin(values, allowed_values)
+    if series.empty or not bool(valid.all()):
+        return None
+    return series
 
 
-def extract_metric_value(summary_df: pd.DataFrame, metric: str) -> float:
-    """Extract a numeric metric from a metric/value summary table."""
+NUMT_READ_DOMAINS = {
+    # SAM MAPQ 255 means mapping quality is unavailable, not high confidence.
+    "mapq": {"minimum": 0, "maximum": 254, "integer": True},
+    "query_length": {"minimum": 1, "integer": True},
+    "aligned_fraction_mt": {"minimum": 0, "maximum": 1},
+    "aligned_reference_bases": {"minimum": 0, "integer": True},
+    "softclip_bases": {"minimum": 0, "integer": True},
+    "softclip_fraction": {"minimum": 0, "maximum": 1},
+    "has_sa_tag": {"integer": True, "allowed_values": (0, 1)},
+    "is_primary": {"integer": True, "allowed_values": (0, 1)},
+    "is_supplementary": {"integer": True, "allowed_values": (0, 1)},
+    "is_secondary": {"integer": True, "allowed_values": (0, 1)},
+}
+
+
+def column_fraction(
+    df: pd.DataFrame,
+    column: str,
+    predicate,
+    **domain,
+) -> float | None:
+    """Return a fraction only when every row has valid in-domain evidence."""
+
+    series = validated_numeric_series(df, column, **domain)
+    if series is None:
+        return None
+    return float(predicate(series).mean())
+
+
+def extract_metric_value(summary_df: pd.DataFrame, metric: str) -> float | None:
+    """Extract one numeric metric without manufacturing a missing value."""
 
     if summary_df.empty or "metric" not in summary_df.columns or "value" not in summary_df.columns:
-        return 0.0
+        return None
     hit = summary_df.loc[summary_df["metric"] == metric, "value"]
-    if hit.empty:
-        return 0.0
-    value = pd.to_numeric(hit, errors="coerce").dropna()
-    if value.empty:
-        return 0.0
-    return float(value.iloc[0])
+    if len(hit) != 1:
+        return None
+    value = pd.to_numeric(hit, errors="coerce").iloc[0]
+    if pd.isna(value) or not np.isfinite(float(value)):
+        return None
+    return float(value)
+
+
+def extract_metric_text(summary_df: pd.DataFrame, metric: str) -> str | None:
+    """Extract one non-empty text metric without accepting duplicate evidence."""
+
+    if summary_df.empty or "metric" not in summary_df.columns or "value" not in summary_df.columns:
+        return None
+    hit = summary_df.loc[summary_df["metric"] == metric, "value"]
+    if len(hit) != 1 or pd.isna(hit.iloc[0]):
+        return None
+    value = str(hit.iloc[0]).strip()
+    return value or None
+
+
+def rounded_or_na(value: float | None, digits: int = 6) -> float | str:
+    """Represent unavailable numeric metrics explicitly in public summary tables."""
+
+    return "NA" if value is None else round(value, digits)
+
+
+def display_metric(value: float | None, digits: int = 4) -> float | str:
+    """Format an optional metric for report cards and progress messages."""
+
+    return "unavailable" if value is None else round(value, digits)
 
 
 def render_no_reads_report(
@@ -112,29 +212,36 @@ def render_no_reads_report(
     sample_id: str,
     mt_contig: str,
     mt_length: int,
+    reference_scope: str,
 ) -> dict[str, Path]:
     """Write outputs for runs without mitochondrial read-level stats."""
 
     print("[numt_qc] no mito_read_stats.tsv available; writing status-only outputs", flush=True)
     summary_df = pd.DataFrame(
-        [{"metric": "status", "value": "no_read_stats_available"}],
+        [
+            {"metric": "status", "value": "not_evaluable"},
+            {"metric": "reason_code", "value": "no_read_stats_available"},
+            {"metric": "reference_scope", "value": reference_scope},
+            {"metric": "numt_interpretation_status", "value": "not_evaluable"},
+        ],
         columns=SUMMARY_COLUMNS,
     )
     summary_df.to_csv(summary_path, sep="\t", index=False)
     intro_html = (
-        '<p class="muted">NUMT-aware QC could not be computed because read-level mitochondrial '
+        '<p class="muted">Alignment-ambiguity QC could not be computed because read-level mitochondrial '
         "alignment statistics were not available.</p>"
     )
     body_html = "<section><h2>Status</h2>" + df_to_html_table(summary_df, max_rows=20) + "</section>"
     render_page(
         report_path,
-        "Mito NUMT-aware QC",
+        "Mito Alignment-Ambiguity QC",
         sample_id,
         f"{mt_contig}:1-{mt_length}",
         intro_html,
         body_html,
     )
     return {
+        "status": "not_evaluable",
         "summary_path": summary_path,
         "report_path": report_path,
     }
@@ -148,10 +255,15 @@ def run_step(
     sample_id: str,
     mt_contig: str,
     mt_length: int,
-) -> dict[str, Path]:
+    reference_scope: str = "custom",
+) -> dict[str, Path | str]:
     """Run the public NUMT-aware mitochondrial QC step."""
 
-    print(f"[numt_qc] starting sample={sample_id} contig={mt_contig} length={mt_length}", flush=True)
+    print(
+        f"[numt_qc] starting sample={sample_id} contig={mt_contig} length={mt_length} "
+        f"reference_scope={reference_scope}",
+        flush=True,
+    )
     summary_dir = Path(summary_dir)
     figure_dir = Path(figure_dir)
     report_dir = Path(report_dir)
@@ -181,56 +293,424 @@ def run_step(
             sample_id=sample_id,
             mt_contig=mt_contig,
             mt_length=mt_length,
+            reference_scope=reference_scope,
         )
 
-    if "is_primary" in reads_df.columns:
-        primary_df = reads_df[reads_df["is_primary"] == 1].copy()
+    invalid_read_columns = sorted(
+        column
+        for column in REQUIRED_NUMT_READ_COLUMNS.intersection(reads_df.columns)
+        if validated_numeric_series(
+            reads_df,
+            column,
+            **NUMT_READ_DOMAINS[column],
+        )
+        is None
+    )
+    aligned_bases = validated_numeric_series(
+        reads_df,
+        "aligned_reference_bases",
+        **NUMT_READ_DOMAINS["aligned_reference_bases"],
+    )
+    aligned_fractions = validated_numeric_series(
+        reads_df,
+        "aligned_fraction_mt",
+        **NUMT_READ_DOMAINS["aligned_fraction_mt"],
+    )
+    aligned_span_consistent = False
+    if aligned_bases is not None and aligned_fractions is not None and mt_length > 0:
+        aligned_span_consistent = bool(
+            (aligned_bases <= mt_length).all()
+            and np.isclose(
+                aligned_fractions.to_numpy(dtype=float),
+                aligned_bases.to_numpy(dtype=float) / mt_length,
+                rtol=0,
+                atol=5.1e-7,
+            ).all()
+        )
+    if (
+        "aligned_reference_bases" in reads_df.columns
+        and "aligned_fraction_mt" in reads_df.columns
+        and not aligned_span_consistent
+    ):
+        invalid_read_columns = sorted(
+            set(invalid_read_columns)
+            | {"aligned_reference_bases_vs_aligned_fraction_mt"}
+        )
+
+    is_primary = validated_numeric_series(
+        reads_df,
+        "is_primary",
+        **NUMT_READ_DOMAINS["is_primary"],
+    )
+    is_secondary = validated_numeric_series(
+        reads_df,
+        "is_secondary",
+        **NUMT_READ_DOMAINS["is_secondary"],
+    )
+    is_supplementary = validated_numeric_series(
+        reads_df,
+        "is_supplementary",
+        **NUMT_READ_DOMAINS["is_supplementary"],
+    )
+    primary_flag_fields_valid = bool(
+        is_primary is not None
+        and is_secondary is not None
+        and is_supplementary is not None
+    )
+    primary_flag_consistent = False
+    if primary_flag_fields_valid:
+        expected_primary = ((is_secondary == 0) & (is_supplementary == 0)).astype(int)
+        primary_flag_consistent = bool((is_primary == expected_primary).all())
+    if primary_flag_fields_valid and not primary_flag_consistent:
+        invalid_read_columns = sorted(
+            set(invalid_read_columns) | {"is_primary_vs_alignment_flags"}
+        )
+    primary_indicator_valid = bool(
+        primary_flag_fields_valid and primary_flag_consistent
+    )
+
+    query_lengths = validated_numeric_series(
+        reads_df,
+        "query_length",
+        **NUMT_READ_DOMAINS["query_length"],
+    )
+    softclip_bases = validated_numeric_series(
+        reads_df,
+        "softclip_bases",
+        **NUMT_READ_DOMAINS["softclip_bases"],
+    )
+    softclip_fractions = validated_numeric_series(
+        reads_df,
+        "softclip_fraction",
+        **NUMT_READ_DOMAINS["softclip_fraction"],
+    )
+    if query_lengths is not None and softclip_bases is not None:
+        if not bool((softclip_bases <= query_lengths).all()):
+            invalid_read_columns = sorted(
+                set(invalid_read_columns) | {"softclip_bases_vs_query_length"}
+            )
+    if (
+        query_lengths is not None
+        and aligned_bases is not None
+        and softclip_bases is not None
+    ):
+        if not bool((aligned_bases + softclip_bases <= query_lengths).all()):
+            invalid_read_columns = sorted(
+                set(invalid_read_columns)
+                | {"aligned_reference_bases_plus_softclip_bases_vs_query_length"}
+            )
+    if (
+        query_lengths is not None
+        and softclip_bases is not None
+        and softclip_fractions is not None
+    ):
+        softclip_fraction_consistent = bool(
+            np.isclose(
+                softclip_fractions.to_numpy(dtype=float),
+                softclip_bases.to_numpy(dtype=float)
+                / query_lengths.to_numpy(dtype=float),
+                rtol=0,
+                atol=5.1e-7,
+            ).all()
+        )
+        if not softclip_fraction_consistent:
+            invalid_read_columns = sorted(
+                set(invalid_read_columns)
+                | {"softclip_bases_vs_softclip_fraction"}
+            )
+
+    if primary_indicator_valid:
+        primary_df = reads_df[is_primary == 1].copy()
     else:
-        primary_df = reads_df.copy()
-    eval_df = primary_df if not primary_df.empty else reads_df.copy()
+        primary_df = reads_df.iloc[0:0]
+    primary_evidence_available = primary_indicator_valid and not primary_df.empty
+    eval_df = primary_df if primary_evidence_available else reads_df.copy()
     print(
         f"[numt_qc] evaluating reads_rows={len(eval_df)} primary_rows={len(primary_df)} "
-        f"fallback_to_all_reads={int(primary_df.empty)}",
+        f"fallback_to_all_reads={int(not primary_evidence_available)}",
+        f"primary_indicator_valid={int(primary_indicator_valid)}",
         flush=True,
     )
 
-    low_mapq_fraction = column_fraction(eval_df, "mapq", lambda s: s < 20)
-    very_low_mapq_fraction = column_fraction(eval_df, "mapq", lambda s: s < 5)
-    short_span_fraction = column_fraction(eval_df, "aligned_fraction_mt", lambda s: s < 0.50)
-    heavy_softclip_fraction = column_fraction(eval_df, "softclip_fraction", lambda s: s > 0.20)
-    sa_fraction = column_fraction(eval_df, "has_sa_tag", lambda s: s == 1)
-    supplementary_fraction = column_fraction(reads_df, "is_supplementary", lambda s: s == 1)
-    full_length_fraction = extract_metric_value(qc_df, "full_length_fraction")
+    low_mapq_fraction = column_fraction(
+        eval_df, "mapq", lambda s: s < 20, **NUMT_READ_DOMAINS["mapq"]
+    )
+    very_low_mapq_fraction = column_fraction(
+        eval_df, "mapq", lambda s: s < 5, **NUMT_READ_DOMAINS["mapq"]
+    )
+    short_span_fraction = column_fraction(
+        eval_df,
+        "aligned_fraction_mt",
+        lambda s: s < 0.50,
+        **NUMT_READ_DOMAINS["aligned_fraction_mt"],
+    )
+    heavy_softclip_fraction = column_fraction(
+        eval_df,
+        "softclip_fraction",
+        lambda s: s > 0.20,
+        **NUMT_READ_DOMAINS["softclip_fraction"],
+    )
+    sa_fraction = column_fraction(
+        eval_df, "has_sa_tag", lambda s: s == 1, **NUMT_READ_DOMAINS["has_sa_tag"]
+    )
+    supplementary_fraction = column_fraction(
+        reads_df,
+        "is_supplementary",
+        lambda s: s == 1,
+        **NUMT_READ_DOMAINS["is_supplementary"],
+    )
+    primary_full_length_fraction = column_fraction(
+        primary_df,
+        "aligned_fraction_mt",
+        lambda s: s >= 0.90,
+        **NUMT_READ_DOMAINS["aligned_fraction_mt"],
+    )
+    primary_full_length_reads: int | None = None
+    if primary_full_length_fraction is not None:
+        primary_full_length_reads = int(
+            (pd.to_numeric(primary_df["aligned_fraction_mt"], errors="coerce") >= 0.90).sum()
+        )
+    if "metric" in qc_df.columns:
+        available_summary_metrics = set(qc_df["metric"].dropna().astype(str))
+    else:
+        available_summary_metrics = set()
+    missing_summary_metrics = sorted(
+        REQUIRED_NUMT_SUMMARY_METRICS - available_summary_metrics
+    )
 
-    risk_score = 0
-    risk_score += 1 if low_mapq_fraction > 0.10 else 0
-    risk_score += 1 if very_low_mapq_fraction > 0.02 else 0
-    risk_score += 1 if short_span_fraction > 0.35 else 0
-    risk_score += 1 if heavy_softclip_fraction > 0.10 else 0
-    risk_score += 1 if sa_fraction > 0.05 else 0
-    risk_score += 1 if supplementary_fraction > 0.15 else 0
-    risk_score += 1 if full_length_fraction < 0.01 else 0
-    risk = risk_label(risk_score)
+    qc_primary_full_length_fraction_raw = extract_metric_value(
+        qc_df, "primary_full_length_fraction"
+    )
+    qc_primary_fraction_present = bool(
+        "primary_full_length_fraction" in available_summary_metrics
+    )
+    qc_primary_fraction_numeric_valid = bool(
+        qc_primary_full_length_fraction_raw is not None
+        and 0 <= qc_primary_full_length_fraction_raw <= 1
+    )
+    qc_module_status = extract_metric_text(qc_df, "status")
+    qc_primary_fraction_status = extract_metric_text(
+        qc_df, "primary_full_length_fraction_status"
+    )
+    qc_primary_fraction_denominator = extract_metric_text(
+        qc_df, "primary_full_length_fraction_denominator"
+    )
+    invalid_summary_metrics: list[str] = []
+    if qc_primary_fraction_present and not qc_primary_fraction_numeric_valid:
+        invalid_summary_metrics.append("primary_full_length_fraction")
+    if "status" in available_summary_metrics and qc_module_status != "ok":
+        invalid_summary_metrics.append("status")
+    if (
+        "primary_full_length_fraction_status" in available_summary_metrics
+        and qc_primary_fraction_status != "ok"
+    ):
+        invalid_summary_metrics.append("primary_full_length_fraction_status")
+    if (
+        "primary_full_length_fraction_denominator" in available_summary_metrics
+        and qc_primary_fraction_denominator != "primary_alignment_records"
+    ):
+        invalid_summary_metrics.append("primary_full_length_fraction_denominator")
+    invalid_summary_metrics = sorted(set(invalid_summary_metrics))
+
+    qc_primary_full_length_fraction = (
+        qc_primary_full_length_fraction_raw
+        if not missing_summary_metrics and not invalid_summary_metrics
+        else None
+    )
+    qc_fraction_mismatch = bool(
+        primary_full_length_fraction is not None
+        and qc_primary_full_length_fraction is not None
+        and abs(primary_full_length_fraction - qc_primary_full_length_fraction) > 0.0001
+    )
+    if primary_full_length_fraction is None:
+        qc_fraction_crosscheck_status = "not_evaluable"
+        qc_fraction_crosscheck_reason = "primary_full_length_fraction_unavailable"
+    elif qc_primary_fraction_present and not qc_primary_fraction_numeric_valid:
+        qc_fraction_crosscheck_status = "not_evaluable"
+        qc_fraction_crosscheck_reason = "primary_full_length_fraction_invalid_in_mito_qc"
+    elif "primary_full_length_fraction" in missing_summary_metrics:
+        qc_fraction_crosscheck_status = "not_configured"
+        qc_fraction_crosscheck_reason = "primary_full_length_fraction_missing_from_mito_qc"
+    elif missing_summary_metrics:
+        qc_fraction_crosscheck_status = "not_evaluable"
+        qc_fraction_crosscheck_reason = "primary_full_length_fraction_provenance_missing"
+    elif invalid_summary_metrics:
+        qc_fraction_crosscheck_status = "not_evaluable"
+        if "status" in invalid_summary_metrics:
+            qc_fraction_crosscheck_reason = "mito_qc_status_not_ok"
+        elif "primary_full_length_fraction_status" in invalid_summary_metrics:
+            qc_fraction_crosscheck_reason = "primary_full_length_fraction_status_not_ok"
+        else:
+            qc_fraction_crosscheck_reason = (
+                "primary_full_length_fraction_denominator_invalid"
+            )
+    elif qc_fraction_mismatch:
+        qc_fraction_crosscheck_status = "not_evaluable"
+        qc_fraction_crosscheck_reason = "primary_full_length_fraction_mismatch"
+    else:
+        qc_fraction_crosscheck_status = "ok"
+        qc_fraction_crosscheck_reason = ""
+
+    missing_read_columns = sorted(REQUIRED_NUMT_READ_COLUMNS - set(reads_df.columns))
+    evidence_values = (
+        low_mapq_fraction,
+        very_low_mapq_fraction,
+        short_span_fraction,
+        heavy_softclip_fraction,
+        sa_fraction,
+        supplementary_fraction,
+        primary_full_length_fraction,
+    )
+    evidence_complete = (
+        not missing_read_columns
+        and not invalid_read_columns
+        and not missing_summary_metrics
+        and not invalid_summary_metrics
+        and primary_evidence_available
+        and not qc_fraction_mismatch
+        and qc_fraction_crosscheck_status == "ok"
+        and all(value is not None for value in evidence_values)
+    )
+
+    risk_score: int | None = None
+    risk: str | None = None
+    if evidence_complete:
+        risk_score = 0
+        risk_score += 1 if low_mapq_fraction > 0.10 else 0
+        risk_score += 1 if very_low_mapq_fraction > 0.02 else 0
+        risk_score += 1 if short_span_fraction > 0.35 else 0
+        risk_score += 1 if heavy_softclip_fraction > 0.10 else 0
+        risk_score += 1 if sa_fraction > 0.05 else 0
+        risk_score += 1 if supplementary_fraction > 0.15 else 0
+        risk_score += 1 if primary_full_length_fraction < 0.01 else 0
+        risk = risk_label(risk_score)
+
+    if reference_scope != "whole_genome":
+        interpretation_status = "not_evaluable"
+        reason_code = f"reference_scope_{reference_scope}"
+        reported_risk = "not_evaluable"
+        reported_risk_score: int | str = "NA"
+    elif not evidence_complete:
+        interpretation_status = "not_evaluable"
+        if (
+            "is_primary" in invalid_read_columns
+            or "is_primary_vs_alignment_flags" in invalid_read_columns
+        ):
+            reason_code = "numt_primary_indicator_invalid"
+        elif invalid_read_columns:
+            reason_code = "numt_read_stats_invalid_values"
+        elif primary_indicator_valid and primary_df.empty:
+            reason_code = "numt_primary_reads_unavailable"
+        elif missing_read_columns and not missing_summary_metrics:
+            reason_code = "numt_read_stats_missing_columns"
+        elif missing_summary_metrics and not missing_read_columns:
+            reason_code = "numt_qc_summary_missing_metrics"
+        elif invalid_summary_metrics:
+            reason_code = "numt_qc_summary_invalid_values"
+        elif qc_fraction_mismatch:
+            reason_code = "numt_primary_full_length_fraction_mismatch"
+        else:
+            reason_code = "numt_required_evidence_unavailable"
+        reported_risk = "not_evaluable"
+        reported_risk_score = "NA"
+    else:
+        interpretation_status = "ok"
+        reason_code = ""
+        reported_risk = risk
+        reported_risk_score = risk_score
     print(
-        f"[numt_qc] fractions low_mapq={low_mapq_fraction:.4f} very_low_mapq={very_low_mapq_fraction:.4f} "
-        f"short_span={short_span_fraction:.4f} heavy_softclip={heavy_softclip_fraction:.4f} "
-        f"sa={sa_fraction:.4f} supplementary={supplementary_fraction:.4f} "
-        f"full_length={full_length_fraction:.4f} risk={risk} score={risk_score}",
+        f"[numt_qc] fractions low_mapq={display_metric(low_mapq_fraction)} "
+        f"very_low_mapq={display_metric(very_low_mapq_fraction)} "
+        f"short_span={display_metric(short_span_fraction)} "
+        f"heavy_softclip={display_metric(heavy_softclip_fraction)} "
+        f"sa={display_metric(sa_fraction)} supplementary={display_metric(supplementary_fraction)} "
+        f"primary_near_complete_alignment={display_metric(primary_full_length_fraction)} "
+        f"risk={reported_risk} "
+        f"score={reported_risk_score} "
+        f"missing_read_columns={','.join(missing_read_columns) or 'none'} "
+        f"invalid_read_columns={','.join(invalid_read_columns) or 'none'} "
+        f"missing_summary_metrics={','.join(missing_summary_metrics) or 'none'} "
+        f"invalid_summary_metrics={','.join(invalid_summary_metrics) or 'none'}",
         flush=True,
     )
 
     summary_df = pd.DataFrame(
         [
+            {"metric": "status", "value": "ok"},
+            {"metric": "reference_scope", "value": reference_scope},
+            {"metric": "numt_interpretation_status", "value": interpretation_status},
+            {"metric": "reason_code", "value": reason_code},
+            {
+                "metric": "missing_required_read_columns",
+                "value": ",".join(missing_read_columns) or "none",
+            },
+            {
+                "metric": "missing_required_summary_metrics",
+                "value": ",".join(missing_summary_metrics) or "none",
+            },
+            {
+                "metric": "invalid_required_read_values",
+                "value": ",".join(invalid_read_columns) or "none",
+            },
+            {
+                "metric": "invalid_required_summary_values",
+                "value": ",".join(invalid_summary_metrics) or "none",
+            },
+            {
+                "metric": "aligned_span_fraction_consistent",
+                "value": int(aligned_span_consistent),
+            },
+            {"metric": "primary_indicator_valid", "value": int(primary_indicator_valid)},
+            {"metric": "primary_evidence_available", "value": int(primary_evidence_available)},
             {"metric": "reads_evaluated", "value": int(len(eval_df))},
-            {"metric": "low_mapq_fraction_lt20", "value": round(low_mapq_fraction, 6)},
-            {"metric": "very_low_mapq_fraction_lt5", "value": round(very_low_mapq_fraction, 6)},
-            {"metric": "short_aligned_fraction_lt0.5_mt", "value": round(short_span_fraction, 6)},
-            {"metric": "heavy_softclip_fraction_gt0.2", "value": round(heavy_softclip_fraction, 6)},
-            {"metric": "sa_tag_fraction", "value": round(sa_fraction, 6)},
-            {"metric": "supplementary_fraction_all_reads", "value": round(supplementary_fraction, 6)},
-            {"metric": "full_length_fraction", "value": round(full_length_fraction, 6)},
-            {"metric": "heuristic_numt_risk", "value": risk},
-            {"metric": "heuristic_numt_risk_score", "value": int(risk_score)},
+            {
+                "metric": "primary_alignment_records",
+                "value": int(len(primary_df)) if primary_indicator_valid else "NA",
+            },
+            {
+                "metric": "primary_full_length_reads",
+                "value": primary_full_length_reads if primary_full_length_reads is not None else "NA",
+            },
+            {"metric": "low_mapq_fraction_lt20", "value": rounded_or_na(low_mapq_fraction)},
+            {"metric": "very_low_mapq_fraction_lt5", "value": rounded_or_na(very_low_mapq_fraction)},
+            {"metric": "short_aligned_fraction_lt0.5_mt", "value": rounded_or_na(short_span_fraction)},
+            {"metric": "heavy_softclip_fraction_gt0.2", "value": rounded_or_na(heavy_softclip_fraction)},
+            {"metric": "sa_tag_fraction", "value": rounded_or_na(sa_fraction)},
+            {"metric": "supplementary_fraction_all_reads", "value": rounded_or_na(supplementary_fraction)},
+            {
+                "metric": "primary_full_length_fraction",
+                "value": rounded_or_na(primary_full_length_fraction),
+            },
+            {
+                "metric": "primary_full_length_fraction_denominator",
+                "value": "primary_alignment_records",
+            },
+            {
+                "metric": "primary_full_length_fraction_source",
+                "value": "mito_read_stats_primary_alignment_records",
+            },
+            {
+                "metric": "primary_full_length_fraction_basis",
+                "value": "aligned_reference_bases_excluding_cigar_D_N",
+            },
+            {
+                "metric": "primary_full_length_qc_crosscheck_status",
+                "value": qc_fraction_crosscheck_status,
+            },
+            {
+                "metric": "primary_full_length_qc_crosscheck_reason_code",
+                "value": qc_fraction_crosscheck_reason,
+            },
+            {
+                "metric": "full_length_fraction",
+                "value": rounded_or_na(primary_full_length_fraction),
+            },
+            {
+                "metric": "full_length_fraction_compatibility_alias_of",
+                "value": "primary_full_length_fraction",
+            },
+            {"metric": "heuristic_numt_risk", "value": reported_risk},
+            {"metric": "heuristic_numt_risk_score", "value": reported_risk_score},
         ],
         columns=SUMMARY_COLUMNS,
     )
@@ -257,63 +737,111 @@ def run_step(
             ],
         },
         columns=FRACTION_PLOT_COLUMNS,
-    )
+    ).dropna(subset=["fraction"])
 
     scatter_fig_created = False
-    if not eval_df.empty and {"aligned_fraction_mt", "mapq"}.issubset(eval_df.columns):
-        plt.figure(figsize=(8, 5))
-        plt.scatter(eval_df["aligned_fraction_mt"], eval_df["mapq"], s=8, alpha=0.4, color="#2563eb")
-        plt.axvline(0.50, color="#dc2626", linestyle="--", linewidth=1)
-        plt.axhline(20, color="#dc2626", linestyle="--", linewidth=1)
-        plt.xlabel("Aligned fraction of mitochondrial contig")
-        plt.ylabel("MAPQ")
-        plt.title(f"{sample_id} mito alignment span vs MAPQ")
-        plt.tight_layout()
-        plt.savefig(scatter_fig, dpi=150)
-        plt.close()
-        scatter_fig_created = True
-        print(f"[numt_qc] wrote scatter figure {scatter_fig}", flush=True)
+    scatter_span = validated_numeric_series(
+        eval_df,
+        "aligned_fraction_mt",
+        **NUMT_READ_DOMAINS["aligned_fraction_mt"],
+    )
+    scatter_mapq = validated_numeric_series(
+        eval_df,
+        "mapq",
+        **NUMT_READ_DOMAINS["mapq"],
+    )
+    if scatter_span is not None and scatter_mapq is not None:
+        scatter_df = pd.DataFrame(
+            {"aligned_fraction_mt": scatter_span, "mapq": scatter_mapq}
+        )
+        if not scatter_df.empty:
+            plt.figure(figsize=(8, 5))
+            plt.scatter(
+                scatter_df["aligned_fraction_mt"],
+                scatter_df["mapq"],
+                s=8,
+                alpha=0.4,
+                color="#2563eb",
+            )
+            plt.axvline(0.50, color="#dc2626", linestyle="--", linewidth=1)
+            plt.axhline(20, color="#dc2626", linestyle="--", linewidth=1)
+            plt.xlabel("Aligned reference bases / mitochondrial length")
+            plt.ylabel("MAPQ")
+            plt.title(f"{sample_id} aligned-reference fraction vs MAPQ")
+            plt.tight_layout()
+            plt.savefig(scatter_fig, dpi=150)
+            plt.close()
+            scatter_fig_created = True
+            print(f"[numt_qc] wrote scatter figure {scatter_fig}", flush=True)
     else:
-        print("[numt_qc] skipped scatter figure because aligned span or MAPQ columns were unavailable", flush=True)
+        print(
+            "[numt_qc] skipped scatter figure because aligned-reference fraction or MAPQ "
+            "columns were unavailable",
+            flush=True,
+        )
 
-    plt.figure(figsize=(8, 4))
-    plt.bar(metric_plot_df["metric"], metric_plot_df["fraction"], color="#7c3aed")
-    plt.xticks(rotation=20)
-    plt.ylabel("Fraction of reads")
-    plt.title(f"{sample_id} mito QC fractions used for NUMT-aware warning")
-    plt.tight_layout()
-    plt.savefig(metrics_fig, dpi=150)
-    plt.close()
-    print(f"[numt_qc] wrote metric figure {metrics_fig}", flush=True)
+    metrics_fig_created = False
+    if not metric_plot_df.empty:
+        plt.figure(figsize=(8, 4))
+        plt.bar(metric_plot_df["metric"], metric_plot_df["fraction"], color="#7c3aed")
+        plt.xticks(rotation=20)
+        plt.ylabel("Fraction of reads")
+        plt.title(f"{sample_id} mitochondrial alignment-ambiguity QC fractions")
+        plt.tight_layout()
+        plt.savefig(metrics_fig, dpi=150)
+        plt.close()
+        metrics_fig_created = True
+        print(f"[numt_qc] wrote metric figure {metrics_fig}", flush=True)
+    else:
+        print("[numt_qc] skipped metric figure because no QC fractions were available", flush=True)
 
     metrics_html = "".join(
         [
-            metric_card("Heuristic NUMT risk", risk),
-            metric_card("Risk score", int(risk_score)),
-            metric_card("Low MAPQ fraction", round(low_mapq_fraction, 4)),
-            metric_card("Short-span fraction", round(short_span_fraction, 4)),
-            metric_card("Heavy soft-clip fraction", round(heavy_softclip_fraction, 4)),
-            metric_card("Full-length fraction", round(full_length_fraction, 4)),
+            metric_card("NUMT interpretation", interpretation_status),
+            metric_card("Heuristic risk", reported_risk),
+            metric_card("Low MAPQ fraction", display_metric(low_mapq_fraction)),
+            metric_card("Short-span fraction", display_metric(short_span_fraction)),
+            metric_card("Heavy soft-clip fraction", display_metric(heavy_softclip_fraction)),
+            metric_card(
+                "Primary near-complete aligned-reference fraction",
+                display_metric(primary_full_length_fraction),
+            ),
         ]
     )
     intro_html = (
-        '<p class="muted">This page provides a conservative, heuristic warning layer for '
-        "mitochondrial reads that may be more vulnerable to NUMT-like interpretation issues. "
+        '<p class="muted">This page reports mitochondrial alignment-structure and ambiguity metrics. '
+        "A categorical NUMT warning is shown only when reads were aligned against a recognized whole-genome reference. "
         "The summary is based on read-level alignment structure, including MAPQ, mitochondrial "
-        "span coverage, soft clipping, supplementary alignments, and SA-tag frequency. "
-        "It is intended as QC context rather than a formal NUMT classifier.</p>"
+        "aligned-reference coverage, soft clipping, supplementary alignments, and SA-tag frequency. "
+        "The compatibility field primary_full_length_fraction is a near-complete alignment metric: "
+        "its numerator contains primary records with M, =, and X CIGAR bases covering at least 90% of the "
+        "mitochondrial reference length, while D and N bases are excluded. Supplementary and secondary "
+        "records do not contribute. It is not a direct measure of intact molecule length. "
+        f"The resolved reference scope is {reference_scope}; NUMT interpretation status is {interpretation_status}. "
+        "This remains QC context rather than a formal NUMT classifier.</p>"
         f"<div class='metrics-grid'>{metrics_html}</div>"
     )
 
     body_parts = [
         "<section><h2>NUMT-aware QC summary</h2>" + df_to_html_table(summary_df, max_rows=20) + "</section>",
-        "<section><h2>QC-fraction overview</h2>"
-        + figure_html(metrics_fig, "Fractions contributing to the heuristic NUMT-risk score")
-        + "</section>",
         "<section><h2>Read-level mitochondrial alignment table</h2>"
         + df_to_html_table(eval_df, max_rows=30)
         + "</section>",
     ]
+    if metrics_fig_created:
+        body_parts.insert(
+            1,
+            "<section><h2>QC-fraction overview</h2>"
+            + figure_html(metrics_fig, "Available fractions used by the heuristic NUMT-risk score")
+            + "</section>",
+        )
+    else:
+        body_parts.insert(
+            1,
+            "<section><h2>QC-fraction overview</h2>"
+            "<p class='muted'>No read-level QC fractions could be computed from the available columns.</p>"
+            "</section>",
+        )
     if scatter_fig_created:
         body_parts.insert(
             1,
@@ -332,7 +860,7 @@ def run_step(
 
     render_page(
         report_path,
-        "Mito NUMT-aware QC",
+        "Mito Alignment-Ambiguity QC",
         sample_id,
         f"{mt_contig}:1-{mt_length}",
         intro_html,
@@ -340,10 +868,12 @@ def run_step(
     )
     print(f"[numt_qc] wrote report {report_path}", flush=True)
     outputs = {
+        "status": "ok",
         "summary_path": summary_path,
-        "metrics_figure_path": metrics_fig,
         "report_path": report_path,
     }
+    if metrics_fig_created:
+        outputs["metrics_figure_path"] = metrics_fig
     if scatter_fig_created:
         outputs["scatter_figure_path"] = scatter_fig
     return outputs
@@ -358,6 +888,7 @@ def main() -> None:
         sample_id=args.sample_id,
         mt_contig=args.mt_contig,
         mt_length=args.mt_length,
+        reference_scope=args.reference_scope,
     )
     for path in outputs.values():
         print(f"Wrote {path}")

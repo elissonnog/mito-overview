@@ -1,2 +1,2 @@
-consequence_class	candidate_sites	mean_heteroplasmy
-control_region_variant	1	0.3
+consequence_class	candidate_sites	candidate_variants	annotation_rows	mean_alt_allele_fraction	mean_heteroplasmy
+control_region_variant	1	1	1	0.3	0.3

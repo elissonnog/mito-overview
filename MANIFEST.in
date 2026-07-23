@@ -1,0 +1,18 @@
+include CHANGELOG.md CITATION.cff CONTRIBUTING.md environment.yml
+include examples/README.md
+recursive-include .github/workflows *.yml
+recursive-include docs *.md
+recursive-include resources *.fa *.gtf *.json *.md *.yaml
+recursive-include scripts *.pl *.py *.sh
+recursive-include tests *.csv *.json *.py *.sh *.tsv *.txt
+prune resources/zenodo
+exclude scripts/capture_zenodo_reservation.py
+recursive-include examples/configs *.env
+recursive-include examples/synthetic_data *.md *.fa *.sam *.tsv *.gtf *.vcf
+recursive-include examples/expected_reports/TOY-001_output *
+recursive-include examples/expected_reports/TOY-SR-001_output *
+include examples/public_validation/*.sha256
+include examples/public_validation/*.tsv
+recursive-include examples/public_validation/GM11906_MERRF_shortread *
+recursive-include examples/public_validation/GM12878_ONT_longread *
+global-exclude .DS_Store *.py[cod]

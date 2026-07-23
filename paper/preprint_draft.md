@@ -12,196 +12,229 @@ Elisson Lopes^1,* and Xiaowu Gai^1
 ## Correspondence
 * Correspondence: Elisson Lopes, Medical College of Wisconsin, Milwaukee, Wisconsin, USA
 
-## Software version
-This draft describes `mito-overview` version `0.2.1` at [elissonnog/mito-overview](https://github.com/elissonnog/mito-overview). The manuscript is framed as a workflow/resource software preprint and does not claim clinical diagnostic validation, calibrated detection limits, deletion-truth benchmarking, pathogenicity classification, or formal NUMT-classifier performance.
+## Software version and evidence status
+This draft describes the unreleased `mito-overview` version `0.3.0` release candidate at [elissonnog/mito-overview](https://github.com/elissonnog/mito-overview). The evidence reported here is a validation snapshot dated 20 July 2026. A historical public-data matrix and pre-review deterministic checks are complete for earlier clean candidate commits, whereas reruns on the exact final commit, push-event CI evidence, the final audit packet, the `v0.3.0` tag, release date, and archival DOI remain pending release gates. The manuscript therefore describes release-candidate workflow/resource behavior rather than a final release.
 
 ## Abstract
-Mitochondrial DNA analysis from Oxford Nanopore Technologies (ONT) data often remains fragmented across single-purpose callers, external annotation resources, and custom review steps. This fragmentation is especially limiting for long-read mitochondrial workflows because interpretation may depend not only on variant presence, but also on deletion structure, mtDNA burden proxies, read-level co-segregation, circular-genome edge effects, and quality signals relevant to nuclear mitochondrial DNA segments (NUMTs). We developed `mito-overview`, a modular mtDNA interpretation and reporting framework that converts aligned ONT mitochondrial inputs into layered tabular summaries, figures, and self-contained HTML reports. The current core implementation includes mitochondrial extraction, QC, heteroplasmy summarization, deletion screening, mt:nuclear depth proxy estimation, feature annotation, co-segregation, gene-level aggregation, NUMT-aware QC, identity QC, variant consequence summaries, circularity-aware QC, and an exploratory methylation layer. Two additional human-only enrichment layers are implemented for haplogroup classification and external mtDNA annotation through optional Phy-Mer-compatible and mvTool-style interfaces exercised in the repository with local fixtures. The repository provides a command-line entry point, environment specification, synthetic workflow-validation inputs, tracked example output bundles, and reproducible regeneration of report pages `01` through `14`; these assets support workflow execution and output reproducibility rather than analytical or clinical performance claims. `mito-overview` is intended as a disease-agnostic research framework for ONT mtDNA evidence synthesis and report generation rather than as a clinical diagnostic test.
+Mitochondrial DNA (mtDNA) analysis from aligned sequencing data often remains distributed across single-purpose callers, external annotation resources, and custom review steps. Long-read interpretation can additionally require structural screening, same-read co-occurrence, circular-reference checks, and alignment-ambiguity metrics, while some of these layers are not applicable to short-read or targeted-mt assays. We developed `mito-overview`, a modular, mode-gated workflow that converts BAM or CRAM inputs into synchronized tabular summaries, figures, and HTML reports. The unreleased version 0.3.0 release candidate uses a shared filtered allele-observation engine for candidate-site selection and co-occurrence analysis, an experimental within-sample mt:nuclear depth ratio only when nuclear context is evaluable, reference-scope-dependent suppression of categorical NUMT interpretation, explicit module-status semantics, and offline-by-default optional mvTool annotation. A six-key standalone input contract separates normal execution from deployment-specific assumptions. Local implementation evidence comprised 239 passing deterministic tests and four passing synthetic smoke workflows. A prespecified 13-case public matrix passed at a historical clean v0.3.0 candidate commit, including fixed-BAM repeatability and descriptive filter-dependence profiles; exact-final-commit reruns remain a release gate. In pooled GM11906 short-read data, `m.8344A>G` had 1,027 callable observations, 740 alternate observations, and an observed alternate allele fraction of 0.720545. In a deterministic 1,000-query-name GM12878 ONT subset, the workflow reported 16 candidate sites and 13 singleton CIGAR-deletion bins. These examples demonstrate bounded workflow execution and output contracts; they do not establish diagnostic performance, clinically calibrated low-fraction detection, pathogenicity, deletion accuracy, absolute mtDNA copy number, formal NUMT classification, or equivalence between sequencing modalities.
 
 ## Keywords
-mitochondrial DNA; Oxford Nanopore; heteroplasmy; deletions; NUMT; haplogroup; reporting workflow; bioinformatics software
+mitochondrial DNA; Oxford Nanopore; alternate allele fraction; deletions; NUMT; haplogroup; reporting workflow; bioinformatics software
 
 ## Introduction
-Human mitochondrial DNA (mtDNA) is a small circular genome whose interpretation is biologically and technically distinct from standard linear nuclear analysis. Disease-relevant signal can arise through heteroplasmic single-nucleotide variants, large deletions or rearrangements, mtDNA burden differences, and molecule-level structure. At the same time, interpretation can be distorted by extreme depth, circular-reference edge effects, and nuclear mitochondrial DNA segments (NUMTs), the latter of which can generate pseudo-heteroplasmy if they are not handled carefully [1,2]. Oxford Nanopore Technologies (ONT) long reads are well suited to this context because they preserve molecule-scale information and can improve structural interpretation, but they also increase the number of analytical layers that need to be reviewed coherently [3-6].
+Human mitochondrial DNA is a small circular genome whose analysis is biologically and technically distinct from standard linear nuclear analysis. Relevant signals can include heteroplasmic single-nucleotide variation, large deletions or rearrangements, mtDNA burden differences, and molecule-level structure. Interpretation can be distorted by extreme depth, circular-reference edge effects, and nuclear mitochondrial DNA segments (NUMTs), which can generate apparent mtDNA variation if not handled carefully [1,2]. Oxford Nanopore Technologies (ONT) long reads preserve molecule-scale information and can improve structural interpretation, but they also increase the number of analytical layers that need to be reviewed coherently [3-6].
 
-The current mtDNA software ecosystem includes specialized resources for haplogroup classification, variant interpretation, and annotated mtDNA reporting. Examples include Phy-Mer for alignment-free haplogroup classification [7], HaploGrep 3 for phylogenetic classification and QC [8], mvTool within MSeqDR for mtDNA annotation and nomenclature handling [9], MitoVisualize for structure-aware mtDNA interpretation [10], MToolBox for automated mtDNA reconstruction and prioritization [11], and mtDNA-Server 2 for human mtDNA variant analysis and interactive reporting [12]. ONT-focused analysis tools are also emerging for long-read heteroplasmy analysis and NUMT-aware read discrimination [6,13]. However, there remains a need for a compact sample-level workflow that integrates multiple ONT-relevant layers into one report bundle while remaining reproducible, inspectable, and portable.
+The mtDNA software ecosystem includes specialized resources for haplogroup classification, variant interpretation, and annotated reporting. Examples include Phy-Mer for alignment-free haplogroup classification [7], HaploGrep 3 for phylogenetic classification and quality control [8], mvTool within MSeqDR for annotation and nomenclature handling [9], MitoVisualize for structure-aware interpretation [10], MToolBox for automated mtDNA reconstruction and prioritization [11], and mtDNA-Server 2 for human mtDNA variant analysis and interactive reporting [12]. ONT-focused approaches are also emerging for long-read heteroplasmy analysis and NUMT-aware read discrimination [6,13]. These resources remain the appropriate primary methods for their specialized tasks.
 
-`mito-overview` was developed to address that need. It is not intended to replace specialized mtDNA tools or to serve as a best-in-class caller for each event type. Instead, it provides a modular long-read mtDNA evidence-synthesis and reporting framework that organizes long-read-aware analytical layers into one machine-readable and human-readable sample bundle.
+`mito-overview` addresses a narrower need: a compact, per-sample workflow that organizes multiple mtDNA evidence layers into one inspectable bundle. It is not intended to replace specialized callers or classifiers. The unreleased version 0.3.0 release candidate emphasizes filtered observations, explicit mode and status gating, reference-scope-aware interpretation, and reproducible reporting from fixed inputs.
 
-## Software scope and design principles
-`mito-overview` was designed around five principles.
+## Software scope and design
+The workflow follows five design principles. First, each analytical question is implemented as an independent step with synchronized TSV, figure, and HTML outputs. Second, provenance records the reference, mitochondrial contig, thresholds, modes, and input sources. Third, unsupported, unevaluable, and unconfigured analyses are represented explicitly rather than silently omitted. Fourth, the reproducible core is separated from optional human-specific enrichments and network services. Fifth, methylation is retained only as exploratory context, consistent with studies reporting no evidence for CpG methylation above modeled background in human mtDNA and no evidence for extensive non-CpG mtDNA methylation in reanalysis studies [14,15].
 
-First, each analytical question is implemented as an independent step that writes its own summaries, figures, and report page. Second, report generation is paired with TSV outputs so that visual review does not come at the expense of downstream reuse. Third, provenance is carried explicitly, including the reference build, mitochondrial contig name, threshold settings, and input-source tracing. Fourth, the reproducible public core is kept separate from optional human-specific enrichments that depend on external tools or services. Fifth, the methylation layer is retained as exploratory context rather than elevated to a primary biological or diagnostic claim, consistent with recent studies reporting no evidence for CpG methylation above modeled background in human mtDNA and no evidence for extensive non-CpG methylation in reanalysis studies [14,15].
+The implementation contains `validate`, `stage`, `extract`, 14 analytical/reporting steps, and `sync_bioinfo`. The 12 core report pages cover mitochondrial QC, alternate-allele screening, CIGAR-deletion screening, an experimental within-sample mt:nuclear depth ratio, feature annotation, same-read co-occurrence, gene-level aggregation, alignment-ambiguity/NUMT-aware QC, identity QC, consequence summaries, circularity-aware QC, and exploratory methylation. Two optional human-only pages provide a Phy-Mer-compatible haplogroup interface and mvTool-style annotation. Long-read mode enables molecule- and alignment-structure layers when their inputs are available. Short-read mode retains applicable layers and emits explicit status pages for unsupported long-read analyses. Assay type further gates analyses requiring nuclear context.
 
-## Implementation and workflow
-The workflow is driven by an environment-style configuration and accepts aligned BAM or CRAM inputs from which mitochondrial reads can be extracted. Configuration records the sample identifier, reference build, mitochondrial contig, thresholds, output paths, and optional integration settings. The public repository packages the workflow as a Python-based framework with a shell runner, CLI entry point, example configuration, smoke tests, and reproducible example-bundle builders.
+The evaluated scope is a workflow/resource package. Clair3, NanoDel, in-pipeline modkit execution, absolute copy-number estimation, and deployment-specific integrations are outside the v0.3.0 release-candidate evidence presented here. Human mtDNA has the most complete public configuration; non-human use is limited to reference-driven core modules unless separately evaluated.
 
-The current implemented workflow consists of 18 steps: `validate`, `stage`, `extract`, 14 analytical/reporting steps, and `sync_bioinfo`. Of the 14 report-generating analytical steps, 12 comprise the general public-core analysis and 2 are optional human-only enrichment layers. In the long-read default profile, the 12 public-core analytical pages are:
+## Methods
 
-1. mitochondrial QC
-2. heteroplasmy
-3. deletion screening
-4. mt:nuclear depth proxy
-5. mitochondrial feature annotation
-6. co-segregation
-7. gene summary
-8. NUMT-aware QC
-9. identity QC
-10. variant consequence summary
-11. circularity-aware QC
-12. exploratory methylation
+### Standalone input and validation contract
+The minimal standalone configuration requires six keys: `WORK_ROOT`, `RUN_NAME`, `SAMPLE_ID`, `REF_FASTA`, `SOURCE_ALIGN_FILE`, and `MT_CONTIG`. Alignment mode is inferred from the `.bam` or `.cram` suffix, and the suffix, any explicit `SOURCE_ALIGN_MODE`, and the encoded BAM/CRAM container must agree; this prevents renamed containers from bypassing format-specific index and CRAM reference checks. Mitochondrial length is inferred from the FASTA index when `MT_LENGTH` is omitted. Explicit generic VCF and bedMethyl sidecars take precedence over legacy `wf-human-variation` discovery. Missing optional sidecars do not terminate the core workflow and instead produce `not_configured` outputs.
 
-Two optional human-only enrichment pages are also implemented and, in the public repository, are exercised with local fixtures to verify interface wiring and report generation rather than benchmarked against live external resources:
+Before analytical execution, validation checks the FASTA index, BAM or CRAM index, mitochondrial contig, configured or inferred mitochondrial length, and CRAM reference accessibility. A configured length must agree with the FASTA index. The validation step cannot be omitted during normal execution. This contract permits standalone BAM/CRAM operation without deployment-specific paths or inputs.
 
-13. Phy-Mer haplogroup classification
-14. mvTool-style external mtDNA annotation
+### Public-data reference, subsampling, and alignment
+Both public examples were aligned to the 16,569-bp revised Cambridge Reference Sequence accession `NC_012920.1`, supplied as an mt-only FASTA. For GM11906, BWA-MEM was selected because the input comprised pooled paired-end short reads. The tracked provenance records BWA `0.7.19-r1273` and samtools `1.23.1` with the following command template:
 
-The core pages are intended to run without external network services. For real-world use, the optional pages depend on the underlying external resources and their terms or availability.
+```bash
+bwa mem -t {threads} {reference_fasta} {combined_r1} {combined_r2} | samtools sort -@ {threads} -o {alignment_bam}
+```
 
-The public repository also includes a reduced short-read compatibility profile that is gated by `READ_MODE=short` together with assay-aware settings such as `ASSAY_TYPE=targeted_mt|wgs`. This auxiliary profile was added without changing the long-read default behavior. In the current targeted-mt public example, the active short-read-compatible layers are mitochondrial QC, heteroplasmy, feature annotation, gene summary, variant consequence summary, and optional mvTool-style annotation. Long-read-specific layers that are not supported in this short-read configuration are emitted as explicit `not_applicable` pages rather than being silently interpreted.
+The GM12878 targeted-mt ONT run `SRR18110025` from BioProject `PRJNA809571` was generated by Vandiver et al. [16]. Because the full source contained 193,043 FASTQ records and the example was intended to provide bounded workflow evidence rather than full-run characterization, exactly 1,000 query names were selected by the smallest seeded SHA-256 scores under `smallest_sha256_seeded_query_names_v1`, using seed `mito-overview-v0.3.0-GM12878-SRR18110025`. This fixed-size hash rule was chosen to make inclusion deterministic and auditable; it was not intended to produce a statistically representative sample. Minimap2 with the `map-ont` preset was selected for these ONT long reads. The tracked provenance records minimap2 `2.31-r1302` and samtools `1.23.1` with the following mapped-only alignment command template:
 
-## Algorithmic calculations and output semantics
-The workflow uses deliberately simple, inspectable calculations so that each report page can be audited from TSV outputs. Let the mitochondrial contig length be \(L\), the per-base coverage at mitochondrial position \(i\) be \(d_i\), and the configured heteroplasmy thresholds be \(D_{\min}\) and \(V_{\min}\). The mean mitochondrial depth reported by the QC layer is:
+```bash
+minimap2 -t {threads} -ax map-ont {reference_mmi} {deterministic_subset_fastq} | samtools view -@ {threads} -b -F 4 | samtools sort -@ {threads} -o {alignment_bam}
+```
 
-$$
-\bar{d}_{MT} = \frac{1}{L}\sum_{i=1}^{L} d_i
-$$
+### Shared filtered allele-observation method
+Candidate-site selection and same-read co-occurrence use the same implementation in `mito_overview/allele_counting.py`. At a reference position, let $n_A$, $n_C$, $n_G$, and $n_T$ be the numbers of passing canonical base observations. Callable depth is
 
-At each position, the heteroplasmy layer counts A, C, G, and T support with no base-quality filter in the public implementation, identifies the most supported non-reference base as the candidate alternate allele, and reports:
+\[
+D_{callable}=n_A+n_C+n_G+n_T.
+\]
 
-$$
-h_i = \frac{a_i}{d_i}
-$$
+For reference base $r$, the alternate count is the largest non-reference canonical base count,
 
-where \(a_i\) is the count of the most supported non-reference base. A candidate site is emitted when \(d_i \ge D_{\min}\), \(h_i \ge V_{\min}\), and both the reference and alternate bases are canonical A/C/G/T. Forward and reverse alternate-support counts are then added for emitted candidates as an audit field rather than as a hidden filter.
+\[
+n_{alt}=\max_{b \in \{A,C,G,T\}\setminus\{r\}} n_b,
+\]
 
-Deletion screening is intentionally reported as a structural screen rather than as a finalized structural-variant caller. The deletion step scans long-read CIGAR operations for deletion segments of size at least \(S_{\min}\), records event start/end/size, bins event boundaries in 10-bp units, and summarizes each bin by unique supporting reads and size distribution. The primary-read support fraction for a deletion cluster \(b\) is:
+and the observed alternate allele fraction is
 
-$$
-f_b = \frac{n_b}{N_{primary}}
-$$
+\[
+AF_{alt}=\frac{n_{alt}}{D_{callable}}.
+\]
 
-where \(n_b\) is the number of unique supporting reads in the cluster and \(N_{primary}\) is the number of primary mitochondrial alignments scanned.
+The canonical machine-readable field is `alt_allele_fraction`; `heteroplasmy_fraction` remains only as a deprecated compatibility alias for 0.x outputs. Candidate emission requires canonical reference and alternate bases, $D_{callable} \geq D_{min}$, and $AF_{alt} \geq AF_{min}$. An all-reference position does not receive a fabricated alternate candidate. Forward and reverse alternate counts are audit fields, with `alt_count = alt_forward + alt_reverse`.
 
-For WGS-compatible contexts, the mt:nuclear depth proxy compares mean mitochondrial depth to mean depth across selected nuclear reference windows:
+Version 0.3.0 defaults require base quality at least 13, mapping quality at least 20, and mean read quality at least 10. The default has no pileup depth cap, uses excluded SAM flag mask 3844 (unmapped, secondary, quality-control-fail, duplicate, and supplementary records), and suppresses overlapping paired-read observations. These are reporting defaults, not clinically calibrated thresholds. Package candidate defaults are `MIN_CALLABLE_DEPTH=100` and `MIN_ALT_ALLELE_FRACTION=0.02`; the public examples retain their separately documented candidate thresholds while varying only observation-quality filters. Deterministic known-answer tests include more than 8,000 accepted observations without hidden truncation, explicit depth-cap accounting when a cap is requested, all configured quality and flag exclusions, overlap suppression, exact strand accounting, and identical passing-observation logic in candidate selection and co-occurrence.
 
-$$
-r_{MT:nuc} = \frac{\bar{d}_{MT}}{\bar{d}_{nuclear\ windows}}
-$$
+### Coverage, CIGAR-deletion screening, and same-read co-occurrence
+For mitochondrial contig length $L$ and per-base depth $d_i$, mean mitochondrial depth is
 
-This value is a coverage proxy only. It is emitted as `not_applicable` for targeted-mt configurations where nuclear depth context is not interpretable.
+\[
+\overline{D}_{mt}=\frac{1}{L}\sum_{i=1}^{L}d_i.
+\]
 
-The co-segregation page uses selected high-ranking candidate sites and compares alt-supporting read sets. For two sites \(p\) and \(q\), the reported Jaccard index is:
+CIGAR-deletion output is a candidate structural screen rather than a structural-variant call set. The workflow scans primary and supplementary long-read alignments for CIGAR deletion operations meeting the configured size threshold, groups their event boundaries into 10-bp bins, and reports unique query-name support and size summaries. Supplementary-alignment or `SA`-tag presence is summarized separately as alignment-structure context and does not itself create a CIGAR-deletion bin. For CIGAR-deletion bin $b$, the primary-alignment support fraction is
 
-$$
-J(p,q) = \frac{|R_p^{alt} \cap R_q^{alt}|}{|R_p^{alt} \cup R_q^{alt}|}
-$$
+\[
+f_b=\frac{n_b}{N_{primary}},
+\]
 
-where \(R_p^{alt}\) and \(R_q^{alt}\) are sets of reads supporting the alternate allele at each site among reads covering the selected positions. The gene summary aggregates candidate-site counts, heteroplasmy summaries, co-segregation-selected sites, and deletion-cluster overlaps by mitochondrial feature intervals.
+where $n_b$ is the number of unique supporting query names and $N_{primary}$ is the number of primary mitochondrial alignments scanned. No sensitivity or specificity is inferred without orthogonal structural truth.
 
-The NUMT-oriented alignment QC page is a warning-oriented heuristic, not a classifier. It calculates fractions of primary alignments with low MAPQ, very low MAPQ, short aligned mitochondrial span, heavy soft-clipping, supplementary/SA-tag evidence, and low full-length mitochondrial read fraction. The page reports the component metrics and a categorical heuristic risk label so that users can decide whether additional NUMT-aware review is needed.
+For selected candidate sites $p$ and $q$, let $C_{pq}$ denote the reads with a passing callable observation at both sites after applying the shared allele-observation filters. The pair-conditioned alternate-read sets are
 
-## Public workflow and reproducibility assets
-The public evidence set was designed as an ordered workflow and reproducibility ladder rather than a single test. The sequence was: package and runtime integrity, long-read workflow regression stability, reproducible synthetic bundle generation, tracked public long-read asset inspection, reduced short-read behavior under explicit gating, real-data short-read proof-of-principle rerun, and fresh-clone reproducibility after publication. This ordering was used so that later biological interpretation would only be considered after earlier structural and reproducibility checks had passed.
+\[
+A_p^{(pq)}=\{r\in C_{pq}:r_p=a_p\},\qquad
+A_q^{(pq)}=\{r\in C_{pq}:r_q=a_q\},
+\]
 
-Tracked public assets include synthetic validation inputs (`TOY-001`), tracked expected example bundles, local fixtures for the optional human-only enrichment layers, a public GM12878 ONT long-read asset pack, and an auxiliary real-data short-read asset pack based on pooled GM11906 public runs. The public validation path includes:
+where $a_p$ and $a_q$ are the selected alternate alleles. Same-read co-occurrence is then summarized as
 
-- `python -m mito_overview.cli --list-steps`
-- `./tests/smoke_public_pipeline.sh`
-- `./scripts/build_public_example_bundle.sh`
-- `./tests/smoke_public_pipeline_shortread.sh`
-- `./scripts/build_public_shortread_example_bundle.sh`
-- `./scripts/run_public_longread_validation_gm12878.sh`
-- `./scripts/run_public_shortread_validation_gm11906.sh`
+\[
+J_{shared}(p,q)=
+\frac{|A_p^{(pq)}\cap A_q^{(pq)}|}
+{|A_p^{(pq)}\cup A_q^{(pq)}|}.
+\]
 
-In the release-candidate validation packet, the CLI checks, three synthetic smoke tests, long-read and short-read synthetic bundle rebuilds, and the public GM11906 reduced short-read rerun passed from the local source tree. A fresh GM12878 public ONT rerun was completed on 23 June 2026 and used to refresh the tracked asset pack; the later release-candidate check inspected those tracked outputs without re-downloading the approximately 1.9 GB source FASTQ. The tracked long-read and short-read example bundles contain report pages, figures, TSV outputs, and helper assets appropriate to their respective profiles. Analytical TSV, HTML, and figure outputs are intended to remain stable across rebuilds. The bundled mitochondrial BAM and BAM index are included for reproducibility and inspection, but byte-level identity is not guaranteed across rebuilds because compression and indexing can vary by environment.
+This conditional statistic is restricted to the shared callable read universe $C_{pq}$; it is not the Jaccard index of the two unconditioned genome-wide candidate read sets. The common-universe size and pair-conditioned support counts are reported for audit. The statistic is a descriptive same-read measure, not a biological phasing benchmark, and conditioning can change its magnitude relative to an unconditioned read-set statistic.
 
-These workflow and reproducibility checks establish installation integrity, step connectivity, profile gating, and output-contract stability. They do not establish analytical accuracy, detection limits, cohort-scale performance, or clinical validity. The synthetic datasets are intentionally minimal and were designed to validate package behavior rather than biological realism.
+### Within-sample mt:nuclear depth ratio
+When the assay and reference provide evaluable nuclear context, the `mito_copy_number` page reports only the within-sample mt:nuclear depth ratio
 
-The repository also includes an auxiliary short-read real-data proof-of-principle example. This example pools three public GM11906 scATAC-seq runs (`SRR10804585`, `SRR10804590`, and `SRR10804657`) associated with the GM11906 single-cell mtDNA/chromatin dataset reported by Lareau and colleagues [16]. Public sample metadata identify GM11906 as a lymphoblastoid cell line carrying the literature-associated `m.8344A>G` marker [18], and `m.8344A>G` has been reported in MERRF-associated `MT-TK` disease context [17]. The workflow executes this example in `READ_MODE=short` with `ASSAY_TYPE=targeted_mt`. Under this reduced profile, long-read-specific layers are emitted as explicit `not_applicable` pages while the applicable core layers remain active. In the bundled example output and fresh release-candidate rerun, the workflow reports `m.8344A>G` in the pooled mt-only alignment with depth `1041`, alternate count `754`, estimated heteroplasmy fraction `0.724304`, and `MT-TK` / `tRNA_variant` annotation. This example was included to demonstrate real-data execution under the reduced short-read profile and to show how a previously reported site is represented in the output; it is not presented as a modality-matched benchmark, a calibrated heteroplasmy study, pathogenicity classification, or clinical validation. It also does not establish accurate mt:nuclear copy-number estimation for non-WGS assays or definitive NUMT discrimination from an mt-only alignment strategy.
+\[
+R_{mt:nuclear}=\frac{\overline{D}_{mt}}{\overline{D}_{nuclear}}.
+\]
 
-## Relation to current ONT mtDNA evidence
-Published validation evidence currently most clearly supports ONT mtDNA analysis for structural interpretation and moderate-fraction heteroplasmy analysis in validated assay contexts. Long-read sequencing has been shown to improve detection and interpretation of mtDNA deletions and rearrangements, including cases where apparent single-deletion events resolve into more complex structures under long-read inspection [3,4]. A recent ONT heteroplasmy validation study reported strong correlation with expected heteroplasmy above an approximately 12% detection threshold, but high-level variants were underreported and diagnostic use required stringent validation [5].
+The ratio is not multiplied by two and is not interpreted as mtDNA copies per diploid cell. Outputs record the requested and valid nuclear-window counts. Missing or zero nuclear depth never yields a numeric zero ratio: the ratio is `NA` (an empty machine-readable value), with `status=not_evaluable` and `reason_code=no_valid_nuclear_windows`. Targeted-mt assays yield `status=not_applicable`. A deterministic known-answer fixture with mitochondrial depth 100 and nuclear depth 10 produces exactly 10.0; negative fixtures cover missing mitochondrial evidence and absent or zero nuclear denominators.
 
-These publications define the current evidentiary context for interpreting `mito-overview` outputs, but they do not constitute direct performance validation of this workflow. In this manuscript, internal evidence is limited to workflow execution checks, reproducible example regeneration, fixture-based interface testing, and bounded public long- and short-read proof-of-principle examples. In its current form, the framework is intended to organize long-read-aware QC, heteroplasmy summaries, deletion screening, mtDNA burden context, and report generation. It is not presented here as a validated low-VAF diagnostic caller. Likewise, the methylation page is retained as an exploratory context layer only. This is consistent with studies that found no evidence for CpG methylation above modeled background in human mtDNA by single-molecule ONT analysis and no evidence for extensive non-CpG mtDNA methylation in reanalysis studies [14,15].
+### Reference scope, alignment ambiguity, and coordinates
+`REFERENCE_SCOPE` accepts `auto`, `mt_only`, `whole_genome`, or `custom`. A reference containing only the configured mitochondrial contig resolves to `mt_only`. Automatic `whole_genome` assignment requires an exact chromosome-length profile for GRCh37, GRCh38, GRCm38, or GRCm39, including the assembly-specific mitochondrial length and no additional contigs; standard chromosome-name prefixes may differ, but scaled, hybrid, incomplete, modified, or augmented profiles resolve to `custom`. The alignment header is evaluated independently. Effective `whole_genome` scope requires the FASTA index and alignment sequence dictionary to match the same recognized complete profile; a reduced, discordant, or ambiguous alignment dictionary conservatively downgrades interpretation. The same exact FASTA profile supports species inference when a generic filename and the six-key input contract are used. An explicit false whole-genome override on an incomplete, augmented, discordant, or unrecognized reference contract is rejected.
 
-NUMT-aware interpretation further emphasizes the need for a dedicated mtDNA workflow rather than simple variant listing. NUMTs are widespread and dynamic in human genomes [1], and published reinterpretations have shown that apparent mtDNA findings can change after better NUMT-aware review [2]. Recent tools such as MitSorter reinforce the value of explicit read-level discrimination strategies in the ONT setting [13]. In `mito-overview`, this motivates separate alignment and circularity warning layers. The current NUMT-oriented page summarizes heuristic alignment signals and is not a read-level mtDNA-versus-NUMT classifier.
+For CRAM input, preflight establishes reference identity from sequence-dictionary MD5 metadata and the supplied FASTA sequence rather than from successful decoding of an observed mitochondrial record. A missing or discordant mitochondrial reference MD5 fails preflight, including for an empty or no-mitochondrial-record CRAM, so a same-length but incorrect reference cannot pass silently.
 
-## Results and current release scope
-The results reported here are repository-execution and reproducibility results rather than analytical performance results. The current version of `mito-overview` produced a release-candidate workflow and reproducibility pass across package checks, long-read regression tests, reproducible synthetic example-bundle generation, reduced short-read profile checks, a previously refreshed public long-read asset pack, and a fresh public short-read proof-of-principle rerun. The public-core workflow produces 12 analytical pages, and the optional enrichment boundary extends that to 14 pages when the human-only Phy-Mer-compatible and mvTool-style layers are exercised.
+For `mt_only` and `custom` references, raw alignment-span, mapping-quality, clipping, and supplementary-alignment metrics remain available, but categorical NUMT-risk interpretation is suppressed. The output records `numt_interpretation_status=not_evaluable` and a scope-specific reason code. Under recognized whole-genome scope, a categorical warning is calculated only when the read table contains usable MAPQ, mitochondrial aligned-fraction, soft-clip fraction, `SA`-tag, primary, and supplementary indicators; at least one valid primary alignment is present; and the QC summary contains one numeric full-length fraction. Missing, malformed, or nonnumeric required evidence yields `not_evaluable` and an explicit reason rather than zero-filled metrics or a low-risk label. The compatible report filename is retained, while the page is titled alignment-ambiguity QC. Whole-genome categorical warning calculations remain bounded heuristics and are not formal NUMT classification. The generated mitochondrial BED interval is exactly zero-based and half-open: `MT_CONTIG\t0\tMT_LENGTH`.
 
-### Package and workflow integrity
-Package and runtime checks passed, indicating that the public installation can expose the expected workflow steps and import the current code without immediate syntax or load-time breakage. This result supports structural usability of the package, but not biological correctness by itself.
+### Optional mvTool integration
+`MVTOOL_MODE` has three explicit states: `disabled`, `fixture`, and `network`. The default is `disabled`, with an empty default URL. Disabled mode writes deterministic `not_configured` output for report page 14 without constructing an HTTP session. Fixture mode reads bundled deterministic annotations for local validation. Network mode is opt-in; an explicit network failure yields `unavailable` with a reason code, does not fabricate annotations, and does not terminate otherwise valid core reporting. A successful fixture or network response must map every submitted unique candidate exactly once and may not contain missing, duplicate, or unexpected input identifiers; response-integrity failure is reported as `unavailable` rather than partial success. Deterministic tests cover disabled no-network behavior, exact fixture content, a mocked successful network response, timeout handling, malformed-response handling, and response-identity mismatches. Live service content and availability were not validated by the public matrix.
 
-The long-read synthetic smoke workflow also passed. In the public synthetic validation path, report pages `01` through `14` were produced successfully, indicating that the long-read public core remains intact and that the optional human-only enrichment layers remain connected in the public codebase. This result supports workflow continuity and regression stability rather than cohort-scale biological benchmarking.
+### Status and verdict semantics
+Module states are restricted to `ok`, `not_configured`, `not_applicable`, `not_evaluable`, `unavailable`, and `failed`. `not_configured` means an optional input or integration was not supplied; `not_applicable` means the read or assay mode excludes the module; `not_evaluable` means the module ran but its available reference or denominator cannot support the interpretation; `unavailable` is reserved for failure of an explicitly requested external service; and `failed` denotes required execution failure. Validation verdicts (`PASS`, `FAIL`, `XFAIL`, `SKIP`, and `BLOCKED`) are separate from module states. A case cannot pass when required input or evidence is unavailable.
 
-### Reproducible example-bundle generation
-Long-read example-bundle regeneration from tracked public assets passed. This result supports the claim that the README and manuscript figures are tied to rebuildable repository outputs rather than one-off local runs. The same logic was confirmed for the reduced short-read bundle: short-read example-bundle regeneration from tracked repository assets also passed, supporting internal consistency of the public short-read documentation path.
+## Validation design
 
-### Reduced short-read profile behavior
-The short-read synthetic smoke workflow passed under explicit short-read gating. Active short-read-compatible layers executed successfully, while unsupported long-read-specific layers were emitted as explicit `not_applicable` pages. This result supports the claim that the short-read profile behaves honestly as a reduced compatibility path and does not silently reuse long-read-only logic in an unsupported setting.
+### Local deterministic implementation evidence
+Local validation was performed on macOS with Python 3.12.13, samtools/htslib 1.23.1, pysam 0.24.0, NumPy 2.5.1, pandas 3.0.3, Matplotlib 3.11.0, Pillow 12.3.0, Requests 2.34.2, and pytest 9.1.1. The corrected deterministic unit and known-answer suite reported exactly 239 passing tests in 17.07 s. CLI step listing exited successfully; minimal generic BAM and CRAM configurations each passed strict dry-run and full workflow execution.
 
-### Real public short-read proof-of-principle
-The pooled GM11906 proof-of-principle example passed on the validated local Mac environment. In this real public dataset, the reduced short-read profile reported `m.8344A>G` with depth `1041`, alternate count `754`, estimated heteroplasmy fraction `0.724304`, `MT-TK` feature context, and `tRNA_variant` consequence annotation. This result supports real-data execution and representation of a literature-associated mtDNA marker under the reduced short-read profile. It does not support a claim of full short-read benchmarking, clinical calibration of heteroplasmy estimates, pathogenicity classification, accurate mt:nuclear copy-number estimation for non-WGS assays, definitive NUMT discrimination from an mt-only alignment strategy, or validation of long-read-only analytical layers in short-read mode.
+Four synthetic smoke workflows were run locally:
 
-### Published repository state
-Fresh-clone validation is part of the release-freeze procedure and should be repeated after the final merge and tag. The local release-candidate evidence reported here supports source-tree reproducibility at the tested state rather than portability across every operating system or compute environment.
+| Workflow | Observed local result |
+| --- | --- |
+| `tests/smoke_public_pipeline.sh` | PASS; all applicable long-read steps completed, including fixture mvTool and methylation paths |
+| `tests/smoke_public_pipeline_shortread.sh` | PASS; short-read-compatible core steps completed and long-read-only layers reported `not_applicable` |
+| `tests/smoke_public_pipeline_longread_nomethyl.sh` | PASS; core long-read reporting completed and methylation reported `not_configured` |
+| `tests/smoke_standalone_minimal.sh` | PASS; the six-key standalone contract completed without deployment-specific inputs |
 
-Taken together, these results support a workflow-level claim: `mito-overview` is a reproducible public long-read mtDNA reporting package with a bounded public ONT asset pack and an auxiliary reduced short-read compatibility path. The strongest support is for workflow reproducibility and package behavior rather than broader performance benchmarking. These results do not support a stronger claim of analytical or clinical validation, full modality-matched short-read validation, or replacement of specialized clinical or deletion-specific tools.
+The 239-test result and four smoke results characterize the tested release-candidate state within the stated environment and evidence boundaries.
+
+### Public-data design and provenance
+The public validation matrix was executed twice at default observation filters and once under each descriptive filter profile at historical clean validation source commit `dc09114e1a0dcec2baf83d94549dfa41f3e49c8b`. Repeatability comparisons normalized TSV outputs. HTML and PNG outputs were evaluated for inventory, readability, dimensions, structure, and visual consistency rather than byte identity. These values are release-candidate supporting evidence; rerunning the matrix and binding its evidence to the exact final v0.3.0 commit remain release gates.
+
+The GM11906 example pooled paired-end reads from `SRR10804585`, `SRR10804590`, and `SRR10804657`. The analyzed BAM SHA-256 was `53ca478465cfdaee4eb5d7e59e14d3abfb0c72d7b366afe5e96041638b6fb6f8`.
+
+The GM12878 example used the Vandiver et al. dataset `SRR18110025` from `PRJNA809571`/`SAMN26195906` [16], but did not analyze the full run. The selection fraction was 0.00518019. The selected-name SHA-256 was `3444cc7db3dcf78bea807d8bcc6686883a7759d128288c1d26aeae077a771a19`, the subset FASTQ SHA-256 was `40e203ead1d621bfec8caa3c5d18cd1e7e70c08da27008a73364812b6871df33`, and the analyzed BAM SHA-256 was `a36e1b5cb0f0e6576e9b4eda2cca9c527610a39b287fd2379109961b5fef24c1`. The alignment contained 728 primary and 543 supplementary records from 728 mapped query names.
+
+### Prespecified 13-case public matrix
+All 13 prespecified cases passed at the historical clean validation source commit:
+
+| Case | Evidence class | Verdict | Evidence boundary |
+| --- | --- | --- | --- |
+| `gm11906_default_run1` | Public default | PASS | Fixed GM11906 BAM |
+| `gm11906_default_run2` | Public default | PASS | Same fixed GM11906 BAM |
+| `gm11906_lenient` | Public lenient | PASS | Descriptive 0/0/0 profile |
+| `gm11906_strict` | Public strict | PASS | Descriptive 20/30/15 profile |
+| `gm12878_default_run1` | Public default | PASS | Fixed provenance-bound qn1000 BAM |
+| `gm12878_default_run2` | Public default | PASS | Same fixed provenance-bound qn1000 BAM |
+| `gm12878_lenient` | Public lenient | PASS | Descriptive 0/0/0 profile |
+| `gm12878_strict` | Public strict | PASS | Descriptive 20/30/15 profile |
+| `gm11906_repeatability` | Normalized TSV repeatability | PASS | Conditional on the fixed BAM and environment |
+| `gm11906_visual_integrity` | HTML/PNG integrity | PASS | Structural consistency, not byte identity |
+| `gm12878_repeatability` | Normalized TSV repeatability | PASS | Conditional on the fixed reduced BAM and environment |
+| `gm12878_visual_integrity` | HTML/PNG integrity | PASS | Structural consistency, not byte identity |
+| `filter_profiles` | Descriptive filter dependence | PASS | Not analytical sensitivity or specificity |
+
+Both normalized repeat diffs and both visual-structure diffs were empty. Each default normalized summary inventory contained 46 files; default public output contained 14 HTML pages and 15 report PNGs before representative figures were selected. The repeated invocations began from the same provenance-verified BAMs. They did not repeat query-name selection or alignment, so repeatability is conditional on the fixed BAMs and tested environment and does not establish reconstruction invariance across aligner or software versions.
+
+### Observation filter profiles
+Candidate thresholds remained fixed within each dataset while BaseQ/MAPQ/readQ filters varied from lenient 0/0/0, to default 13/20/10, to strict 20/30/15.
+
+| Dataset | Profile | BaseQ/MAPQ/readQ | Candidate sites | Accepted observations | Excluded observations | `m.8344A>G` observed alternate allele fraction |
+| --- | --- | --- | ---: | ---: | ---: | ---: |
+| GM11906 | lenient | 0/0/0 | 33 | 44,052,664 | 7,293,106 | 0.720545 |
+| GM11906 | default | 13/20/10 | 33 | 44,052,664 | 7,293,106 | 0.720545 |
+| GM11906 | strict | 20/30/15 | 33 | 42,676,166 | 8,669,604 | 0.733469 |
+| GM12878 qn1000 | lenient | 0/0/0 | 32 | 8,278,969 | 911,659 | NA |
+| GM12878 qn1000 | default | 13/20/10 | 16 | 7,143,152 | 2,047,476 | NA |
+| GM12878 qn1000 | strict | 20/30/15 | 15 | 6,046,355 | 3,144,273 | NA |
+
+These changes quantify filter dependence in the fixed inputs. They are not estimates of sensitivity, specificity, limit of detection, or a clinical reporting threshold.
+
+## Results
+
+### GM11906 reduced short-read proof of principle
+The GM11906 workflow used `READ_MODE=short`, `ASSAY_TYPE=targeted_mt`, `MIN_CALLABLE_DEPTH=10`, and `MIN_ALT_ALLELE_FRACTION=0.20`. At the default 13/20/10 observation filters, it reported 33 candidate sites, 44,052,664 accepted canonical-base observations, and 7,293,106 accounted excluded observations. The literature-associated `m.8344A>G` row had exactly 1,027 callable observations, 740 alternate observations, an observed alternate allele fraction of 0.720545, 305 forward alternate observations, and 435 reverse alternate observations; the corresponding depth/count/fraction audit tuple is `1027/740/0.720545`. Its feature and consequence labels were `MT-TK` and `tRNA_variant`.
+
+The example pools public GM11906 scATAC-seq runs associated with the single-cell mtDNA/chromatin study by Lareau and colleagues [17]. Public sample metadata identify GM11906 as a lymphoblastoid cell line carrying the literature-associated marker [19], and `m.8344A>G` has been reported in MERRF-associated `MT-TK` context [18]. The result demonstrates representation of that marker in a reduced short-read workflow. It is not a modality-matched benchmark, independent pathogenicity confirmation, calibrated allele-fraction study, or clinical validation.
+
+### GM12878 deterministic reduced ONT proof of principle
+The GM12878 workflow used the deterministic, provenance-bound 1,000-query-name subset described above with `READ_MODE=long`, `ASSAY_TYPE=targeted_mt`, `MIN_CALLABLE_DEPTH=100`, `MIN_ALT_ALLELE_FRACTION=0.10`, and default 13/20/10 observation filters. It reported 16 candidate sites, 7,143,152 accepted canonical-base observations, 2,047,476 accounted excluded observations, mean mitochondrial depth 545.484, median depth 544.0, and eight selected co-occurrence sites.
+
+The structural screen produced 13 singleton CIGAR-deletion bins; the largest binned median CIGAR-deletion length was 1,394 bp, and the maximum bin support fraction relative to primary query names was 0.001374. Five query names had at least one qualifying CIGAR deletion. Separately, 542 query names had a supplementary alignment or `SA` tag. These are descriptive CIGAR-deletion and alignment-structure summaries without orthogonal structural truth and do not establish deletion-calling accuracy.
+
+The targeted-mt and mt-only boundaries were explicit: the within-sample mt:nuclear depth ratio and Phy-Mer were `not_applicable`; mvTool and methylation were `not_configured`; and NUMT interpretation was `not_evaluable` with `reason_code=reference_scope_mt_only`. Raw alignment-ambiguity metrics remained inspectable, but no low/moderate/high NUMT-risk category was emitted. Candidate sites and their strong same-read co-occurrence were not independently validated variants or haplotypes. Because only 1,000 deterministically selected query names were analyzed, these outputs are neither full-run estimates nor evidence of statistical representativeness.
+
+### Relation to published ONT mtDNA evidence
+Published evidence supports the potential value of ONT reads for structural interpretation and analysis of moderate-fraction mtDNA variation in validated assay contexts. Long-read sequencing has resolved deletions and rearrangements, including complex structures that can resemble single-deletion events under less resolved inspection [3,4]. An ONT heteroplasmy study reported strong correlation above its evaluated threshold but also underreporting at high variant fractions and a need for stringent validation before diagnostic use [5]. These studies provide context; they do not validate `mito-overview` performance.
+
+NUMT-aware interpretation remains important because NUMTs are widespread and dynamic in human genomes [1], and apparent mtDNA findings can change after improved NUMT-aware review [2]. MitSorter illustrates the value of explicit read-level discrimination strategies for ONT data [13]. In `mito-overview`, the corresponding output remains warning-oriented alignment-ambiguity QC, with categorical interpretation suppressed when reference scope is insufficient.
 
 ## Example figures
-### Figure 1. Public ONT long-read report-native views
-![Figure 1. Public ONT long-read report-native views](figures/figure0_workflow_architecture.png)
 
-This figure shows representative report-native public GM12878 ONT outputs generated through the `mito-overview` reporting path. The panels show mitochondrial depth, alternate-allele fractions, selected-site read co-occurrence, and mitochondrial alignment span-versus-MAPQ QC. The leading candidate sites are dominated by high-fraction background-style differences and are not independently validated heteroplasmies or haplotypes. The alignment panel is a warning-oriented QC view, not a formal mtDNA-versus-NUMT classifier.
+### Figure 1. GM12878 public ONT long-read report-native views
+![Figure 1. GM12878 public ONT long-read report-native views](figures/figure0_workflow_architecture.png)
 
-### Figure 2. Auxiliary short-read proof-of-principle compatibility example from pooled public GM11906 scATAC-seq runs
-![Figure 2. Auxiliary short-read proof-of-principle compatibility example from pooled public GM11906 scATAC-seq runs](figures/figure2_shortread_public_validation_montage.png)
+Representative outputs from the fixed deterministic 1,000-query-name GM12878 targeted-mt subset. (A) Mitochondrial depth profile. (B) Observed alternate allele fraction by mitochondrial position, with the configured candidate threshold shown by the dashed line. (C) Alternate-read Jaccard matrix at eight selected sites after restricting each site pair to filtered reads spanning both positions; this is not a Jaccard index over the sites' unconditioned read sets. (D) Alignment-ambiguity QC showing aligned mitochondrial-contig fraction versus mapping quality. The montage is workflow evidence from a reduced input, not an analytical performance benchmark. Candidate sites are not independently validated variants or haplotypes, and the mt-only reference scope does not support categorical NUMT classification.
 
-This auxiliary figure summarizes the reduced short-read profile applied to pooled public GM11906 data. The panels show the short-read heteroplasmy landscape together with mitochondrial feature annotation, feature-level gene summary, and variant consequence summary from the public asset pack bundled in the repository. This example is intended to show real-data execution and representation of the previously reported `m.8344A>G` site under the mt-only short-read profile. It is not intended to establish modality-matched or cohort-scale short-read validation, calibrated heteroplasmy benchmarking, non-WGS copy-number estimation, definitive NUMT discrimination, or validation of long-read-only layers.
+### Figure 2. GM11906 public short-read workflow proof of principle
+![Figure 2. GM11906 public short-read workflow proof of principle](figures/figure2_shortread_public_validation_montage.png)
+
+Representative outputs from pooled public GM11906 short-read/scATAC-derived reads under the targeted-mt compatibility profile. (A) Observed alternate allele fraction by mitochondrial position, with the 0.20 candidate threshold shown by the dashed line. (B) Candidate-site counts by mitochondrial feature. (C) Feature-level candidate burden summary; long-read-only co-occurrence and CIGAR-deletion-bin-overlap series are inactive in this profile. (D) Candidate counts by consequence class. The underlying default summary contains `m.8344A>G` at 1,027 callable observations, 740 alternate observations, and observed alternate allele fraction 0.720545. The montage demonstrates report generation and marker representation, not modality equivalence, calibrated detection, evaluation of the within-sample mt:nuclear depth ratio, NUMT discrimination, or validation of long-read-only layers.
 
 ## Discussion
-`mito-overview` is a software/resource contribution for ONT mtDNA evidence synthesis and reporting. Its main contribution lies in modular integration, explicit long-read-aware interpretation layers, and a reproducible public-core implementation. The workflow is therefore complementary to existing mtDNA utilities rather than a replacement for each specialized tool.
+The unreleased `mito-overview` v0.3.0 release candidate is a software/resource contribution for mode-gated mtDNA evidence synthesis. Its principal contribution is the synchronization of filtered candidate observations, structural screens, the within-sample mt:nuclear depth ratio when evaluable, feature summaries, warning-oriented QC, and explicit status pages in a per-sample bundle. The shared observation engine and scope-aware status contracts make numerical outputs and unavailable interpretations more directly auditable.
 
-## Availability and implementation
-Repository:
-- [elissonnog/mito-overview](https://github.com/elissonnog/mito-overview)
+The evidence supports implementation behavior under deterministic fixtures, four synthetic workflows, and two bounded public examples. It also supports normalized table repeatability and visual-structure consistency when workflows are rerun from the same fixed BAMs. It does not support analytical accuracy, clinical validity, a low-fraction detection limit, pathogenicity classification, deletion sensitivity or specificity, absolute mtDNA copy number, formal NUMT classification, biological phasing accuracy, or equivalence of long- and short-read modes.
 
-Versioned source:
-- latest tagged release: `mito-overview` `v0.2.1` at commit `2ba62b775a7204c0dc61f5408989603f536c78da`
-- GitHub release archive: [https://github.com/elissonnog/mito-overview/releases/tag/v0.2.1](https://github.com/elissonnog/mito-overview/releases/tag/v0.2.1)
-- the current figure and documentation revisions are recorded under `Unreleased` and should be included in the next tagged patch release
-- a Zenodo DOI or Software Heritage identifier can be added after external archival
+Additional limitations arise from the public inputs. GM11906 is a pooled, mt-only, reduced short-read proof of principle. GM12878 is a deterministic 1,000-query-name subset of a targeted-mt run rather than the full dataset or a statistically representative sample. Neither example includes orthogonal truth for all reported candidates or CIGAR-deletion bins. External mvTool content was not evaluated live, methylation remains exploratory, and deployment-specific environments were not evaluated.
 
-Implementation assets currently available in the public repository include:
-- Python package modules for the workflow and report generation
-- shell runner and HPC-oriented wrapper separation
-- `environment.yml`
-- `pyproject.toml`
-- `CITATION.cff`
-- tracked synthetic validation inputs
-- tracked synthetic example outputs
-- smoke-test workflow
-- example-bundle regeneration script
-- MIT license for the public core repository
+## Availability and release status
+The source repository, synthetic fixtures, public proof-of-principle asset packs, validation scripts, and manuscript source are available at [https://github.com/elissonnog/mito-overview](https://github.com/elissonnog/mito-overview). Optional Phy-Mer and mvTool resources are not bundled as core dependencies.
 
-Optional external enrichments such as Phy-Mer and mvTool are intentionally kept as optional dependencies rather than bundled redistributable components.
-
-## Limitations and future work
-The current release has clear boundaries. Public evidence is limited to synthetic workflow and reproducibility checks, fixture-based testing of optional human-only interfaces, a bounded GM12878 ONT asset pack, and one auxiliary short-read real-data proof-of-principle example. Copy-number remains a depth proxy rather than an absolute mtDNA copy-number estimate. Deletion output is a structural screen driven by alignment structure rather than a specialized SV caller. NUMT and circularity components are warning-oriented QC layers, not formal classifiers. The most fully exercised public configuration is currently the human mtDNA path, and the optional enrichment modules remain human-only.
-
-The auxiliary short-read example has additional limits. It uses pooled public scATAC-seq runs aligned directly to the mitochondrial reference and therefore supports only a reduced `READ_MODE=short` profile. It should be interpreted as a compatibility example for real-data execution and marker representation, not as a full short-read validation study or a calibrated heteroplasmy benchmark.
-
-Immediate next steps before journal submission include:
-- adding cohort-scale quantitative validation summaries
-- benchmarking selected outputs against specialized external tools where appropriate
-- clarifying versioned release metadata and DOI minting
-- extending workflow test coverage and real-data evaluation beyond the current human-focused path
-
-A second future direction is downstream classifier work using `mito-overview` outputs as engineered features. That problem is intentionally outside the scope of the current software/resource paper, which is centered on report generation, reproducible workflow structure, and ONT-aware mtDNA interpretation.
+Version `0.3.0` remains an unreleased release candidate. No final `v0.3.0` tag, release date, or version-specific archival DOI is claimed in this manuscript; the reported results are release-candidate evidence within the stated validation boundaries.
 
 ## Author contributions
-E.L. designed and implemented the public workflow, generated validation assets, performed the release-readiness analyses, and drafted the manuscript. X.G. supervised the project, contributed mitochondrial-disease and mtDNA-analysis context, and reviewed the scientific framing.
+E.L. designed and implemented the public workflow, generated validation assets, performed the analyses, and drafted the manuscript. X.G. supervised the project, contributed mitochondrial-disease and mtDNA-analysis context, and reviewed the scientific framing.
 
 ## Funding
 Not declared.
@@ -210,7 +243,7 @@ Not declared.
 The authors declare no competing interests.
 
 ## Data and code availability
-The software, synthetic fixtures, public proof-of-principle asset bundles, validation scripts, and manuscript source are available at [https://github.com/elissonnog/mito-overview](https://github.com/elissonnog/mito-overview). Public data accessions and source pages used by the validation examples are listed in the repository documentation and in the References section. The public examples are intended to support workflow reproducibility and output-contract review, not clinical or analytical validation.
+Public data accessions, fixed-input provenance, hashes, result tables, and source pages for the GM11906 and GM12878 examples are recorded in the repository. The public examples support workflow reproducibility and output-contract review only. A version-specific DOI and final `v0.3.0` archive have not yet been issued and are not claimed for this release candidate.
 
 ## References
 1. Wei W, et al. Nuclear-embedded mitochondrial DNA sequences in 66,083 human genomes. *Nature*. 2022. [PubMed](https://pubmed.ncbi.nlm.nih.gov/36198798/)
@@ -228,6 +261,7 @@ The software, synthetic fixtures, public proof-of-principle asset bundles, valid
 13. Cox SN, et al. MitSorter: a standalone tool for accurate discrimination of mtDNA and NuMT ONT reads based on differential methylation. *Bioinformatics Advances*. 2025. [PubMed](https://pubmed.ncbi.nlm.nih.gov/40688360/)
 14. Bicci I, et al. Single-molecule mitochondrial DNA sequencing shows no evidence of CpG methylation in human cells and tissues. *Nucleic Acids Res*. 2021. [PubMed](https://pubmed.ncbi.nlm.nih.gov/34850165/)
 15. Guitton R, et al. No evidence of extensive non-CpG methylation in mtDNA. *Nucleic Acids Res*. 2022. [PubMed](https://pubmed.ncbi.nlm.nih.gov/35979955/)
-16. Lareau CA, Ludwig LS, Muus C, et al. Massively parallel single-cell mitochondrial DNA genotyping and chromatin profiling. *Nat Biotechnol*. 2021. [Nature](https://www.nature.com/articles/s41587-020-0645-6)
-17. Shoffner JM, Lott MT, Lezza AMS, et al. Myoclonic epilepsy and ragged-red fiber disease (MERRF) is associated with a mitochondrial DNA tRNA(Lys) mutation. *Cell*. 1990. [PubMed](https://pubmed.ncbi.nlm.nih.gov/2112427/)
-18. Coriell Institute for Medical Research. GM11906 sample record. [Coriell](https://www.coriell.org/0/Sections/Search/Sample_Detail.aspx?Ref=GM11906)
+16. Vandiver AR, Pielstick B, Gilpatrick T, et al. Long read mitochondrial genome sequencing using Cas9-guided adaptor ligation. *Mitochondrion*. 2022;65:176-183. [PMC: PMC9399971](https://pmc.ncbi.nlm.nih.gov/articles/PMC9399971/)
+17. Lareau CA, Ludwig LS, Muus C, et al. Massively parallel single-cell mitochondrial DNA genotyping and chromatin profiling. *Nat Biotechnol*. 2021. [Nature](https://www.nature.com/articles/s41587-020-0645-6)
+18. Shoffner JM, Lott MT, Lezza AMS, et al. Myoclonic epilepsy and ragged-red fiber disease (MERRF) is associated with a mitochondrial DNA tRNA(Lys) mutation. *Cell*. 1990. [PubMed](https://pubmed.ncbi.nlm.nih.gov/2112427/)
+19. Coriell Institute for Medical Research. GM11906 sample record. [Coriell](https://www.coriell.org/0/Sections/Search/Sample_Detail.aspx?Ref=GM11906)

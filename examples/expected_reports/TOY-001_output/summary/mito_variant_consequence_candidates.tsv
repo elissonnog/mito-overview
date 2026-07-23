@@ -1,2 +1,2 @@
-position	ref_base	alt_base	depth	heteroplasmy_fraction	feature_label	feature_class	consequence_class	codon_ref	codon_alt	protein_change	clinvar_significance	clinvar_disease
-10	A	C	10	0.3	D-loop/control region	control_region	control_region_variant	NA	NA	NA	Reported	Toy_mito_condition
+position	ref_base	alt_base	depth	alt_allele_fraction	heteroplasmy_fraction	feature_label	feature_class	consequence_class	codon_ref	codon_alt	protein_change	clinvar_significance	clinvar_disease
+10	A	C	10	0.3	0.3	D-loop/control region	control_region	control_region_variant	NA	NA	NA	Reported	Toy_mito_condition

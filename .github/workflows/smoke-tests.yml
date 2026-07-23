@@ -6,34 +6,227 @@ on:
   pull_request:
     branches: ["main"]
 
+permissions:
+  contents: read
+
 jobs:
   synthetic-smoke:
-    name: Synthetic workflow smoke tests
-    runs-on: ubuntu-latest
+    name: Unit and synthetic tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            platform: linux-64
+            lock_file: locks/environment-linux-64.yml
+          - os: macos-15-intel
+            platform: osx-64
+            lock_file: locks/environment-osx-64.yml
+          - os: macos-15
+            platform: osx-arm64
+            lock_file: locks/environment-osx-arm64.yml
+    env:
+      MITO_OVERVIEW_REQUIRE_INSTALLED: "1"
+      PYTHONNOUSERSITE: "1"
     defaults:
       run:
-        shell: bash -l {0}
+        shell: bash -el -o pipefail {0}
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+
+      - name: Verify event commit checkout
+        env:
+          EXPECTED_COMMIT: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+        run: |
+          checked_out_commit="$(git rev-parse HEAD)"
+          printf 'event=%s\nexpected_commit=%s\nchecked_out_commit=%s\n' \
+            "${GITHUB_EVENT_NAME}" "${EXPECTED_COMMIT}" "${checked_out_commit}"
+          test "${checked_out_commit}" = "${EXPECTED_COMMIT}"
 
       - name: Set up conda environment
-        uses: conda-incubator/setup-miniconda@v3
+        uses: conda-incubator/setup-miniconda@8ee1f361103df19b6f8c8655fd3967a8ecb162d5 # v4.0.1
         with:
-          environment-file: environment.yml
+          environment-file: ${{ matrix.lock_file }}
           activate-environment: mito-overview
-          auto-activate-base: false
+          auto-activate: false
+          conda-remove-defaults: true
 
-      - name: Show versions
+      - name: Validate and record release environment
+        env:
+          EXPECTED_PLATFORM: ${{ matrix.platform }}
+          LOCK_FILE: ${{ matrix.lock_file }}
         run: |
-          python --version
-          samtools --version | head -n 2
+          mkdir -p "$RUNNER_TEMP/environment"
+          python --version | tee "$RUNNER_TEMP/environment/python-${EXPECTED_PLATFORM}.txt"
+          conda list --explicit | tee "$RUNNER_TEMP/environment/conda-${EXPECTED_PLATFORM}.explicit.txt"
+          python -m pip freeze --all | tee "$RUNNER_TEMP/environment/pip-${EXPECTED_PLATFORM}.txt"
+          cp "$LOCK_FILE" "$RUNNER_TEMP/environment/"
+          python - <<'PY'
+          from importlib.metadata import version
+          import hashlib
+          import json
+          import os
+          import platform
+          import subprocess
+          from pathlib import Path
+
+          expected_python = (3, 12, 13)
+          if tuple(__import__("sys").version_info[:3]) != expected_python:
+              raise SystemExit(f"Python version mismatch: {platform.python_version()}")
+
+          expected_packages = {
+              "biopython": "1.87",
+              "matplotlib": "3.11.0",
+              "numpy": "2.5.1",
+              "pandas": "3.0.3",
+              "pysam": "0.24.0",
+              "requests": "2.34.2",
+              "pytest": "9.1.1",
+              "build": "1.5.0",
+              "setuptools": "82.0.1",
+              "wheel": "0.47.0",
+              "python-docx": "1.2.0",
+          }
+          for package, expected in expected_packages.items():
+              observed = version(package)
+              if observed != expected:
+                  raise SystemExit(f"{package} version mismatch: {observed} != {expected}")
+
+          samtools = subprocess.run(
+              ["samtools", "--version"], check=True, text=True, capture_output=True
+          ).stdout.splitlines()[0]
+          if samtools != "samtools 1.23.1":
+              raise SystemExit(f"samtools version mismatch: {samtools}")
+          minimap2 = subprocess.run(
+              ["minimap2", "--version"], check=True, text=True, capture_output=True
+          ).stdout.strip()
+          if minimap2 != "2.31-r1302":
+              raise SystemExit(f"minimap2 version mismatch: {minimap2}")
+          bwa = subprocess.run(["bwa"], text=True, capture_output=True).stderr
+          if "Version: 0.7.19-r1273" not in bwa:
+              raise SystemExit("bwa version mismatch")
+
+          expected_machine = {
+              "linux-64": "x86_64",
+              "osx-64": "x86_64",
+              "osx-arm64": "arm64",
+          }[os.environ["EXPECTED_PLATFORM"]]
+          if platform.machine() != expected_machine:
+              raise SystemExit(
+                  f"runner architecture mismatch: {platform.machine()} != {expected_machine}"
+              )
+          environment_root = Path(os.environ["RUNNER_TEMP"]) / "environment"
+          evidence_names = (
+              f"conda-{os.environ['EXPECTED_PLATFORM']}.explicit.txt",
+              f"pip-{os.environ['EXPECTED_PLATFORM']}.txt",
+              f"environment-{os.environ['EXPECTED_PLATFORM']}.yml",
+              f"python-{os.environ['EXPECTED_PLATFORM']}.txt",
+          )
+          evidence_files = {}
+          for name in evidence_names:
+              payload = (environment_root / name).read_bytes()
+              evidence_files[name] = {
+                  "sha256": hashlib.sha256(payload).hexdigest(),
+                  "size_bytes": len(payload),
+              }
+          manifest_payload = "".join(
+              f"{name}\t{evidence_files[name]['sha256']}\t{evidence_files[name]['size_bytes']}\n"
+              for name in sorted(evidence_files)
+          ).encode("utf-8")
+          identity = {
+              "schema_version": "2.0",
+              "git_commit": subprocess.run(
+                  ["git", "rev-parse", "HEAD"],
+                  check=True,
+                  text=True,
+                  capture_output=True,
+              ).stdout.strip(),
+              "github_run_id": int(os.environ["GITHUB_RUN_ID"]),
+              "job": "Unit and synthetic tests",
+              "platform_id": os.environ["EXPECTED_PLATFORM"],
+              "runner_os": os.environ["RUNNER_OS"],
+              "runner_arch": os.environ["RUNNER_ARCH"],
+              "machine": platform.machine(),
+              "python": platform.python_version(),
+              "resolved_environment": True,
+              "evidence_files": evidence_files,
+              "evidence_manifest_sha256": hashlib.sha256(manifest_payload).hexdigest(),
+              "source_lock_sha256": evidence_files[
+                  f"environment-{os.environ['EXPECTED_PLATFORM']}.yml"
+              ]["sha256"],
+          }
+          destination = (
+              environment_root
+              / f"platform-{os.environ['EXPECTED_PLATFORM']}.json"
+          )
+          destination.write_text(
+              json.dumps(identity, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          PY
 
       - name: Check CLI wiring
         run: |
           python -m mito_overview.cli --list-steps
           python -m mito_overview.cli --config examples/configs/human_example.env --dry-run
+
+      - name: Run deterministic unit and known-answer tests
+        run: |
+          python -m pytest -q tests
+
+      - name: Build and inspect source and wheel distributions
+        run: |
+          python -m build --no-isolation
+
+          tar -tf dist/mito_overview-*.tar.gz > "$RUNNER_TEMP/sdist-contents.txt"
+          grep -q 'resources/schemas/mito_overview_config.schema.yaml' "$RUNNER_TEMP/sdist-contents.txt"
+          grep -q 'locks/environment-${{ matrix.platform }}.yml' "$RUNNER_TEMP/sdist-contents.txt"
+
+          wheel_paths=("$GITHUB_WORKSPACE"/dist/mito_overview-*.whl)
+          if [[ ${#wheel_paths[@]} -ne 1 || ! -f "${wheel_paths[0]}" ]]; then
+            printf 'Expected exactly one wheel, found: %s\n' "${wheel_paths[*]}" >&2
+            exit 1
+          fi
+          python -m pip install --no-deps --force-reinstall "${wheel_paths[0]}"
+
+          cd "$RUNNER_TEMP"
+          python - <<'PY'
+          import os
+          import sys
+          from importlib.metadata import version
+          from pathlib import Path
+
+          expected_version = "0.3.0"
+          installed_version = version("mito-overview")
+          if installed_version != expected_version:
+              raise SystemExit(
+                  f"Installed mito-overview version is {installed_version}; "
+                  f"expected {expected_version}"
+              )
+
+          import mito_overview
+
+          module_path = Path(mito_overview.__file__).resolve()
+          workspace = Path(os.environ["GITHUB_WORKSPACE"]).resolve()
+          if module_path.is_relative_to(workspace):
+              raise SystemExit(f"Repository code shadowed the installed package: {module_path}")
+          if mito_overview.__version__ != installed_version:
+              raise SystemExit(
+                  f"Package __version__ {mito_overview.__version__} does not match "
+                  f"installed metadata {installed_version}"
+              )
+
+          schema = Path(sys.prefix) / "share" / "mito-overview" / "schemas" / "mito_overview_config.schema.yaml"
+          if not schema.is_file() or schema.stat().st_size == 0:
+              raise SystemExit(f"Installed configuration schema missing: {schema}")
+          PY
+          mito-overview --list-steps
+          python -m mito_overview.cli --list-steps
 
       - name: Run synthetic long-read smoke test
         run: |
@@ -46,3 +239,16 @@ jobs:
       - name: Run long-read no-methylation smoke test
         run: |
           MITO_OVERVIEW_PYTHON="$(command -v python)" ./tests/smoke_public_pipeline_longread_nomethyl.sh
+
+      - name: Run minimal standalone smoke test
+        run: |
+          MITO_OVERVIEW_PYTHON="$(command -v python)" ./tests/smoke_standalone_minimal.sh
+
+      - name: Upload resolved environment evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: resolved-environment-${{ matrix.platform }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/environment/
+          if-no-files-found: warn
+          retention-days: 30

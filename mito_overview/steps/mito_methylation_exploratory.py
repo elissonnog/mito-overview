@@ -17,10 +17,22 @@ from mito_overview.report_common import df_to_html_table, figure_html, metric_ca
 ROW_COLUMNS = [
     "track",
     "position",
+    "modification_code",
+    "strand",
     "valid_coverage",
     "percent_modified",
     "modified_count",
     "canonical_count",
+    "other_modified_count",
+]
+IDENTITY_COLUMNS = ["modification_code", "strand"]
+COMPARISON_COLUMNS = [
+    "position",
+    "modification_code",
+    "strand",
+    "percent_modified_np",
+    "percent_modified_proxy",
+    "abs_difference",
 ]
 PROXY_TRACKS = {"HP1", "HP2", "Ungrouped"}
 
@@ -32,6 +44,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--report-dir", required=True)
     parser.add_argument("--sample-id", required=True)
     parser.add_argument("--mt-contig", required=True)
+    parser.add_argument("--mt-length", type=int)
     parser.add_argument("--mito-mods-np", required=True)
     parser.add_argument("--mito-mods-hp1", required=True)
     parser.add_argument("--mito-mods-hp2", required=True)
@@ -43,7 +56,142 @@ def empty_rows_df() -> pd.DataFrame:
     return pd.DataFrame(columns=ROW_COLUMNS)
 
 
-def load_bedmethyl_table(path: str | Path | None, track_label: str) -> pd.DataFrame:
+def normalize_modification_identity(df: pd.DataFrame) -> pd.DataFrame:
+    """Normalize legacy identity-free rows while rejecting invalid bedMethyl strands."""
+
+    normalized = df.copy()
+    for column in IDENTITY_COLUMNS:
+        if column not in normalized.columns:
+            normalized[column] = "."
+        normalized[column] = (
+            normalized[column]
+            .fillna(".")
+            .astype(str)
+            .str.strip()
+            .replace({"": ".", "nan": ".", "NA": "."})
+        )
+    invalid_strands = sorted(set(normalized["strand"]) - {"+", "-", "."})
+    if invalid_strands:
+        raise ValueError(
+            "Unsupported bedMethyl strand value(s): " + ",".join(invalid_strands)
+        )
+    return normalized
+
+
+def normalize_modkit_counts(df: pd.DataFrame) -> pd.DataFrame:
+    """Recalculate valid coverage and percentages from modkit count columns."""
+
+    normalized = normalize_modification_identity(df)
+    if normalized.empty:
+        return normalized.reindex(columns=ROW_COLUMNS)
+
+    required = ["valid_coverage", "modified_count", "canonical_count"]
+    missing = [column for column in required if column not in normalized.columns]
+    if missing:
+        raise ValueError("Missing bedMethyl count column(s): " + ",".join(missing))
+    for column in required:
+        normalized[column] = pd.to_numeric(normalized[column], errors="raise")
+    required_values = normalized[required].to_numpy(dtype=float)
+    if not np.isfinite(required_values).all():
+        raise ValueError("bedMethyl required count columns must be finite")
+    if (normalized["valid_coverage"] < 0).any():
+        raise ValueError("bedMethyl valid coverage must be nonnegative")
+
+    if "other_modified_count" not in normalized.columns:
+        normalized["other_modified_count"] = np.nan
+    normalized["other_modified_count"] = pd.to_numeric(
+        normalized["other_modified_count"], errors="raise"
+    )
+    supplied_other = normalized["other_modified_count"].notna()
+    if supplied_other.any() and not np.isfinite(
+        normalized.loc[supplied_other, "other_modified_count"].to_numpy(dtype=float)
+    ).all():
+        raise ValueError("bedMethyl supplied other-modified counts must be finite")
+
+    # Legacy 13-column subsets omitted N_other_mod. Its only safe reconstruction
+    # is the nonnegative residual of modkit's declared valid coverage.
+    other_missing = normalized["other_modified_count"].isna()
+    residual = (
+        normalized["valid_coverage"]
+        - normalized["modified_count"]
+        - normalized["canonical_count"]
+    )
+    invalid_residual = other_missing & (residual < -1e-9)
+    if invalid_residual.any():
+        raise ValueError(
+            "Cannot infer N_other_mod: modified plus canonical counts exceed valid coverage"
+        )
+    normalized.loc[other_missing, "other_modified_count"] = residual.loc[
+        other_missing
+    ].clip(lower=0.0)
+
+    count_columns = ["modified_count", "canonical_count", "other_modified_count"]
+    integer_count_columns = ["valid_coverage", *count_columns]
+    count_values = normalized[integer_count_columns].to_numpy(dtype=float)
+    if not (count_values == np.floor(count_values)).all():
+        raise ValueError("bedMethyl count columns must contain integer-valued counts")
+    if (normalized[count_columns] < 0).any(axis=None):
+        raise ValueError("bedMethyl count columns must be nonnegative")
+
+    component_coverage = normalized[count_columns].sum(axis=1)
+    contradictory_coverage = supplied_other & (
+        normalized["valid_coverage"] != component_coverage
+    )
+    if contradictory_coverage.any():
+        raise ValueError(
+            "bedMethyl valid coverage must equal modified, canonical, and "
+            "other-modified component counts when N_other_mod is supplied"
+        )
+    normalized["valid_coverage"] = component_coverage
+    normalized["percent_modified"] = pd.Series(
+        np.nan, index=normalized.index, dtype=float
+    )
+    evaluable = normalized["valid_coverage"] > 0
+    normalized.loc[evaluable, "percent_modified"] = (
+        100.0
+        * normalized.loc[evaluable, "modified_count"]
+        / normalized.loc[evaluable, "valid_coverage"]
+    ).to_numpy(dtype=float)
+    return normalized
+
+
+def collapse_track_positions(df: pd.DataFrame) -> pd.DataFrame:
+    """Pool only duplicate bedMethyl rows with identical modification identity."""
+
+    if df.empty:
+        return empty_rows_df()
+    df = normalize_modkit_counts(df)
+    pooled = (
+        df.groupby(
+            ["track", "position", "modification_code", "strand"],
+            as_index=False,
+            sort=False,
+        )
+        .agg(
+            valid_coverage=("valid_coverage", "sum"),
+            modified_count=("modified_count", "sum"),
+            canonical_count=("canonical_count", "sum"),
+            other_modified_count=("other_modified_count", "sum"),
+        )
+        .reset_index(drop=True)
+    )
+    pooled = normalize_modkit_counts(pooled)
+    return pooled[ROW_COLUMNS]
+
+
+def track_input_present(path: str | Path | None) -> int:
+    """Return whether a configured track path points to an existing file."""
+
+    return int(path is not None and Path(path).is_file())
+
+
+def load_bedmethyl_table(
+    path: str | Path | None,
+    track_label: str,
+    *,
+    mt_contig: str | None = None,
+    mt_length: int | None = None,
+) -> pd.DataFrame:
     """Load a mitochondrial bedmethyl subset into a normalized table."""
 
     if not path:
@@ -54,72 +202,237 @@ def load_bedmethyl_table(path: str | Path | None, track_label: str) -> pd.DataFr
 
     rows: list[dict[str, object]] = []
     with src.open("r", encoding="utf-8") as handle:
-        for line in handle:
-            parts = line.rstrip("\n").split("\t")
+        for line_number, line in enumerate(handle, start=1):
+            if not line.strip() or line.lstrip().startswith("#"):
+                continue
+            parts = line.rstrip("\r\n").split("\t")
             if len(parts) < 13:
-                continue
-            try:
-                rows.append(
-                    {
-                        "track": track_label,
-                        "position": int(parts[1]) + 1,
-                        "valid_coverage": float(parts[9]),
-                        "percent_modified": float(parts[10]),
-                        "modified_count": float(parts[11]),
-                        "canonical_count": float(parts[12]),
-                    }
+                raise ValueError(
+                    f"Malformed bedMethyl row in {src} at line {line_number}: "
+                    f"expected at least 13 tab-separated columns, found {len(parts)}"
                 )
-            except ValueError:
-                continue
+            try:
+                start = int(parts[1])
+                end = int(parts[2])
+                valid_coverage = float(parts[9])
+                percent_modified = float(parts[10])
+                modified_count = float(parts[11])
+                canonical_count = float(parts[12])
+                other_modified_count = float(parts[13]) if len(parts) >= 14 else np.nan
+            except ValueError as exc:
+                raise ValueError(
+                    f"Malformed numeric value in bedMethyl source {src} at line {line_number}: {exc}"
+                ) from exc
+            numeric_values = {
+                "valid_coverage": valid_coverage,
+                "percent_modified": percent_modified,
+                "modified_count": modified_count,
+                "canonical_count": canonical_count,
+            }
+            if len(parts) >= 14:
+                numeric_values["other_modified_count"] = other_modified_count
+            nonfinite_fields = [
+                field for field, value in numeric_values.items() if not np.isfinite(value)
+            ]
+            if nonfinite_fields:
+                raise ValueError(
+                    f"Non-finite numeric value in bedMethyl source {src} at line "
+                    f"{line_number}: {','.join(nonfinite_fields)}"
+                )
+            if mt_contig is not None and parts[0] != mt_contig:
+                raise ValueError(
+                    f"Unexpected contig in bedMethyl source {src} at line {line_number}: "
+                    f"{parts[0]!r} != {mt_contig!r}"
+                )
+            if start < 0 or end != start + 1:
+                raise ValueError(
+                    f"Invalid single-base BED interval in bedMethyl source {src} at line "
+                    f"{line_number}: start={start}, end={end}"
+                )
+            if mt_length is not None and end > mt_length:
+                raise ValueError(
+                    f"Out-of-bounds interval in bedMethyl source {src} at line {line_number}: "
+                    f"end={end}, mitochondrial_length={mt_length}"
+                )
+            position = start + 1
+            rows.append(
+                {
+                    "track": track_label,
+                    "position": position,
+                    "modification_code": parts[3].strip() or ".",
+                    "strand": parts[5].strip() or ".",
+                    "valid_coverage": valid_coverage,
+                    "percent_modified": percent_modified,
+                    "modified_count": modified_count,
+                    "canonical_count": canonical_count,
+                    "other_modified_count": other_modified_count,
+                }
+            )
     if not rows:
         return empty_rows_df()
-    return pd.DataFrame(rows, columns=ROW_COLUMNS)
+    return collapse_track_positions(pd.DataFrame(rows, columns=ROW_COLUMNS))
 
 
 def track_summary(df: pd.DataFrame) -> pd.DataFrame:
+    df = normalize_modkit_counts(df)
     rows: list[dict[str, object]] = []
-    for track, sub in df.groupby("track", sort=False):
-        total_cov = float(sub["valid_coverage"].sum())
-        total_calls = float((sub["modified_count"] + sub["canonical_count"]).sum())
+    for (track, modification_code, strand), sub in df.groupby(
+        ["track", "modification_code", "strand"],
+        sort=False,
+    ):
+        percent_modified = pd.to_numeric(sub["percent_modified"], errors="coerce")
+        valid_coverage = pd.to_numeric(sub["valid_coverage"], errors="coerce")
+        coverage_evaluable_rows = percent_modified.notna() & valid_coverage.notna() & (valid_coverage > 0)
+        total_cov = float(valid_coverage.loc[coverage_evaluable_rows].sum())
+        total_calls = float(valid_coverage.sum())
+        coverage_evaluable = total_cov > 0
+        calls_evaluable = total_calls > 0
         rows.append(
             {
                 "track": track,
+                "modification_code": modification_code,
+                "strand": strand,
                 "site_count": int(len(sub)),
-                "mean_percent_modified": round(float(sub["percent_modified"].mean()), 6),
-                "median_percent_modified": round(float(sub["percent_modified"].median()), 6),
+                "mean_percent_modified": round(float(percent_modified.mean()), 6),
+                "median_percent_modified": round(float(percent_modified.median()), 6),
                 "coverage_weighted_percent_modified": round(
-                    float((sub["percent_modified"] * sub["valid_coverage"]).sum() / total_cov),
+                    float(
+                        (
+                            percent_modified.loc[coverage_evaluable_rows]
+                            * valid_coverage.loc[coverage_evaluable_rows]
+                        ).sum()
+                        / total_cov
+                    ),
                     6,
                 )
-                if total_cov
-                else 0.0,
+                if coverage_evaluable
+                else np.nan,
+                "coverage_weighted_denominator_valid_coverage": round(total_cov, 6),
+                "coverage_weighted_status": "ok" if coverage_evaluable else "not_evaluable",
+                "coverage_weighted_reason_code": "" if coverage_evaluable else "zero_valid_coverage",
                 "count_weighted_percent_modified": round(
                     float(100.0 * sub["modified_count"].sum() / total_calls),
                     6,
                 )
-                if total_calls
-                else 0.0,
-                "mean_valid_coverage": round(float(sub["valid_coverage"].mean()), 6),
-                "median_valid_coverage": round(float(sub["valid_coverage"].median()), 6),
+                if calls_evaluable
+                else np.nan,
+                "count_weighted_denominator_calls": round(total_calls, 6),
+                "count_weighted_status": "ok" if calls_evaluable else "not_evaluable",
+                "count_weighted_reason_code": "" if calls_evaluable else "zero_valid_coverage",
+                "mean_valid_coverage": round(float(valid_coverage.mean()), 6),
+                "median_valid_coverage": round(float(valid_coverage.median()), 6),
             }
         )
     return pd.DataFrame(rows)
 
 
 def build_proxy(df: pd.DataFrame) -> pd.DataFrame:
+    df = normalize_modkit_counts(df)
     phased = df[df["track"].isin(PROXY_TRACKS)].copy()
     if phased.empty:
         return empty_rows_df()
 
-    proxy = phased.groupby("position", as_index=False).agg(
+    proxy = phased.groupby(
+        ["position", "modification_code", "strand"],
+        as_index=False,
+        sort=False,
+    ).agg(
         valid_coverage=("valid_coverage", "sum"),
         modified_count=("modified_count", "sum"),
         canonical_count=("canonical_count", "sum"),
+        other_modified_count=("other_modified_count", "sum"),
     )
-    total_calls = proxy["modified_count"] + proxy["canonical_count"]
-    proxy["percent_modified"] = np.where(total_calls > 0, 100.0 * proxy["modified_count"] / total_calls, 0.0)
+    proxy = normalize_modkit_counts(proxy)
     proxy["track"] = "Phased_proxy_all_reads"
     return proxy[ROW_COLUMNS]
+
+
+def np_proxy_comparison_summary(
+    comparison_df: pd.DataFrame,
+    *,
+    tracks_available: int,
+    np_rows: int,
+    proxy_rows: int,
+) -> pd.DataFrame:
+    """Summarize NP/proxy agreement without converting undefined statistics to zero."""
+
+    shared_positions = int(len(comparison_df))
+    comparable = comparison_df.copy()
+    for column in ["percent_modified_np", "percent_modified_proxy"]:
+        if column not in comparable.columns:
+            comparable[column] = np.nan
+        comparable[column] = pd.to_numeric(comparable[column], errors="coerce")
+    comparable = comparable.replace([np.inf, -np.inf], np.nan).dropna(
+        subset=["percent_modified_np", "percent_modified_proxy"]
+    )
+    evaluable_positions = int(len(comparable))
+
+    if evaluable_positions:
+        mean_abs_difference = round(
+            float(
+                (
+                    comparable["percent_modified_np"]
+                    - comparable["percent_modified_proxy"]
+                )
+                .abs()
+                .mean()
+            ),
+            6,
+        )
+        mean_status = "ok"
+        mean_reason = ""
+    else:
+        mean_abs_difference = np.nan
+        mean_status = "not_evaluable"
+        mean_reason = "no_shared_positions" if shared_positions == 0 else "no_evaluable_shared_positions"
+
+    correlation = np.nan
+    correlation_status = "not_evaluable"
+    if evaluable_positions < 2:
+        correlation_reason = "fewer_than_two_evaluable_shared_positions"
+    elif (
+        comparable["percent_modified_np"].nunique(dropna=True) < 2
+        or comparable["percent_modified_proxy"].nunique(dropna=True) < 2
+    ):
+        correlation_reason = "undefined_zero_variance"
+    else:
+        corr_value = comparable["percent_modified_np"].corr(comparable["percent_modified_proxy"])
+        if pd.notna(corr_value):
+            correlation = round(float(corr_value), 6)
+            correlation_status = "ok"
+            correlation_reason = ""
+        else:
+            correlation_reason = "undefined_zero_variance"
+
+    if evaluable_positions:
+        status = "ok"
+        reason_code = ""
+    else:
+        status = "not_evaluable"
+        reason_code = "no_shared_positions" if shared_positions == 0 else "no_evaluable_shared_positions"
+
+    return pd.DataFrame(
+        [
+            {"metric": "status", "value": status},
+            {"metric": "reason_code", "value": reason_code},
+            {"metric": "tracks_available", "value": int(tracks_available)},
+            {"metric": "np_rows", "value": int(np_rows)},
+            {"metric": "proxy_rows", "value": int(proxy_rows)},
+            {"metric": "shared_np_proxy_positions", "value": shared_positions},
+            {"metric": "evaluable_np_proxy_positions", "value": evaluable_positions},
+            {"metric": "np_proxy_mean_abs_difference", "value": mean_abs_difference},
+            {
+                "metric": "np_proxy_mean_abs_difference_denominator_positions",
+                "value": evaluable_positions,
+            },
+            {"metric": "np_proxy_mean_abs_difference_status", "value": mean_status},
+            {"metric": "np_proxy_mean_abs_difference_reason_code", "value": mean_reason},
+            {"metric": "np_proxy_correlation", "value": correlation},
+            {"metric": "np_proxy_correlation_denominator_positions", "value": evaluable_positions},
+            {"metric": "np_proxy_correlation_status", "value": correlation_status},
+            {"metric": "np_proxy_correlation_reason_code", "value": correlation_reason},
+        ]
+    )
 
 
 def render_no_data_report(
@@ -132,33 +445,39 @@ def render_no_data_report(
     sample_id: str,
     mt_contig: str,
     track_paths: dict[str, str | Path | None],
-) -> dict[str, Path]:
+    track_inputs_configured: dict[str, bool],
+    inputs_configured: bool,
+) -> dict[str, Path | str]:
     """Write a status-only report when no mitochondrial bedmethyl rows are present."""
 
+    status = "not_evaluable" if inputs_configured else "not_configured"
+    reason_code = "no_mt_bedmethyl_rows_available" if inputs_configured else "no_bedmethyl_sidecars_configured"
     summary_df = pd.DataFrame(
         [
-            {"metric": "status", "value": "no_mt_bedmethyl_rows_available"},
+            {"metric": "status", "value": status},
+            {"metric": "reason_code", "value": reason_code},
             {
                 "metric": "message",
                 "value": "No mitochondrial bedmethyl rows were available after mitochondrial subsetting.",
             },
-            {"metric": "np_track_input_present", "value": int(bool(track_paths.get("NP_real_all_reads")))},
-            {"metric": "hp1_track_input_present", "value": int(bool(track_paths.get("HP1")))},
-            {"metric": "hp2_track_input_present", "value": int(bool(track_paths.get("HP2")))},
-            {"metric": "ungrouped_track_input_present", "value": int(bool(track_paths.get("Ungrouped")))},
+            {"metric": "np_track_input_present", "value": int(track_inputs_configured["NP_real_all_reads"])},
+            {"metric": "hp1_track_input_present", "value": int(track_inputs_configured["HP1"])},
+            {"metric": "hp2_track_input_present", "value": int(track_inputs_configured["HP2"])},
+            {"metric": "ungrouped_track_input_present", "value": int(track_inputs_configured["Ungrouped"])},
         ]
     )
     summary_df.to_csv(summary_path, sep="\t", index=False)
     empty_rows_df().to_csv(combined_path, sep="\t", index=False)
-    pd.DataFrame(
-        columns=["position", "percent_modified_np", "percent_modified_proxy", "abs_difference"]
-    ).to_csv(cmp_path, sep="\t", index=False)
-    pd.DataFrame(
-        [
-            {"metric": "status", "value": "no_mt_bedmethyl_rows_available"},
-            {"metric": "shared_np_proxy_positions", "value": 0},
-        ]
-    ).to_csv(cmp_summary_path, sep="\t", index=False)
+    pd.DataFrame(columns=COMPARISON_COLUMNS).to_csv(cmp_path, sep="\t", index=False)
+    cmp_summary = np_proxy_comparison_summary(
+        pd.DataFrame(),
+        tracks_available=0,
+        np_rows=0,
+        proxy_rows=0,
+    )
+    cmp_summary.loc[cmp_summary["metric"] == "status", "value"] = status
+    cmp_summary.loc[cmp_summary["metric"] == "reason_code", "value"] = reason_code
+    cmp_summary.to_csv(cmp_summary_path, sep="\t", index=False, na_rep="NA")
     intro_html = '<p class="muted">No mitochondrial bedmethyl rows were available for the exploratory methylation summary.</p>'
     body_html = "<section><h2>Status</h2>" + df_to_html_table(summary_df, max_rows=20) + "</section>"
     render_page(
@@ -170,6 +489,7 @@ def render_no_data_report(
         body_html,
     )
     return {
+        "status": status,
         "summary_path": summary_path,
         "combined_path": combined_path,
         "cmp_path": cmp_path,
@@ -185,11 +505,14 @@ def run_step(
     report_dir: str | Path,
     sample_id: str,
     mt_contig: str,
+    mt_length: int | None = None,
     mito_mods_np: str | Path | None,
     mito_mods_hp1: str | Path,
     mito_mods_hp2: str | Path,
     mito_mods_ungrouped: str | Path,
-) -> dict[str, Path]:
+    inputs_configured: bool = True,
+    track_inputs_configured: dict[str, bool] | None = None,
+) -> dict[str, Path | str]:
     """Run the public exploratory mitochondrial methylation step."""
 
     print(f"[methylation] starting sample={sample_id} contig={mt_contig}", flush=True)
@@ -206,9 +529,20 @@ def run_step(
         "HP2": mito_mods_hp2,
         "Ungrouped": mito_mods_ungrouped,
     }
+    if track_inputs_configured is None:
+        track_inputs_configured = {
+            label: bool(track_input_present(path)) for label, path in track_paths.items()
+        }
+    elif set(track_inputs_configured) != set(track_paths):
+        raise ValueError("track_inputs_configured must define exactly the four methylation tracks")
     frames: list[pd.DataFrame] = []
     for track_label, path in track_paths.items():
-        frame = load_bedmethyl_table(path, track_label)
+        frame = load_bedmethyl_table(
+            path,
+            track_label,
+            mt_contig=mt_contig,
+            mt_length=mt_length,
+        )
         frames.append(frame)
         print(
             f"[methylation] loaded track={track_label} rows={len(frame)} "
@@ -237,57 +571,73 @@ def run_step(
             sample_id=sample_id,
             mt_contig=mt_contig,
             track_paths=track_paths,
+            track_inputs_configured=track_inputs_configured,
+            inputs_configured=inputs_configured,
         )
 
-    combined_df.to_csv(combined_path, sep="\t", index=False)
+    combined_df.to_csv(combined_path, sep="\t", index=False, na_rep="NA")
     print(f"[methylation] wrote combined rows {combined_path}", flush=True)
 
     summary_df = track_summary(combined_df)
-    summary_df.to_csv(summary_path, sep="\t", index=False)
+    summary_df.to_csv(summary_path, sep="\t", index=False, na_rep="NA")
     print(f"[methylation] wrote track summary {summary_path}", flush=True)
 
-    np_proxy_cmp = pd.DataFrame(
-        columns=["position", "percent_modified_np", "percent_modified_proxy", "abs_difference"]
-    )
-    np_real = combined_df[combined_df["track"] == "NP_real_all_reads"][["position", "percent_modified"]].rename(
+    np_proxy_cmp = pd.DataFrame(columns=COMPARISON_COLUMNS)
+    np_real = combined_df[combined_df["track"] == "NP_real_all_reads"][[
+        "position",
+        "modification_code",
+        "strand",
+        "percent_modified",
+    ]].rename(
         columns={"percent_modified": "percent_modified_np"}
     )
-    proxy = combined_df[combined_df["track"] == "Phased_proxy_all_reads"][["position", "percent_modified"]].rename(
+    proxy = combined_df[combined_df["track"] == "Phased_proxy_all_reads"][[
+        "position",
+        "modification_code",
+        "strand",
+        "percent_modified",
+    ]].rename(
         columns={"percent_modified": "percent_modified_proxy"}
     )
     if not np_real.empty and not proxy.empty:
-        np_proxy_cmp = pd.merge(np_real, proxy, on="position", how="inner")
+        np_proxy_cmp = pd.merge(
+            np_real,
+            proxy,
+            on=["position", "modification_code", "strand"],
+            how="inner",
+        )
         if not np_proxy_cmp.empty:
             np_proxy_cmp["abs_difference"] = (
                 np_proxy_cmp["percent_modified_np"] - np_proxy_cmp["percent_modified_proxy"]
             ).abs()
-    np_proxy_cmp.to_csv(cmp_path, sep="\t", index=False)
+    np_proxy_cmp.to_csv(cmp_path, sep="\t", index=False, na_rep="NA")
     print(f"[methylation] wrote NP vs proxy table {cmp_path}", flush=True)
 
-    correlation = 0.0
-    if len(np_proxy_cmp) > 1:
-        corr_value = np_proxy_cmp["percent_modified_np"].corr(np_proxy_cmp["percent_modified_proxy"])
-        correlation = round(float(corr_value), 6) if pd.notna(corr_value) else 0.0
-    cmp_summary = pd.DataFrame(
-        [
-            {"metric": "tracks_available", "value": int(summary_df["track"].nunique())},
-            {"metric": "np_rows", "value": int((combined_df["track"] == "NP_real_all_reads").sum())},
-            {"metric": "proxy_rows", "value": int((combined_df["track"] == "Phased_proxy_all_reads").sum())},
-            {"metric": "shared_np_proxy_positions", "value": int(len(np_proxy_cmp))},
-            {
-                "metric": "np_proxy_mean_abs_difference",
-                "value": round(float(np_proxy_cmp["abs_difference"].mean()), 6) if not np_proxy_cmp.empty else 0.0,
-            },
-            {"metric": "np_proxy_correlation", "value": correlation},
-        ]
+    cmp_summary = np_proxy_comparison_summary(
+        np_proxy_cmp,
+        tracks_available=int(summary_df["track"].nunique()),
+        np_rows=int((combined_df["track"] == "NP_real_all_reads").sum()),
+        proxy_rows=int((combined_df["track"] == "Phased_proxy_all_reads").sum()),
     )
-    cmp_summary.to_csv(cmp_summary_path, sep="\t", index=False)
+    cmp_summary.to_csv(cmp_summary_path, sep="\t", index=False, na_rep="NA")
     print(f"[methylation] wrote NP vs proxy summary {cmp_summary_path}", flush=True)
 
     summary_fig = figure_dir / "mito_methylation_weighted_summary.png"
     plot_df = summary_df.copy()
+    plot_df["track_identity"] = (
+        plot_df["track"].astype(str)
+        + " ("
+        + plot_df["modification_code"].astype(str)
+        + "/"
+        + plot_df["strand"].astype(str)
+        + ")"
+    )
     plt.figure(figsize=(9, 4))
-    plt.bar(plot_df["track"], plot_df["coverage_weighted_percent_modified"], color="#0f766e")
+    plt.bar(
+        plot_df["track_identity"],
+        plot_df["coverage_weighted_percent_modified"],
+        color="#0f766e",
+    )
     plt.xticks(rotation=30, ha="right")
     plt.ylabel("Coverage-weighted percent modified")
     plt.title(f"{sample_id} mitochondrial methylation track summary")
@@ -298,10 +648,14 @@ def run_step(
 
     profile_fig = figure_dir / "mito_methylation_profiles.png"
     plt.figure(figsize=(12, 4))
-    for track, sub in combined_df.groupby("track", sort=False):
+    for (track, modification_code, strand), sub in combined_df.groupby(
+        ["track", "modification_code", "strand"],
+        sort=False,
+    ):
         sub = sub.sort_values("position").copy()
         smooth = sub["percent_modified"].rolling(window=25, min_periods=1, center=True).mean()
-        plt.plot(sub["position"], smooth, linewidth=1.2, label=track)
+        identity = f"{modification_code}/{strand}"
+        plt.plot(sub["position"], smooth, linewidth=1.2, label=f"{track} ({identity})")
     plt.xlabel("Mitochondrial position")
     plt.ylabel("Rolling mean percent modified")
     plt.title(f"{sample_id} mitochondrial methylation profiles")
@@ -312,12 +666,15 @@ def run_step(
     print(f"[methylation] wrote profile figure {profile_fig}", flush=True)
 
     cmp_fig = None
-    if not np_proxy_cmp.empty:
+    evaluable_cmp = np_proxy_cmp.dropna(
+        subset=["percent_modified_np", "percent_modified_proxy"]
+    )
+    if not evaluable_cmp.empty:
         cmp_fig = figure_dir / "mito_methylation_np_vs_proxy.png"
         plt.figure(figsize=(5, 5))
         plt.scatter(
-            np_proxy_cmp["percent_modified_np"],
-            np_proxy_cmp["percent_modified_proxy"],
+            evaluable_cmp["percent_modified_np"],
+            evaluable_cmp["percent_modified_proxy"],
             s=8,
             alpha=0.4,
             color="#2563eb",
@@ -335,19 +692,20 @@ def run_step(
             metric_card("Tracks available", int(summary_df["track"].nunique())),
             metric_card("NP rows", int((combined_df["track"] == "NP_real_all_reads").sum())),
             metric_card("Proxy rows", int((combined_df["track"] == "Phased_proxy_all_reads").sum())),
-            metric_card("NP/proxy shared positions", int(len(np_proxy_cmp))),
+            metric_card("NP/proxy shared identity-position rows", int(len(np_proxy_cmp))),
         ]
     )
     intro_html = (
         '<p class="muted">This page provides an exploratory mitochondrial methylation summary using real '
         "mitochondrial bedmethyl rows from both the phased and no-phased workflows. The phased tracks are shown "
         "separately, a phased-derived all-read proxy is reconstructed from the phased tracks, and that proxy is "
-        "compared against the real no-phased all-read mitochondrial bedmethyl track. This page is intended for "
+        "compared against the real no-phased all-read mitochondrial bedmethyl track. Modification code and strand "
+        "are retained so that only scientifically compatible observations are pooled or compared. This page is intended for "
         "pattern-finding and QC context rather than strong biological claims about mtDNA methylation.</p>"
         f"<div class='metrics-grid'>{metrics_html}</div>"
     )
     body_parts = [
-        "<section><h2>Track summary</h2>" + df_to_html_table(summary_df, max_rows=20) + "</section>",
+        "<section><h2>Track summary</h2>" + df_to_html_table(summary_df.fillna("NA"), max_rows=20) + "</section>",
         "<section><h2>Weighted methylation summary</h2>"
         + figure_html(summary_fig, "Coverage-weighted mitochondrial methylation across tracks")
         + "</section>",
@@ -355,10 +713,10 @@ def run_step(
         + figure_html(profile_fig, "Rolling mean methylation profiles across the mitochondrial genome")
         + "</section>",
         "<section><h2>NP vs phased-proxy comparison summary</h2>"
-        + df_to_html_table(cmp_summary, max_rows=20)
+        + df_to_html_table(cmp_summary.fillna("NA"), max_rows=20)
         + "</section>",
         "<section><h2>NP vs phased-proxy shared-position table</h2>"
-        + df_to_html_table(np_proxy_cmp, max_rows=30)
+        + df_to_html_table(np_proxy_cmp.fillna("NA"), max_rows=30)
         + "</section>",
     ]
     if cmp_fig:
@@ -381,6 +739,7 @@ def run_step(
     )
     print(f"[methylation] wrote report {report_path}", flush=True)
     return {
+        "status": "ok",
         "track_rows_path": combined_path,
         "summary_path": summary_path,
         "cmp_path": cmp_path,
@@ -397,6 +756,7 @@ def main() -> None:
         report_dir=args.report_dir,
         sample_id=args.sample_id,
         mt_contig=args.mt_contig,
+        mt_length=args.mt_length,
         mito_mods_np=args.mito_mods_np,
         mito_mods_hp1=args.mito_mods_hp1,
         mito_mods_hp2=args.mito_mods_hp2,

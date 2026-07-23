@@ -2,23 +2,20 @@
 
 from __future__ import annotations
 
+import gzip
+import math
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, TypeVar
 
 
 REQUIRED_KEYS = (
-    "PIPELINE_ROOT",
     "WORK_ROOT",
     "RUN_NAME",
     "SAMPLE_ID",
-    "SOURCE_SAMPLE_DIR",
-    "SOURCE_HV_DIR",
     "REF_FASTA",
     "SOURCE_ALIGN_FILE",
-    "SOURCE_ALIGN_MODE",
     "MT_CONTIG",
-    "MT_LENGTH",
 )
 
 DEFAULTS: dict[str, Any] = {
@@ -27,22 +24,52 @@ DEFAULTS: dict[str, Any] = {
     "SPECIES": "auto",
     "READ_MODE": "long",
     "ASSAY_TYPE": "wgs",
+    "REFERENCE_SCOPE": "auto",
     "CONDA_BASE": "",
     "CONDA_ENV_PREFIX": "",
+    "PIPELINE_ROOT": "",
+    "SOURCE_SAMPLE_DIR": "",
+    "SOURCE_HV_DIR": "",
     "SOURCE_HV_NP_DIR": "",
+    "SOURCE_ALIGN_MODE": "",
+    "MT_LENGTH": "",
     "FINAL_BIOINFO_DIR": "",
-    "HET_MIN_DEPTH": "100",
-    "HET_MIN_VAF": "0.02",
+    "MIN_CALLABLE_DEPTH": "100",
+    "MIN_ALT_ALLELE_FRACTION": "0.02",
+    "ALLELE_MIN_BASE_QUALITY": "13",
+    "ALLELE_MIN_MAPPING_QUALITY": "20",
+    "ALLELE_MIN_READ_MEAN_QUALITY": "10",
+    "ALLELE_MAX_DEPTH": "0",
+    "ALLELE_EXCLUDE_FLAGS": "3844",
+    "ALLELE_IGNORE_OVERLAPS": "1",
     "DELETION_MIN_SIZE": "100",
     "NUCLEAR_WINDOW_SIZE": "100000",
     "NUCLEAR_WINDOW_COUNT": "5",
+    "CONTROL_REGION_ANNOTATION_MODE": "auto",
     "PHYMER_ROOT": "",
+    "PHYMER_MODE": "external",
+    "PHYMER_SCRIPT_SHA256": "",
+    "PHYMER_LIBRARY_SHA256": "",
+    "PHYMER_DEFINITIONS_SHA256": "",
     "HUMAN_MT_GTF": "",
     "PHYMER_MIN_DEPTH": "100",
     "PHYMER_MAJOR_VAF": "0.90",
-    "MVTOOL_API_URL": "https://mseqdr.org/mtannotapi.php?format=hgvs",
+    "PHYMER_MIN_CALLABLE_FRACTION": "0.95",
+    "MVTOOL_MODE": "disabled",
+    "MVTOOL_API_URL": "",
+    "MVTOOL_FIXTURE_JSON": "",
     "MSEQDR_TIMEOUT": "120",
+    "SOURCE_VARIANT_VCF": "",
+    "SOURCE_CLINVAR_VCF": "",
+    "SOURCE_VARIANT_VCF_UNPHASED": "",
+    "SOURCE_CLINVAR_VCF_UNPHASED": "",
+    "SOURCE_BEDMETHYL": "",
+    "SOURCE_BEDMETHYL_HP1": "",
+    "SOURCE_BEDMETHYL_HP2": "",
+    "SOURCE_BEDMETHYL_UNGROUPED": "",
 }
+
+T = TypeVar("T")
 
 
 def _strip_quotes(value: str) -> str:
@@ -85,14 +112,24 @@ def detect_reference_build(reference_fasta: str | Path) -> str:
     return "unknown"
 
 
-def detect_species(reference_fasta: str | Path, requested_species: str = "auto") -> str:
-    """Infer species from the requested value and reference name."""
+def detect_species(
+    reference_fasta: str | Path,
+    requested_species: str = "auto",
+    *,
+    contig_lengths: dict[str, int] | None = None,
+    mt_contig: str = "",
+) -> str:
+    """Infer species from an explicit value, a complete profile, or the reference name."""
 
     requested = (requested_species or "auto").strip().lower()
-    build = detect_reference_build(reference_fasta)
-    ref_name = Path(reference_fasta).name.lower()
     if requested not in {"", "auto"}:
         return requested
+    if contig_lengths and mt_contig:
+        # A present index is stronger evidence than a potentially misleading filename.
+        return _infer_species_from_reference_profile(contig_lengths, mt_contig)
+
+    build = detect_reference_build(reference_fasta)
+    ref_name = Path(reference_fasta).name.lower()
     if build in {"mm10", "mm39"} or "mouse" in ref_name or "mus" in ref_name:
         return "mouse"
     if build in {"hg19", "hg38"} or "human" in ref_name or "grch" in ref_name:
@@ -119,6 +156,322 @@ def _optional_path(value: str, base_dir: Path | None) -> Path | None:
     return _resolve_path(value, base_dir) if value else None
 
 
+def _parse_bool(value: str) -> bool:
+    normalized = str(value).strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError(f"Expected a boolean value, received: {value}")
+
+
+def _resolve_alias(
+    mapping: dict[str, str],
+    canonical: str,
+    legacy: str,
+    default: str,
+    cast: Callable[[str], T],
+) -> T:
+    canonical_present = canonical in mapping and str(mapping[canonical]).strip() != ""
+    legacy_present = legacy in mapping and str(mapping[legacy]).strip() != ""
+    canonical_raw = str(mapping[canonical]).strip() if canonical_present else default
+    legacy_raw = str(mapping[legacy]).strip() if legacy_present else canonical_raw
+    canonical_value = cast(canonical_raw)
+    legacy_value = cast(legacy_raw)
+    if canonical_present and legacy_present and canonical_value != legacy_value:
+        raise ValueError(
+            f"Conflicting config values: {canonical}={canonical_raw} and {legacy}={legacy_raw}"
+        )
+    return canonical_value if canonical_present else legacy_value
+
+
+def _read_fai_lengths(reference_fasta: Path) -> dict[str, int]:
+    fai_path = Path(f"{reference_fasta}.fai")
+    if not fai_path.exists():
+        return {}
+    lengths: dict[str, int] = {}
+    for raw_line in fai_path.read_text(encoding="utf-8").splitlines():
+        fields = raw_line.split("\t")
+        if len(fields) >= 2:
+            lengths[fields[0]] = int(fields[1])
+    return lengths
+
+
+def _detect_alignment_container(path: Path) -> str | None:
+    """Return the encoded HTS container for an existing local alignment."""
+
+    if not path.is_file():
+        return None
+    try:
+        with path.open("rb") as handle:
+            prefix = handle.read(4)
+        if prefix == b"CRAM":
+            return "cram"
+        if prefix[:2] == b"\x1f\x8b":
+            with gzip.open(path, "rb") as handle:
+                if handle.read(4) == b"BAM\x01":
+                    return "bam"
+    except (EOFError, OSError):
+        pass
+    return "unknown"
+
+
+def _infer_alignment_mode(path: Path, requested: str) -> str:
+    requested = requested.strip().lower()
+    suffix = path.suffix.lower()
+    inferred = {".bam": "bam", ".cram": "cram"}.get(suffix)
+    if requested:
+        if requested not in {"bam", "cram"}:
+            raise ValueError(f"Unsupported SOURCE_ALIGN_MODE: {requested}")
+        if inferred is not None and requested != inferred:
+            raise ValueError(
+                f"SOURCE_ALIGN_MODE={requested} conflicts with "
+                f"SOURCE_ALIGN_FILE extension {suffix}"
+            )
+        resolved = requested
+    elif inferred is not None:
+        resolved = inferred
+    else:
+        raise ValueError(
+            "SOURCE_ALIGN_MODE is required when SOURCE_ALIGN_FILE is not .bam or .cram"
+        )
+
+    encoded = _detect_alignment_container(path)
+    if encoded == "unknown":
+        raise ValueError(f"SOURCE_ALIGN_FILE is not a recognizable BAM or CRAM container: {path}")
+    if encoded is not None and encoded != resolved:
+        raise ValueError(
+            f"SOURCE_ALIGN_FILE content is {encoded.upper()} but resolved "
+            f"SOURCE_ALIGN_MODE={resolved}"
+        )
+    return resolved
+
+
+@dataclass(frozen=True)
+class _ReferenceProfile:
+    species: str
+    build: str
+    autosome_lengths: tuple[int, ...]
+    sex_chromosome_lengths: tuple[int, int]
+    mt_length: int
+
+
+_REFERENCE_PROFILES = (
+    _ReferenceProfile(
+        species="human",
+        build="GRCh37",
+        autosome_lengths=(
+            249_250_621,
+            243_199_373,
+            198_022_430,
+            191_154_276,
+            180_915_260,
+            171_115_067,
+            159_138_663,
+            146_364_022,
+            141_213_431,
+            135_534_747,
+            135_006_516,
+            133_851_895,
+            115_169_878,
+            107_349_540,
+            102_531_392,
+            90_354_753,
+            81_195_210,
+            78_077_248,
+            59_128_983,
+            63_025_520,
+            48_129_895,
+            51_304_566,
+        ),
+        sex_chromosome_lengths=(155_270_560, 59_373_566),
+        mt_length=16_569,
+    ),
+    _ReferenceProfile(
+        species="human",
+        build="GRCh38",
+        autosome_lengths=(
+            248_956_422,
+            242_193_529,
+            198_295_559,
+            190_214_555,
+            181_538_259,
+            170_805_979,
+            159_345_973,
+            145_138_636,
+            138_394_717,
+            133_797_422,
+            135_086_622,
+            133_275_309,
+            114_364_328,
+            107_043_718,
+            101_991_189,
+            90_338_345,
+            83_257_441,
+            80_373_285,
+            58_617_616,
+            64_444_167,
+            46_709_983,
+            50_818_468,
+        ),
+        sex_chromosome_lengths=(156_040_895, 57_227_415),
+        mt_length=16_569,
+    ),
+    _ReferenceProfile(
+        species="mouse",
+        build="GRCm38",
+        autosome_lengths=(
+            195_471_971,
+            182_113_224,
+            160_039_680,
+            156_508_116,
+            151_834_684,
+            149_736_546,
+            145_441_459,
+            129_401_213,
+            124_595_110,
+            130_694_993,
+            122_082_543,
+            120_129_022,
+            120_421_639,
+            124_902_244,
+            104_043_685,
+            98_207_768,
+            94_987_271,
+            90_702_639,
+            61_431_566,
+        ),
+        sex_chromosome_lengths=(171_031_299, 91_744_698),
+        mt_length=16_299,
+    ),
+    _ReferenceProfile(
+        species="mouse",
+        build="GRCm39",
+        autosome_lengths=(
+            195_154_279,
+            181_755_017,
+            159_745_316,
+            156_860_686,
+            151_758_149,
+            149_588_044,
+            144_995_196,
+            130_127_694,
+            124_359_700,
+            130_530_862,
+            121_973_369,
+            120_092_757,
+            120_883_175,
+            125_139_656,
+            104_073_951,
+            98_008_968,
+            95_294_699,
+            90_720_763,
+            61_420_004,
+        ),
+        sex_chromosome_lengths=(169_476_592, 91_455_967),
+        mt_length=16_299,
+    ),
+)
+
+
+def _matches_reference_profile(
+    contig_lengths: dict[str, int], mt_contig: str, profile: _ReferenceProfile
+) -> bool:
+    expected_nuclear_lengths = tuple(
+        (str(index), length) for index, length in enumerate(profile.autosome_lengths, 1)
+    ) + tuple(zip(("X", "Y"), profile.sex_chromosome_lengths, strict=True))
+
+    # Assembly profiles are exact; standard chromosome prefixes are the only aliases.
+    return any(
+        contig_lengths
+        == {
+            mt_contig: profile.mt_length,
+            **{f"{prefix}{name}": length for name, length in expected_nuclear_lengths},
+        }
+        for prefix in ("", "chr")
+    )
+
+
+def _matching_reference_profiles(
+    contig_lengths: dict[str, int], mt_contig: str
+) -> tuple[_ReferenceProfile, ...]:
+    return tuple(
+        profile
+        for profile in _REFERENCE_PROFILES
+        if _matches_reference_profile(contig_lengths, mt_contig, profile)
+    )
+
+
+def detect_reference_profile(contig_lengths: dict[str, int], mt_contig: str) -> str:
+    """Return the unique exact assembly profile represented by a contig map."""
+
+    matches = _matching_reference_profiles(contig_lengths, mt_contig)
+    if len(matches) != 1:
+        return "unrecognized"
+    return f"{matches[0].species}:{matches[0].build}"
+
+
+def detect_physical_reference_scope(contig_lengths: dict[str, int], mt_contig: str) -> str:
+    """Classify a FASTA index or alignment header without configuration overrides."""
+
+    if set(contig_lengths) == {mt_contig}:
+        return "mt_only"
+    if detect_reference_profile(contig_lengths, mt_contig) != "unrecognized":
+        return "whole_genome"
+    return "custom"
+
+
+def _infer_species_from_reference_profile(
+    contig_lengths: dict[str, int], mt_contig: str
+) -> str:
+    matched_species = {
+        profile.species for profile in _matching_reference_profiles(contig_lengths, mt_contig)
+    }
+    return matched_species.pop() if len(matched_species) == 1 else "unknown"
+
+
+def _has_recognized_nuclear_chromosome_profile(
+    contig_lengths: dict[str, int], mt_contig: str, species: str
+) -> bool:
+    normalized_species = (species or "").strip().lower()
+    return any(
+        profile.species == normalized_species
+        and _matches_reference_profile(contig_lengths, mt_contig, profile)
+        for profile in _REFERENCE_PROFILES
+    )
+
+
+def detect_reference_scope(
+    *,
+    requested: str,
+    contig_lengths: dict[str, int],
+    mt_contig: str,
+    species: str,
+) -> str:
+    """Resolve whether the supplied reference supports nuclear-context interpretation."""
+
+    requested = (requested or "auto").strip().lower()
+    allowed = {"auto", "mt_only", "whole_genome", "custom"}
+    if requested not in allowed:
+        raise ValueError(f"Unsupported REFERENCE_SCOPE: {requested}")
+    contigs = set(contig_lengths)
+    physically_inferred = "custom"
+    if contigs == {mt_contig}:
+        physically_inferred = "mt_only"
+    elif mt_contig in contigs and _has_recognized_nuclear_chromosome_profile(
+        contig_lengths, mt_contig, species
+    ):
+        physically_inferred = "whole_genome"
+    if requested == "auto":
+        return physically_inferred
+    if requested == "whole_genome" and physically_inferred != "whole_genome":
+        raise ValueError(
+            "REFERENCE_SCOPE=whole_genome requires a recognized complete nuclear reference; "
+            f"the supplied FASTA resolved as {physically_inferred}"
+        )
+    return requested
+
+
 @dataclass(frozen=True)
 class PipelineConfig:
     """Normalized portable representation of a mito-overview run configuration."""
@@ -129,7 +482,7 @@ class PipelineConfig:
     run_name: str
     sample_id: str
     source_sample_dir: Path
-    source_hv_dir: Path
+    source_hv_dir: Path | None
     source_hv_np_dir: Path | None
     ref_fasta: Path
     source_align_file: Path
@@ -140,23 +493,49 @@ class PipelineConfig:
     requested_species: str
     detected_species: str
     reference_build_guess: str
+    fasta_reference_scope: str
+    fasta_reference_profile: str
+    requested_reference_scope: str
+    reference_scope: str
     read_mode: str
     assay_type: str
     conda_base: str
     conda_env_prefix: str
     final_bioinfo_dir: Path | None
     debug: bool
-    het_min_depth: int
-    het_min_vaf: float
+    min_callable_depth: int
+    min_alt_allele_fraction: float
+    allele_min_base_quality: int
+    allele_min_mapping_quality: int
+    allele_min_read_mean_quality: float
+    allele_max_depth: int
+    allele_exclude_flags: int
+    allele_ignore_overlaps: bool
     deletion_min_size: int
     nuclear_window_size: int
     nuclear_window_count: int
+    control_region_annotation_mode: str
     phymer_root: Path | None
+    phymer_mode: str
+    phymer_script_sha256: str
+    phymer_library_sha256: str
+    phymer_definitions_sha256: str
     human_mt_gtf: Path | None
     phymer_min_depth: int
     phymer_major_vaf: float
+    phymer_min_callable_fraction: float
+    mvtool_mode: str
     mvtool_api_url: str
+    mvtool_fixture_json: Path | None
     mseqdr_timeout: int
+    source_variant_vcf: Path | None
+    source_clinvar_vcf: Path | None
+    source_variant_vcf_unphased: Path | None
+    source_clinvar_vcf_unphased: Path | None
+    source_bedmethyl: Path | None
+    source_bedmethyl_hp1: Path | None
+    source_bedmethyl_hp2: Path | None
+    source_bedmethyl_ungrouped: Path | None
 
     @classmethod
     def from_env_file(cls, path: str | Path) -> "PipelineConfig":
@@ -167,54 +546,213 @@ class PipelineConfig:
         merged = {**DEFAULTS, **mapping}
         missing = [key for key in REQUIRED_KEYS if not merged.get(key)]
         if missing:
-            missing_str = ", ".join(missing)
-            raise ValueError(f"Missing required config keys: {missing_str}")
+            raise ValueError(f"Missing required config keys: {', '.join(missing)}")
 
         base_dir = _config_base_dir(config_file)
-        ref_fasta = _resolve_path(merged["REF_FASTA"], base_dir)
-        requested_species = merged["SPECIES"]
-        read_mode = merged["READ_MODE"].strip().lower()
-        assay_type = merged["ASSAY_TYPE"].strip().lower()
+        ref_fasta = _resolve_path(str(merged["REF_FASTA"]), base_dir)
+        source_align_file = _resolve_path(str(merged["SOURCE_ALIGN_FILE"]), base_dir)
+        source_align_mode = _infer_alignment_mode(source_align_file, str(merged["SOURCE_ALIGN_MODE"]))
+        mt_contig = str(merged["MT_CONTIG"]).strip()
+        fai_lengths = _read_fai_lengths(ref_fasta)
+        mt_length_raw = str(merged["MT_LENGTH"]).strip()
+        if mt_length_raw:
+            mt_length = int(mt_length_raw)
+        elif mt_contig in fai_lengths:
+            mt_length = fai_lengths[mt_contig]
+        else:
+            raise ValueError(
+                f"MT_LENGTH was omitted and {ref_fasta}.fai does not define contig {mt_contig}"
+            )
+
+        requested_species = str(merged["SPECIES"])
+        detected_species = detect_species(
+            ref_fasta,
+            requested_species,
+            contig_lengths=fai_lengths,
+            mt_contig=mt_contig,
+        )
+        reference_scope = detect_reference_scope(
+            requested=str(merged["REFERENCE_SCOPE"]),
+            contig_lengths=fai_lengths,
+            mt_contig=mt_contig,
+            species=detected_species,
+        )
+        fasta_reference_scope = detect_physical_reference_scope(fai_lengths, mt_contig)
+        fasta_reference_profile = detect_reference_profile(fai_lengths, mt_contig)
+        read_mode = str(merged["READ_MODE"]).strip().lower()
+        assay_type = str(merged["ASSAY_TYPE"]).strip().lower()
+        control_region_annotation_mode = str(
+            merged["CONTROL_REGION_ANNOTATION_MODE"]
+        ).strip().lower()
+        phymer_mode = str(merged["PHYMER_MODE"]).strip().lower()
+        mvtool_mode = str(merged["MVTOOL_MODE"]).strip().lower()
         if read_mode not in {"long", "short"}:
             raise ValueError(f"Unsupported READ_MODE: {read_mode}")
         if assay_type not in {"wgs", "targeted_mt"}:
             raise ValueError(f"Unsupported ASSAY_TYPE: {assay_type}")
-        return cls(
+        if control_region_annotation_mode not in {
+            "auto",
+            "disabled",
+            "synthetic_fixture_override",
+        }:
+            raise ValueError(
+                "Unsupported CONTROL_REGION_ANNOTATION_MODE: "
+                f"{control_region_annotation_mode}"
+            )
+        if mvtool_mode not in {"disabled", "fixture", "network"}:
+            raise ValueError(f"Unsupported MVTOOL_MODE: {mvtool_mode}")
+        if phymer_mode not in {"external", "fixture"}:
+            raise ValueError(f"Unsupported PHYMER_MODE: {phymer_mode}")
+        if mvtool_mode == "network" and not str(merged["MVTOOL_API_URL"]).strip():
+            raise ValueError("MVTOOL_MODE=network requires a nonempty MVTOOL_API_URL")
+
+        pipeline_default = Path(__file__).resolve().parents[1]
+        pipeline_root = _optional_path(str(merged["PIPELINE_ROOT"]), base_dir) or pipeline_default
+        source_sample_dir = _optional_path(str(merged["SOURCE_SAMPLE_DIR"]), base_dir) or source_align_file.parent
+        min_callable_depth = _resolve_alias(
+            mapping,
+            "MIN_CALLABLE_DEPTH",
+            "HET_MIN_DEPTH",
+            str(DEFAULTS["MIN_CALLABLE_DEPTH"]),
+            int,
+        )
+        min_alt_allele_fraction = _resolve_alias(
+            mapping,
+            "MIN_ALT_ALLELE_FRACTION",
+            "HET_MIN_VAF",
+            str(DEFAULTS["MIN_ALT_ALLELE_FRACTION"]),
+            float,
+        )
+
+        config = cls(
             config_file=Path(config_file),
-            pipeline_root=_resolve_path(merged["PIPELINE_ROOT"], base_dir),
-            work_root=_resolve_path(merged["WORK_ROOT"], base_dir),
-            run_name=merged["RUN_NAME"],
-            sample_id=merged["SAMPLE_ID"],
-            source_sample_dir=_resolve_path(merged["SOURCE_SAMPLE_DIR"], base_dir),
-            source_hv_dir=_resolve_path(merged["SOURCE_HV_DIR"], base_dir),
-            source_hv_np_dir=_optional_path(merged["SOURCE_HV_NP_DIR"], base_dir),
+            pipeline_root=pipeline_root,
+            work_root=_resolve_path(str(merged["WORK_ROOT"]), base_dir),
+            run_name=str(merged["RUN_NAME"]),
+            sample_id=str(merged["SAMPLE_ID"]),
+            source_sample_dir=source_sample_dir,
+            source_hv_dir=_optional_path(str(merged["SOURCE_HV_DIR"]), base_dir),
+            source_hv_np_dir=_optional_path(str(merged["SOURCE_HV_NP_DIR"]), base_dir),
             ref_fasta=ref_fasta,
-            source_align_file=_resolve_path(merged["SOURCE_ALIGN_FILE"], base_dir),
-            source_align_mode=merged["SOURCE_ALIGN_MODE"],
-            mt_contig=merged["MT_CONTIG"],
-            mt_length=int(merged["MT_LENGTH"]),
+            source_align_file=source_align_file,
+            source_align_mode=source_align_mode,
+            mt_contig=mt_contig,
+            mt_length=mt_length,
             threads=int(merged["THREADS"]),
             requested_species=requested_species,
-            detected_species=detect_species(ref_fasta, requested_species),
+            detected_species=detected_species,
             reference_build_guess=detect_reference_build(ref_fasta),
+            fasta_reference_scope=fasta_reference_scope,
+            fasta_reference_profile=fasta_reference_profile,
+            requested_reference_scope=str(merged["REFERENCE_SCOPE"]).strip().lower(),
+            reference_scope=reference_scope,
             read_mode=read_mode,
             assay_type=assay_type,
-            conda_base=merged["CONDA_BASE"],
-            conda_env_prefix=merged["CONDA_ENV_PREFIX"],
-            final_bioinfo_dir=_optional_path(merged["FINAL_BIOINFO_DIR"], base_dir),
-            debug=merged["DEBUG"] in {"1", "true", "TRUE", "yes", "YES"},
-            het_min_depth=int(merged["HET_MIN_DEPTH"]),
-            het_min_vaf=float(merged["HET_MIN_VAF"]),
+            conda_base=str(merged["CONDA_BASE"]),
+            conda_env_prefix=str(merged["CONDA_ENV_PREFIX"]),
+            final_bioinfo_dir=_optional_path(str(merged["FINAL_BIOINFO_DIR"]), base_dir),
+            debug=_parse_bool(str(merged["DEBUG"])),
+            min_callable_depth=min_callable_depth,
+            min_alt_allele_fraction=min_alt_allele_fraction,
+            allele_min_base_quality=int(merged["ALLELE_MIN_BASE_QUALITY"]),
+            allele_min_mapping_quality=int(merged["ALLELE_MIN_MAPPING_QUALITY"]),
+            allele_min_read_mean_quality=float(merged["ALLELE_MIN_READ_MEAN_QUALITY"]),
+            allele_max_depth=int(merged["ALLELE_MAX_DEPTH"]),
+            allele_exclude_flags=int(str(merged["ALLELE_EXCLUDE_FLAGS"]), 0),
+            allele_ignore_overlaps=_parse_bool(str(merged["ALLELE_IGNORE_OVERLAPS"])),
             deletion_min_size=int(merged["DELETION_MIN_SIZE"]),
             nuclear_window_size=int(merged["NUCLEAR_WINDOW_SIZE"]),
             nuclear_window_count=int(merged["NUCLEAR_WINDOW_COUNT"]),
-            phymer_root=_optional_path(merged["PHYMER_ROOT"], base_dir),
-            human_mt_gtf=_optional_path(merged["HUMAN_MT_GTF"], base_dir),
+            control_region_annotation_mode=control_region_annotation_mode,
+            phymer_root=_optional_path(str(merged["PHYMER_ROOT"]), base_dir),
+            phymer_mode=phymer_mode,
+            phymer_script_sha256=str(merged["PHYMER_SCRIPT_SHA256"]).strip().lower(),
+            phymer_library_sha256=str(merged["PHYMER_LIBRARY_SHA256"]).strip().lower(),
+            phymer_definitions_sha256=str(
+                merged["PHYMER_DEFINITIONS_SHA256"]
+            ).strip().lower(),
+            human_mt_gtf=_optional_path(str(merged["HUMAN_MT_GTF"]), base_dir),
             phymer_min_depth=int(merged["PHYMER_MIN_DEPTH"]),
             phymer_major_vaf=float(merged["PHYMER_MAJOR_VAF"]),
-            mvtool_api_url=merged["MVTOOL_API_URL"],
+            phymer_min_callable_fraction=float(
+                merged["PHYMER_MIN_CALLABLE_FRACTION"]
+            ),
+            mvtool_mode=mvtool_mode,
+            mvtool_api_url=str(merged["MVTOOL_API_URL"]).strip(),
+            mvtool_fixture_json=_optional_path(str(merged["MVTOOL_FIXTURE_JSON"]), base_dir),
             mseqdr_timeout=int(merged["MSEQDR_TIMEOUT"]),
+            source_variant_vcf=_optional_path(str(merged["SOURCE_VARIANT_VCF"]), base_dir),
+            source_clinvar_vcf=_optional_path(str(merged["SOURCE_CLINVAR_VCF"]), base_dir),
+            source_variant_vcf_unphased=_optional_path(str(merged["SOURCE_VARIANT_VCF_UNPHASED"]), base_dir),
+            source_clinvar_vcf_unphased=_optional_path(str(merged["SOURCE_CLINVAR_VCF_UNPHASED"]), base_dir),
+            source_bedmethyl=_optional_path(str(merged["SOURCE_BEDMETHYL"]), base_dir),
+            source_bedmethyl_hp1=_optional_path(str(merged["SOURCE_BEDMETHYL_HP1"]), base_dir),
+            source_bedmethyl_hp2=_optional_path(str(merged["SOURCE_BEDMETHYL_HP2"]), base_dir),
+            source_bedmethyl_ungrouped=_optional_path(str(merged["SOURCE_BEDMETHYL_UNGROUPED"]), base_dir),
         )
+        config._validate_numeric_values()
+        return config
+
+    def _validate_numeric_values(self) -> None:
+        if self.mt_length <= 0:
+            raise ValueError("MT_LENGTH must be positive")
+        if self.min_callable_depth < 0:
+            raise ValueError("MIN_CALLABLE_DEPTH cannot be negative")
+        if not math.isfinite(self.min_alt_allele_fraction) or not (
+            0 <= self.min_alt_allele_fraction <= 1
+        ):
+            raise ValueError("MIN_ALT_ALLELE_FRACTION must be between 0 and 1")
+        for label, value in (
+            ("ALLELE_MIN_BASE_QUALITY", self.allele_min_base_quality),
+            ("ALLELE_MIN_MAPPING_QUALITY", self.allele_min_mapping_quality),
+            ("ALLELE_MIN_READ_MEAN_QUALITY", self.allele_min_read_mean_quality),
+            ("ALLELE_MAX_DEPTH", self.allele_max_depth),
+        ):
+            if isinstance(value, float) and not math.isfinite(value):
+                raise ValueError(f"{label} must be finite")
+            if value < 0:
+                raise ValueError(f"{label} cannot be negative")
+        if not math.isfinite(self.phymer_major_vaf) or not 0 <= self.phymer_major_vaf <= 1:
+            raise ValueError("PHYMER_MAJOR_VAF must be finite and between 0 and 1")
+        if not math.isfinite(self.phymer_min_callable_fraction) or not (
+            0 < self.phymer_min_callable_fraction <= 1
+        ):
+            raise ValueError(
+                "PHYMER_MIN_CALLABLE_FRACTION must be finite, greater than 0, and at most 1"
+            )
+        if self.phymer_mode == "external" and self.phymer_min_callable_fraction < 0.95:
+            raise ValueError(
+                "PHYMER_MIN_CALLABLE_FRACTION cannot be below 0.95 when "
+                "PHYMER_MODE=external"
+            )
+        for label, value in (
+            ("PHYMER_SCRIPT_SHA256", self.phymer_script_sha256),
+            ("PHYMER_LIBRARY_SHA256", self.phymer_library_sha256),
+            ("PHYMER_DEFINITIONS_SHA256", self.phymer_definitions_sha256),
+        ):
+            if value and (
+                len(value) != 64
+                or any(character not in "0123456789abcdef" for character in value)
+            ):
+                raise ValueError(
+                    f"{label} must be a 64-character lowercase hexadecimal SHA-256"
+                )
+        if self.phymer_min_depth <= 0:
+            raise ValueError("PHYMER_MIN_DEPTH must be positive")
+        if self.threads <= 0 or self.nuclear_window_size <= 0 or self.nuclear_window_count <= 0:
+            raise ValueError("THREADS and nuclear window settings must be positive")
+
+    @property
+    def het_min_depth(self) -> int:
+        """Compatibility alias for the former configuration name."""
+
+        return self.min_callable_depth
+
+    @property
+    def het_min_vaf(self) -> float:
+        """Compatibility alias for the former configuration name."""
+
+        return self.min_alt_allele_fraction
 
     def context_rows(self) -> list[tuple[str, str]]:
         """Return key run metadata in a table-friendly order."""
@@ -224,7 +762,7 @@ class PipelineConfig:
             ("run_name", self.run_name),
             ("sample_id", self.sample_id),
             ("source_sample_dir", str(self.source_sample_dir)),
-            ("source_hv_dir", str(self.source_hv_dir)),
+            ("source_hv_dir", str(self.source_hv_dir or "")),
             ("source_hv_np_dir", str(self.source_hv_np_dir or "")),
             ("reference_fasta", str(self.ref_fasta)),
             ("source_align_file", str(self.source_align_file)),
@@ -234,14 +772,35 @@ class PipelineConfig:
             ("species_requested", self.requested_species),
             ("species_detected", self.detected_species),
             ("reference_build_guess", self.reference_build_guess),
+            ("reference_scope_requested", self.requested_reference_scope),
+            ("reference_scope_fasta", self.fasta_reference_scope),
+            ("reference_profile_fasta", self.fasta_reference_profile),
+            ("reference_scope_configured", self.reference_scope),
+            ("reference_scope_resolved", self.reference_scope),
             ("mt_contig", self.mt_contig),
             ("mt_length", str(self.mt_length)),
             ("threads", str(self.threads)),
-            ("het_min_depth", str(self.het_min_depth)),
-            ("het_min_vaf", str(self.het_min_vaf)),
+            ("min_callable_depth", str(self.min_callable_depth)),
+            ("min_alt_allele_fraction", str(self.min_alt_allele_fraction)),
+            ("allele_min_base_quality", str(self.allele_min_base_quality)),
+            ("allele_min_mapping_quality", str(self.allele_min_mapping_quality)),
+            ("allele_min_read_mean_quality", str(self.allele_min_read_mean_quality)),
+            ("allele_max_depth", str(self.allele_max_depth)),
+            ("allele_exclude_flags", str(self.allele_exclude_flags)),
+            ("allele_ignore_overlaps", str(int(self.allele_ignore_overlaps))),
             ("deletion_min_size", str(self.deletion_min_size)),
             ("human_mt_gtf", str(self.human_mt_gtf or "")),
-            ("mvtool_api_url", self.mvtool_api_url),
+            ("control_region_annotation_mode", self.control_region_annotation_mode),
+            ("phymer_mode", self.phymer_mode),
+            ("phymer_min_depth", str(self.phymer_min_depth)),
+            ("phymer_major_vaf", str(self.phymer_major_vaf)),
+            (
+                "phymer_min_callable_fraction",
+                str(self.phymer_min_callable_fraction),
+            ),
+            ("mvtool_mode", self.mvtool_mode),
+            ("mvtool_api_url", self.mvtool_api_url if self.mvtool_mode == "network" else ""),
+            ("mvtool_fixture_json", str(self.mvtool_fixture_json or "")),
         ]
 
     @property

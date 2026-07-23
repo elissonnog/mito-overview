@@ -1,6 +1,6 @@
 # Examples
 
-This directory holds packaging examples for the public mirror.
+This directory holds synthetic smoke-test bundles and v0.3.0 public workflow-evidence assets.
 
 ## Included now
 - [`configs/human_example.env`](configs/human_example.env): example environment-style config for a human mtDNA run
@@ -8,8 +8,8 @@ This directory holds packaging examples for the public mirror.
 - [`synthetic_data/TOY-001`](synthetic_data/TOY-001): tracked toy input dataset used for installation checks and example-bundle generation
 - [`expected_reports/TOY-001_output`](expected_reports/TOY-001_output): synthetic public report bundle generated from the repository's own example-builder workflow, including locally validated optional pages `13` and `14`
 - [`expected_reports/TOY-SR-001_output`](expected_reports/TOY-SR-001_output): synthetic short-read report bundle that exercises the reduced short-read profile with explicit status pages for long-read-only analyses
-- [`public_validation/GM12878_ONT_longread`](public_validation/GM12878_ONT_longread): light-weight figures and summary tables from a bounded real public ONT long-read proof-of-principle example
-- [`public_validation/GM11906_MERRF_shortread`](public_validation/GM11906_MERRF_shortread): light-weight figures and summary tables from a real public short-read proof-of-principle compatibility example
+- [`public_validation/GM12878_ONT_longread`](public_validation/GM12878_ONT_longread): figures, summaries, and provenance from the deterministic GM12878 qn1000 ONT selection
+- [`public_validation/GM11906_MERRF_shortread`](public_validation/GM11906_MERRF_shortread): figures, summaries, and provenance from three pooled GM11906 single-cell ATAC-seq libraries analyzed in the reduced short-read profile
 
 ## How to regenerate
 Use the builder script:
@@ -40,10 +40,11 @@ For the public proof-of-principle long-read dataset:
   /tmp/GM12878_ONT_longread_output
 ```
 
-This produces a synthetic human-like toy sample that exercises the public analytical pages without relying on private project identifiers. The bundled builder uses local fixture resources for the optional Phy-Mer and mvTool-style validation layers so the example bundle can be regenerated from a fresh clone without private tool installations or live remote calls.
+The synthetic builders exercise public analytical pages without private project identifiers. They use local fixture resources for optional Phy-Mer and mvTool-style report wiring, so no private installation or live request is needed for the smoke-test bundles.
 
-Note:
-- analytical TSV, HTML, and figure outputs are intended to be stable across rebuilds
-- the bundled mitochondrial BAM and BAM index are included for inspection convenience, but byte-level identity is not guaranteed across rebuilds because binary compression and indexing details can vary by environment
-- the GM12878 public long-read example assets are intentionally light-weight; they preserve a bounded targeted-mt proof-of-principle subset of the real-data outputs rather than the full `01-14` public synthetic example surface
-- the GM11906 public example assets are intentionally light-weight; they preserve the figures and key summary tables used for documentation and manuscript support rather than the full intermediate bundle
+## v0.3.0 public matrix summary
+The GM12878 input is exactly a fixed deterministic `1,000`-query-name subset selected from `193,043` `SRR18110025` records. Its mapped-only BAM contains `728` mapped unique query names/primary alignments and `543` supplementary records. The default profile reports `16` candidates, `7,143,152` accepted observations, and `2,047,476` excluded observations.
+
+The GM11906 pooled-scATAC default profile reports `33` candidates, `44,048,838` accepted observations, and `7,296,932` excluded observations. At `m.8344A>G`, depth is `1,027`, alternate count is `740`, and the pooled observed alternate allele fraction is `0.720545`. Unequal callable depth across the three libraries makes this a read-observation-weighted pseudo-bulk statistic, not an equal-weight per-cell or calibrated sample heteroplasmy estimate.
+
+Each clean-room platform matrix starts from the sealed raw FASTQs, rebuilds the pooled GM11906 and seeded GM12878 derivatives and alignments, and then uses each newly generated BAM for the two within-matrix default report invocations. Exact normalized-table repeatability is therefore evaluated separately from cross-platform reconstruction of the deterministic derivatives. Each public asset directory documents its filter profiles, exact status values, and selected report artifacts.

@@ -35,6 +35,21 @@ CLUSTER_COLUMNS = [
     "max_deletion_size",
     "support_fraction_primary",
 ]
+READ_COLUMNS = [
+    "read_name",
+    "has_large_deletion",
+    "is_supplementary",
+    "has_sa_tag",
+]
+BREAKPOINT_BIN_SIZE = 10
+
+
+def breakpoint_bin_anchor(position_1based: int) -> int:
+    """Return the zero-based anchor of a 10-bp bin for a one-based position."""
+
+    if position_1based < 1:
+        raise ValueError("Breakpoint positions must be one-based positive integers")
+    return ((position_1based - 1) // BREAKPOINT_BIN_SIZE) * BREAKPOINT_BIN_SIZE
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -60,8 +75,17 @@ def run_step(
     mt_contig: str,
     mt_length: int,
     min_deletion_size: int,
-) -> dict[str, Path]:
+) -> dict[str, Path | str]:
     """Run the public mitochondrial deletion screen."""
+
+    if not isinstance(mt_length, int) or isinstance(mt_length, bool) or mt_length <= 0:
+        raise ValueError("mt_length must be a positive integer")
+    if (
+        not isinstance(min_deletion_size, int)
+        or isinstance(min_deletion_size, bool)
+        or min_deletion_size <= 0
+    ):
+        raise ValueError("min_deletion_size must be a positive integer")
 
     print(
         f"[deletions] starting sample={sample_id} contig={mt_contig} "
@@ -77,9 +101,9 @@ def run_step(
     bam_handle = pysam.AlignmentFile(str(bam), "rb")
     event_rows: list[dict[str, object]] = []
     read_rows: list[dict[str, object]] = []
-    primary_reads = 0
-    reads_with_large_deletion = 0
-    reads_with_supplementary = 0
+    primary_read_names: set[str] = set()
+    read_names_with_large_deletion: set[str] = set()
+    read_names_with_supplementary_or_sa: set[str] = set()
     processed_reads = 0
     event_counter = Counter()
 
@@ -88,11 +112,14 @@ def run_step(
             continue
         processed_reads += 1
         if processed_reads % 5000 == 0:
-            print(f"[deletions] scanned reads={processed_reads} events={len(event_rows)}")
+            print(
+                f"[deletions] scanned alignment_records={processed_reads} "
+                f"events={len(event_rows)}"
+            )
         if not read.is_supplementary:
-            primary_reads += 1
+            primary_read_names.add(read.query_name)
         if read.has_tag("SA") or read.is_supplementary:
-            reads_with_supplementary += 1
+            read_names_with_supplementary_or_sa.add(read.query_name)
 
         has_large = False
         ref_pos = read.reference_start + 1
@@ -101,7 +128,14 @@ def run_step(
                 if op == CIGAR_DEL and length >= min_deletion_size:
                     start = ref_pos
                     end = ref_pos + length - 1
-                    key = (int(start / 10) * 10, int(end / 10) * 10)
+                    if start < 1 or end > mt_length or end < start:
+                        bam_handle.close()
+                        raise ValueError(
+                            "CIGAR deletion extends outside the configured mitochondrial "
+                            f"interval for read {read.query_name!r}: "
+                            f"start={start}, end={end}, mt_length={mt_length}"
+                        )
+                    key = (breakpoint_bin_anchor(start), breakpoint_bin_anchor(end))
                     event_counter[key] += 1
                     event_rows.append(
                         {
@@ -120,7 +154,7 @@ def run_step(
             elif op in (1, 4, 5, 6):
                 continue
         if has_large:
-            reads_with_large_deletion += 1
+            read_names_with_large_deletion.add(read.query_name)
         read_rows.append(
             {
                 "read_name": read.query_name,
@@ -130,10 +164,15 @@ def run_step(
             }
         )
     bam_handle.close()
+    primary_reads = len(primary_read_names)
+    reads_with_large_deletion = len(read_names_with_large_deletion)
+    reads_with_supplementary = len(read_names_with_supplementary_or_sa)
     print(f"[deletions] finished scanning primary_reads={primary_reads} candidate_events={len(event_rows)}")
+    module_status = "ok" if primary_reads else "not_evaluable"
+    module_reason = "" if primary_reads else "no_primary_reads"
 
     event_df = pd.DataFrame(event_rows, columns=EVENT_COLUMNS)
-    read_df = pd.DataFrame(read_rows)
+    read_df = pd.DataFrame(read_rows, columns=READ_COLUMNS)
     if not event_df.empty:
         cluster_df = (
             event_df.groupby(["event_bin_start", "event_bin_end"], as_index=False)
@@ -145,26 +184,61 @@ def run_step(
             )
             .sort_values(["supporting_reads", "median_deletion_size"], ascending=[False, False])
         )
-        cluster_df["support_fraction_primary"] = cluster_df["supporting_reads"].apply(
-            lambda x: round(x / primary_reads, 6) if primary_reads else 0.0
+        supporting_primary_reads = (
+            event_df.assign(
+                has_primary_alignment=event_df["read_name"].isin(primary_read_names).astype(int)
+            )
+            .loc[lambda frame: frame["has_primary_alignment"] == 1]
+            .groupby(["event_bin_start", "event_bin_end"])["read_name"]
+            .nunique()
         )
+        cluster_keys = pd.MultiIndex.from_frame(cluster_df[["event_bin_start", "event_bin_end"]])
+        primary_support_counts = supporting_primary_reads.reindex(cluster_keys, fill_value=0).to_numpy()
+        cluster_df["support_fraction_primary"] = [
+            round(int(count) / primary_reads, 6) if primary_reads else pd.NA
+            for count in primary_support_counts
+        ]
     else:
         cluster_df = pd.DataFrame(columns=CLUSTER_COLUMNS)
 
+    if not cluster_df.empty:
+        cluster_metric_status = "ok"
+        cluster_metric_reason = ""
+    elif primary_reads:
+        cluster_metric_status = "not_applicable"
+        cluster_metric_reason = "no_candidate_deletion_clusters"
+    else:
+        cluster_metric_status = "not_evaluable"
+        cluster_metric_reason = "no_primary_reads"
+
     summary_df = pd.DataFrame(
         [
+            {"metric": "status", "value": module_status},
+            {"metric": "reason_code", "value": module_reason},
             {"metric": "primary_reads", "value": primary_reads},
             {"metric": "reads_with_large_deletion", "value": reads_with_large_deletion},
             {"metric": "reads_with_supplementary_or_SA", "value": reads_with_supplementary},
             {"metric": "candidate_deletion_clusters", "value": len(cluster_df)},
             {
                 "metric": "largest_median_deletion",
-                "value": float(cluster_df["median_deletion_size"].max()) if not cluster_df.empty else 0,
+                "value": (
+                    float(cluster_df["median_deletion_size"].max())
+                    if not cluster_df.empty
+                    else pd.NA
+                ),
             },
+            {"metric": "largest_median_deletion_status", "value": cluster_metric_status},
+            {"metric": "largest_median_deletion_reason_code", "value": cluster_metric_reason},
             {
                 "metric": "max_support_fraction_primary",
-                "value": float(cluster_df["support_fraction_primary"].max()) if not cluster_df.empty else 0,
+                "value": (
+                    float(cluster_df["support_fraction_primary"].max())
+                    if primary_reads and not cluster_df.empty
+                    else pd.NA
+                ),
             },
+            {"metric": "max_support_fraction_primary_status", "value": cluster_metric_status},
+            {"metric": "max_support_fraction_primary_reason_code", "value": cluster_metric_reason},
         ]
     )
 
@@ -185,7 +259,7 @@ def run_step(
         plt.bar(labels, top["supporting_reads"], color="#b91c1c")
         plt.xticks(rotation=90)
         plt.ylabel("Supporting reads")
-        plt.title(f"{sample_id} candidate mtDNA deletion clusters")
+        plt.title(f"{sample_id} qualifying CIGAR-deletion bins")
         plt.tight_layout()
         fig_path = figure_dir / "mito_deletion_clusters.png"
         plt.savefig(fig_path, dpi=150)
@@ -193,28 +267,45 @@ def run_step(
 
     metrics_html = "".join(
         [
+            metric_card("Evaluation status", module_status),
             metric_card("Primary reads", primary_reads),
-            metric_card("Reads with large deletion", reads_with_large_deletion),
-            metric_card("Candidate clusters", len(cluster_df)),
+            metric_card("Reads with qualifying CIGAR deletion", reads_with_large_deletion),
+            metric_card("CIGAR-deletion bins", len(cluster_df)),
             metric_card("Min deletion size", min_deletion_size),
         ]
     )
     intro_html = (
-        '<p class="muted">Large mitochondrial deletion candidates are summarized from CIGAR deletion segments '
-        "and supplementary-structure flags in the mito-only BAM. This page is intended as a structural screen "
-        "rather than a finalized SV caller output.</p>"
+        '<p class="muted">Only CIGAR deletion operations meeting the configured minimum size of '
+        f"{min_deletion_size} bp create or support candidate bins, whether they occur on retained primary or "
+        "supplementary alignment records. Supplementary-alignment status and SA tags are summarized separately "
+        "as alignment-structure evidence and do not create bin support on their own. This page is intended as a "
+        "structural screen rather than a finalized SV caller output. "
+        "Breakpoints are grouped by zero-based 10-bp bin anchors derived from the one-based inclusive event "
+        "coordinates; positions 1-10 map to anchor 0, positions 11-20 to anchor 10, and so forth. The "
+        "supporting_reads field counts all unique "
+        "read names with qualifying CIGAR-deletion evidence in a bin. The compatibility field "
+        "support_fraction_primary uses only those supporting read names that also have a retained primary "
+        "mitochondrial alignment as its numerator and all unique retained primary mitochondrial read names as "
+        "its denominator; supplementary-only records remain in the event evidence but cannot make this fraction "
+        "exceed one.</p>"
         f"<div class='metrics-grid'>{metrics_html}</div>"
     )
     body_parts = [
-        "<section><h2>Deletion summary</h2>" + df_to_html_table(summary_df, max_rows=20) + "</section>",
-        "<section><h2>Candidate deletion clusters</h2>" + df_to_html_table(cluster_df, max_rows=25) + "</section>",
-        "<section><h2>Read-level deletion events</h2>" + df_to_html_table(event_df, max_rows=30) + "</section>",
+        "<section><h2>Deletion summary</h2>"
+        + df_to_html_table(summary_df.fillna("NA"), max_rows=20)
+        + "</section>",
+        "<section><h2>Qualifying CIGAR-deletion bins</h2>"
+        + df_to_html_table(cluster_df.fillna("NA"), max_rows=25)
+        + "</section>",
+        "<section><h2>Qualifying CIGAR-deletion events</h2>"
+        + df_to_html_table(event_df, max_rows=30)
+        + "</section>",
     ]
     if fig_path:
         body_parts.insert(
             1,
-            "<section><h2>Top deletion clusters</h2>"
-            + figure_html(fig_path, "Top mitochondrial deletion-support clusters")
+            "<section><h2>Top CIGAR-deletion bins</h2>"
+            + figure_html(fig_path, "Top mitochondrial CIGAR-deletion bins")
             + "</section>",
         )
 
@@ -228,6 +319,7 @@ def run_step(
         "".join(body_parts),
     )
     return {
+        "status": module_status,
         "summary_path": summary_path,
         "events_path": events_path,
         "clusters_path": clusters_path,

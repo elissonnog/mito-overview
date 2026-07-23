@@ -1,0 +1,32 @@
+{
+  "dataset_id": "GM12878_SRR18110025_ONT",
+  "generated_utc": "2026-07-22T19:37:12.784003+00:00",
+  "provenance_type": "deterministic_fastq_query_name_subset",
+  "schema_version": "1.0",
+  "selected_query_names": {
+    "bytes": 18422,
+    "md5": "64d606e56bf8dd58ad68baad28898e18",
+    "name": "SRR18110025.deterministic-qnames-1000.fastq.gz.selected_qnames.txt",
+    "sha256": "3444cc7db3dcf78bea807d8bcc6686883a7759d128288c1d26aeae077a771a19"
+  },
+  "selection": {
+    "algorithm": "smallest_sha256_seeded_query_names_v1",
+    "requested_query_names": 1000,
+    "seed": "mito-overview-v0.3.0-GM12878-SRR18110025",
+    "selected_query_names": 1000,
+    "source_records_seen": 193043,
+    "subset_records_written": 1000
+  },
+  "source_fastq": {
+    "bytes": 2033558460,
+    "md5": "d5bfb9aeba04cae5f3dd79462a42e5b0",
+    "name": "SRR18110025.fastq.gz",
+    "sha256": "c0872ee9ceb772ee5a4b76735c0d670e2159764b23dd800b6eb1f4933da11320"
+  },
+  "subset_fastq": {
+    "bytes": 10721431,
+    "md5": "a337abc2691753c56f030f7f523dd750",
+    "name": "SRR18110025.deterministic-qnames-1000.fastq.gz",
+    "sha256": "40e203ead1d621bfec8caa3c5d18cd1e7e70c08da27008a73364812b6871df33"
+  }
+}

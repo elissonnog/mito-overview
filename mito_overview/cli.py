@@ -13,7 +13,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--config", help="Path to a shell-style config.env file")
     parser.add_argument("--steps", help="Comma-separated subset of workflow steps to run")
     parser.add_argument("--list-steps", action="store_true", help="List available workflow steps and exit")
-    parser.add_argument("--dry-run", action="store_true", help="Plan steps and write context files without running them")
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Validate and plan steps without creating or modifying run outputs",
+    )
     parser.add_argument(
         "--strict-files",
         action="store_true",

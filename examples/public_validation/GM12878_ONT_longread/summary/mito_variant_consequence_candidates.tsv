@@ -1,29 +1,17 @@
-position	ref_base	alt_base	depth	heteroplasmy_fraction	feature_label	feature_class	consequence_class	codon_ref	codon_alt	protein_change	clinvar_significance	clinvar_disease
-152	T	C	110216	0.978479	D-loop/control region	control_region	control_region_variant	NA	NA	NA	NA	NA
-14872	C	T	103532	0.975805	MT-CYB	protein_coding	synonymous_variant	ATC	ATT	p.I42I	NA	NA
-7337	G	A	103219	0.974782	MT-CO1	protein_coding	synonymous_variant	TCG	TCA	p.S478S	NA	NA
-4745	A	G	108242	0.9744	MT-ND2	protein_coding	synonymous_variant	CAA	CAG	p.Q92Q	NA	NA
-14831	G	A	100581	0.973603	MT-CYB	protein_coding	missense_variant	GCA	ACA	p.A29T	NA	NA
-13326	T	C	102626	0.973457	MT-ND5	protein_coding	synonymous_variant	TGT	TGC	p.C330C	NA	NA
-15326	A	G	102141	0.970022	MT-CYB	protein_coding	missense_variant	ACA	GCA	p.T194A	NA	NA
-1438	A	G	108113	0.969578	MT-RNR1	Mt_rRNA	rRNA_variant	NA	NA	NA	NA	NA
-4769	A	G	107728	0.968968	MT-ND2	protein_coding	synonymous_variant	ATA	ATG	p.M100M	NA	NA
-8860	A	G	105153	0.968151	MT-ATP6	protein_coding	missense_variant	ACA	GCA	p.T112A	NA	NA
-750	A	G	97049	0.965213	MT-RNR1	Mt_rRNA	rRNA_variant	NA	NA	NA	NA	NA
-263	A	G	114400	0.957343	D-loop/control region	control_region	control_region_variant	NA	NA	NA	NA	NA
-2259	C	T	109348	0.95176	MT-RNR2	Mt_rRNA	rRNA_variant	NA	NA	NA	NA	NA
-13680	C	T	105012	0.936093	MT-ND5	protein_coding	synonymous_variant	CCC	CCT	p.P448P	NA	NA
-16023	G	A	103931	0.532238	MT-TP	Mt_tRNA	tRNA_variant	NA	NA	NA	NA	NA
-10695	G	A	100463	0.366642	MT-ND4L	protein_coding	missense_variant	GCC	ACC	p.A76T	NA	NA
-9276	G	A	104435	0.219926	MT-CO3	protein_coding	missense_variant	GCC	ACC	p.A24T	NA	NA
-310	T	C	108883	0.20748	D-loop/control region	control_region	control_region_variant	NA	NA	NA	NA	NA
-625	G	A	113409	0.190964	MT-TF	Mt_tRNA	tRNA_variant	NA	NA	NA	NA	NA
-309	C	T	114482	0.170743	D-loop/control region	control_region	control_region_variant	NA	NA	NA	NA	NA
-6957	G	A	105583	0.148831	MT-CO1	protein_coding	missense_variant	GGC	AGC	p.G352S	NA	NA
-2712	G	A	107755	0.146647	MT-RNR2	Mt_rRNA	rRNA_variant	NA	NA	NA	NA	NA
-3924	A	G	105832	0.145939	MT-ND1	protein_coding	synonymous_variant	GAA	GAG	p.E206E	NA	NA
-11690	G	A	103726	0.130874	MT-ND4	protein_coding	missense_variant	GGC	AGC	p.G311S	NA	NA
-10685	G	A	104075	0.127053	MT-ND4L	protein_coding	synonymous_variant	GCG	GCA	p.A72A	NA	NA
-15777	G	A	102606	0.106446	MT-CYB	protein_coding	missense_variant	AGC	AAC	p.S344N	NA	NA
-13811	C	T	104495	0.104857	MT-ND5	protein_coding	missense_variant	GCT	GTT	p.A492V	NA	NA
-3922	G	A	94799	0.102396	MT-ND1	protein_coding	missense_variant	GAA	AAA	p.E206K	NA	NA
+position	ref_base	alt_base	depth	alt_allele_fraction	heteroplasmy_fraction	feature_label	feature_class	consequence_class	codon_ref	codon_alt	protein_change	clinvar_significance	clinvar_disease
+8860	A	G	474	1.0	1.0	MT-ATP6	protein_coding	missense_variant	ACA	GCA	p.T112A	NA	NA
+14831	G	A	433	1.0	1.0	MT-CYB	protein_coding	missense_variant	GCA	ACA	p.A29T	NA	NA
+4769	A	G	494	0.997976	0.997976	MT-ND2	protein_coding	synonymous_variant	ATA	ATG	p.M100M	NA	NA
+13326	T	C	474	0.995781	0.995781	MT-ND5	protein_coding	synonymous_variant	TGT	TGC	p.C330C	NA	NA
+7337	G	A	459	0.995643	0.995643	MT-CO1	protein_coding	synonymous_variant	TCG	TCA	p.S478S	NA	NA
+14872	C	T	448	0.995536	0.995536	MT-CYB	protein_coding	synonymous_variant	ATC	ATT	p.I42I	NA	NA
+15326	A	G	427	0.995316	0.995316	MT-CYB	protein_coding	missense_variant	ACA	GCA	p.T194A	NA	NA
+4745	A	G	446	0.993274	0.993274	MT-ND2	protein_coding	synonymous_variant	CAA	CAG	p.Q92Q	NA	NA
+2259	C	T	469	0.987207	0.987207	MT-RNR2	Mt_rRNA	rRNA_variant	NA	NA	NA	NA	NA
+1438	A	G	115	0.973913	0.973913	MT-RNR1	Mt_rRNA	rRNA_variant	NA	NA	NA	NA	NA
+13680	C	T	451	0.973392	0.973392	MT-ND5	protein_coding	synonymous_variant	CCC	CCT	p.P448P	NA	NA
+16023	G	A	485	0.509278	0.509278	MT-TP	Mt_tRNA	tRNA_variant	NA	NA	NA	NA	NA
+10695	G	A	225	0.257778	0.257778	MT-ND4L	protein_coding	missense_variant	GCC	ACC	p.A76T	NA	NA
+1539	C	T	134	0.216418	0.216418	MT-RNR1	Mt_rRNA	rRNA_variant	NA	NA	NA	NA	NA
+1544	A	C	128	0.210938	0.210938	MT-RNR1	Mt_rRNA	rRNA_variant	NA	NA	NA	NA	NA
+1543	T	G	136	0.198529	0.198529	MT-RNR1	Mt_rRNA	rRNA_variant	NA	NA	NA	NA	NA

@@ -1,10 +1,12 @@
 # mito-overview v0.2.1 Release Validation Audit
 
+> **Historical immutable-release record.** This audit applies only to v0.2.1 at `2ba62b775a7204c0dc61f5408989603f536c78da`. Its public metrics and method descriptions must not be used as v0.3.0 manuscript or release evidence. The active v0.3.0 release contract is [clean_room_validation_protocol_v0.3.0.md](clean_room_validation_protocol_v0.3.0.md), with current state in [reproducibility_run_ledger.md](reproducibility_run_ledger.md); [preprint_release_validation_v0.3.0.md](preprint_release_validation_v0.3.0.md) is a dated historical candidate snapshot.
+
 Date: 2026-07-07
 
 Repository: `https://github.com/elissonnog/mito-overview`
 
-Release candidate branch: `codex/github-release-readiness`
+Release candidate branch: historical GitHub release-readiness branch
 
 Release target: `v0.2.1`
 
