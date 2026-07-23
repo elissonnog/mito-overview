@@ -145,6 +145,76 @@ def test_alignment_provenance_rejects_duplicate_public_input_labels(
         )
 
 
+@pytest.mark.parametrize(
+    ("record_name", "replacement"),
+    [
+        ("alignment", {}),
+        ("alignment_index", {"sha256": "0" * 64}),
+        ("reference", {"name": "mt.fa"}),
+        ("reference_index", {"name": "mt.fa.fai", "bytes": 1}),
+    ],
+)
+def test_alignment_provenance_rejects_incomplete_digest_records(
+    tmp_path: Path,
+    record_name: str,
+    replacement: dict[str, object],
+) -> None:
+    reference, alignment, fastq = _alignment_fixture(tmp_path)
+    manifest = _record_source(tmp_path, reference, alignment, fastq)
+    payload = json.loads(manifest.read_text(encoding="utf-8"))
+    payload[record_name] = replacement
+    manifest.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ProvenanceError, match="digest (record|field inventory)"):
+        verify_alignment_provenance(
+            manifest_path=manifest,
+            dataset_id="PUBLIC-001",
+            alignment_path=alignment,
+            reference_path=reference,
+            inputs={"run_1": fastq},
+            derivation_id="test-aligner-v1",
+            command_template="test-aligner {reference} {fastq} | test-sort {alignment}",
+            parameters={"threads": "1"},
+            tools=(),
+        )
+
+
+def test_alignment_provenance_rejects_label_only_or_wrong_name_public_input(
+    tmp_path: Path,
+) -> None:
+    reference, alignment, fastq = _alignment_fixture(tmp_path)
+    manifest = _record_source(tmp_path, reference, alignment, fastq)
+
+    for replacement, message in (
+        ({"label": "run_1"}, "digest field inventory"),
+        (
+            {
+                **digest_file(fastq, include_md5=True),
+                "label": "run_1",
+                "name": "wrong.fastq",
+            },
+            "name mismatch",
+        ),
+    ):
+        payload = json.loads(manifest.read_text(encoding="utf-8"))
+        payload["public_inputs"] = [replacement]
+        manifest.write_text(json.dumps(payload), encoding="utf-8")
+        with pytest.raises(ProvenanceError, match=message):
+            verify_alignment_provenance(
+                manifest_path=manifest,
+                dataset_id="PUBLIC-001",
+                alignment_path=alignment,
+                reference_path=reference,
+                inputs={"run_1": fastq},
+                derivation_id="test-aligner-v1",
+                command_template="test-aligner {reference} {fastq} | test-sort {alignment}",
+                parameters={"threads": "1"},
+                tools=(),
+            )
+        manifest.unlink()
+        _record_source(tmp_path, reference, alignment, fastq)
+
+
 def test_deterministic_subset_selects_exact_seeded_query_names(tmp_path: Path) -> None:
     reference, alignment, fastq = _alignment_fixture(tmp_path, read_count=20)
     source_manifest = _record_source(tmp_path, reference, alignment, fastq)
@@ -220,6 +290,39 @@ def test_subset_verification_rejects_seed_or_manifest_tampering(tmp_path: Path) 
     payload["subset_alignment"]["sha256"] = "0" * 64
     subset_manifest.write_text(json.dumps(payload), encoding="utf-8")
     with pytest.raises(ProvenanceError, match="subset alignment sha256 mismatch"):
+        verify_deterministic_subset(
+            source_alignment=alignment,
+            source_manifest=source_manifest,
+            output_alignment=subset,
+            output_manifest=subset_manifest,
+            selected_names_path=names_path,
+            dataset_id="PUBLIC-001",
+            requested_count=3,
+            seed="seed-a",
+        )
+
+
+def test_subset_verification_rejects_incomplete_file_identity(tmp_path: Path) -> None:
+    reference, alignment, fastq = _alignment_fixture(tmp_path, read_count=8)
+    source_manifest = _record_source(tmp_path, reference, alignment, fastq)
+    subset = tmp_path / "subset.bam"
+    subset_manifest = tmp_path / "subset.provenance.json"
+    names_path = tmp_path / "subset.selected_qnames.txt"
+    create_deterministic_subset(
+        source_alignment=alignment,
+        source_manifest=source_manifest,
+        output_alignment=subset,
+        output_manifest=subset_manifest,
+        selected_names_path=names_path,
+        dataset_id="PUBLIC-001",
+        requested_count=3,
+        seed="seed-a",
+    )
+    payload = json.loads(subset_manifest.read_text(encoding="utf-8"))
+    payload["subset_alignment"] = {}
+    subset_manifest.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ProvenanceError, match="subset alignment digest field inventory"):
         verify_deterministic_subset(
             source_alignment=alignment,
             source_manifest=source_manifest,

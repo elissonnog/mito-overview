@@ -286,13 +286,23 @@ def verify_alignment_provenance(
 
     alignment_path = alignment_path.resolve()
     reference_path = reference_path.resolve()
-    _assert_record_matches("alignment", payload["alignment"], alignment_path)
-    _assert_record_matches(
-        "alignment index", payload["alignment_index"], alignment_index_path(alignment_path)
+    _assert_complete_digest_record(
+        "alignment", payload.get("alignment"), alignment_path, require_md5=False
     )
-    _assert_record_matches("reference", payload["reference"], reference_path)
-    _assert_record_matches(
-        "reference index", payload["reference_index"], reference_index_path(reference_path)
+    _assert_complete_digest_record(
+        "alignment index",
+        payload.get("alignment_index"),
+        alignment_index_path(alignment_path),
+        require_md5=False,
+    )
+    _assert_complete_digest_record(
+        "reference", payload.get("reference"), reference_path, require_md5=False
+    )
+    _assert_complete_digest_record(
+        "reference index",
+        payload.get("reference_index"),
+        reference_index_path(reference_path),
+        require_md5=False,
     )
 
     manifest_inputs = payload.get("public_inputs")
@@ -318,7 +328,17 @@ def verify_alignment_provenance(
             f"expected {sorted(inputs)}, observed {sorted(records_by_label)}"
         )
     for label, path in sorted(inputs.items()):
-        _assert_record_matches(f"public input {label}", records_by_label[label], path)
+        record = {
+            key: value
+            for key, value in records_by_label[label].items()
+            if key != "label"
+        }
+        _assert_complete_digest_record(
+            f"public input {label}",
+            record,
+            path,
+            require_md5=True,
+        )
     pysam.quickcheck(str(alignment_path))
     return payload
 
@@ -714,21 +734,32 @@ def verify_deterministic_subset(
                 f"Deterministic subset {key} mismatch: expected {expected}, "
                 f"observed {selection.get(key)}"
             )
-    _assert_record_matches("source alignment", payload["source_alignment"], source_alignment)
-    _assert_record_matches(
+    _assert_complete_digest_record(
+        "source alignment", payload.get("source_alignment"), source_alignment, require_md5=False
+    )
+    _assert_complete_digest_record(
         "source alignment index",
-        payload["source_alignment_index"],
+        payload.get("source_alignment_index"),
         alignment_index_path(source_alignment),
+        require_md5=False,
     )
-    _assert_record_matches("source provenance", payload["source_provenance"], source_manifest)
-    _assert_record_matches("subset alignment", payload["subset_alignment"], output_alignment)
-    _assert_record_matches(
+    _assert_complete_digest_record(
+        "source provenance", payload.get("source_provenance"), source_manifest, require_md5=False
+    )
+    _assert_complete_digest_record(
+        "subset alignment", payload.get("subset_alignment"), output_alignment, require_md5=False
+    )
+    _assert_complete_digest_record(
         "subset alignment index",
-        payload["subset_alignment_index"],
+        payload.get("subset_alignment_index"),
         alignment_index_path(output_alignment),
+        require_md5=False,
     )
-    _assert_record_matches(
-        "selected query names", payload["selected_query_names"], selected_names_path
+    _assert_complete_digest_record(
+        "selected query names",
+        payload.get("selected_query_names"),
+        selected_names_path,
+        require_md5=False,
     )
     selected_names = selected_names_path.read_text(encoding="utf-8").splitlines()
     if len(selected_names) != requested_count or selected_names != sorted(set(selected_names)):
