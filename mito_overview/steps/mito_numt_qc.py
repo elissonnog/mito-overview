@@ -37,15 +37,25 @@ FRACTION_PLOT_COLUMNS = ["metric", "fraction"]
 REQUIRED_NUMT_READ_COLUMNS = frozenset(
     {
         "mapq",
+        "query_length",
         "aligned_fraction_mt",
         "aligned_reference_bases",
+        "softclip_bases",
         "softclip_fraction",
         "has_sa_tag",
         "is_primary",
         "is_supplementary",
+        "is_secondary",
     }
 )
-REQUIRED_NUMT_SUMMARY_METRICS = frozenset({"primary_full_length_fraction"})
+REQUIRED_NUMT_SUMMARY_METRICS = frozenset(
+    {
+        "status",
+        "primary_full_length_fraction",
+        "primary_full_length_fraction_status",
+        "primary_full_length_fraction_denominator",
+    }
+)
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -131,12 +141,15 @@ def validated_numeric_series(
 NUMT_READ_DOMAINS = {
     # SAM MAPQ 255 means mapping quality is unavailable, not high confidence.
     "mapq": {"minimum": 0, "maximum": 254, "integer": True},
+    "query_length": {"minimum": 1, "integer": True},
     "aligned_fraction_mt": {"minimum": 0, "maximum": 1},
     "aligned_reference_bases": {"minimum": 0, "integer": True},
+    "softclip_bases": {"minimum": 0, "integer": True},
     "softclip_fraction": {"minimum": 0, "maximum": 1},
     "has_sa_tag": {"integer": True, "allowed_values": (0, 1)},
     "is_primary": {"integer": True, "allowed_values": (0, 1)},
     "is_supplementary": {"integer": True, "allowed_values": (0, 1)},
+    "is_secondary": {"integer": True, "allowed_values": (0, 1)},
 }
 
 
@@ -166,6 +179,18 @@ def extract_metric_value(summary_df: pd.DataFrame, metric: str) -> float | None:
     if pd.isna(value) or not np.isfinite(float(value)):
         return None
     return float(value)
+
+
+def extract_metric_text(summary_df: pd.DataFrame, metric: str) -> str | None:
+    """Extract one non-empty text metric without accepting duplicate evidence."""
+
+    if summary_df.empty or "metric" not in summary_df.columns or "value" not in summary_df.columns:
+        return None
+    hit = summary_df.loc[summary_df["metric"] == metric, "value"]
+    if len(hit) != 1 or pd.isna(hit.iloc[0]):
+        return None
+    value = str(hit.iloc[0]).strip()
+    return value or None
 
 
 def rounded_or_na(value: float | None, digits: int = 6) -> float | str:
@@ -317,7 +342,73 @@ def run_step(
         "is_primary",
         **NUMT_READ_DOMAINS["is_primary"],
     )
-    primary_indicator_valid = is_primary is not None
+    is_secondary = validated_numeric_series(
+        reads_df,
+        "is_secondary",
+        **NUMT_READ_DOMAINS["is_secondary"],
+    )
+    is_supplementary = validated_numeric_series(
+        reads_df,
+        "is_supplementary",
+        **NUMT_READ_DOMAINS["is_supplementary"],
+    )
+    primary_flag_fields_valid = bool(
+        is_primary is not None
+        and is_secondary is not None
+        and is_supplementary is not None
+    )
+    primary_flag_consistent = False
+    if primary_flag_fields_valid:
+        expected_primary = ((is_secondary == 0) & (is_supplementary == 0)).astype(int)
+        primary_flag_consistent = bool((is_primary == expected_primary).all())
+    if primary_flag_fields_valid and not primary_flag_consistent:
+        invalid_read_columns = sorted(
+            set(invalid_read_columns) | {"is_primary_vs_alignment_flags"}
+        )
+    primary_indicator_valid = bool(
+        primary_flag_fields_valid and primary_flag_consistent
+    )
+
+    query_lengths = validated_numeric_series(
+        reads_df,
+        "query_length",
+        **NUMT_READ_DOMAINS["query_length"],
+    )
+    softclip_bases = validated_numeric_series(
+        reads_df,
+        "softclip_bases",
+        **NUMT_READ_DOMAINS["softclip_bases"],
+    )
+    softclip_fractions = validated_numeric_series(
+        reads_df,
+        "softclip_fraction",
+        **NUMT_READ_DOMAINS["softclip_fraction"],
+    )
+    if query_lengths is not None and softclip_bases is not None:
+        if not bool((softclip_bases <= query_lengths).all()):
+            invalid_read_columns = sorted(
+                set(invalid_read_columns) | {"softclip_bases_vs_query_length"}
+            )
+    if (
+        query_lengths is not None
+        and softclip_bases is not None
+        and softclip_fractions is not None
+    ):
+        softclip_fraction_consistent = bool(
+            np.isclose(
+                softclip_fractions.to_numpy(dtype=float),
+                softclip_bases.to_numpy(dtype=float)
+                / query_lengths.to_numpy(dtype=float),
+                rtol=0,
+                atol=5.1e-7,
+            ).all()
+        )
+        if not softclip_fraction_consistent:
+            invalid_read_columns = sorted(
+                set(invalid_read_columns)
+                | {"softclip_bases_vs_softclip_fraction"}
+            )
+
     if primary_indicator_valid:
         primary_df = reads_df[is_primary == 1].copy()
     else:
@@ -369,16 +460,52 @@ def run_step(
         primary_full_length_reads = int(
             (pd.to_numeric(primary_df["aligned_fraction_mt"], errors="coerce") >= 0.90).sum()
         )
-    qc_primary_full_length_fraction = extract_metric_value(
+    if "metric" in qc_df.columns:
+        available_summary_metrics = set(qc_df["metric"].dropna().astype(str))
+    else:
+        available_summary_metrics = set()
+    missing_summary_metrics = sorted(
+        REQUIRED_NUMT_SUMMARY_METRICS - available_summary_metrics
+    )
+
+    qc_primary_full_length_fraction_raw = extract_metric_value(
         qc_df, "primary_full_length_fraction"
     )
     qc_primary_fraction_present = bool(
-        "metric" in qc_df.columns
-        and (qc_df["metric"].astype(str) == "primary_full_length_fraction").any()
+        "primary_full_length_fraction" in available_summary_metrics
     )
-    qc_primary_fraction_valid = bool(
-        qc_primary_full_length_fraction is not None
-        and 0 <= qc_primary_full_length_fraction <= 1
+    qc_primary_fraction_numeric_valid = bool(
+        qc_primary_full_length_fraction_raw is not None
+        and 0 <= qc_primary_full_length_fraction_raw <= 1
+    )
+    qc_module_status = extract_metric_text(qc_df, "status")
+    qc_primary_fraction_status = extract_metric_text(
+        qc_df, "primary_full_length_fraction_status"
+    )
+    qc_primary_fraction_denominator = extract_metric_text(
+        qc_df, "primary_full_length_fraction_denominator"
+    )
+    invalid_summary_metrics: list[str] = []
+    if qc_primary_fraction_present and not qc_primary_fraction_numeric_valid:
+        invalid_summary_metrics.append("primary_full_length_fraction")
+    if "status" in available_summary_metrics and qc_module_status != "ok":
+        invalid_summary_metrics.append("status")
+    if (
+        "primary_full_length_fraction_status" in available_summary_metrics
+        and qc_primary_fraction_status != "ok"
+    ):
+        invalid_summary_metrics.append("primary_full_length_fraction_status")
+    if (
+        "primary_full_length_fraction_denominator" in available_summary_metrics
+        and qc_primary_fraction_denominator != "primary_alignment_records"
+    ):
+        invalid_summary_metrics.append("primary_full_length_fraction_denominator")
+    invalid_summary_metrics = sorted(set(invalid_summary_metrics))
+
+    qc_primary_full_length_fraction = (
+        qc_primary_full_length_fraction_raw
+        if not missing_summary_metrics and not invalid_summary_metrics
+        else None
     )
     qc_fraction_mismatch = bool(
         primary_full_length_fraction is not None
@@ -388,12 +515,25 @@ def run_step(
     if primary_full_length_fraction is None:
         qc_fraction_crosscheck_status = "not_evaluable"
         qc_fraction_crosscheck_reason = "primary_full_length_fraction_unavailable"
-    elif qc_primary_fraction_present and not qc_primary_fraction_valid:
+    elif qc_primary_fraction_present and not qc_primary_fraction_numeric_valid:
         qc_fraction_crosscheck_status = "not_evaluable"
         qc_fraction_crosscheck_reason = "primary_full_length_fraction_invalid_in_mito_qc"
-    elif qc_primary_full_length_fraction is None:
+    elif "primary_full_length_fraction" in missing_summary_metrics:
         qc_fraction_crosscheck_status = "not_configured"
         qc_fraction_crosscheck_reason = "primary_full_length_fraction_missing_from_mito_qc"
+    elif missing_summary_metrics:
+        qc_fraction_crosscheck_status = "not_evaluable"
+        qc_fraction_crosscheck_reason = "primary_full_length_fraction_provenance_missing"
+    elif invalid_summary_metrics:
+        qc_fraction_crosscheck_status = "not_evaluable"
+        if "status" in invalid_summary_metrics:
+            qc_fraction_crosscheck_reason = "mito_qc_status_not_ok"
+        elif "primary_full_length_fraction_status" in invalid_summary_metrics:
+            qc_fraction_crosscheck_reason = "primary_full_length_fraction_status_not_ok"
+        else:
+            qc_fraction_crosscheck_reason = (
+                "primary_full_length_fraction_denominator_invalid"
+            )
     elif qc_fraction_mismatch:
         qc_fraction_crosscheck_status = "not_evaluable"
         qc_fraction_crosscheck_reason = "primary_full_length_fraction_mismatch"
@@ -402,16 +542,6 @@ def run_step(
         qc_fraction_crosscheck_reason = ""
 
     missing_read_columns = sorted(REQUIRED_NUMT_READ_COLUMNS - set(reads_df.columns))
-    if "metric" in qc_df.columns:
-        available_summary_metrics = set(qc_df["metric"].dropna().astype(str))
-    else:
-        available_summary_metrics = set()
-    missing_summary_metrics = sorted(REQUIRED_NUMT_SUMMARY_METRICS - available_summary_metrics)
-    invalid_summary_metrics = (
-        ["primary_full_length_fraction"]
-        if qc_primary_fraction_present and not qc_primary_fraction_valid
-        else []
-    )
     evidence_values = (
         low_mapq_fraction,
         very_low_mapq_fraction,
@@ -428,6 +558,7 @@ def run_step(
         and not invalid_summary_metrics
         and primary_evidence_available
         and not qc_fraction_mismatch
+        and qc_fraction_crosscheck_status == "ok"
         and all(value is not None for value in evidence_values)
     )
 
@@ -451,7 +582,10 @@ def run_step(
         reported_risk_score: int | str = "NA"
     elif not evidence_complete:
         interpretation_status = "not_evaluable"
-        if "is_primary" in reads_df.columns and not primary_indicator_valid:
+        if (
+            "is_primary" in invalid_read_columns
+            or "is_primary_vs_alignment_flags" in invalid_read_columns
+        ):
             reason_code = "numt_primary_indicator_invalid"
         elif invalid_read_columns:
             reason_code = "numt_read_stats_invalid_values"

@@ -60,7 +60,10 @@ def write_numt_inputs(
     summary_dir.mkdir(parents=True, exist_ok=True)
     reads = pd.DataFrame(READ_ROWS).drop(columns=list(drop_read_columns))
     reads.to_csv(summary_dir / "mito_read_stats.tsv", sep="\t", index=False)
-    summary_rows = [{"metric": "mapped_reads", "value": 2}]
+    summary_rows = [
+        {"metric": "status", "value": "ok"},
+        {"metric": "mapped_reads", "value": 2},
+    ]
     if include_primary_full_length_fraction:
         summary_rows.append(
             {
@@ -68,6 +71,15 @@ def write_numt_inputs(
                 "value": primary_full_length_fraction,
             }
         )
+    summary_rows.extend(
+        [
+            {"metric": "primary_full_length_fraction_status", "value": "ok"},
+            {
+                "metric": "primary_full_length_fraction_denominator",
+                "value": "primary_alignment_records",
+            },
+        ]
+    )
     summary_rows.append({"metric": "full_length_fraction", "value": 0.5})
     pd.DataFrame(summary_rows).to_csv(summary_dir / "mito_qc_summary.tsv", sep="\t", index=False)
 
@@ -198,6 +210,136 @@ def test_invalid_primary_indicator_cannot_produce_categorical_risk(tmp_path: Pat
     assert metrics["heuristic_numt_risk_score"] == "NA"
 
 
+@pytest.mark.parametrize("column", ("is_secondary", "query_length", "softclip_bases"))
+def test_new_numt_evidence_columns_are_required(
+    tmp_path: Path,
+    column: str,
+) -> None:
+    write_numt_inputs(tmp_path / "summary", drop_read_columns=(column,))
+
+    outputs = run_numt_fixture(tmp_path)
+    metrics = metric_map(outputs["summary_path"])
+
+    assert metrics["numt_interpretation_status"] == "not_evaluable"
+    assert metrics["reason_code"] == "numt_read_stats_missing_columns"
+    assert metrics["missing_required_read_columns"] == column
+    assert metrics["heuristic_numt_risk"] == "not_evaluable"
+
+
+def test_primary_and_supplementary_contradiction_cannot_produce_categorical_risk(
+    tmp_path: Path,
+) -> None:
+    write_numt_inputs(tmp_path / "summary")
+    reads_path = tmp_path / "summary" / "mito_read_stats.tsv"
+    reads = pd.read_csv(reads_path, sep="\t")
+    reads.loc[0, "is_primary"] = 1
+    reads.loc[0, "is_supplementary"] = 1
+    reads.to_csv(reads_path, sep="\t", index=False)
+
+    outputs = run_numt_fixture(tmp_path)
+    metrics = metric_map(outputs["summary_path"])
+
+    assert metrics["numt_interpretation_status"] == "not_evaluable"
+    assert metrics["reason_code"] == "numt_primary_indicator_invalid"
+    assert metrics["primary_indicator_valid"] == "0"
+    assert (
+        metrics["invalid_required_read_values"]
+        == "is_primary_vs_alignment_flags"
+    )
+    assert metrics["heuristic_numt_risk"] == "not_evaluable"
+
+
+def test_softclip_bases_cannot_exceed_query_length(tmp_path: Path) -> None:
+    write_numt_inputs(tmp_path / "summary")
+    reads_path = tmp_path / "summary" / "mito_read_stats.tsv"
+    reads = pd.read_csv(reads_path, sep="\t")
+    reads.loc[0, "softclip_bases"] = reads.loc[0, "query_length"] + 1
+    reads.to_csv(reads_path, sep="\t", index=False)
+
+    outputs = run_numt_fixture(tmp_path)
+    metrics = metric_map(outputs["summary_path"])
+
+    assert metrics["numt_interpretation_status"] == "not_evaluable"
+    assert metrics["reason_code"] == "numt_read_stats_invalid_values"
+    assert "softclip_bases_vs_query_length" in metrics["invalid_required_read_values"]
+    assert metrics["heuristic_numt_risk"] == "not_evaluable"
+
+
+def test_inconsistent_softclip_fraction_cannot_produce_categorical_risk(
+    tmp_path: Path,
+) -> None:
+    write_numt_inputs(tmp_path / "summary")
+    reads_path = tmp_path / "summary" / "mito_read_stats.tsv"
+    reads = pd.read_csv(reads_path, sep="\t")
+    reads.loc[0, "query_length"] = 100
+    reads.loc[0, "softclip_bases"] = 100
+    reads.loc[0, "softclip_fraction"] = 0
+    reads.to_csv(reads_path, sep="\t", index=False)
+
+    outputs = run_numt_fixture(tmp_path)
+    metrics = metric_map(outputs["summary_path"])
+
+    assert metrics["numt_interpretation_status"] == "not_evaluable"
+    assert metrics["reason_code"] == "numt_read_stats_invalid_values"
+    assert (
+        metrics["invalid_required_read_values"]
+        == "softclip_bases_vs_softclip_fraction"
+    )
+    assert metrics["heuristic_numt_risk"] == "not_evaluable"
+
+
+def test_stale_qc_fraction_under_not_evaluable_statuses_is_not_trusted(
+    tmp_path: Path,
+) -> None:
+    write_numt_inputs(tmp_path / "summary")
+    qc_path = tmp_path / "summary" / "mito_qc_summary.tsv"
+    qc = pd.read_csv(qc_path, sep="\t")
+    qc.loc[qc["metric"] == "status", "value"] = "not_evaluable"
+    qc.loc[
+        qc["metric"] == "primary_full_length_fraction_status", "value"
+    ] = "not_evaluable"
+    qc.to_csv(qc_path, sep="\t", index=False)
+
+    outputs = run_numt_fixture(tmp_path)
+    metrics = metric_map(outputs["summary_path"])
+
+    assert metrics["numt_interpretation_status"] == "not_evaluable"
+    assert metrics["reason_code"] == "numt_qc_summary_invalid_values"
+    assert (
+        metrics["invalid_required_summary_values"]
+        == "primary_full_length_fraction_status,status"
+    )
+    assert metrics["primary_full_length_qc_crosscheck_status"] == "not_evaluable"
+    assert metrics["primary_full_length_qc_crosscheck_reason_code"] == "mito_qc_status_not_ok"
+    assert metrics["heuristic_numt_risk"] == "not_evaluable"
+
+
+def test_qc_fraction_with_wrong_denominator_is_not_trusted(tmp_path: Path) -> None:
+    write_numt_inputs(tmp_path / "summary")
+    qc_path = tmp_path / "summary" / "mito_qc_summary.tsv"
+    qc = pd.read_csv(qc_path, sep="\t")
+    qc.loc[
+        qc["metric"] == "primary_full_length_fraction_denominator", "value"
+    ] = "all_alignment_records"
+    qc.to_csv(qc_path, sep="\t", index=False)
+
+    outputs = run_numt_fixture(tmp_path)
+    metrics = metric_map(outputs["summary_path"])
+
+    assert metrics["numt_interpretation_status"] == "not_evaluable"
+    assert metrics["reason_code"] == "numt_qc_summary_invalid_values"
+    assert (
+        metrics["invalid_required_summary_values"]
+        == "primary_full_length_fraction_denominator"
+    )
+    assert metrics["primary_full_length_qc_crosscheck_status"] == "not_evaluable"
+    assert (
+        metrics["primary_full_length_qc_crosscheck_reason_code"]
+        == "primary_full_length_fraction_denominator_invalid"
+    )
+    assert metrics["heuristic_numt_risk"] == "not_evaluable"
+
+
 @pytest.mark.parametrize(
     ("column", "value"),
     (
@@ -214,6 +356,14 @@ def test_invalid_primary_indicator_cannot_produce_categorical_risk(tmp_path: Pat
         ("aligned_reference_bases", float("inf")),
         ("aligned_reference_bases", -1),
         ("aligned_reference_bases", 1.5),
+        ("query_length", float("nan")),
+        ("query_length", float("inf")),
+        ("query_length", 0),
+        ("query_length", 1.5),
+        ("softclip_bases", float("nan")),
+        ("softclip_bases", float("inf")),
+        ("softclip_bases", -1),
+        ("softclip_bases", 1.5),
         ("softclip_fraction", float("nan")),
         ("softclip_fraction", float("-inf")),
         ("softclip_fraction", -0.01),
@@ -222,6 +372,8 @@ def test_invalid_primary_indicator_cannot_produce_categorical_risk(tmp_path: Pat
         ("has_sa_tag", 2),
         ("is_supplementary", float("nan")),
         ("is_supplementary", 2),
+        ("is_secondary", float("nan")),
+        ("is_secondary", 2),
     ),
 )
 def test_invalid_required_read_domains_suppress_categorical_risk(
@@ -309,7 +461,7 @@ def test_invalid_required_qc_fraction_suppresses_categorical_risk(
     write_numt_inputs(tmp_path / "summary")
     qc_path = tmp_path / "summary" / "mito_qc_summary.tsv"
     qc = pd.read_csv(qc_path, sep="\t")
-    qc.loc[qc["metric"] == "primary_full_length_fraction", "value"] = value
+    qc.loc[qc["metric"] == "primary_full_length_fraction", "value"] = str(value)
     qc.to_csv(qc_path, sep="\t", index=False)
 
     outputs = run_numt_fixture(tmp_path)
