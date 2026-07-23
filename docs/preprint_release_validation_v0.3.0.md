@@ -372,3 +372,42 @@ The successor removes manuscript state from GitHub release acceptance without ch
 Candidate `db62aa4e47eb3d88aac767840c3a360c721d8257` was not pushed. It passed its exact archive/source-distribution suites (`1042/1042`), separate installed-package checks, four workflow modes, and deterministic `88/88` long-read plus `74/74` short-read example comparisons. Release-engineering audit `MITO-REL-20260723T171401Z-4d3d9b67-5b0c-4a98-9eda-e8e3434e21bf` passed. Scientific audit `MITO-SCI-DB62AA4-20260723T170408Z-0D07AF88-F49A-4D3A-A91B-3609CC90C05B` and reproducibility audit `MITO-RO-20260723T172150Z-0dd9978f-b5e0-4bbc-af14-230942131b63` returned HOLD, so the candidate was rejected.
 
 The successor requires an exact complete Phy-Mer provenance contract before retaining formal haplogroup output, rejects contradictory bedMethyl component coverage, validates positive copy-proxy window settings at the step boundary, uses explicit left-closed mvTool alternate-allele-frequency bins, and removes manuscript-specific wording rules from default software-release hygiene. Missing provenance remains distinct from the literal external value `phymer_fixture_id=NA`. The focused remediation suite passed `169/169`; the complete working-tree suite passed `1054/1054` in 468.96 seconds with no tracked example drift. These are pre-freeze checks only and cannot replace exact-commit package, workflow, or independent audit evidence.
+
+## Rejected candidate `77089b2`
+
+Candidate `77089b28302dddd6f91b94e08d366c4bcd5a6188` was not pushed. Its exact
+Git archive and extracted source distribution each passed `1054/1054` tests;
+separate wheel and source-distribution installations exposed the same 18-step
+registry, passed strict dry-run and all four synthetic workflows, and rebuilt
+the tracked 88-file long-read and 74-file reduced-short-read examples exactly.
+Reproducibility audit `4a94b13f-5b88-4533-bec4-12dccdc7dd10` returned a bounded
+PASS. Release-engineering audit `MO030-RE-20260723T181628Z-D428B7B3` and
+scientific audit
+`MITO-SCI-77089B2-20260723T182321Z-30440820-9D70-493A-82F5-07E46ED61466`
+returned HOLD. The release blocker was a residual manuscript-tree acceptance
+condition in active guidance. Scientific blockers were unbound external
+Phy-Mer resources, insufficient formal-result checks, incomplete configured
+reference enforcement in candidate consumers, and acceptance of invalid
+mvTool `AF_M1` values.
+
+The successor keeps the manuscript out of GitHub release acceptance without
+editing `paper/**`. External Phy-Mer execution requires exact expected SHA-256
+identities for its script, library, and definitions; observed hashes and
+binding status are written to the summary. Identity QC independently compares
+those observations with configured expected hashes. Formal identity assignment also
+requires a nonempty best result and a finite score in `[0,1]`. Co-segregation,
+identity, circularity, and mvTool validate candidate coordinates and REF bases
+against the configured indexed mitochondrial sequence, and their direct step
+CLIs require the same indexed FASTA contract, while mvTool rejects
+invalid population frequencies outside `[0,1]`. The connected suite passed
+`174/174`; two source-mode long-read regenerations agreed byte-for-byte, and
+only page 13 plus its Phy-Mer summary changed to add the resource-binding
+evidence. Complete pre-freeze pytest subsequently passed `1069/1069` in 437.12
+seconds. The surrounding macOS `/usr/bin/time -l` process was denied access to
+`sysctl kern.clockrate` after pytest completed, so optional timing-wrapper
+metadata was unavailable; the pytest verdict itself was successful. These
+results were followed by the downstream configured-hash and direct-step-CLI
+hardening; its connected replacement suite passed `117/117`, so a new complete
+run was performed and passed `1075/1075` in 425.98 seconds with exit code zero.
+These remain working-tree checks pending a frozen successor commit, exact
+package/workflow gates, and three fresh role-separated audits.

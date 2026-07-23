@@ -145,6 +145,18 @@ properties:
     type: string
     enum: [external, fixture]
     default: external
+  PHYMER_SCRIPT_SHA256:
+    type: string
+    pattern: "^(?:|[0-9a-f]{64})$"
+    default: ""
+  PHYMER_LIBRARY_SHA256:
+    type: string
+    pattern: "^(?:|[0-9a-f]{64})$"
+    default: ""
+  PHYMER_DEFINITIONS_SHA256:
+    type: string
+    pattern: "^(?:|[0-9a-f]{64})$"
+    default: ""
   PHYMER_MIN_DEPTH:
     $ref: "#/$defs/integerLike"
     default: "100"

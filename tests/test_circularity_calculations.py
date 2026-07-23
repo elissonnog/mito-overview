@@ -5,9 +5,17 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from mito_overview.steps.mito_circularity_qc import CANDIDATE_COLUMNS, run_step
+from mito_overview.steps.mito_circularity_qc import (
+    CANDIDATE_COLUMNS,
+    run_step as _run_step,
+)
 
 from ._helpers import metric_map
+
+
+def run_step(**kwargs: object) -> dict[str, Path | str]:
+    kwargs.setdefault("reference_sequence", "A" * int(kwargs.get("mt_length", 100)))
+    return _run_step(**kwargs)
 
 
 def candidate_table(positions: list[int]) -> pd.DataFrame:

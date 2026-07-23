@@ -417,9 +417,17 @@ def _effective_reference_scope(
 
 
 def _reference_sequence_md5(config: PipelineConfig) -> str:
+    return hashlib.md5(_mt_reference_sequence(config).encode("ascii")).hexdigest()
+
+
+def _mt_reference_sequence(config: PipelineConfig) -> str:
     with pysam.FastaFile(str(config.ref_fasta)) as reference:
-        sequence = reference.fetch(config.mt_contig)
-    return hashlib.md5(sequence.upper().encode("ascii")).hexdigest()
+        sequence = reference.fetch(config.mt_contig, 0, config.mt_length).upper()
+    if len(sequence) != config.mt_length:
+        raise ValueError(
+            "Configured mitochondrial reference length does not match the indexed FASTA"
+        )
+    return sequence
 
 
 def _inspect_alignment_reference(config: PipelineConfig) -> AlignmentReferenceContract:
@@ -856,6 +864,8 @@ def _run_cosegregation(config: PipelineConfig, paths: RunPaths, strict_files: bo
         report_dir=paths.report_dir,
         sample_id=config.sample_id,
         mt_contig=config.mt_contig,
+        mt_length=config.mt_length,
+        reference_sequence=_mt_reference_sequence(config),
         min_base_quality=config.allele_min_base_quality,
         min_mapping_quality=config.allele_min_mapping_quality,
         min_read_mean_quality=config.allele_min_read_mean_quality,
@@ -925,6 +935,9 @@ def _run_phymer_haplogroup(config: PipelineConfig, paths: RunPaths, strict_files
         ref_fasta=config.ref_fasta,
         phymer_root=config.phymer_root,
         phymer_mode=config.phymer_mode,
+        expected_script_sha256=config.phymer_script_sha256,
+        expected_library_sha256=config.phymer_library_sha256,
+        expected_definitions_sha256=config.phymer_definitions_sha256,
         min_depth=config.phymer_min_depth,
         major_vaf=config.phymer_major_vaf,
         min_callable_fraction=config.phymer_min_callable_fraction,
@@ -944,8 +957,13 @@ def _run_identity_qc(config: PipelineConfig, paths: RunPaths, strict_files: bool
         report_dir=paths.report_dir,
         sample_id=config.sample_id,
         mt_contig=config.mt_contig,
+        mt_length=config.mt_length,
+        reference_sequence=_mt_reference_sequence(config),
         phased_snp_vcf=paths.phased_snp_vcf,
         np_snp_vcf=paths.np_snp_vcf,
+        phymer_script_sha256=config.phymer_script_sha256,
+        phymer_library_sha256=config.phymer_library_sha256,
+        phymer_definitions_sha256=config.phymer_definitions_sha256,
     )
     status = str(outputs.get("status", "ok"))
     status_suffix = "done" if status == "ok" else status
@@ -987,6 +1005,7 @@ def _run_circularity_qc(config: PipelineConfig, paths: RunPaths, strict_files: b
         sample_id=config.sample_id,
         mt_contig=config.mt_contig,
         mt_length=config.mt_length,
+        reference_sequence=_mt_reference_sequence(config),
     )
     status = str(outputs.get("status", "ok"))
     (paths.log_dir / f"circularity_qc.{status}").write_text(status + "\n", encoding="utf-8")
@@ -1039,6 +1058,8 @@ def _run_mvtool_annotation(config: PipelineConfig, paths: RunPaths, strict_files
         report_dir=paths.report_dir,
         sample_id=config.sample_id,
         species=config.detected_species,
+        mt_length=config.mt_length,
+        reference_sequence=_mt_reference_sequence(config),
         mode=config.mvtool_mode,
         api_url=config.mvtool_api_url,
         fixture_json=config.mvtool_fixture_json,

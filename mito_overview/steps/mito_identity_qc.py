@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import math
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
@@ -17,10 +18,11 @@ import pandas as pd
 import pysam
 
 from mito_overview.report_common import df_to_html_table, figure_html, metric_card, render_page
-from mito_overview.steps.mito_phymer_haplogroup import FIXTURE_ID
+from mito_overview.steps.mito_phymer_haplogroup import FIXTURE_FILE_SHA256, FIXTURE_ID
 from mito_overview.table_contracts import (
     ensure_alt_fraction_columns,
     load_metric_module_state,
+    load_reference_sequence,
     validate_candidate_table,
     validate_module_state,
 )
@@ -34,6 +36,12 @@ PHYMER_PROVENANCE_FIELDS = (
     "biological_validation_status",
     "phymer_python_compatibility",
 )
+PHYMER_RESOURCE_FIELDS = (
+    "phymer_script_sha256",
+    "phymer_library_sha256",
+    "phymer_definitions_sha256",
+)
+SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 PHYMER_FIXTURE_PROVENANCE = {
     "phymer_mode": "fixture",
     "phymer_vendor_provenance": "bundled_exact_hash_fixture",
@@ -91,8 +99,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--report-dir", required=True)
     parser.add_argument("--sample-id", required=True)
     parser.add_argument("--mt-contig", required=True)
+    parser.add_argument("--mt-length", type=int, required=True)
+    parser.add_argument("--ref-fasta", required=True)
     parser.add_argument("--phased-snp-vcf", required=True)
     parser.add_argument("--np-snp-vcf", required=True)
+    parser.add_argument("--phymer-script-sha256", default="")
+    parser.add_argument("--phymer-library-sha256", default="")
+    parser.add_argument("--phymer-definitions-sha256", default="")
     parser.add_argument("--fingerprint-depth", type=int, default=100)
     parser.add_argument("--major-vaf", type=float, default=0.90)
     return parser
@@ -246,8 +259,13 @@ def run_step(
     report_dir: str | Path,
     sample_id: str,
     mt_contig: str,
+    mt_length: int,
+    reference_sequence: str,
     phased_snp_vcf: str | Path | None,
     np_snp_vcf: str | Path | None,
+    phymer_script_sha256: str = "",
+    phymer_library_sha256: str = "",
+    phymer_definitions_sha256: str = "",
     fingerprint_depth: int = 100,
     major_vaf: float = 0.90,
 ) -> dict[str, Path | str]:
@@ -392,6 +410,8 @@ def run_step(
         major_df = validate_candidate_table(
             major_df,
             table_name="mito_heteroplasmy_all_sites.tsv major-fingerprint rows",
+            mt_length=mt_length,
+            reference_sequence=reference_sequence,
         )
         major_df = major_df.sort_values(
             ["alt_allele_fraction", "depth", "position"],
@@ -489,6 +509,7 @@ def run_step(
         else:
             metric_map = dict(zip(metric_names, phymer_summary["value"]))
         phymer_best = str(metric_map.get("best_haplogroup", "NA"))
+        raw_best_score = metric_map.get("best_score")
         raw_phymer_status = str(metric_map.get("status", "not_configured"))
         if metric_map:
             try:
@@ -511,7 +532,60 @@ def run_step(
                 else str(raw_value).strip()
             )
         if phymer_status == "ok":
+            observed_resource_hashes = {
+                field: str(metric_map.get(field, "")).strip().lower()
+                for field in PHYMER_RESOURCE_FIELDS
+            }
             if observed_provenance == PHYMER_FIXTURE_PROVENANCE:
+                expected_resource_hashes = {
+                    "phymer_script_sha256": FIXTURE_FILE_SHA256["Phy-Mer.py"],
+                    "phymer_library_sha256": FIXTURE_FILE_SHA256[
+                        "PhyloTree_b16_k12.txt"
+                    ],
+                    "phymer_definitions_sha256": FIXTURE_FILE_SHA256[
+                        "resources/Build_16_-_rCRS-based_haplogroup_motifs.csv"
+                    ],
+                }
+            else:
+                expected_resource_hashes = {
+                    "phymer_script_sha256": str(phymer_script_sha256).strip().lower(),
+                    "phymer_library_sha256": str(phymer_library_sha256).strip().lower(),
+                    "phymer_definitions_sha256": str(
+                        phymer_definitions_sha256
+                    ).strip().lower(),
+                }
+            resource_binding_valid = (
+                str(metric_map.get("phymer_resource_binding_status", "")).strip()
+                == "verified"
+                and all(
+                    SHA256_PATTERN.fullmatch(value)
+                    for value in observed_resource_hashes.values()
+                )
+                and all(
+                    SHA256_PATTERN.fullmatch(value)
+                    for value in expected_resource_hashes.values()
+                )
+                and observed_resource_hashes == expected_resource_hashes
+            )
+            best_match_valid = (
+                "best_haplogroup" in metric_map
+                and not pd.isna(metric_map["best_haplogroup"])
+                and phymer_best.strip().lower() not in {"", "na", "nan", "none"}
+            )
+            try:
+                best_score = float(raw_best_score)
+                best_score_valid = math.isfinite(best_score) and 0 <= best_score <= 1
+            except (TypeError, ValueError):
+                best_score_valid = False
+            if not best_match_valid or not best_score_valid:
+                phymer_status = "not_evaluable"
+                phymer_reason = "phymer_result_invalid"
+                phymer_best = "NA"
+            elif not resource_binding_valid:
+                phymer_status = "not_evaluable"
+                phymer_reason = "phymer_resource_provenance_invalid"
+                phymer_best = "NA"
+            elif observed_provenance == PHYMER_FIXTURE_PROVENANCE:
                 phymer_status = "not_evaluable"
                 phymer_reason = "synthetic_phymer_fixture_not_biological"
                 phymer_best = "NA"
@@ -761,8 +835,17 @@ def main() -> None:
         report_dir=args.report_dir,
         sample_id=args.sample_id,
         mt_contig=args.mt_contig,
+        mt_length=args.mt_length,
+        reference_sequence=load_reference_sequence(
+            args.ref_fasta,
+            args.mt_contig,
+            args.mt_length,
+        ),
         phased_snp_vcf=args.phased_snp_vcf,
         np_snp_vcf=args.np_snp_vcf,
+        phymer_script_sha256=args.phymer_script_sha256,
+        phymer_library_sha256=args.phymer_library_sha256,
+        phymer_definitions_sha256=args.phymer_definitions_sha256,
         fingerprint_depth=args.fingerprint_depth,
         major_vaf=args.major_vaf,
     )

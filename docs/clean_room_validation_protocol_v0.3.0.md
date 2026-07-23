@@ -20,12 +20,12 @@ outside scope.
 | Repository | `https://github.com/elissonnog/mito-overview` |
 | Development branch | `codex/preprint-hardening-v0.3.0` |
 | Reconciled baseline | `6dc5f079745bf7732710a483e926ab27e6b94926` |
-| Frozen `paper/` tree | `bfb5664db9c8b43ed5de33ecbddef88071fc6378` |
 | Prior immutable release | `v0.2.1` at `2ba62b775a7204c0dc61f5408989603f536c78da` |
 
-No release-hardening commit may modify `paper/**`. The final release commit,
-CI jobs, tag, distributions, validation packet, and reports must all resolve to
-one full 40-character commit.
+The manuscript tree is outside this protocol and is neither recorded nor
+compared by software release acceptance. The final release commit, CI jobs,
+tag, distributions, validation packet, and reports must all resolve to one
+full 40-character commit.
 
 ## Locked execution environment
 
@@ -205,10 +205,9 @@ complete rerun from a new final commit.
 
 ## Required release sequence
 
-1. Complete PR 3 and run three role-separated read-only agent audits without
-   modifying `paper/**`. Each audit uses a unique execution ID and is bound to
-   the PR-head tree; owner-posted GitHub records do not imply distinct external
-   reviewers.
+1. Complete PR 3 and run three role-separated read-only software audits. Each
+   audit uses a unique execution ID and is bound to the PR-head tree;
+   owner-posted GitHub records do not imply distinct external reviewers.
 2. Require Ubuntu and macOS PR CI at the exact final PR head.
 3. Merge PR 3 and define the resulting `main` commit as `FINAL_SHA`.
 4. Require push-event Ubuntu and macOS CI at `FINAL_SHA`.

@@ -18,7 +18,11 @@ import pandas as pd
 import requests
 
 from mito_overview.report_common import df_to_html_table, figure_html, metric_card, render_page
-from mito_overview.table_contracts import load_metric_module_state, validate_candidate_table
+from mito_overview.table_contracts import (
+    load_metric_module_state,
+    load_reference_sequence,
+    validate_candidate_table,
+)
 
 DEFAULT_FIELDS = [
     "Input",
@@ -73,6 +77,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--report-dir", required=True)
     parser.add_argument("--sample-id", required=True)
     parser.add_argument("--species", required=True)
+    parser.add_argument("--mt-contig", required=True)
+    parser.add_argument("--mt-length", type=int, required=True)
+    parser.add_argument("--ref-fasta", required=True)
     parser.add_argument("--mode", choices=("disabled", "fixture", "network"), default="disabled")
     parser.add_argument("--api-url", default="")
     parser.add_argument("--fixture-json")
@@ -271,6 +278,8 @@ def run_step(
     report_dir: str | Path,
     sample_id: str,
     species: str,
+    mt_length: int,
+    reference_sequence: str,
     mode: str = "disabled",
     api_url: str = "",
     fixture_json: str | Path | None = None,
@@ -463,6 +472,8 @@ def run_step(
     candidates = validate_candidate_table(
         candidates,
         table_name="mito_heteroplasmy_candidates.tsv",
+        mt_length=mt_length,
+        reference_sequence=reference_sequence,
     )
     if candidates.empty:
         return write_status_page(
@@ -631,13 +642,21 @@ def run_step(
     if "AF_M1" in merged.columns:
         freq_df = merged[["mvtool_input", "AF_M1"]].copy()
         freq_df["AF_M1"] = as_float(freq_df["AF_M1"])
+        supplied_frequency = merged["AF_M1"].notna()
+        invalid_frequency = supplied_frequency & (
+            ~np.isfinite(freq_df["AF_M1"])
+            | (freq_df["AF_M1"] < 0)
+            | (freq_df["AF_M1"] > 1)
+        )
+        if invalid_frequency.any():
+            raise ValueError("mvTool AF_M1 values must be finite and between 0 and 1")
         freq_df = freq_df.dropna(subset=["AF_M1"])
         if not freq_df.empty:
             population_bin_summary = (
                 freq_df.assign(
                     AF_M1_bin=pd.cut(
                         freq_df["AF_M1"],
-                        bins=[0.0, 0.001, 0.01, 0.05, 0.10, np.inf],
+                        bins=[0.0, 0.001, 0.01, 0.05, 0.10, 1.0 + np.finfo(float).eps],
                         labels=[
                             "<0.1%",
                             "0.1-<1%",
@@ -772,6 +791,12 @@ def main() -> None:
         report_dir=args.report_dir,
         sample_id=args.sample_id,
         species=args.species,
+        mt_length=args.mt_length,
+        reference_sequence=load_reference_sequence(
+            args.ref_fasta,
+            args.mt_contig,
+            args.mt_length,
+        ),
         mode=args.mode,
         api_url=args.api_url,
         fixture_json=args.fixture_json,

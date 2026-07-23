@@ -11,7 +11,6 @@ The historical `v0.2.1` release remains immutable at `2ba62b775a7204c0dc61f54089
 | version | `0.3.0` | recorded in package metadata; final agreement check pending |
 | repository | `https://github.com/elissonnog/mito-overview` | recorded |
 | prior release | `v0.2.1` at `2ba62b775a7204c0dc61f5408989603f536c78da` | preserved |
-| frozen manuscript tree | `bfb5664db9c8b43ed5de33ecbddef88071fc6378` | frozen; `paper/**` excluded from this phase |
 | final commit | one exact 40-character public `main` commit | pending |
 | GitHub Actions | successful Ubuntu and macOS jobs with `head_sha=FINAL_SHA` | pending |
 | tag | annotated `v0.3.0` peeled to `FINAL_SHA` | pending |
@@ -122,7 +121,8 @@ The runner must reject legacy DOI/Zenodo arguments, require an absent raw-cache 
 
 ## Ordered Finish Gate
 
-1. Stabilize and review the GitHub-only branch without modifying `paper/**`.
+1. Stabilize and review the GitHub-only software branch; manuscript state is
+   neither an input nor an acceptance condition.
 2. Run complete local tests, all four synthetic workflows, both example builders, package-isolation checks, and hygiene scans.
 3. Run three role-separated read-only agent audits for release engineering,
    bioinformatics, and reproducibility. Bind unique audit-instance IDs to the
@@ -202,3 +202,44 @@ The successor removes the manuscript-tree release check while leaving `paper/**`
 Exact commit `db62aa4e47eb3d88aac767840c3a360c721d8257` is rejected release evidence and was not pushed. Exact archive/source-distribution tests passed `1042/1042`; separate wheel and source-distribution installations passed the 18-step CLI and all four workflow modes; repeated long- and short-read examples matched `88/88` and `74/74` tracked files. Release audit `MITO-REL-20260723T171401Z-4d3d9b67-5b0c-4a98-9eda-e8e3434e21bf` passed, but scientific audit `MITO-SCI-DB62AA4-20260723T170408Z-0D07AF88-F49A-4D3A-A91B-3609CC90C05B` and reproducibility audit `MITO-RO-20260723T172150Z-0dd9978f-b5e0-4bbc-af14-230942131b63` returned HOLD.
 
 The five reproduced blockers were incomplete Phy-Mer provenance retaining a formal assignment, contradictory bedMethyl valid coverage being normalized, direct zero-window copy-proxy execution reporting `ok`, mvTool boundary labels disagreeing with interval closure, and manuscript wording remaining a transitive software-release gate. The successor fails closed for all four scientific conditions and makes manuscript wording checks opt-in and non-gating. Focused adversarial tests passed `169/169`; the complete working-tree suite passed `1054/1054` in 468.96 seconds. These results do not approve a mutable working tree. A new exact commit and three fresh role-separated PASS audits remain mandatory before PR #3 can be updated.
+
+## Rejected candidate `77089b2` and resource/reference remediation
+
+Exact commit `77089b28302dddd6f91b94e08d366c4bcd5a6188` (tree
+`0ac41b459e9740b330eca87650a7c95f49e0b419`) is rejected release evidence and
+was not pushed. Its Git archive and extracted source distribution each passed
+`1054/1054` tests. Separately installed wheel and source-distribution
+environments resolved the package outside the checkout, exposed all 18 steps,
+passed strict dry-run and all four synthetic workflow modes, and reproduced
+the tracked 88-file long-read and 74-file reduced-short-read bundles exactly.
+Reproducibility audit `4a94b13f-5b88-4533-bec4-12dccdc7dd10` returned a bounded
+PASS. Release-engineering audit `MO030-RE-20260723T181628Z-D428B7B3` returned
+HOLD because active protocol/checklist evidence still treated the frozen
+manuscript tree as a software-release acceptance condition. Scientific audit
+`MITO-SCI-77089B2-20260723T182321Z-30440820-9D70-493A-82F5-07E46ED61466`
+returned HOLD because external Phy-Mer resources were not identity-bound,
+formal identity output could survive missing classifier result fields,
+candidate consumers did not all enforce the configured mitochondrial
+reference, and mvTool accepted invalid `AF_M1` values outside `[0,1]`.
+
+The successor removes manuscript state from the active GitHub-only protocol
+without modifying `paper/**`; requires configured SHA-256 identities for the
+external Phy-Mer script, library, and definitions; records observed resource
+hashes and a verified binding state; makes identity QC independently compare
+those observations with configured expected hashes; requires a nonempty best
+haplogroup and a finite score in `[0,1]` before formal identity output is retained; and validates
+co-segregation, identity, circularity, and mvTool candidate positions and REF
+alleles against the indexed configured mitochondrial sequence. Their direct
+step CLIs require the same indexed FASTA contract. mvTool rejects nonnumeric,
+nonfinite, negative, and greater-than-one `AF_M1` values.
+The connected successor suite passed `174/174`. Two independent source-mode
+long-read regenerations were byte-identical; only the page-13 report and its
+Phy-Mer summary changed, adding verified resource identities. Complete
+pre-freeze pytest then passed `1069/1069` in 437.12 seconds. The surrounding
+macOS `/usr/bin/time -l` process could not query `sysctl kern.clockrate` after
+pytest completed; this affects only optional resource metadata, not the pytest
+verdict. A subsequent downstream-boundary review added the independent
+configured-hash comparison and repaired the four direct step CLI adapters; its
+connected replacement suite passed `117/117`. The clean complete replacement
+run passed `1075/1075` in 425.98 seconds with exit code zero. Exact-package
+gates and three new exact-SHA audits remain required.

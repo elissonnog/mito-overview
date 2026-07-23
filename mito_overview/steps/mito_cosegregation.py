@@ -15,7 +15,11 @@ import pandas as pd
 
 from mito_overview.allele_counting import AlleleFilterPolicy, collect_site_read_calls, policy_rows
 from mito_overview.report_common import df_to_html_table, figure_html, metric_card, render_page
-from mito_overview.table_contracts import load_metric_module_state, validate_candidate_table
+from mito_overview.table_contracts import (
+    load_metric_module_state,
+    load_reference_sequence,
+    validate_candidate_table,
+)
 
 TOP_SITES_LIMIT = 8
 MIN_SHARED_READS_THRESHOLD = 25
@@ -66,6 +70,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--report-dir", required=True)
     parser.add_argument("--sample-id", required=True)
     parser.add_argument("--mt-contig", required=True)
+    parser.add_argument("--mt-length", type=int, required=True)
+    parser.add_argument("--ref-fasta", required=True)
     parser.add_argument("--min-base-quality", type=int, default=13)
     parser.add_argument("--min-mapping-quality", type=int, default=20)
     parser.add_argument("--min-read-mean-quality", type=float, default=10.0)
@@ -94,6 +100,8 @@ def _site_label(position: int, ref_base: str, alt_base: str) -> str:
 def _load_selected_sites(
     summary_dir: Path,
     top_sites_limit: int,
+    mt_length: int,
+    reference_sequence: str,
 ) -> tuple[pd.DataFrame, str | None, str | None, str | None]:
     upstream_status, upstream_reason = load_metric_module_state(
         summary_dir / "mito_heteroplasmy_summary.tsv",
@@ -119,6 +127,8 @@ def _load_selected_sites(
     filtered = validate_candidate_table(
         candidates_df,
         table_name="mito_heteroplasmy_candidates.tsv",
+        mt_length=mt_length,
+        reference_sequence=reference_sequence,
     )
     if filtered.empty:
         message = "The heteroplasmy candidate table is present but empty after filtering; stable empty outputs were written."
@@ -396,6 +406,8 @@ def run_step(
     report_dir: str | Path,
     sample_id: str,
     mt_contig: str,
+    mt_length: int,
+    reference_sequence: str,
     min_base_quality: int = 13,
     min_mapping_quality: int = 20,
     min_read_mean_quality: float = 10.0,
@@ -426,7 +438,10 @@ def run_step(
         ignore_overlaps=ignore_overlaps,
     )
     selected_df, status_message, upstream_status, upstream_reason = _load_selected_sites(
-        summary_dir, TOP_SITES_LIMIT
+        summary_dir,
+        TOP_SITES_LIMIT,
+        mt_length,
+        reference_sequence,
     )
     coverage_by_site, alt_by_site, filter_stats = _collect_read_support(bam, mt_contig, selected_df, policy)
     if not selected_df.empty:
@@ -621,6 +636,12 @@ def main() -> None:
         report_dir=args.report_dir,
         sample_id=args.sample_id,
         mt_contig=args.mt_contig,
+        mt_length=args.mt_length,
+        reference_sequence=load_reference_sequence(
+            args.ref_fasta,
+            args.mt_contig,
+            args.mt_length,
+        ),
         min_base_quality=args.min_base_quality,
         min_mapping_quality=args.min_mapping_quality,
         min_read_mean_quality=args.min_read_mean_quality,

@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import math
+import re
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -24,6 +25,7 @@ RANKING_COLUMNS = ["rank", "haplogroup", "score", "defining_snps"]
 PHYMER_MODES = {"external", "fixture"}
 EXTERNAL_MIN_CALLABLE_FRACTION = 0.95
 FIXTURE_ID = "mito-overview-phymer-wiring-v1"
+SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 FIXTURE_FILE_SHA256 = {
     "Phy-Mer.py": "1f5231e6958ffd731c4c644aa69168824126c251f8b8129b74c47f87a68cbb22",
     "PhyloTree_b16_k12.txt": "8bd377e62052ec9145c7078fa0dd85eb071aa7977bd225baa6ede87031fea968",
@@ -239,6 +241,28 @@ def _verify_fixture_vendor(root: Path) -> None:
         )
 
 
+def _resource_rows(
+    resource_hashes: dict[str, str],
+    *,
+    binding_status: str,
+) -> list[dict[str, object]]:
+    return [
+        {"metric": "phymer_resource_binding_status", "value": binding_status},
+        {
+            "metric": "phymer_script_sha256",
+            "value": resource_hashes.get("script", "NA"),
+        },
+        {
+            "metric": "phymer_library_sha256",
+            "value": resource_hashes.get("library", "NA"),
+        },
+        {
+            "metric": "phymer_definitions_sha256",
+            "value": resource_hashes.get("definitions", "NA"),
+        },
+    ]
+
+
 def _provenance_rows(phymer_mode: str) -> list[dict[str, object]]:
     if phymer_mode == "fixture":
         return [
@@ -303,6 +327,9 @@ def run_step(
     ref_fasta: str | Path,
     phymer_root: str | Path | None,
     phymer_mode: str = "external",
+    expected_script_sha256: str = "",
+    expected_library_sha256: str = "",
+    expected_definitions_sha256: str = "",
     min_depth: int = 100,
     major_vaf: float = 0.90,
     min_callable_fraction: float = 0.95,
@@ -342,6 +369,21 @@ def run_step(
     phymer_mode = str(phymer_mode).strip().lower()
     if phymer_mode not in PHYMER_MODES:
         raise ValueError(f"Unsupported PHYMER_MODE: {phymer_mode}")
+    expected_hashes = {
+        "script": str(expected_script_sha256).strip().lower(),
+        "library": str(expected_library_sha256).strip().lower(),
+        "definitions": str(expected_definitions_sha256).strip().lower(),
+    }
+    invalid_expected_hashes = [
+        label
+        for label, value in expected_hashes.items()
+        if value and not SHA256_PATTERN.fullmatch(value)
+    ]
+    if invalid_expected_hashes:
+        raise ValueError(
+            "Phy-Mer expected SHA-256 values must be 64 lowercase hexadecimal "
+            f"characters: {','.join(invalid_expected_hashes)}"
+        )
     if min_depth <= 0:
         raise ValueError("Phy-Mer min_depth must be positive")
     if not math.isfinite(major_vaf) or not 0 <= major_vaf <= 1:
@@ -477,6 +519,61 @@ def run_step(
 
     if phymer_mode == "fixture":
         _verify_fixture_vendor(phymer_root_path)
+        expected_hashes = {
+            "script": FIXTURE_FILE_SHA256["Phy-Mer.py"],
+            "library": FIXTURE_FILE_SHA256["PhyloTree_b16_k12.txt"],
+            "definitions": FIXTURE_FILE_SHA256[
+                "resources/Build_16_-_rCRS-based_haplogroup_motifs.csv"
+            ],
+        }
+
+    observed_hashes = {
+        "script": _sha256(phymer_script),
+        "library": _sha256(phymer_library),
+        "definitions": _sha256(phymer_defs),
+    }
+    if phymer_mode == "external" and not all(expected_hashes.values()):
+        return _write_status_outputs(
+            report_path=report_path,
+            summary_path=summary_path,
+            ranking_path=ranking_path,
+            input_path=input_path,
+            status_rows=[
+                {"metric": "status", "value": "not_configured"},
+                {
+                    "metric": "reason_code",
+                    "value": "phymer_external_hashes_not_configured",
+                },
+                *provenance_rows,
+                *_resource_rows(observed_hashes, binding_status="not_configured"),
+            ],
+            message=(
+                "External Phy-Mer resources were present, but expected SHA-256 "
+                "identities were not completely configured."
+            ),
+            sample_id=sample_id,
+            region=region,
+        )
+    if observed_hashes != expected_hashes:
+        return _write_status_outputs(
+            report_path=report_path,
+            summary_path=summary_path,
+            ranking_path=ranking_path,
+            input_path=input_path,
+            status_rows=[
+                {"metric": "status", "value": "unavailable"},
+                {"metric": "reason_code", "value": "phymer_resource_digest_mismatch"},
+                *provenance_rows,
+                *_resource_rows(observed_hashes, binding_status="mismatch"),
+            ],
+            message=(
+                "Configured Phy-Mer resources did not match their expected SHA-256 "
+                "identities, so no classifier code was executed."
+            ),
+            sample_id=sample_id,
+            region=region,
+        )
+    resource_rows = _resource_rows(observed_hashes, binding_status="verified")
 
     evidence = build_consensus_fasta(
         all_sites=all_sites,
@@ -508,6 +605,7 @@ def run_step(
                 {"metric": "upstream_heteroplasmy_status", "value": "ok"},
                 *coverage_rows,
                 *provenance_rows,
+                *resource_rows,
             ],
             message=(
                 "Phy-Mer was not run because the fraction of mitochondrial positions "
@@ -558,6 +656,7 @@ def run_step(
                 {"metric": "stderr_preview", "value": completed.stderr.strip()[:200] or "NA"},
                 *coverage_rows,
                 *provenance_rows,
+                *resource_rows,
             ],
             message="Phy-Mer was invoked but did not return a successful haplogroup result. See the raw output files in the summary directory for debugging context.",
             sample_id=sample_id,
@@ -583,6 +682,7 @@ def run_step(
             {"metric": "major_variant_sites_used", "value": int(len(major))},
             *coverage_rows,
             *provenance_rows,
+            *resource_rows,
             {"metric": "phymer_library", "value": phymer_library.name},
             {
                 "metric": "major_variant_threshold",

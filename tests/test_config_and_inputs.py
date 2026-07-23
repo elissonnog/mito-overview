@@ -504,6 +504,28 @@ def test_unknown_phymer_mode_is_rejected(
         PipelineConfig.from_mapping(mapping)
 
 
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("PHYMER_SCRIPT_SHA256", "abc"),
+        ("PHYMER_LIBRARY_SHA256", "G" * 64),
+        ("PHYMER_DEFINITIONS_SHA256", "0" * 63),
+    ],
+)
+def test_invalid_phymer_expected_digest_is_rejected(
+    minimal_inputs: tuple[Path, Path],
+    tmp_path: Path,
+    key: str,
+    value: str,
+) -> None:
+    ref, bam = minimal_inputs
+    mapping = minimal_mapping(tmp_path, ref, bam)
+    mapping[key] = value
+
+    with pytest.raises(ValueError, match=key):
+        PipelineConfig.from_mapping(mapping)
+
+
 def test_explicit_sidecar_overrides_legacy_and_missing_is_nonfatal(
     minimal_inputs: tuple[Path, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

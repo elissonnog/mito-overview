@@ -67,7 +67,22 @@ def run_phymer(
     min_callable_fraction: float = 0.95,
     phymer_mode: str = "fixture",
     phymer_root: Path | None = None,
+    bind_external_resources: bool = True,
 ) -> dict[str, Path | str]:
+    resolved_root = phymer_root or Path(__file__).parent / "fixtures" / "mock_phymer_vendor"
+    hash_kwargs: dict[str, str] = {}
+    if phymer_mode == "external" and bind_external_resources:
+        hash_kwargs = {
+            "expected_script_sha256": phymer._sha256(resolved_root / "Phy-Mer.py"),
+            "expected_library_sha256": phymer._sha256(
+                resolved_root / "PhyloTree_b16_k12.txt"
+            ),
+            "expected_definitions_sha256": phymer._sha256(
+                resolved_root
+                / "resources"
+                / "Build_16_-_rCRS-based_haplogroup_motifs.csv"
+            ),
+        }
     return phymer.run_step(
         summary_dir=summary,
         figure_dir=root / "figures",
@@ -77,13 +92,62 @@ def run_phymer(
         mt_length=MT_LENGTH,
         species="human",
         ref_fasta=reference,
-        phymer_root=phymer_root
-        or Path(__file__).parent / "fixtures" / "mock_phymer_vendor",
+        phymer_root=resolved_root,
         phymer_mode=phymer_mode,
+        **hash_kwargs,
         min_depth=100,
         major_vaf=0.9,
         min_callable_fraction=min_callable_fraction,
     )
+
+
+def test_external_mode_requires_complete_expected_resource_hashes(
+    tmp_path: Path,
+) -> None:
+    summary, reference = prepare_case(tmp_path)
+    outputs = run_phymer(
+        tmp_path,
+        summary,
+        reference,
+        phymer_mode="external",
+        bind_external_resources=False,
+    )
+    metrics = metric_map(Path(outputs["summary_path"]))
+
+    assert outputs["status"] == "not_configured"
+    assert metrics["reason_code"] == "phymer_external_hashes_not_configured"
+    assert metrics["phymer_resource_binding_status"] == "not_configured"
+
+
+def test_external_mode_rejects_resource_digest_mismatch(tmp_path: Path) -> None:
+    summary, reference = prepare_case(tmp_path)
+    vendor = Path(__file__).parent / "fixtures" / "mock_phymer_vendor"
+    outputs = phymer.run_step(
+        summary_dir=summary,
+        figure_dir=tmp_path / "figures",
+        report_dir=tmp_path / "reports",
+        sample_id="PHYMER-DIGEST-MISMATCH",
+        mt_contig="MT",
+        mt_length=MT_LENGTH,
+        species="human",
+        ref_fasta=reference,
+        phymer_root=vendor,
+        phymer_mode="external",
+        expected_script_sha256="0" * 64,
+        expected_library_sha256=phymer._sha256(
+            vendor / "PhyloTree_b16_k12.txt"
+        ),
+        expected_definitions_sha256=phymer._sha256(
+            vendor
+            / "resources"
+            / "Build_16_-_rCRS-based_haplogroup_motifs.csv"
+        ),
+    )
+    metrics = metric_map(Path(outputs["summary_path"]))
+
+    assert outputs["status"] == "unavailable"
+    assert metrics["reason_code"] == "phymer_resource_digest_mismatch"
+    assert metrics["phymer_resource_binding_status"] == "mismatch"
 
 
 def retain_callable_positions(table: pd.DataFrame, positions: set[int]) -> pd.DataFrame:

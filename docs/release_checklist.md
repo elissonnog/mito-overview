@@ -16,8 +16,6 @@ release date.
 ## Scope gate
 
 - [ ] Work only in the public Mac repository.
-- [ ] Preserve the frozen `paper/` tree
-  `bfb5664db9c8b43ed5de33ecbddef88071fc6378` after main reconciliation.
 - [ ] Confirm no internal paths, private sample identifiers, credentials, or
   secret-like values are tracked.
 - [ ] Keep claims limited to workflow execution, output contracts,
@@ -44,10 +42,12 @@ release date.
   existing run directory, an existing final destination, and overlapping run
   and final paths before modification.
 - [ ] Phy-Mer external mode rejects a callable-genome threshold below `0.95`,
-  every accepted score is finite and within `[0,1]`, and fixture mode verifies
-  the exact bundled mock hashes and labels its output non-biological. Direct
-  rerun failures clear all prior owned outputs. The exact callable-fraction
-  boundary and `N` masking have deterministic known-answer tests.
+  requires matching expected SHA-256 identities for the script, library, and
+  motif definitions, and accepts only a nonempty result with a finite score in
+  `[0,1]`. Fixture mode verifies the exact bundled mock hashes and labels its
+  output non-biological. Direct rerun failures clear all prior owned outputs.
+  The exact callable-fraction boundary and `N` masking have deterministic
+  known-answer tests.
 
 ## Public-data gate
 

@@ -12,6 +12,16 @@ from mito_overview.steps import mito_mvtool_annotation as mvtool
 from ._helpers import metric_map
 
 
+MT_LENGTH = 60
+REFERENCE_SEQUENCE = "A" * MT_LENGTH
+
+
+def run_mvtool(**kwargs: object) -> dict[str, Path | str]:
+    kwargs.setdefault("mt_length", MT_LENGTH)
+    kwargs.setdefault("reference_sequence", REFERENCE_SEQUENCE)
+    return mvtool.run_step(**kwargs)
+
+
 def complete_candidate(row: dict[str, object]) -> dict[str, object]:
     position = int(row["position"])
     ref_base = str(row["ref_base"])
@@ -64,7 +74,7 @@ def prepare_case(
 def test_disabled_mode_cannot_create_requests_session(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     summary, figures, reports = prepare_case(tmp_path)
     monkeypatch.setattr(mvtool.requests, "Session", lambda: (_ for _ in ()).throw(AssertionError("network used")))
-    outputs = mvtool.run_step(
+    outputs = run_mvtool(
         summary_dir=summary,
         figure_dir=figures,
         report_dir=reports,
@@ -81,7 +91,7 @@ def test_disabled_mode_cannot_create_requests_session(tmp_path: Path, monkeypatc
 def test_fixture_mode_returns_exact_annotation(tmp_path: Path) -> None:
     summary, figures, reports = prepare_case(tmp_path)
     fixture = Path(__file__).parent / "fixtures" / "mock_mvtool_annotations.json"
-    outputs = mvtool.run_step(
+    outputs = run_mvtool(
         summary_dir=summary,
         figure_dir=figures,
         report_dir=reports,
@@ -122,7 +132,7 @@ def test_population_frequency_bins_use_explicit_left_closed_boundaries(
         encoding="utf-8",
     )
 
-    outputs = mvtool.run_step(
+    outputs = run_mvtool(
         summary_dir=summary,
         figure_dir=figures,
         report_dir=reports,
@@ -146,6 +156,84 @@ def test_population_frequency_bins_use_explicit_left_closed_boundaries(
     ]
 
 
+@pytest.mark.parametrize("frequency", (-0.1, 1.1, "not-a-number"))
+def test_population_frequency_rejects_invalid_domain_values(
+    tmp_path: Path,
+    frequency: object,
+) -> None:
+    summary, figures, reports = prepare_case(tmp_path)
+    fixture = tmp_path / "invalid-frequency.json"
+    fixture.write_text(
+        json.dumps(
+            {
+                "records": {
+                    "m.10A>C": {
+                        "Input": "m.10A>C",
+                        "AF_M1": frequency,
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="AF_M1 values must be finite and between 0 and 1",
+    ):
+        run_mvtool(
+            summary_dir=summary,
+            figure_dir=figures,
+            report_dir=reports,
+            sample_id="INVALID-AF",
+            species="human",
+            mode="fixture",
+            fixture_json=fixture,
+        )
+
+
+@pytest.mark.parametrize(
+    ("row", "message"),
+    [
+        (
+            {
+                "position": MT_LENGTH + 1,
+                "ref_base": "A",
+                "alt_base": "C",
+            },
+            "out-of-domain values",
+        ),
+        (
+            {
+                "position": 10,
+                "ref_base": "G",
+                "alt_base": "C",
+            },
+            "REF alleles disagree",
+        ),
+    ],
+)
+def test_candidate_reference_contract_is_enforced_before_annotation(
+    tmp_path: Path,
+    row: dict[str, object],
+    message: str,
+) -> None:
+    summary, figures, reports = prepare_case(tmp_path, [row])
+    fixture = tmp_path / "unused.json"
+    fixture.write_text(json.dumps({"records": {}}), encoding="utf-8")
+
+    with pytest.raises(ValueError, match=message):
+        run_mvtool(
+            summary_dir=summary,
+            figure_dir=figures,
+            report_dir=reports,
+            sample_id="INVALID-REFERENCE",
+            species="human",
+            mode="fixture",
+            fixture_json=fixture,
+        )
+
+
 class FakeResponse:
     status_code = 200
 
@@ -163,7 +251,7 @@ def test_explicit_network_mode_with_mock_response(tmp_path: Path, monkeypatch: p
     summary, figures, reports = prepare_case(tmp_path)
     payload = {"mseqdr": [{"Input": "m.10A>C", "Mitomap_status": "Reported"}]}
     monkeypatch.setattr(requests.Session, "post", lambda self, *args, **kwargs: FakeResponse(payload))
-    outputs = mvtool.run_step(
+    outputs = run_mvtool(
         summary_dir=summary,
         figure_dir=figures,
         report_dir=reports,
@@ -196,7 +284,7 @@ def test_network_mode_rejects_non_http_or_credentialed_urls_without_request(
         "Session",
         lambda: (_ for _ in ()).throw(AssertionError("request session created")),
     )
-    outputs = mvtool.run_step(
+    outputs = run_mvtool(
         summary_dir=summary,
         figure_dir=figures,
         report_dir=reports,
@@ -229,7 +317,7 @@ def test_network_submits_every_valid_candidate_once(
         )
 
     monkeypatch.setattr(requests.Session, "post", post)
-    outputs = mvtool.run_step(
+    outputs = run_mvtool(
         summary_dir=summary,
         figure_dir=figures,
         report_dir=reports,
@@ -259,7 +347,7 @@ def test_duplicate_internal_candidates_are_rejected_before_network_use(
     )
 
     with pytest.raises(ValueError, match="duplicate variant keys"):
-        mvtool.run_step(
+        run_mvtool(
             summary_dir=summary,
             figure_dir=figures,
             report_dir=reports,
@@ -280,7 +368,7 @@ def test_incomplete_internal_candidates_are_rejected_before_fixture_use(
     fixture = Path(__file__).parent / "fixtures" / "mock_mvtool_annotations.json"
 
     with pytest.raises(ValueError, match="lacks required columns: callable_depth"):
-        mvtool.run_step(
+        run_mvtool(
             summary_dir=summary,
             figure_dir=figures,
             report_dir=reports,
@@ -300,7 +388,7 @@ def test_partial_header_only_candidates_are_rejected_before_fixture_use(
     fixture = Path(__file__).parent / "fixtures" / "mock_mvtool_annotations.json"
 
     with pytest.raises(ValueError, match="lacks required columns"):
-        mvtool.run_step(
+        run_mvtool(
             summary_dir=summary,
             figure_dir=figures,
             report_dir=reports,
@@ -327,7 +415,7 @@ def test_valid_header_only_candidate_table_is_an_empty_result(
     )
     fixture = Path(__file__).parent / "fixtures" / "mock_mvtool_annotations.json"
 
-    outputs = mvtool.run_step(
+    outputs = run_mvtool(
         summary_dir=summary,
         figure_dir=figures,
         report_dir=reports,
@@ -360,7 +448,7 @@ def test_failed_upstream_status_blocks_stale_candidate_annotation(
         lambda: (_ for _ in ()).throw(AssertionError("network session created")),
     )
 
-    outputs = mvtool.run_step(
+    outputs = run_mvtool(
         summary_dir=summary,
         figure_dir=figures,
         report_dir=reports,
@@ -388,7 +476,7 @@ def test_missing_candidate_table_is_distinct_from_observed_zero(
         lambda: (_ for _ in ()).throw(AssertionError("network session created")),
     )
 
-    outputs = mvtool.run_step(
+    outputs = run_mvtool(
         summary_dir=summary,
         figure_dir=figures,
         report_dir=reports,
@@ -442,7 +530,7 @@ def test_invalid_network_response_inputs_are_unavailable(
         lambda self, *args, **kwargs: FakeResponse({"mseqdr": returned_rows}),
     )
 
-    outputs = mvtool.run_step(
+    outputs = run_mvtool(
         summary_dir=summary,
         figure_dir=figures,
         report_dir=reports,
@@ -465,7 +553,7 @@ def test_fixture_does_not_fabricate_a_missing_candidate_from_defaults(tmp_path: 
     )
     fixture = Path(__file__).parent / "fixtures" / "mock_mvtool_annotations.json"
 
-    outputs = mvtool.run_step(
+    outputs = run_mvtool(
         summary_dir=summary,
         figure_dir=figures,
         report_dir=reports,
@@ -488,7 +576,7 @@ def test_fixture_mseqdr_rejects_unexpected_input(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    outputs = mvtool.run_step(
+    outputs = run_mvtool(
         summary_dir=summary,
         figure_dir=figures,
         report_dir=reports,
@@ -518,7 +606,7 @@ def test_network_failures_return_unavailable(
         def post(*args, **kwargs):
             return FakeResponse({"mseqdr": {"not": "a list"}})
     monkeypatch.setattr(requests.Session, "post", post)
-    outputs = mvtool.run_step(
+    outputs = run_mvtool(
         summary_dir=summary,
         figure_dir=figures,
         report_dir=reports,

@@ -7,7 +7,9 @@ Public-package rule:
 - keep species gating explicit
 - do not make this dependency mandatory for the reproducible core workflow
 - in the repository's fixture-backed smoke-test path, use the bundled deterministic fixture under `tests/fixtures/mock_phymer_vendor`
-- in real use, set `PHYMER_MODE=external` and point `PHYMER_ROOT` to a true local Phy-Mer vendor tree
+- in real use, set `PHYMER_MODE=external`, point `PHYMER_ROOT` to a local
+  Phy-Mer vendor tree, and provide its expected `PHYMER_SCRIPT_SHA256`,
+  `PHYMER_LIBRARY_SHA256`, and `PHYMER_DEFINITIONS_SHA256` identities
 - BioPython 1.87 is pinned because the official Phy-Mer script imports it; the
   external Phy-Mer code and data library remain separately installed resources
 - official Phy-Mer still uses Python 2's removed `rU` file mode; external mode
@@ -46,7 +48,12 @@ one-third of its artificial reference is covered at the fixture depth threshold.
 Fixture mode verifies SHA-256 identities for the bundled stand-in script,
 library, and definitions before execution. Its TSV and HTML outputs record the
 fixture ID, provenance, synthetic result scope, and absence of biological
-validation. External mode cannot set the callable fraction below `0.95`.
+validation. External mode cannot set the callable fraction below `0.95` and
+does not execute files based on expected names alone: all three configured
+digests must match the local script, library, and motif-definition files. The
+verified observed identities are recorded in the Phy-Mer summary. Identity QC
+independently compares those recorded identities with the configured expected
+hashes before retaining a formal external assignment.
 
 Every direct invocation clears all Phy-Mer-owned summaries, ranking/input
 tables, raw logs, consensus FASTA, figure, and HTML before validating the new

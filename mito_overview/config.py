@@ -48,6 +48,9 @@ DEFAULTS: dict[str, Any] = {
     "CONTROL_REGION_ANNOTATION_MODE": "auto",
     "PHYMER_ROOT": "",
     "PHYMER_MODE": "external",
+    "PHYMER_SCRIPT_SHA256": "",
+    "PHYMER_LIBRARY_SHA256": "",
+    "PHYMER_DEFINITIONS_SHA256": "",
     "HUMAN_MT_GTF": "",
     "PHYMER_MIN_DEPTH": "100",
     "PHYMER_MAJOR_VAF": "0.90",
@@ -514,6 +517,9 @@ class PipelineConfig:
     control_region_annotation_mode: str
     phymer_root: Path | None
     phymer_mode: str
+    phymer_script_sha256: str
+    phymer_library_sha256: str
+    phymer_definitions_sha256: str
     human_mt_gtf: Path | None
     phymer_min_depth: int
     phymer_major_vaf: float
@@ -660,6 +666,11 @@ class PipelineConfig:
             control_region_annotation_mode=control_region_annotation_mode,
             phymer_root=_optional_path(str(merged["PHYMER_ROOT"]), base_dir),
             phymer_mode=phymer_mode,
+            phymer_script_sha256=str(merged["PHYMER_SCRIPT_SHA256"]).strip().lower(),
+            phymer_library_sha256=str(merged["PHYMER_LIBRARY_SHA256"]).strip().lower(),
+            phymer_definitions_sha256=str(
+                merged["PHYMER_DEFINITIONS_SHA256"]
+            ).strip().lower(),
             human_mt_gtf=_optional_path(str(merged["HUMAN_MT_GTF"]), base_dir),
             phymer_min_depth=int(merged["PHYMER_MIN_DEPTH"]),
             phymer_major_vaf=float(merged["PHYMER_MAJOR_VAF"]),
@@ -714,6 +725,18 @@ class PipelineConfig:
                 "PHYMER_MIN_CALLABLE_FRACTION cannot be below 0.95 when "
                 "PHYMER_MODE=external"
             )
+        for label, value in (
+            ("PHYMER_SCRIPT_SHA256", self.phymer_script_sha256),
+            ("PHYMER_LIBRARY_SHA256", self.phymer_library_sha256),
+            ("PHYMER_DEFINITIONS_SHA256", self.phymer_definitions_sha256),
+        ):
+            if value and (
+                len(value) != 64
+                or any(character not in "0123456789abcdef" for character in value)
+            ):
+                raise ValueError(
+                    f"{label} must be a 64-character lowercase hexadecimal SHA-256"
+                )
         if self.phymer_min_depth <= 0:
             raise ValueError("PHYMER_MIN_DEPTH must be positive")
         if self.threads <= 0 or self.nuclear_window_size <= 0 or self.nuclear_window_count <= 0:

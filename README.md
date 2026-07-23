@@ -209,6 +209,10 @@ In long-read mode without ONT bedmethyl sidecars, page `12` is expected to be a 
   synthetic threshold is accepted only with `PHYMER_MODE=fixture` and the exact
   hash-identified bundled mock, whose TSV and HTML outputs are labelled as a
   non-biological wiring test
+- external execution additionally requires matching `PHYMER_SCRIPT_SHA256`,
+  `PHYMER_LIBRARY_SHA256`, and `PHYMER_DEFINITIONS_SHA256` values, binding the
+  result to the exact local resources instead of filenames alone; identity QC
+  rechecks those recorded identities against the configured expected hashes
 - accepted Phy-Mer ranking scores must be finite and fall within the method's
   mathematical score domain `[0,1]`
 - mvTool is disabled by default; fixture or explicitly requested network success requires one unique returned row for every submitted candidate, with no missing, duplicate, or unexpected identifiers

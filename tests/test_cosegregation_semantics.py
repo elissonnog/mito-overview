@@ -138,6 +138,8 @@ def test_run_step_is_not_evaluable_when_shared_pairs_have_no_alt_support(
         report_dir=tmp_path / "reports",
         sample_id="REFERENCE-ONLY",
         mt_contig="MT",
+        mt_length=30,
+        reference_sequence="A" * 30,
     )
 
     pairwise = pd.read_csv(outputs["pairwise_path"], sep="\t")
@@ -181,6 +183,8 @@ def test_stale_candidates_are_not_used_when_upstream_heteroplasmy_failed(
         report_dir=tmp_path / "reports",
         sample_id="STALE",
         mt_contig="MT",
+        mt_length=30,
+        reference_sequence="A" * 30,
     )
     summary = metric_map(outputs["summary_path"])
 

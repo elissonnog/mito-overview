@@ -6,6 +6,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pysam
 
 
 MODULE_STATES = frozenset(
@@ -35,6 +36,24 @@ ALLELE_TABLE_COLUMNS = (
     "G",
     "T",
 )
+
+
+def load_reference_sequence(
+    ref_fasta: str | Path,
+    mt_contig: str,
+    mt_length: int,
+) -> str:
+    """Load the configured mitochondrial sequence under an exact length contract."""
+
+    if mt_length <= 0:
+        raise ValueError("Mitochondrial reference length must be positive")
+    with pysam.FastaFile(str(ref_fasta)) as reference:
+        sequence = reference.fetch(mt_contig, 0, mt_length).upper()
+    if len(sequence) != mt_length:
+        raise ValueError(
+            "Configured mitochondrial reference length does not match the indexed FASTA"
+        )
+    return sequence
 
 
 def _strict_numeric_column(

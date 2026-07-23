@@ -54,6 +54,9 @@ def test_workflow_preserves_non_evaluable_status_from_reporting_modules(
         mt_contig="MT",
         mt_length=100,
         deletion_min_size=100,
+        phymer_script_sha256="",
+        phymer_library_sha256="",
+        phymer_definitions_sha256="",
     )
 
     def not_evaluable_step(**kwargs: object) -> dict[str, Path | str]:
@@ -65,6 +68,10 @@ def test_workflow_preserves_non_evaluable_status_from_reporting_modules(
     monkeypatch.setattr("mito_overview.steps.mito_qc.run_step", not_evaluable_step)
     monkeypatch.setattr("mito_overview.steps.mito_deletions.run_step", not_evaluable_step)
     monkeypatch.setattr("mito_overview.steps.mito_identity_qc.run_step", not_evaluable_step)
+    monkeypatch.setattr(
+        "mito_overview.workflow._mt_reference_sequence",
+        lambda _config: "A" * 100,
+    )
 
     results = [
         _run_mito_qc(config, paths, False),

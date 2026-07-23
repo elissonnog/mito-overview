@@ -1,11 +1,19 @@
 from __future__ import annotations
 
 import pandas as pd
+import pysam
 import pytest
 
+from mito_overview.steps.mito_circularity_qc import (
+    build_arg_parser as circularity_parser,
+)
+from mito_overview.steps.mito_cosegregation import build_arg_parser as cosegregation_parser
+from mito_overview.steps.mito_identity_qc import build_arg_parser as identity_parser
+from mito_overview.steps.mito_mvtool_annotation import build_arg_parser as mvtool_parser
 from mito_overview.table_contracts import (
     MODULE_STATES,
     ensure_alt_fraction_columns,
+    load_reference_sequence,
     load_metric_module_state,
     validate_module_state,
 )
@@ -64,3 +72,27 @@ def test_metric_module_state_preserves_explicit_status_and_reason(tmp_path) -> N
         "failed",
         "upstream_failed",
     )
+
+
+def test_reference_loader_enforces_indexed_contig_length(tmp_path) -> None:
+    fasta = tmp_path / "reference.fa"
+    fasta.write_text(">MT\nACGT\n", encoding="ascii")
+    pysam.faidx(str(fasta))
+
+    assert load_reference_sequence(fasta, "MT", 4) == "ACGT"
+    with pytest.raises(ValueError, match="length"):
+        load_reference_sequence(fasta, "MT", 5)
+
+
+@pytest.mark.parametrize(
+    "parser_factory",
+    [cosegregation_parser, circularity_parser, identity_parser, mvtool_parser],
+)
+def test_reference_aware_step_cli_requires_reference_contract(parser_factory) -> None:
+    parser = parser_factory()
+    required = {
+        action.dest
+        for action in parser._actions
+        if getattr(action, "required", False)
+    }
+    assert {"mt_length", "ref_fasta"}.issubset(required)

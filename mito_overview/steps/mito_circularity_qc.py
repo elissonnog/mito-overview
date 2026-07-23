@@ -13,7 +13,11 @@ import numpy as np
 import pandas as pd
 
 from mito_overview.report_common import df_to_html_table, figure_html, metric_card, render_page
-from mito_overview.table_contracts import load_metric_module_state, validate_candidate_table
+from mito_overview.table_contracts import (
+    load_metric_module_state,
+    load_reference_sequence,
+    validate_candidate_table,
+)
 
 SUMMARY_COLUMNS = ["metric", "value"]
 DEPTH_COLUMNS = ["position", "depth"]
@@ -59,6 +63,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--sample-id", required=True)
     parser.add_argument("--mt-contig", required=True)
     parser.add_argument("--mt-length", type=int, required=True)
+    parser.add_argument("--ref-fasta", required=True)
     parser.add_argument("--edge-window", type=int, default=500)
     return parser
 
@@ -218,6 +223,7 @@ def run_step(
     sample_id: str,
     mt_contig: str,
     mt_length: int,
+    reference_sequence: str,
     edge_window: int = 500,
 ) -> dict[str, Path | str]:
     """Run the public mitochondrial circularity QC step."""
@@ -264,6 +270,7 @@ def run_step(
             load_candidate_table(candidates_path),
             table_name="mito_heteroplasmy_candidates.tsv",
             mt_length=mt_length,
+            reference_sequence=reference_sequence,
         )
     print(
         f"[circularity_qc] loaded depth_rows={len(depth_df)} reads_rows={len(reads_df)} "
@@ -680,6 +687,11 @@ def main() -> None:
         sample_id=args.sample_id,
         mt_contig=args.mt_contig,
         mt_length=args.mt_length,
+        reference_sequence=load_reference_sequence(
+            args.ref_fasta,
+            args.mt_contig,
+            args.mt_length,
+        ),
         edge_window=args.edge_window,
     )
     for path in outputs.values():
