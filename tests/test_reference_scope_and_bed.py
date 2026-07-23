@@ -353,7 +353,13 @@ def write_numt_inputs(summary_dir: Path) -> None:
     ).to_csv(summary_dir / "mito_read_stats.tsv", sep="\t", index=False)
     pd.DataFrame(
         [
+            {"metric": "status", "value": "ok"},
             {"metric": "primary_full_length_fraction", "value": 1.0},
+            {"metric": "primary_full_length_fraction_status", "value": "ok"},
+            {
+                "metric": "primary_full_length_fraction_denominator",
+                "value": "primary_alignment_records",
+            },
             {"metric": "full_length_fraction", "value": 1.0},
         ]
     ).to_csv(
