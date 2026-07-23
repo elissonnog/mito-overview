@@ -22,6 +22,12 @@
 - separated repository-only archival helpers and mocked tests from default pytest, CI acceptance, and source-distribution contents so Zenodo and DOI tooling cannot gate the GitHub release
 - replaced the lead workflow schematic with public ONT report-native views, tightened figure terminology and caveats, consolidated the figure set, and added a deterministic figure builder without repository-specific local paths
 - synchronized package and citation metadata for version 0.3.0, the public repository, and both Medical College of Wisconsin authors
+- reject nonfinite or out-of-domain allele-filter thresholds before analysis and restrict candidate-evaluable positions to canonical reference bases
+- validate candidate, feature-overlap, fingerprint, and all-site tables against strict coordinate, allele, depth, fraction, strand, count-sum, uniqueness, and configured-reference contracts before downstream interpretation
+- propagate unavailable upstream candidate evidence through co-segregation rather than reusing stale tables, and reject mitochondrial CIGAR-deletion events outside the configured reference interval
+- require integer bedMethyl count fields, ordered circularity read coordinates, consistent NUMT aligned-base fractions, a valid required QC denominator, and MAPQ values that distinguish unavailable `255` from high-quality mappings
+- require complete exact digest identities for every cached public input and deterministic-subset derivative, including MD5 where prescribed, before reuse or packet verification
+- require GitHub release state to remain explicitly non-prerelease through every draft, upload, and publication checkpoint
 
 ## v0.2.1 - 2026-07-07
 - synchronized release metadata across `pyproject.toml`, `CITATION.cff`, README, release checklist, and manuscript source

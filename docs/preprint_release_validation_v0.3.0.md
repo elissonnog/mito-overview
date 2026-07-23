@@ -295,6 +295,12 @@ The final packet applies a closed case inventory: every required case ID must be
 
 Version `0.3.0` remains unreleased. The final GitHub tag, release assets, and exact-commit validation packet are pending and are not represented as completed validation results.
 
+Candidate `454c0b93e04069ffd219da0a97a00fecaf17f839` is explicitly rejected release evidence. Its exact checkout and extracted source distribution completed the predefined suite, but three new read-only audits returned HOLD after adversarial review. The scientific audit (`mito-overview-v0.3.0-20260723T032135Z-c6509d0a-44d3-4ac8-83d0-ff8d8db54d83`) reproduced fail-open paths involving nonfinite thresholds, noncanonical reference bases, malformed or stale internal candidate tables, out-of-reference deletion coordinates, fractional bedMethyl counts, reversed circularity read coordinates, and inconsistent or unavailable NUMT evidence. The reproducibility audit (`12603a81-2120-4f20-b390-9739ec91f9bc`) showed that cached public derivatives could be represented by incomplete digest identities. The release-engineering audit (`mitooverview-v0.3.0-20260723T032145Z-121646d6-71dc-4c3c-a273-b74c3cfc0409`) showed that a draft release could drift to `prerelease=true` after upload without blocking publication.
+
+The successor tree now validates all affected scientific domains before interpretation, requires complete exact digest inventories for alignment and deterministic-subset provenance, and rechecks the literal non-prerelease state at each publication checkpoint. Focused remediation tests passed `327/327`. A preliminary complete checkout run reached `910` passes and three expected generated-fixture differences; after updating only the affected synthetic reference outputs and the corrected NUMT known-answer fixture, the complete pre-freeze suite passed `913/913` in 425.05 seconds. These are pre-freeze checks, not release acceptance. The resulting exact commit must still pass the complete source-distribution run, isolated wheel/sdist checks, four workflow smokes, exact example rebuilds, hygiene checks, and three entirely new read-only audits before any GitHub push.
+
+The manuscript tree remains frozen at `bfb5664db9c8b43ed5de33ecbddef88071fc6378`. No MCW/HPC, Notion, manuscript, Zenodo, DOI, or bioRxiv change is part of this remediation.
+
 ## Independent reproducibility checklist
 
 An external reviewer can:
