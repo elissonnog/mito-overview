@@ -31,7 +31,7 @@ one full 40-character commit.
 
 The tested Python line is `>=3.12,<3.13`. Release validation uses Python
 3.12.13, samtools/htslib 1.23.1, minimap2 2.31-r1302, BWA 0.7.19-r1273,
-pysam 0.24.0, pandas 3.0.3, NumPy 2.5.1, Matplotlib 3.11.0, Requests
+BioPython 1.87, pysam 0.24.0, pandas 3.0.3, NumPy 2.5.1, Matplotlib 3.11.0, Requests
 2.34.2, pytest 9.1.1, build 1.5.0, setuptools 82.0.1, wheel 0.47.0,
 and python-docx 1.2.0. Platform lock records are required for Linux x86-64,
 macOS x86-64, and macOS arm64.

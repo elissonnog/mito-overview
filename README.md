@@ -74,6 +74,12 @@ Optional human-only enrichment pages are exercised locally in this repository wi
 - a tiny deterministic Phy-Mer vendor stand-in under [`tests/fixtures/mock_phymer_vendor`](tests/fixtures/mock_phymer_vendor)
 - a local mvTool-style annotation fixture under [`tests/fixtures/mock_mvtool_annotations.json`](tests/fixtures/mock_mvtool_annotations.json)
 
+The package pins BioPython 1.87 because the official external Phy-Mer script imports
+BioPython. Phy-Mer itself and its haplogroup library remain optional external
+resources and are not redistributed by `mito-overview`. External mode invokes
+the unmodified vendor script through a narrow Python 3 compatibility adapter
+that translates the removed legacy `rU` file mode to ordinary text mode.
+
 ## Report views
 The lead figure below shows public ONT long-read report-native panels from the fixed GM12878 qn1000 asset pack.
 
@@ -194,9 +200,17 @@ In long-read mode without ONT bedmethyl sidecars, page `12` is expected to be a 
 - these integrations are intentionally non-mandatory and should be treated as secondary annotation layers rather than the core analysis
 - Phy-Mer requires a complete, reference-consistent per-base allele table and,
   by default, at least 95% of mitochondrial positions at
-  `PHYMER_MIN_DEPTH=100`; lower-depth positions in an otherwise eligible
-  consensus are written as `N`, and insufficient callable-genome coverage is
-  `not_evaluable` rather than a categorical haplogroup
+  `PHYMER_MIN_DEPTH=100`; lower-depth positions and unresolved reference `N`
+  positions in an otherwise eligible consensus are written as `N`, excluded
+  from the callable numerator, and reported explicitly. Insufficient
+  callable-genome coverage is `not_evaluable` rather than a categorical
+  haplogroup
+- `PHYMER_MODE=external` enforces the 95% callable-genome floor; the lower
+  synthetic threshold is accepted only with `PHYMER_MODE=fixture` and the exact
+  hash-identified bundled mock, whose TSV and HTML outputs are labelled as a
+  non-biological wiring test
+- accepted Phy-Mer ranking scores must be finite and fall within the method's
+  mathematical score domain `[0,1]`
 - mvTool is disabled by default; fixture or explicitly requested network success requires one unique returned row for every submitted candidate, with no missing, duplicate, or unexpected identifiers
 - the repository's synthetic smoke-test path uses local fixtures to exercise these layers; real biological use should point to a true Phy-Mer vendor tree and an explicitly configured mvTool-compatible endpoint
 - `mito-overview` does not bundle external Phy-Mer code or mvTool data resources; see [`docs/license_notes.md`](docs/license_notes.md)

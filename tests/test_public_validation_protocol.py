@@ -1292,6 +1292,7 @@ def test_matrix_requires_installed_distribution_and_exact_runtime_contract() -> 
     assert '"threads": expected_threads' in contract
     for expected in (
         '"mito-overview": "0.3.0"',
+        '"biopython": "1.87"',
         '"pysam": "0.24.0"',
         '"samtools 1.23.1"',
         '"Using htslib 1.23.1"',

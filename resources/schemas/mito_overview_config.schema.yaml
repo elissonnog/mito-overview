@@ -141,6 +141,10 @@ properties:
     $ref: "#/$defs/path"
   PHYMER_ROOT:
     $ref: "#/$defs/path"
+  PHYMER_MODE:
+    type: string
+    enum: [external, fixture]
+    default: external
   PHYMER_MIN_DEPTH:
     $ref: "#/$defs/integerLike"
     default: "100"

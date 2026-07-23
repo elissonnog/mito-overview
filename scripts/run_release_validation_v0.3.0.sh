@@ -967,7 +967,7 @@ run_clean $(printf '%q' "${PYTHON_BIN}") -m venv $(printf '%q' "${venv_root}")
 FRESH_PYTHON=$(printf '%q' "${venv_root}/bin/python")
 run_clean "\${FRESH_PYTHON}" -m pip install --force-reinstall \
   pip==26.1.2 build==1.5.0 setuptools==82.0.1 wheel==0.47.0 \
-  pytest==9.1.1 python-docx==1.2.0
+  biopython==1.87 pytest==9.1.1 python-docx==1.2.0
 measure_command package_build $(printf '%q' "${package_log_file}") not_applicable \
   bash $(printf '%q' "${package_command_file}")
 WHEEL="\$(find $(printf '%q' "${VALIDATION_ROOT}/dist") -maxdepth 1 -type f -name '*.whl' -print -quit)"
@@ -977,7 +977,7 @@ run_clean "\${FRESH_PYTHON}" -m pip install --force-reinstall "\${WHEEL}"
 run_clean "\${FRESH_PYTHON}" -I -c \
   'import platform,sys; assert tuple(sys.version_info[:3]) == (3,12,13), platform.python_version()'
 run_clean "\${FRESH_PYTHON}" -I -c \
-  'from importlib.metadata import version; expected={"mito-overview":"0.3.0","pysam":"0.24.0","pandas":"3.0.3","numpy":"2.5.1","matplotlib":"3.11.0","requests":"2.34.2","pytest":"9.1.1","build":"1.5.0","setuptools":"82.0.1","wheel":"0.47.0","python-docx":"1.2.0"}; observed={k:version(k) for k in expected}; assert observed == expected, (observed, expected)'
+  'from importlib.metadata import version; expected={"mito-overview":"0.3.0","biopython":"1.87","pysam":"0.24.0","pandas":"3.0.3","numpy":"2.5.1","matplotlib":"3.11.0","requests":"2.34.2","pytest":"9.1.1","build":"1.5.0","setuptools":"82.0.1","wheel":"0.47.0","python-docx":"1.2.0"}; observed={k:version(k) for k in expected}; assert observed == expected, (observed, expected)'
 test "\$(run_clean samtools --version | sed -n '1p')" = 'samtools 1.23.1'
 test "\$(run_clean samtools --version | sed -n '2p')" = 'Using htslib 1.23.1'
 test "\$(run_clean minimap2 --version)" = '2.31-r1302'
@@ -992,7 +992,7 @@ run_clean $(printf '%q' "${PYTHON_BIN}") -m venv $(printf '%q' "${sdist_venv_roo
 SDIST_PYTHON=$(printf '%q' "${sdist_venv_root}/bin/python")
 run_clean "\${SDIST_PYTHON}" -m pip install --force-reinstall \
   pip==26.1.2 build==1.5.0 setuptools==82.0.1 wheel==0.47.0 \
-  pytest==9.1.1 python-docx==1.2.0
+  biopython==1.87 pytest==9.1.1 python-docx==1.2.0
 run_clean "\${SDIST_PYTHON}" -m pip install --force-reinstall --no-build-isolation "\${SDIST}"
 WHEEL_SHA256_BEFORE_TESTS="\$(run_clean $(printf '%q' "${PYTHON_BIN}") -c \
   'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())' \

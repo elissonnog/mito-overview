@@ -47,6 +47,7 @@ DEFAULTS: dict[str, Any] = {
     "NUCLEAR_WINDOW_COUNT": "5",
     "CONTROL_REGION_ANNOTATION_MODE": "auto",
     "PHYMER_ROOT": "",
+    "PHYMER_MODE": "external",
     "HUMAN_MT_GTF": "",
     "PHYMER_MIN_DEPTH": "100",
     "PHYMER_MAJOR_VAF": "0.90",
@@ -512,6 +513,7 @@ class PipelineConfig:
     nuclear_window_count: int
     control_region_annotation_mode: str
     phymer_root: Path | None
+    phymer_mode: str
     human_mt_gtf: Path | None
     phymer_min_depth: int
     phymer_major_vaf: float
@@ -576,6 +578,7 @@ class PipelineConfig:
         control_region_annotation_mode = str(
             merged["CONTROL_REGION_ANNOTATION_MODE"]
         ).strip().lower()
+        phymer_mode = str(merged["PHYMER_MODE"]).strip().lower()
         mvtool_mode = str(merged["MVTOOL_MODE"]).strip().lower()
         if read_mode not in {"long", "short"}:
             raise ValueError(f"Unsupported READ_MODE: {read_mode}")
@@ -592,6 +595,8 @@ class PipelineConfig:
             )
         if mvtool_mode not in {"disabled", "fixture", "network"}:
             raise ValueError(f"Unsupported MVTOOL_MODE: {mvtool_mode}")
+        if phymer_mode not in {"external", "fixture"}:
+            raise ValueError(f"Unsupported PHYMER_MODE: {phymer_mode}")
         if mvtool_mode == "network" and not str(merged["MVTOOL_API_URL"]).strip():
             raise ValueError("MVTOOL_MODE=network requires a nonempty MVTOOL_API_URL")
 
@@ -654,6 +659,7 @@ class PipelineConfig:
             nuclear_window_count=int(merged["NUCLEAR_WINDOW_COUNT"]),
             control_region_annotation_mode=control_region_annotation_mode,
             phymer_root=_optional_path(str(merged["PHYMER_ROOT"]), base_dir),
+            phymer_mode=phymer_mode,
             human_mt_gtf=_optional_path(str(merged["HUMAN_MT_GTF"]), base_dir),
             phymer_min_depth=int(merged["PHYMER_MIN_DEPTH"]),
             phymer_major_vaf=float(merged["PHYMER_MAJOR_VAF"]),
@@ -702,6 +708,11 @@ class PipelineConfig:
         ):
             raise ValueError(
                 "PHYMER_MIN_CALLABLE_FRACTION must be finite, greater than 0, and at most 1"
+            )
+        if self.phymer_mode == "external" and self.phymer_min_callable_fraction < 0.95:
+            raise ValueError(
+                "PHYMER_MIN_CALLABLE_FRACTION cannot be below 0.95 when "
+                "PHYMER_MODE=external"
             )
         if self.phymer_min_depth <= 0:
             raise ValueError("PHYMER_MIN_DEPTH must be positive")
@@ -757,6 +768,7 @@ class PipelineConfig:
             ("deletion_min_size", str(self.deletion_min_size)),
             ("human_mt_gtf", str(self.human_mt_gtf or "")),
             ("control_region_annotation_mode", self.control_region_annotation_mode),
+            ("phymer_mode", self.phymer_mode),
             ("phymer_min_depth", str(self.phymer_min_depth)),
             ("phymer_major_vaf", str(self.phymer_major_vaf)),
             (

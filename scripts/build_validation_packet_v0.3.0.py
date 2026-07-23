@@ -72,6 +72,7 @@ PUBLIC_ENVIRONMENT_FILES = (
 )
 EXPECTED_RUNTIME_PACKAGES = {
     "mito-overview": "0.3.0",
+    "biopython": "1.87",
     "pysam": "0.24.0",
     "pandas": "3.0.3",
     "numpy": "2.5.1",
@@ -6002,7 +6003,8 @@ public_environment_files = (
     "network_isolation.tsv", "pip-freeze.txt", "runtime_versions.json",
 )
 runtime_packages = {
-    "mito-overview": "0.3.0", "pysam": "0.24.0", "pandas": "3.0.3",
+    "mito-overview": "0.3.0", "biopython": "1.87",
+    "pysam": "0.24.0", "pandas": "3.0.3",
     "numpy": "2.5.1", "matplotlib": "3.11.0", "requests": "2.34.2",
     "pytest": "9.1.1", "build": "1.5.0", "setuptools": "82.0.1",
     "wheel": "0.47.0", "python-docx": "1.2.0",

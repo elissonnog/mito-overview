@@ -284,8 +284,11 @@ def validate_all_site_table(
             f"{table_name} reference length mismatch: "
             f"expected {mt_length}, observed {len(reference_sequence)}"
         )
-    if set(reference_sequence) - CANONICAL_BASES:
-        raise ValueError(f"{table_name} reference contains noncanonical bases")
+    allowed_reference_bases = CANONICAL_BASES | {"N"}
+    if set(reference_sequence) - allowed_reference_bases:
+        raise ValueError(
+            f"{table_name} reference may contain only A/C/G/T and unresolved N bases"
+        )
 
     normalized["position"] = _strict_numeric_column(
         normalized,
@@ -310,8 +313,10 @@ def validate_all_site_table(
         )
 
     normalized["ref_base"] = normalized["ref_base"].astype(str).str.strip().str.upper()
-    if not normalized["ref_base"].isin(CANONICAL_BASES).all():
-        raise ValueError(f"{table_name} ref_base must contain canonical bases")
+    if not normalized["ref_base"].isin(allowed_reference_bases).all():
+        raise ValueError(
+            f"{table_name} ref_base may contain only A/C/G/T and unresolved N bases"
+        )
     expected_ref = normalized["position"].map(
         lambda position: reference_sequence[int(position) - 1]
     )

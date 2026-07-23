@@ -21,6 +21,7 @@ LOCKS = {
     "osx-arm64": REPO_ROOT / "locks" / "environment-osx-arm64.yml",
 }
 EXPECTED_CONDA_SPECS = {
+    "biopython=1.87",
     "python=3.12.13",
     "htslib=1.23.1",
     "samtools=1.23.1",
@@ -74,6 +75,7 @@ def test_release_python_and_python_dependencies_are_exactly_bounded() -> None:
 
     assert metadata["requires-python"] == ">=3.12,<3.13"
     assert metadata["dependencies"] == [
+        "biopython==1.87",
         "matplotlib==3.11.0",
         "numpy==2.5.1",
         "pandas==3.0.3",

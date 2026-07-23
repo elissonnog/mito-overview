@@ -157,6 +157,7 @@ from importlib.metadata import version
 
 assert platform.python_version() == "3.12.13"
 expected = {
+    "biopython": "1.87",
     "pysam": "0.24.0", "pandas": "3.0.3", "numpy": "2.5.1",
     "matplotlib": "3.11.0", "requests": "2.34.2", "pytest": "9.1.1",
     "build": "1.5.0", "setuptools": "82.0.1", "wheel": "0.47.0",

@@ -54,6 +54,7 @@ GM11906_SOURCE_METADATA_SHA256 = (
 
 EXPECTED_RUNTIME_PACKAGES = {
     "mito-overview": "0.3.0",
+    "biopython": "1.87",
     "pysam": "0.24.0",
     "pandas": "3.0.3",
     "numpy": "2.5.1",

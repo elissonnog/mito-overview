@@ -458,6 +458,52 @@ def test_invalid_phymer_callable_fraction_is_rejected(
         PipelineConfig.from_mapping(mapping)
 
 
+def test_external_phymer_mode_rejects_low_callable_fraction(
+    minimal_inputs: tuple[Path, Path], tmp_path: Path
+) -> None:
+    ref, bam = minimal_inputs
+    mapping = minimal_mapping(tmp_path, ref, bam)
+    mapping.update(
+        {
+            "PHYMER_MODE": "external",
+            "PHYMER_MIN_CALLABLE_FRACTION": "0.30",
+        }
+    )
+
+    with pytest.raises(ValueError, match="cannot be below 0.95.*PHYMER_MODE=external"):
+        PipelineConfig.from_mapping(mapping)
+
+
+def test_fixture_phymer_mode_allows_explicit_low_callable_fraction(
+    minimal_inputs: tuple[Path, Path], tmp_path: Path
+) -> None:
+    ref, bam = minimal_inputs
+    mapping = minimal_mapping(tmp_path, ref, bam)
+    mapping.update(
+        {
+            "PHYMER_MODE": "fixture",
+            "PHYMER_MIN_CALLABLE_FRACTION": "0.30",
+        }
+    )
+
+    config = PipelineConfig.from_mapping(mapping)
+
+    assert config.phymer_mode == "fixture"
+    assert config.phymer_min_callable_fraction == pytest.approx(0.30)
+    assert ("phymer_mode", "fixture") in config.context_rows()
+
+
+def test_unknown_phymer_mode_is_rejected(
+    minimal_inputs: tuple[Path, Path], tmp_path: Path
+) -> None:
+    ref, bam = minimal_inputs
+    mapping = minimal_mapping(tmp_path, ref, bam)
+    mapping["PHYMER_MODE"] = "auto"
+
+    with pytest.raises(ValueError, match="Unsupported PHYMER_MODE"):
+        PipelineConfig.from_mapping(mapping)
+
+
 def test_explicit_sidecar_overrides_legacy_and_missing_is_nonfatal(
     minimal_inputs: tuple[Path, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

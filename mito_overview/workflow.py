@@ -924,6 +924,7 @@ def _run_phymer_haplogroup(config: PipelineConfig, paths: RunPaths, strict_files
         species=config.detected_species,
         ref_fasta=config.ref_fasta,
         phymer_root=config.phymer_root,
+        phymer_mode=config.phymer_mode,
         min_depth=config.phymer_min_depth,
         major_vaf=config.phymer_major_vaf,
         min_callable_fraction=config.phymer_min_callable_fraction,

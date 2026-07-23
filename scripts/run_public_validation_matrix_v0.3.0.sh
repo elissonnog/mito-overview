@@ -293,6 +293,7 @@ if tuple(sys.version_info[:3]) != (3, 12, 13):
 
 expected_packages = {
     "mito-overview": "0.3.0",
+    "biopython": "1.87",
     "pysam": "0.24.0",
     "pandas": "3.0.3",
     "numpy": "2.5.1",

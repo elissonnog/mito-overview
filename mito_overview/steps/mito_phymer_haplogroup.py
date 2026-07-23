@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import math
 import subprocess
 import sys
@@ -20,6 +21,16 @@ from mito_overview.report_common import df_to_html_table, figure_html, metric_ca
 from mito_overview.table_contracts import load_metric_module_state, validate_all_site_table
 
 RANKING_COLUMNS = ["rank", "haplogroup", "score", "defining_snps"]
+PHYMER_MODES = {"external", "fixture"}
+EXTERNAL_MIN_CALLABLE_FRACTION = 0.95
+FIXTURE_ID = "mito-overview-phymer-wiring-v1"
+FIXTURE_FILE_SHA256 = {
+    "Phy-Mer.py": "1f5231e6958ffd731c4c644aa69168824126c251f8b8129b74c47f87a68cbb22",
+    "PhyloTree_b16_k12.txt": "8bd377e62052ec9145c7078fa0dd85eb071aa7977bd225baa6ede87031fea968",
+    "resources/Build_16_-_rCRS-based_haplogroup_motifs.csv": (
+        "fd1d9412344b5f8a2ab878feddc6c204069ada56ee97d5982cb605cdff36f05c"
+    ),
+}
 MAJOR_COLUMNS = [
     "position",
     "ref_base",
@@ -38,6 +49,7 @@ class ConsensusEvidence:
     total_positions: int
     callable_fraction: float
     masked_positions: int
+    noncanonical_reference_positions: int
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -51,6 +63,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--species", required=True)
     parser.add_argument("--ref-fasta", required=True)
     parser.add_argument("--phymer-root", default="")
+    parser.add_argument("--phymer-mode", choices=sorted(PHYMER_MODES), default="external")
     parser.add_argument("--min-depth", type=int, default=100)
     parser.add_argument("--major-vaf", type=float, default=0.90)
     parser.add_argument("--min-callable-fraction", type=float, default=0.95)
@@ -79,7 +92,7 @@ def parse_phymer_output(text: str) -> tuple[str, pd.DataFrame]:
                 if sample_label == "NA":
                     sample_label = line
                 continue
-            if not math.isfinite(score):
+            if not math.isfinite(score) or not 0 <= score <= 1:
                 continue
             defining_snps = parts[2] if len(parts) > 2 else "NA"
             rows.append(
@@ -124,10 +137,12 @@ def build_consensus_fasta(
         mt_length=mt_length,
         reference_sequence=reference_sequence,
     )
-    callable_mask = all_sites["callable_depth"] >= min_depth
+    canonical_reference_mask = all_sites["ref_base"].isin({"A", "C", "G", "T"})
+    callable_mask = (all_sites["callable_depth"] >= min_depth) & canonical_reference_mask
     callable_positions = int(callable_mask.sum())
     callable_fraction = callable_positions / mt_length
     masked_positions = mt_length - callable_positions
+    noncanonical_reference_positions = int((~canonical_reference_mask).sum())
     major = all_sites[
         callable_mask & (all_sites["alt_allele_fraction"] >= major_vaf)
     ].copy()
@@ -142,6 +157,7 @@ def build_consensus_fasta(
             total_positions=mt_length,
             callable_fraction=callable_fraction,
             masked_positions=masked_positions,
+            noncanonical_reference_positions=noncanonical_reference_positions,
         )
 
     seq = [
@@ -170,6 +186,7 @@ def build_consensus_fasta(
         total_positions=mt_length,
         callable_fraction=callable_fraction,
         masked_positions=masked_positions,
+        noncanonical_reference_positions=noncanonical_reference_positions,
     )
 
 
@@ -187,10 +204,60 @@ def _coverage_rows(
             "value": round(evidence.callable_fraction, 6),
         },
         {"metric": "phymer_masked_positions", "value": evidence.masked_positions},
+        {
+            "metric": "phymer_noncanonical_reference_positions",
+            "value": evidence.noncanonical_reference_positions,
+        },
         {"metric": "phymer_min_depth", "value": min_depth},
         {
             "metric": "phymer_min_callable_fraction",
             "value": min_callable_fraction,
+        },
+    ]
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _verify_fixture_vendor(root: Path) -> None:
+    mismatches: list[str] = []
+    for relative_path, expected_sha256 in FIXTURE_FILE_SHA256.items():
+        path = root / relative_path
+        if not path.is_file():
+            mismatches.append(f"missing:{relative_path}")
+        elif _sha256(path) != expected_sha256:
+            mismatches.append(f"sha256:{relative_path}")
+    if mismatches:
+        raise ValueError(
+            "PHYMER_MODE=fixture requires the exact bundled synthetic wiring fixture; "
+            + ", ".join(mismatches)
+        )
+
+
+def _provenance_rows(phymer_mode: str) -> list[dict[str, object]]:
+    if phymer_mode == "fixture":
+        return [
+            {"metric": "phymer_mode", "value": "fixture"},
+            {"metric": "phymer_vendor_provenance", "value": "bundled_exact_hash_fixture"},
+            {"metric": "phymer_fixture_id", "value": FIXTURE_ID},
+            {"metric": "phymer_result_scope", "value": "synthetic_wiring_fixture"},
+            {"metric": "biological_validation_status", "value": "not_applicable"},
+            {"metric": "phymer_python_compatibility", "value": "not_required"},
+        ]
+    return [
+        {"metric": "phymer_mode", "value": "external"},
+        {"metric": "phymer_vendor_provenance", "value": "user_supplied_local_vendor"},
+        {"metric": "phymer_fixture_id", "value": "NA"},
+        {"metric": "phymer_result_scope", "value": "external_classifier_output"},
+        {"metric": "biological_validation_status", "value": "not_established"},
+        {
+            "metric": "phymer_python_compatibility",
+            "value": "legacy_universal_newline_adapter",
         },
     ]
 
@@ -235,29 +302,13 @@ def run_step(
     species: str,
     ref_fasta: str | Path,
     phymer_root: str | Path | None,
+    phymer_mode: str = "external",
     min_depth: int = 100,
     major_vaf: float = 0.90,
     min_callable_fraction: float = 0.95,
 ) -> dict[str, Path]:
     """Run the optional Phy-Mer haplogroup enrichment step."""
 
-    if min_depth <= 0:
-        raise ValueError("Phy-Mer min_depth must be positive")
-    if not math.isfinite(major_vaf) or not 0 <= major_vaf <= 1:
-        raise ValueError("Phy-Mer major_vaf must be finite and between 0 and 1")
-    if not math.isfinite(min_callable_fraction) or not (
-        0 < min_callable_fraction <= 1
-    ):
-        raise ValueError(
-            "Phy-Mer min_callable_fraction must be finite, greater than 0, and at most 1"
-        )
-
-    print(
-        f"[phymer] starting sample={sample_id} species={species} contig={mt_contig} "
-        f"min_depth={min_depth} major_vaf={major_vaf} "
-        f"min_callable_fraction={min_callable_fraction}",
-        flush=True,
-    )
     summary_dir = Path(summary_dir)
     figure_dir = Path(figure_dir)
     report_dir = Path(report_dir)
@@ -275,8 +326,48 @@ def run_step(
     fasta_path = summary_dir / "mito_phymer_consensus.fasta"
     rank_fig = figure_dir / "mito_phymer_haplogroup_scores.png"
 
-    for owned_output in (raw_output_path, raw_error_path, fasta_path, rank_fig):
+    # A direct step rerun must never leave a prior categorical result visible.
+    for owned_output in (
+        report_path,
+        summary_path,
+        ranking_path,
+        input_path,
+        raw_output_path,
+        raw_error_path,
+        fasta_path,
+        rank_fig,
+    ):
         owned_output.unlink(missing_ok=True)
+
+    phymer_mode = str(phymer_mode).strip().lower()
+    if phymer_mode not in PHYMER_MODES:
+        raise ValueError(f"Unsupported PHYMER_MODE: {phymer_mode}")
+    if min_depth <= 0:
+        raise ValueError("Phy-Mer min_depth must be positive")
+    if not math.isfinite(major_vaf) or not 0 <= major_vaf <= 1:
+        raise ValueError("Phy-Mer major_vaf must be finite and between 0 and 1")
+    if not math.isfinite(min_callable_fraction) or not (
+        0 < min_callable_fraction <= 1
+    ):
+        raise ValueError(
+            "Phy-Mer min_callable_fraction must be finite, greater than 0, and at most 1"
+        )
+    if (
+        phymer_mode == "external"
+        and min_callable_fraction < EXTERNAL_MIN_CALLABLE_FRACTION
+    ):
+        raise ValueError(
+            "PHYMER_MIN_CALLABLE_FRACTION cannot be below 0.95 when "
+            "PHYMER_MODE=external"
+        )
+
+    print(
+        f"[phymer] starting sample={sample_id} species={species} contig={mt_contig} "
+        f"min_depth={min_depth} major_vaf={major_vaf} "
+        f"min_callable_fraction={min_callable_fraction} phymer_mode={phymer_mode}",
+        flush=True,
+    )
+    provenance_rows = _provenance_rows(phymer_mode)
 
     if species.lower() != "human":
         return _write_status_outputs(
@@ -287,6 +378,7 @@ def run_step(
             status_rows=[
                 {"metric": "status", "value": "not_applicable"},
                 {"metric": "reason_code", "value": "non_human_sample"},
+                *provenance_rows,
             ],
             message="Phy-Mer haplogroup inference is currently enabled only for human mitochondrial samples.",
             sample_id=sample_id,
@@ -317,6 +409,7 @@ def run_step(
                     "metric": "upstream_heteroplasmy_reason_code",
                     "value": heteroplasmy_reason,
                 },
+                *provenance_rows,
             ],
             message=(
                 "Phy-Mer was not run because the upstream alternate-allele module "
@@ -337,6 +430,7 @@ def run_step(
                 {"metric": "status", "value": "not_evaluable"},
                 {"metric": "reason_code", "value": "all_site_table_missing"},
                 {"metric": "upstream_heteroplasmy_status", "value": "ok"},
+                *provenance_rows,
             ],
             message=(
                 "The upstream alternate-allele summary was valid, but its required "
@@ -374,11 +468,15 @@ def run_step(
                 {"metric": "status", "value": "not_configured"},
                 {"metric": "reason_code", "value": "phymer_resources_missing"},
                 {"metric": "phymer_root", "value": str(phymer_root_path or "")},
+                *provenance_rows,
             ],
             message="Phy-Mer resources were not available in the configured local vendor directory.",
             sample_id=sample_id,
             region=region,
         )
+
+    if phymer_mode == "fixture":
+        _verify_fixture_vendor(phymer_root_path)
 
     evidence = build_consensus_fasta(
         all_sites=all_sites,
@@ -409,6 +507,7 @@ def run_step(
                 },
                 {"metric": "upstream_heteroplasmy_status", "value": "ok"},
                 *coverage_rows,
+                *provenance_rows,
             ],
             message=(
                 "Phy-Mer was not run because the fraction of mitochondrial positions "
@@ -421,14 +520,19 @@ def run_step(
     major = evidence.major_variants
     major.to_csv(input_path, sep="\t", index=False)
 
-    cmd = [
-        sys.executable,
-        str(phymer_script),
-        "--print-ranking",
-        f"--def-snp={phymer_defs}",
-        str(phymer_library),
-        str(fasta_path),
-    ]
+    cmd = [sys.executable]
+    if phymer_mode == "external":
+        compatibility_runner = Path(__file__).resolve().parents[1] / "phymer_compat.py"
+        cmd.append(str(compatibility_runner))
+    cmd.extend(
+        [
+            str(phymer_script),
+            "--print-ranking",
+            f"--def-snp={phymer_defs}",
+            str(phymer_library),
+            str(fasta_path),
+        ]
+    )
     print(f"[phymer] sample={sample_id} running command in {phymer_root_path}", flush=True)
     print(
         f"[phymer] consensus major variants={len(major)} min_depth={min_depth} major_vaf={major_vaf}",
@@ -453,6 +557,7 @@ def run_step(
                 {"metric": "return_code", "value": int(completed.returncode)},
                 {"metric": "stderr_preview", "value": completed.stderr.strip()[:200] or "NA"},
                 *coverage_rows,
+                *provenance_rows,
             ],
             message="Phy-Mer was invoked but did not return a successful haplogroup result. See the raw output files in the summary directory for debugging context.",
             sample_id=sample_id,
@@ -477,6 +582,7 @@ def run_step(
             },
             {"metric": "major_variant_sites_used", "value": int(len(major))},
             *coverage_rows,
+            *provenance_rows,
             {"metric": "phymer_library", "value": phymer_library.name},
             {
                 "metric": "major_variant_threshold",
@@ -513,8 +619,20 @@ def run_step(
             ),
         ]
     )
+    if phymer_mode == "fixture":
+        scope_html = (
+            '<p><strong>Synthetic wiring fixture:</strong> this deterministic result '
+            "tests integration behavior only and must not be interpreted as a biological "
+            "haplogroup assignment.</p>"
+        )
+    else:
+        scope_html = (
+            '<p class="muted">The local external-classifier result is descriptive; '
+            "biological concordance and clinical performance are not established by this workflow.</p>"
+        )
     intro_html = (
-        '<p class="muted">This page runs a local vendor copy of Phy-Mer on a mitochondrial consensus reconstructed from complete per-base allele evidence. '
+        scope_html
+        + '<p class="muted">This page runs a local vendor copy of Phy-Mer on a mitochondrial consensus reconstructed from complete per-base allele evidence. '
         "Callable sites use the reference base unless a high-fraction alternate passes the configured threshold, and residual low-depth sites are masked as N. "
         "The result is an optional haplogroup enrichment layer and does not alter the primary alternate-allele or deletion screens.</p>"
         f"<div class='metrics-grid'>{metrics_html}</div>"
@@ -553,6 +671,7 @@ def main() -> None:
         species=args.species,
         ref_fasta=args.ref_fasta,
         phymer_root=args.phymer_root,
+        phymer_mode=args.phymer_mode,
         min_depth=args.min_depth,
         major_vaf=args.major_vaf,
         min_callable_fraction=args.min_callable_fraction,

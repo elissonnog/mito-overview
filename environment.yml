@@ -8,6 +8,7 @@ dependencies:
   - samtools=1.23.1
   - minimap2=2.31
   - bwa=0.7.19
+  - biopython=1.87
   - matplotlib=3.11.0
   - numpy=2.5.1
   - pandas=3.0.3

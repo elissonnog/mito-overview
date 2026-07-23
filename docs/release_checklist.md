@@ -43,9 +43,11 @@ release date.
 - [ ] Strict dry-run creates no run artifacts; normal execution rejects an
   existing run directory, an existing final destination, and overlapping run
   and final paths before modification.
-- [ ] Phy-Mer rejects insufficient callable-genome coverage and nonfinite
-  ranking scores; the exact callable-fraction boundary and `N` masking have
-  deterministic known-answer tests.
+- [ ] Phy-Mer external mode rejects a callable-genome threshold below `0.95`,
+  every accepted score is finite and within `[0,1]`, and fixture mode verifies
+  the exact bundled mock hashes and labels its output non-biological. Direct
+  rerun failures clear all prior owned outputs. The exact callable-fraction
+  boundary and `N` masking have deterministic known-answer tests.
 
 ## Public-data gate
 

@@ -11,7 +11,14 @@ phymer_callable_positions	20
 phymer_total_positions	60
 phymer_callable_fraction	0.333333
 phymer_masked_positions	40
+phymer_noncanonical_reference_positions	0
 phymer_min_depth	2
 phymer_min_callable_fraction	0.3
+phymer_mode	fixture
+phymer_vendor_provenance	bundled_exact_hash_fixture
+phymer_fixture_id	mito-overview-phymer-wiring-v1
+phymer_result_scope	synthetic_wiring_fixture
+biological_validation_status	not_applicable
+phymer_python_compatibility	not_required
 phymer_library	PhyloTree_b16_k12.txt
 major_variant_threshold	callable_depth>=2;vaf>=0.2

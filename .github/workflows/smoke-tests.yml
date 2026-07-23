@@ -80,6 +80,7 @@ jobs:
               raise SystemExit(f"Python version mismatch: {platform.python_version()}")
 
           expected_packages = {
+              "biopython": "1.87",
               "matplotlib": "3.11.0",
               "numpy": "2.5.1",
               "pandas": "3.0.3",
