@@ -532,6 +532,8 @@ def _require_release_identity(
 ) -> None:
     if not isinstance(release.get("id"), int):
         raise PublicationError("GitHub release has no integer release ID")
+    if release.get("prerelease") is not False:
+        raise PublicationError("GitHub release must explicitly report prerelease=false")
     if release.get("tag_name") != config.tag:
         raise PublicationError("GitHub release tag drifted")
     if release.get("target_commitish") != config.final_sha:

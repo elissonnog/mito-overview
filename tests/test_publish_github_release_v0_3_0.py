@@ -847,6 +847,23 @@ def test_upload_resumes_partial_assets_and_redownloads_existing_assets(
     assert {item["name"] for item in record["remote_assets"]} == set(payloads)
 
 
+def test_prerelease_drift_after_upload_blocks_publication(tmp_path: Path) -> None:
+    runner = FakeGhRunner()
+    asset_dir, output_dir, _ = _create_and_upload(tmp_path, runner)
+    assert runner.release is not None
+    runner.release["prerelease"] = True
+
+    with pytest.raises(
+        publication.PublicationError,
+        match="must explicitly report prerelease=false",
+    ):
+        publication.publish_github_release(
+            _config(output_dir, "publish", asset_dir=asset_dir), runner
+        )
+
+    assert "publish_release" not in runner.mutations
+
+
 @pytest.mark.parametrize("remote_problem", ["unexpected", "hash", "size"])
 def test_unexpected_or_mismatched_remote_assets_fail_before_upload(
     tmp_path: Path, remote_problem: str
