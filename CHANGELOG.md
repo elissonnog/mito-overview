@@ -6,6 +6,7 @@
 - defined a portable standalone BAM/CRAM input contract with explicit sidecars and preflight checks for references, indexes, contigs, lengths, CRAM reference availability, and conflicting format overrides
 - corrected the copy-number-named output to an unscaled within-sample mt:nuclear depth ratio, with missing or zero nuclear denominators reported as `not_evaluable` rather than zero
 - require the mt:nuclear numerator to contain exactly one finite, nonnegative depth observation at every mitochondrial position; truncated, duplicate, out-of-range, fractional, or invalid profiles are `not_evaluable`
+- require circularity edge-depth metrics to use the same complete integer-coordinate, finite, nonnegative mitochondrial depth-profile contract rather than silently truncating malformed positions or accepting invalid depths
 - added explicit reference-scope handling that suppresses categorical NUMT interpretation for mt-only or custom references and emits exact zero-based, half-open mitochondrial BED intervals
 - bounded the supported claim to a reproducible, mode-gated mtDNA reporting workflow/resource; this version does not establish clinical validity, analytical sensitivity, deletion truth, absolute copy number, formal NUMT classification, or long-read/short-read equivalence
 - added tracked validation-provenance tooling, known-answer coverage for the five corrections, deterministic public-input provenance, and resource-limited public proof-of-principle reruns
@@ -13,6 +14,7 @@
 - bound reused public alignments to exact command templates, parameters, and locked tool versions, and bound the GM12878 reduced input to the recomputed seeded minimum-name selection plus frozen subset and ledger identities
 - made public-alignment input labels unique and fail-closed, standardized the selected-name ledger on SHA-256 plus MD5 linkage, and prevented installed-package public helpers from importing checkout modules
 - made deterministic FASTQ provenance require complete name/size/MD5/SHA-256 records, bound nested public manifests to their current bytes, and made fresh packet extraction reject schema, provenance-type, or dataset-identity drift
+- made validation-packet public-input records require an exact label/name/size/MD5/SHA-256 inventory and made fresh extraction recompute the nested subset manifest's MD5 as well as its SHA-256 and byte count
 - froze the bounded claim/evidence matrix and now rederives every manuscript-handoff value from its validated filter-profile source table before packet construction and after fresh extraction
 - separated repository-only archival helpers and mocked tests from default pytest, CI acceptance, and source-distribution contents so Zenodo and DOI tooling cannot gate the GitHub release
 - replaced the lead workflow schematic with public ONT report-native views, tightened figure terminology and caveats, consolidated the figure set, and added a deterministic figure builder without repository-specific local paths

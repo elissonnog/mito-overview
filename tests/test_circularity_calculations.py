@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pandas as pd
+import pytest
 
 from mito_overview.steps.mito_circularity_qc import run_step
 
@@ -187,6 +188,54 @@ def test_sparse_region_spanning_depth_profile_is_not_complete(tmp_path: Path) ->
     assert metrics["mean_depth_first_edge_denominator_positions"] == "1"
     assert metrics["mean_depth_last_edge_denominator_positions"] == "1"
     assert metrics["mean_depth_interior_denominator_positions"] == "1"
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("position", 10.9),
+        ("position", "not-a-position"),
+        ("depth", -1),
+        ("depth", float("inf")),
+        ("depth", "not-a-depth"),
+    ),
+    ids=(
+        "fractional-position",
+        "nonnumeric-position",
+        "negative-depth",
+        "nonfinite-depth",
+        "nonnumeric-depth",
+    ),
+)
+def test_malformed_full_length_depth_profile_is_not_evaluable(
+    tmp_path: Path,
+    field: str,
+    value: object,
+) -> None:
+    depth = pd.DataFrame(
+        {
+            "position": pd.Series(range(1, 101), dtype=object),
+            "depth": pd.Series([10.0] * 100, dtype=object),
+        }
+    )
+    depth.at[9, field] = value
+    write_tables(
+        tmp_path / "summary",
+        depth=depth,
+        reads=pd.DataFrame(),
+        candidates=pd.DataFrame(),
+    )
+
+    outputs, metrics = run_circularity(tmp_path)
+
+    assert outputs["status"] == "not_evaluable"
+    assert metrics["status"] == "not_evaluable"
+    assert metrics["reason_code"] == "incomplete_depth_profile"
+    assert metrics["depth_positions_total"] == "100"
+    assert metrics["depth_profile_complete"] == "0"
+    assert metrics["mean_depth_first_edge"] == "NA"
+    assert metrics["mean_depth_last_edge"] == "NA"
+    assert metrics["mean_depth_interior"] == "NA"
 
 
 def test_missing_depth_profile_has_explicit_module_status(tmp_path: Path) -> None:

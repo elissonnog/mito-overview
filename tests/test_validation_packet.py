@@ -457,6 +457,7 @@ def write_public_provenance(public_root: Path) -> None:
     subset_record = file_provenance_record(
         paths["longread_subset"],
         "SRR18110025.deterministic-qnames-1000.fastq.gz.provenance.json",
+        include_md5=True,
     )
     long = {
         "schema_version": "1.0",
@@ -3649,6 +3650,44 @@ def test_packet_rejects_duplicate_alignment_input_labels(
         packet_builder.build_packet(packet_args(validation, repo, tmp_path / "output"))
 
 
+@pytest.mark.parametrize(
+    ("mutation", "expected_error"),
+    (
+        ("missing_md5", "digest field inventory"),
+        ("extra_field", "digest field inventory"),
+        ("wrong_md5", "does not match packaged evidence"),
+    ),
+)
+def test_packet_rejects_inexact_nested_subset_manifest_digest_inventory(
+    tmp_path: Path,
+    mutation: str,
+    expected_error: str,
+) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    path = (
+        validation
+        / "public"
+        / packet_builder.PUBLIC_PROVENANCE_FILES["longread_alignment"]["source"]
+    )
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    record = next(
+        row
+        for row in payload["public_inputs"]
+        if row["label"] == "deterministic_subset_manifest"
+    )
+    if mutation == "missing_md5":
+        record.pop("md5")
+    elif mutation == "extra_field":
+        record["unexpected"] = "field"
+    else:
+        record["md5"] = "f" * 32
+    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match=expected_error):
+        packet_builder.build_packet(packet_args(validation, repo, tmp_path / "output"))
+
+
 @pytest.mark.parametrize("evidence_name", ("claim", "handoff"))
 def test_packet_rejects_semantically_forged_narrative_evidence(
     tmp_path: Path,
@@ -4563,6 +4602,49 @@ def test_extracted_verifier_rejects_rehashed_duplicate_alignment_input_label(
     checked = verify_packet(packet)
     assert checked.returncode != 0
     assert "duplicate input label" in checked.stderr
+
+
+@pytest.mark.parametrize(
+    ("mutation", "expected_error"),
+    (
+        ("missing_md5", "digest field inventory"),
+        ("extra_field", "digest field inventory"),
+        ("wrong_md5", "subset-manifest linkage mismatch"),
+    ),
+)
+def test_extracted_verifier_rejects_rehashed_inexact_nested_digest_inventory(
+    tmp_path: Path,
+    mutation: str,
+    expected_error: str,
+) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    output = tmp_path / "output"
+    packet_builder.build_packet(packet_args(validation, repo, output))
+    packet = output / "packet"
+    path = (
+        packet
+        / "public_provenance/GM12878_ONT_longread.reduced_alignment.provenance.json"
+    )
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    record = next(
+        row
+        for row in payload["public_inputs"]
+        if row["label"] == "deterministic_subset_manifest"
+    )
+    if mutation == "missing_md5":
+        record.pop("md5")
+    elif mutation == "extra_field":
+        record["unexpected"] = "field"
+    else:
+        record["md5"] = "f" * 32
+    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    rebind_packet_public_provenance(packet, path)
+    rewrite_manifest(packet)
+
+    checked = verify_packet(packet)
+    assert checked.returncode != 0
+    assert expected_error in checked.stderr
 
 
 @pytest.mark.parametrize(

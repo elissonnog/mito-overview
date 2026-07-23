@@ -75,10 +75,6 @@ def load_depth_table(path: Path) -> pd.DataFrame:
     df = df.copy()
     df["position"] = pd.to_numeric(df["position"], errors="coerce")
     df["depth"] = pd.to_numeric(df["depth"], errors="coerce")
-    df = df.dropna(subset=["position", "depth"]).copy()
-    if df.empty:
-        return pd.DataFrame(columns=DEPTH_COLUMNS)
-    df["position"] = df["position"].astype(int)
     return df
 
 
@@ -209,13 +205,32 @@ def run_step(
             message="no mito_depth_per_base.tsv available; writing status-only outputs",
         )
 
-    in_range_mask = (depth_df["position"] >= 1) & (depth_df["position"] <= mt_length)
+    position_values = depth_df["position"].to_numpy(dtype=float)
+    depth_values = depth_df["depth"].to_numpy(dtype=float)
+    finite_position_mask = np.isfinite(position_values)
+    with np.errstate(invalid="ignore"):
+        integer_position_mask = finite_position_mask & (
+            position_values == np.floor(position_values)
+        )
+    in_range_mask = pd.Series(
+        integer_position_mask
+        & (position_values >= 1)
+        & (position_values <= mt_length),
+        index=depth_df.index,
+    )
+    valid_depth_mask = pd.Series(
+        np.isfinite(depth_values) & (depth_values >= 0),
+        index=depth_df.index,
+    )
     depth_in_range = depth_df.loc[in_range_mask].copy()
+    depth_in_range.loc[
+        ~valid_depth_mask.loc[depth_in_range.index], "depth"
+    ] = np.nan
     depth_unique_positions = int(depth_in_range["position"].nunique())
     depth_duplicate_rows = int(len(depth_in_range) - depth_unique_positions)
     depth_out_of_range_rows = int((~in_range_mask).sum())
     depth_missing_positions = int(max(mt_length - depth_unique_positions, 0))
-    depth_profile_complete = (
+    coordinate_profile_complete = (
         len(depth_df) == mt_length
         and depth_unique_positions == mt_length
         and depth_duplicate_rows == 0
@@ -229,6 +244,21 @@ def run_step(
         (depth_in_range["position"] > edge)
         & (depth_in_range["position"] <= (mt_length - edge))
     ].copy()
+
+    regional_depth_means: list[float] = []
+    if coordinate_profile_complete and bool(valid_depth_mask.all()):
+        with np.errstate(over="ignore", invalid="ignore"):
+            regional_depth_means = [
+                float(region["depth"].mean())
+                for region in (first_edge, last_edge, interior)
+                if not region.empty
+            ]
+    depth_profile_complete = (
+        coordinate_profile_complete
+        and bool(valid_depth_mask.all())
+        and bool(regional_depth_means)
+        and all(np.isfinite(value) for value in regional_depth_means)
+    )
 
     edge_candidates = pd.DataFrame(columns=candidates_df.columns)
     candidate_edge_fraction = np.nan

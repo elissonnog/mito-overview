@@ -89,6 +89,8 @@ The mitochondrial numerator is accepted only when `mito_depth_per_base.tsv` cont
 
 The `TOY-WGS-001` known-answer test verifies mitochondrial depth 100, nuclear depth 10, and exact ratio 10.0. Negative tests verify missing mitochondrial evidence; partial, duplicate, out-of-range, fractional-position, nonnumeric, negative, nonfinite, nonfinite-mean, and extra-row mitochondrial profiles; missing and zero nuclear denominators; and targeted-mt gating. Primary tests: `tests/test_copy_number.py`.
 
+Circularity edge-depth summaries use the same complete-profile principle. The input must contain the exact integer coordinates `1..MT_LENGTH`, without duplicates or extras, with finite nonnegative depths and finite regional means. Fractional or nonnumeric coordinates are not silently converted to integers. Any malformed present profile produces `not_evaluable/incomplete_depth_profile` and `NA` edge/interior means. Deterministic negative tests cover fractional and nonnumeric positions plus negative, nonfinite, and nonnumeric depths in an otherwise full-length table. Primary tests: `tests/test_circularity_calculations.py`.
+
 ### 5. Reference scope, alignment ambiguity, and BED coordinates
 
 `REFERENCE_SCOPE` accepts `auto`, `mt_only`, `whole_genome`, or `custom`. A reference containing only the configured mitochondrial contig resolves to `mt_only`; exact GRCh37, GRCh38, GRCm38, or GRCm39 chromosome-length profiles resolve to `whole_genome`; ambiguous, reduced, scaled, hybrid, or modified references resolve to `custom`. Exact recognized profiles also support species inference for a generic FASTA filename.

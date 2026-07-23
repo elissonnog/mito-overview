@@ -889,6 +889,16 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def md5_identity(path: Path) -> str:
+    """Return an archival MD5 identity; SHA-256 remains the integrity digest."""
+
+    digest = hashlib.md5(usedforsecurity=False)
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def safe_posix_relative_path(value: str, label: str) -> PurePosixPath:
     if not value or "\\" in value:
         raise ValueError(f"{label} is empty or uses a non-POSIX separator: {value!r}")
@@ -2949,9 +2959,19 @@ def validate_zenodo_reservation_evidence(
     }
 
 
-def validate_digest_record(value: object, label: str) -> dict[str, object]:
+def validate_digest_record(
+    value: object,
+    label: str,
+    *,
+    expected_fields: frozenset[str] | None = None,
+) -> dict[str, object]:
     if not isinstance(value, dict):
         raise ValueError(f"Public provenance {label} must be an object")
+    if expected_fields is not None and set(value) != expected_fields:
+        raise ValueError(
+            f"Public provenance {label} has an invalid digest field inventory; "
+            f"expected {sorted(expected_fields)}"
+        )
     name = value.get("name")
     size = value.get("bytes")
     digest = value.get("sha256")
@@ -2962,7 +2982,7 @@ def validate_digest_record(value: object, label: str) -> dict[str, object]:
     if not isinstance(digest, str) or re.fullmatch(r"[0-9a-f]{64}", digest) is None:
         raise ValueError(f"Public provenance {label} has an invalid SHA-256")
     md5 = value.get("md5")
-    if md5 is not None and (
+    if "md5" in value and (
         not isinstance(md5, str) or re.fullmatch(r"[0-9a-f]{32}", md5) is None
     ):
         raise ValueError(f"Public provenance {label} has an invalid MD5")
@@ -2977,7 +2997,11 @@ def index_unique_labeled_records(
         raise ValueError(f"Public {label} inputs are missing")
     indexed: dict[str, dict[str, object]] = {}
     for index, record in enumerate(value):
-        validated = validate_digest_record(record, f"{label} input {index}")
+        validated = validate_digest_record(
+            record,
+            f"{label} input {index}",
+            expected_fields=frozenset({"label", "name", "bytes", "md5", "sha256"}),
+        )
         record_label = validated.get("label")
         if not isinstance(record_label, str) or not record_label:
             raise ValueError(f"Public {label} alignment input label is invalid")
@@ -2990,7 +3014,11 @@ def index_unique_labeled_records(
 
 
 def _require_record_content(record: dict[str, object], path: Path, label: str) -> None:
-    if record["bytes"] != path.stat().st_size or record["sha256"] != sha256(path):
+    if (
+        record["bytes"] != path.stat().st_size
+        or record["sha256"] != sha256(path)
+        or record.get("md5") != md5_identity(path)
+    ):
         raise ValueError(f"Public provenance {label} does not match packaged evidence")
 
 
@@ -3162,10 +3190,21 @@ def validate_public_provenance(
         or subset.get("dataset_id") != "GM12878_SRR18110025_ONT"
     ):
         raise ValueError("Public long-read subset provenance identity is invalid")
-    source_fastq = validate_digest_record(subset.get("source_fastq"), "subset source FASTQ")
-    subset_fastq = validate_digest_record(subset.get("subset_fastq"), "subset FASTQ")
+    complete_digest_fields = frozenset({"name", "bytes", "md5", "sha256"})
+    source_fastq = validate_digest_record(
+        subset.get("source_fastq"),
+        "subset source FASTQ",
+        expected_fields=complete_digest_fields,
+    )
+    subset_fastq = validate_digest_record(
+        subset.get("subset_fastq"),
+        "subset FASTQ",
+        expected_fields=complete_digest_fields,
+    )
     selected_names = validate_digest_record(
-        subset.get("selected_query_names"), "selected query names"
+        subset.get("selected_query_names"),
+        "selected query names",
+        expected_fields=complete_digest_fields,
     )
     if subset_fastq != FROZEN_GM12878_SUBSET_FASTQ_RECORD:
         raise ValueError("Public long-read subset FASTQ identity is not frozen")
@@ -5575,6 +5614,13 @@ def digest(path):
             value.update(chunk)
     return value.hexdigest()
 
+def md5_digest(path):
+    value = hashlib.md5(usedforsecurity=False)
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            value.update(chunk)
+    return value.hexdigest()
+
 def decoded_png_rgba(path):
     payload = path.read_bytes()
     if not payload.startswith(b"\x89PNG\r\n\x1a\n"):
@@ -7059,9 +7105,26 @@ def unique_labeled_inputs(value, description):
     for record in value:
         if not isinstance(record, dict):
             raise SystemExit(f"{description} alignment input is not an object")
+        if set(record) != {"label", "name", "bytes", "md5", "sha256"}:
+            raise SystemExit(
+                f"{description} alignment input has an invalid digest field inventory"
+            )
         label = record.get("label")
         if not isinstance(label, str) or not label:
             raise SystemExit(f"{description} alignment input label is invalid")
+        if (
+            not isinstance(record.get("name"), str)
+            or not record["name"]
+            or Path(record["name"]).name != record["name"]
+            or isinstance(record.get("bytes"), bool)
+            or not isinstance(record["bytes"], int)
+            or record["bytes"] <= 0
+            or not isinstance(record.get("md5"), str)
+            or re.fullmatch(r"[0-9a-f]{32}", record["md5"]) is None
+            or not isinstance(record.get("sha256"), str)
+            or re.fullmatch(r"[0-9a-f]{64}", record["sha256"]) is None
+        ):
+            raise SystemExit(f"{description} alignment input digest metadata is invalid")
         if label in indexed:
             raise SystemExit(f"{description} alignment has duplicate input label: {label}")
         indexed[label] = record
@@ -7259,6 +7322,7 @@ if (
     subset_manifest_input.get("name")
     != "SRR18110025.deterministic-qnames-1000.fastq.gz.provenance.json"
     or subset_manifest_input.get("bytes") != subset_manifest_path.stat().st_size
+    or subset_manifest_input.get("md5") != md5_digest(subset_manifest_path)
     or subset_manifest_input.get("sha256") != digest(subset_manifest_path)
 ):
     raise SystemExit("long-read subset-manifest linkage mismatch")
