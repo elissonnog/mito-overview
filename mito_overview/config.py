@@ -50,6 +50,7 @@ DEFAULTS: dict[str, Any] = {
     "HUMAN_MT_GTF": "",
     "PHYMER_MIN_DEPTH": "100",
     "PHYMER_MAJOR_VAF": "0.90",
+    "PHYMER_MIN_CALLABLE_FRACTION": "0.95",
     "MVTOOL_MODE": "disabled",
     "MVTOOL_API_URL": "",
     "MVTOOL_FIXTURE_JSON": "",
@@ -514,6 +515,7 @@ class PipelineConfig:
     human_mt_gtf: Path | None
     phymer_min_depth: int
     phymer_major_vaf: float
+    phymer_min_callable_fraction: float
     mvtool_mode: str
     mvtool_api_url: str
     mvtool_fixture_json: Path | None
@@ -655,6 +657,9 @@ class PipelineConfig:
             human_mt_gtf=_optional_path(str(merged["HUMAN_MT_GTF"]), base_dir),
             phymer_min_depth=int(merged["PHYMER_MIN_DEPTH"]),
             phymer_major_vaf=float(merged["PHYMER_MAJOR_VAF"]),
+            phymer_min_callable_fraction=float(
+                merged["PHYMER_MIN_CALLABLE_FRACTION"]
+            ),
             mvtool_mode=mvtool_mode,
             mvtool_api_url=str(merged["MVTOOL_API_URL"]).strip(),
             mvtool_fixture_json=_optional_path(str(merged["MVTOOL_FIXTURE_JSON"]), base_dir),
@@ -692,6 +697,14 @@ class PipelineConfig:
                 raise ValueError(f"{label} cannot be negative")
         if not math.isfinite(self.phymer_major_vaf) or not 0 <= self.phymer_major_vaf <= 1:
             raise ValueError("PHYMER_MAJOR_VAF must be finite and between 0 and 1")
+        if not math.isfinite(self.phymer_min_callable_fraction) or not (
+            0 < self.phymer_min_callable_fraction <= 1
+        ):
+            raise ValueError(
+                "PHYMER_MIN_CALLABLE_FRACTION must be finite, greater than 0, and at most 1"
+            )
+        if self.phymer_min_depth <= 0:
+            raise ValueError("PHYMER_MIN_DEPTH must be positive")
         if self.threads <= 0 or self.nuclear_window_size <= 0 or self.nuclear_window_count <= 0:
             raise ValueError("THREADS and nuclear window settings must be positive")
 
@@ -744,6 +757,12 @@ class PipelineConfig:
             ("deletion_min_size", str(self.deletion_min_size)),
             ("human_mt_gtf", str(self.human_mt_gtf or "")),
             ("control_region_annotation_mode", self.control_region_annotation_mode),
+            ("phymer_min_depth", str(self.phymer_min_depth)),
+            ("phymer_major_vaf", str(self.phymer_major_vaf)),
+            (
+                "phymer_min_callable_fraction",
+                str(self.phymer_min_callable_fraction),
+            ),
             ("mvtool_mode", self.mvtool_mode),
             ("mvtool_api_url", self.mvtool_api_url if self.mvtool_mode == "network" else ""),
             ("mvtool_fixture_json", str(self.mvtool_fixture_json or "")),

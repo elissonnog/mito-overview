@@ -110,6 +110,12 @@ python -m mito_overview.cli \
   --dry-run
 ```
 
+`--dry-run` is non-mutating: it validates and plans the selected steps without
+creating the run directory or context files. A normal execution treats
+`WORK_ROOT/RUN_NAME` and any selected `FINAL_BIOINFO_DIR` as fresh, single-use
+output namespaces and refuses to overwrite an existing directory. Use a new
+`RUN_NAME` for every independent run.
+
 Run through the public shell wrapper:
 
 ```bash
@@ -186,6 +192,11 @@ In long-read mode without ONT bedmethyl sidecars, page `12` is expected to be a 
 - Phy-Mer: optional human mtDNA haplogroup enrichment
 - mvTool: optional human mtDNA external annotation enrichment
 - these integrations are intentionally non-mandatory and should be treated as secondary annotation layers rather than the core analysis
+- Phy-Mer requires a complete, reference-consistent per-base allele table and,
+  by default, at least 95% of mitochondrial positions at
+  `PHYMER_MIN_DEPTH=100`; lower-depth positions in an otherwise eligible
+  consensus are written as `N`, and insufficient callable-genome coverage is
+  `not_evaluable` rather than a categorical haplogroup
 - mvTool is disabled by default; fixture or explicitly requested network success requires one unique returned row for every submitted candidate, with no missing, duplicate, or unexpected identifiers
 - the repository's synthetic smoke-test path uses local fixtures to exercise these layers; real biological use should point to a true Phy-Mer vendor tree and an explicitly configured mvTool-compatible endpoint
 - `mito-overview` does not bundle external Phy-Mer code or mvTool data resources; see [`docs/license_notes.md`](docs/license_notes.md)

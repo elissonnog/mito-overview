@@ -40,6 +40,12 @@ release date.
   than through checkout `PYTHONPATH` shadowing.
 - [ ] CLI listing, strict dry-run, unit tests, four smoke workflows, and both
   example builders pass.
+- [ ] Strict dry-run creates no run artifacts; normal execution rejects an
+  existing run directory, an existing final destination, and overlapping run
+  and final paths before modification.
+- [ ] Phy-Mer rejects insufficient callable-genome coverage and nonfinite
+  ranking scores; the exact callable-fraction boundary and `N` masking have
+  deterministic known-answer tests.
 
 ## Public-data gate
 

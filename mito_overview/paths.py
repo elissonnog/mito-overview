@@ -197,6 +197,12 @@ class RunPaths:
         ):
             path.mkdir(parents=True, exist_ok=True)
 
+    def create_fresh_layout(self) -> None:
+        """Create a new run layout and refuse any pre-existing run namespace."""
+
+        self.run_dir.mkdir(parents=True, exist_ok=False)
+        self.create_layout()
+
     def context_rows(self) -> list[tuple[str, str]]:
         """Return derived paths and sidecar resolution metadata."""
 

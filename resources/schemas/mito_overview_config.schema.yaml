@@ -147,6 +147,9 @@ properties:
   PHYMER_MAJOR_VAF:
     $ref: "#/$defs/numberLike"
     default: "0.90"
+  PHYMER_MIN_CALLABLE_FRACTION:
+    $ref: "#/$defs/numberLike"
+    default: "0.95"
   MVTOOL_MODE:
     type: string
     enum: [disabled, fixture, network]

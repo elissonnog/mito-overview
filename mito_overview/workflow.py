@@ -926,6 +926,7 @@ def _run_phymer_haplogroup(config: PipelineConfig, paths: RunPaths, strict_files
         phymer_root=config.phymer_root,
         min_depth=config.phymer_min_depth,
         major_vaf=config.phymer_major_vaf,
+        min_callable_fraction=config.phymer_min_callable_fraction,
     )
     status = str(outputs.get("status", "ok"))
     (paths.log_dir / f"phymer_haplogroup.{status}").write_text(status + "\n", encoding="utf-8")
@@ -1111,7 +1112,6 @@ def run_pipeline(
     selected = steps or list_steps()
     _ensure_known_steps(selected)
     paths = RunPaths.from_config(config)
-    paths.create_layout()
     log(f"Run name: {config.run_name}")
     log(f"Sample: {config.sample_id}")
     log(f"Species: {config.detected_species}")
@@ -1134,7 +1134,6 @@ def run_pipeline(
             issues = validate_config(config, strict_files=True)
             if issues:
                 raise ValueError("; ".join(issues))
-        write_context_files(config, paths)
         for step_name in selected:
             results.append(StepResult(step_name, "planned", STEP_DESCRIPTIONS[step_name]))
         return results
@@ -1142,6 +1141,26 @@ def run_pipeline(
     preflight_issues = validate_config(config, strict_files=False)
     if preflight_issues:
         raise ValueError("Preflight failed: " + "; ".join(preflight_issues))
+
+    if paths.run_dir.exists():
+        raise ValueError(
+            f"Run directory already exists: {paths.run_dir}. RUN_NAME is a single-use "
+            "output namespace; choose a new RUN_NAME or archive/remove the prior run."
+        )
+    if "sync_bioinfo" in selected:
+        run_dir = paths.run_dir.resolve(strict=False)
+        final_dir = paths.final_bioinfo_dir.resolve(strict=False)
+        if run_dir == final_dir or run_dir in final_dir.parents or final_dir in run_dir.parents:
+            raise ValueError(
+                "FINAL_BIOINFO_DIR must not equal, contain, or be contained by the run directory"
+            )
+        if paths.final_bioinfo_dir.exists():
+            raise ValueError(
+                f"Final output directory already exists: {paths.final_bioinfo_dir}. "
+                "Choose a new FINAL_BIOINFO_DIR or archive/remove the prior destination."
+            )
+
+    paths.create_fresh_layout()
 
     for step_name in selected:
         log(f"Starting step: {step_name}")

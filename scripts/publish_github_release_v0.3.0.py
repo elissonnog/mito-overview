@@ -343,10 +343,21 @@ def _api_command(repository: str, endpoint: str, method: str) -> list[str]:
 
 
 def _is_http_404(result: CommandResult) -> bool:
-    message = f"{result.stdout}\n{result.stderr}".lower()
-    return result.returncode != 0 and (
-        re.search(r"\b404\b", message) is not None or "not found" in message
-    )
+    """Return true only when the failed command explicitly reports HTTP 404."""
+
+    if result.returncode == 0:
+        return False
+    message = f"{result.stdout}\n{result.stderr}"
+    if re.search(r"\bHTTP(?:\s+status)?[\s:()/=-]*404\b", message, re.IGNORECASE):
+        return True
+    for raw_payload in (result.stdout, result.stderr):
+        try:
+            payload = json.loads(raw_payload)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if isinstance(payload, dict) and str(payload.get("status", "")).strip() == "404":
+            return True
+    return False
 
 
 def _api_json(
@@ -664,23 +675,18 @@ def _ensure_hosting_protection_state(
     runner: Runner, config: PublicationConfig
 ) -> dict[str, Any]:
     state = _query_hosting_protection_state(runner, config)
+    if state.get("supported") is False:
+        fallback = {**state, "enabled_by_publisher": False}
+        _hosting_requires_immutable_release(fallback)
+        return fallback
     if state.get("enabled") is True:
         enabled = {**state, "enabled_by_publisher": False}
         _hosting_requires_immutable_release(enabled)
         return enabled
+    if state.get("supported") is not True or state.get("enabled") is not False:
+        _hosting_requires_immutable_release(state)
     command = _api_command(config.repository, "immutable-releases", "PUT")
     result = runner.run(command, check=False)
-    if _is_http_404(result):
-        fallback = {
-            "supported": False,
-            "enabled": False,
-            "reason": "immutable_releases_endpoint_unavailable",
-            "fallback_active": True,
-            "fallback": HOSTING_FALLBACK,
-            "enabled_by_publisher": False,
-        }
-        _hosting_requires_immutable_release(fallback)
-        return fallback
     if result.returncode != 0:
         detail = result.stderr.strip() or result.stdout.strip() or "no command output"
         raise PublicationError(f"Unable to enable immutable releases: {detail}")

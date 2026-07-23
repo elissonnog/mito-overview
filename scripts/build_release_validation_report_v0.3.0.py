@@ -1700,8 +1700,10 @@ def build_report_blocks(
             "This report is generated before GitHub release creation because the report "
             "is itself a hashed release asset. The separate post-publication receipt "
             "github_publication.json verifies the uploaded asset inventory, authenticated "
-            "redownload hashes, annotated tag, and final immutable release state without "
-            "making this report self-referential."
+            "redownload hashes, annotated tag, and final hosting-protection state without "
+            "making this report self-referential. Native release immutability is required "
+            "when the GitHub endpoint is available; otherwise the receipt identifies the "
+            "bounded annotated-tag and verified-asset-hash fallback explicitly."
         ),
         TableBlock(
             "Bounded claim-to-evidence mapping",

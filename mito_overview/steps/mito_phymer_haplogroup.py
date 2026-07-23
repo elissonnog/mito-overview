@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import argparse
+import math
 import subprocess
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 import matplotlib
@@ -29,6 +31,15 @@ MAJOR_COLUMNS = [
 ]
 
 
+@dataclass(frozen=True)
+class ConsensusEvidence:
+    major_variants: pd.DataFrame
+    callable_positions: int
+    total_positions: int
+    callable_fraction: float
+    masked_positions: int
+
+
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
     parser.add_argument("--summary-dir", required=True)
@@ -42,6 +53,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--phymer-root", default="")
     parser.add_argument("--min-depth", type=int, default=100)
     parser.add_argument("--major-vaf", type=float, default=0.90)
+    parser.add_argument("--min-callable-fraction", type=float, default=0.95)
     return parser
 
 
@@ -66,6 +78,8 @@ def parse_phymer_output(text: str) -> tuple[str, pd.DataFrame]:
             except ValueError:
                 if sample_label == "NA":
                     sample_label = line
+                continue
+            if not math.isfinite(score):
                 continue
             defining_snps = parts[2] if len(parts) > 2 else "NA"
             rows.append(
@@ -94,7 +108,8 @@ def build_consensus_fasta(
     out_fasta: str | Path,
     min_depth: int,
     major_vaf: float,
-) -> pd.DataFrame:
+    min_callable_fraction: float,
+) -> ConsensusEvidence:
     with pysam.FastaFile(str(ref_fasta)) as fasta:
         observed_length = fasta.get_reference_length(mt_contig)
         if observed_length != mt_length:
@@ -109,14 +124,30 @@ def build_consensus_fasta(
         mt_length=mt_length,
         reference_sequence=reference_sequence,
     )
+    callable_mask = all_sites["callable_depth"] >= min_depth
+    callable_positions = int(callable_mask.sum())
+    callable_fraction = callable_positions / mt_length
+    masked_positions = mt_length - callable_positions
     major = all_sites[
-        (all_sites["depth"] >= min_depth) & (all_sites["alt_allele_fraction"] >= major_vaf)
+        callable_mask & (all_sites["alt_allele_fraction"] >= major_vaf)
     ].copy()
     major = major.sort_values("position")
     major["heteroplasmy_fraction"] = major["alt_allele_fraction"]
     major = major[(major["alt_base"] != ".") & (major["ref_base"] != major["alt_base"])].reset_index(drop=True)
 
-    seq = list(reference_sequence)
+    if callable_fraction < min_callable_fraction:
+        return ConsensusEvidence(
+            major_variants=pd.DataFrame(columns=MAJOR_COLUMNS),
+            callable_positions=callable_positions,
+            total_positions=mt_length,
+            callable_fraction=callable_fraction,
+            masked_positions=masked_positions,
+        )
+
+    seq = [
+        reference_sequence[index] if bool(callable_mask.iloc[index]) else "N"
+        for index in range(mt_length)
+    ]
 
     for row in major.itertuples(index=False):
         seq[int(row.position) - 1] = str(row.alt_base)
@@ -130,8 +161,38 @@ def build_consensus_fasta(
 
     if not major.empty:
         major["phymer_input"] = [f"m.{int(r.position)}{r.ref_base}>{r.alt_base}" for r in major.itertuples(index=False)]
-        return major[MAJOR_COLUMNS]
-    return pd.DataFrame(columns=MAJOR_COLUMNS)
+        major = major[MAJOR_COLUMNS]
+    else:
+        major = pd.DataFrame(columns=MAJOR_COLUMNS)
+    return ConsensusEvidence(
+        major_variants=major,
+        callable_positions=callable_positions,
+        total_positions=mt_length,
+        callable_fraction=callable_fraction,
+        masked_positions=masked_positions,
+    )
+
+
+def _coverage_rows(
+    evidence: ConsensusEvidence,
+    *,
+    min_depth: int,
+    min_callable_fraction: float,
+) -> list[dict[str, object]]:
+    return [
+        {"metric": "phymer_callable_positions", "value": evidence.callable_positions},
+        {"metric": "phymer_total_positions", "value": evidence.total_positions},
+        {
+            "metric": "phymer_callable_fraction",
+            "value": round(evidence.callable_fraction, 6),
+        },
+        {"metric": "phymer_masked_positions", "value": evidence.masked_positions},
+        {"metric": "phymer_min_depth", "value": min_depth},
+        {
+            "metric": "phymer_min_callable_fraction",
+            "value": min_callable_fraction,
+        },
+    ]
 
 
 def _write_status_outputs(
@@ -176,12 +237,25 @@ def run_step(
     phymer_root: str | Path | None,
     min_depth: int = 100,
     major_vaf: float = 0.90,
+    min_callable_fraction: float = 0.95,
 ) -> dict[str, Path]:
     """Run the optional Phy-Mer haplogroup enrichment step."""
 
+    if min_depth <= 0:
+        raise ValueError("Phy-Mer min_depth must be positive")
+    if not math.isfinite(major_vaf) or not 0 <= major_vaf <= 1:
+        raise ValueError("Phy-Mer major_vaf must be finite and between 0 and 1")
+    if not math.isfinite(min_callable_fraction) or not (
+        0 < min_callable_fraction <= 1
+    ):
+        raise ValueError(
+            "Phy-Mer min_callable_fraction must be finite, greater than 0, and at most 1"
+        )
+
     print(
         f"[phymer] starting sample={sample_id} species={species} contig={mt_contig} "
-        f"min_depth={min_depth} major_vaf={major_vaf}",
+        f"min_depth={min_depth} major_vaf={major_vaf} "
+        f"min_callable_fraction={min_callable_fraction}",
         flush=True,
     )
     summary_dir = Path(summary_dir)
@@ -306,7 +380,7 @@ def run_step(
             region=region,
         )
 
-    major = build_consensus_fasta(
+    evidence = build_consensus_fasta(
         all_sites=all_sites,
         ref_fasta=ref_fasta,
         mt_contig=mt_contig,
@@ -314,9 +388,14 @@ def run_step(
         out_fasta=fasta_path,
         min_depth=min_depth,
         major_vaf=major_vaf,
+        min_callable_fraction=min_callable_fraction,
     )
-    major.to_csv(input_path, sep="\t", index=False)
-    if major.empty:
+    coverage_rows = _coverage_rows(
+        evidence,
+        min_depth=min_depth,
+        min_callable_fraction=min_callable_fraction,
+    )
+    if evidence.callable_fraction < min_callable_fraction:
         return _write_status_outputs(
             report_path=report_path,
             summary_path=summary_path,
@@ -324,13 +403,23 @@ def run_step(
             input_path=input_path,
             status_rows=[
                 {"metric": "status", "value": "not_evaluable"},
-                {"metric": "reason_code", "value": "no_major_variants_for_consensus"},
-                {"metric": "major_variant_threshold", "value": f"depth>={min_depth};vaf>={major_vaf}"},
+                {
+                    "metric": "reason_code",
+                    "value": "insufficient_callable_genome_fraction",
+                },
+                {"metric": "upstream_heteroplasmy_status", "value": "ok"},
+                *coverage_rows,
             ],
-            message="No high-fraction mitochondrial variants passed the configured thresholds for Phy-Mer consensus haplogroup inference.",
+            message=(
+                "Phy-Mer was not run because the fraction of mitochondrial positions "
+                "meeting its configured depth threshold was below the required minimum."
+            ),
             sample_id=sample_id,
             region=region,
         )
+
+    major = evidence.major_variants
+    major.to_csv(input_path, sep="\t", index=False)
 
     cmd = [
         sys.executable,
@@ -363,6 +452,7 @@ def run_step(
                 {"metric": "reason_code", "value": "phymer_run_failed"},
                 {"metric": "return_code", "value": int(completed.returncode)},
                 {"metric": "stderr_preview", "value": completed.stderr.strip()[:200] or "NA"},
+                *coverage_rows,
             ],
             message="Phy-Mer was invoked but did not return a successful haplogroup result. See the raw output files in the summary directory for debugging context.",
             sample_id=sample_id,
@@ -372,7 +462,7 @@ def run_step(
     sample_label, ranking = parse_phymer_output(completed.stdout)
     ranking.to_csv(ranking_path, sep="\t", index=False)
     best_hg = str(ranking.iloc[0]["haplogroup"]) if not ranking.empty else "NA"
-    best_score = float(ranking.iloc[0]["score"]) if not ranking.empty else 0.0
+    best_score = float(ranking.iloc[0]["score"]) if not ranking.empty else None
     status_df = pd.DataFrame(
         [
             {"metric": "status", "value": "ok" if not ranking.empty else "unavailable"},
@@ -381,10 +471,17 @@ def run_step(
             {"metric": "upstream_heteroplasmy_reason_code", "value": heteroplasmy_reason},
             {"metric": "sample_label", "value": sample_label},
             {"metric": "best_haplogroup", "value": best_hg},
-            {"metric": "best_score", "value": round(best_score, 6)},
+            {
+                "metric": "best_score",
+                "value": round(best_score, 6) if best_score is not None else "NA",
+            },
             {"metric": "major_variant_sites_used", "value": int(len(major))},
+            *coverage_rows,
             {"metric": "phymer_library", "value": phymer_library.name},
-            {"metric": "major_variant_threshold", "value": f"depth>={min_depth};vaf>={major_vaf}"},
+            {
+                "metric": "major_variant_threshold",
+                "value": f"callable_depth>={min_depth};vaf>={major_vaf}",
+            },
         ]
     )
     summary_path.write_text(status_df.to_csv(sep="\t", index=False), encoding="utf-8")
@@ -404,14 +501,22 @@ def run_step(
     metrics_html = "".join(
         [
             metric_card("Best haplogroup", best_hg),
-            metric_card("Best score", round(best_score, 6)),
+            metric_card(
+                "Best score",
+                round(best_score, 6) if best_score is not None else "NA",
+            ),
             metric_card("Major variants used", int(len(major))),
             metric_card("Ranking rows", int(len(ranking))),
+            metric_card(
+                "Callable mtDNA fraction",
+                round(evidence.callable_fraction, 4),
+            ),
         ]
     )
     intro_html = (
-        '<p class="muted">This page runs a local vendor copy of Phy-Mer on a consensus-style mitochondrial FASTA reconstructed from high alternate-allele-fraction variants. '
-        "The goal is to provide a compact haplogroup interpretation layer for human samples without altering the primary alternate-allele screening or deletion logic of the mito_overview workflow.</p>"
+        '<p class="muted">This page runs a local vendor copy of Phy-Mer on a mitochondrial consensus reconstructed from complete per-base allele evidence. '
+        "Callable sites use the reference base unless a high-fraction alternate passes the configured threshold, and residual low-depth sites are masked as N. "
+        "The result is an optional haplogroup enrichment layer and does not alter the primary alternate-allele or deletion screens.</p>"
         f"<div class='metrics-grid'>{metrics_html}</div>"
     )
     body_parts = [
@@ -450,6 +555,7 @@ def main() -> None:
         phymer_root=args.phymer_root,
         min_depth=args.min_depth,
         major_vaf=args.major_vaf,
+        min_callable_fraction=args.min_callable_fraction,
     )
     for path in outputs.values():
         print(f"Wrote {path}")

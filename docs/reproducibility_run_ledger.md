@@ -146,14 +146,16 @@ The runner must reject legacy DOI/Zenodo arguments, require an absent raw-cache 
    DOCX-to-PDF-to-rendered-page provenance. Retain its semantic identity result
    plus the fresh-tag cases, commands, logs, environment, annotated-tag
    identity, trusted 12-asset manifest, hashes, and PASS receipt.
-9. Supply the sealed assets and receipt to create the draft, enable immutable
-   releases, upload and authenticated-redownload all assets, publish, and write
-   the independently queried post-publication proof to `github_publication.json`.
+9. Supply the sealed assets and receipt to create the draft, establish the
+   recorded hosting-protection state, upload and authenticated-redownload all
+   assets, publish, and write the independently queried post-publication proof
+   to `github_publication.json`.
 
 The report builder accepts only a verified read-only prepublication receipt.
 This avoids self-reference because the report is itself a hashed release asset.
-Final upload hashes, tag identity, and immutable publication state are verified
-separately in `github_publication.json`.
+Final upload hashes, tag identity, and the native-immutability or explicit
+unsupported-feature fallback state are verified separately in
+`github_publication.json`.
 
 Any commit after `FINAL_SHA` invalidates the release evidence. Any defect after publication is corrected forward as `v0.3.1`; the `v0.3.0` tag is never moved.
 
@@ -162,3 +164,9 @@ Any commit after `FINAL_SHA` invalidates the release evidence. Any defect after 
 Exact commit `2b981a018629640b81f6a7eb8ec1accab370cbc8` is rejected and was not pushed. Reproducibility audit `MOV-REPRO-20260723T074138Z-ef12f565-e795-44d8-9e8e-9f628ce8094e` passed its bounded role. Release-engineering audit `MO-RELENG-20260723T074129Z-2ef3043b-27ad-455d-89c9-c6485bd0b419` held the candidate for an unavailable immutable-release fallback and two sdist README links to excluded repository-only files. Scientific audit `MO-SCI-2B981A0-20260723T080601Z-CCD0B462` held it because Phy-Mer, mvTool, and circularity could interpret stale or malformed upstream allele evidence and because missing candidate evidence was not distinguished from an observed zero-candidate result.
 
 The successor clears prior heteroplasmy outputs before recounting, propagates the controlled upstream module state, validates every mitochondrial position and REF allele before Phy-Mer consensus editing, and separates missing from observed-zero candidate states. The release publisher now attempts immutable hosting first and accepts only a confirmed endpoint-unavailable fallback bound to the verified annotated tag and authenticated asset SHA-256 checks. The focused scientific and connected release suites passed `118/118` and `158/158`, respectively. Two independent checkout-mode example rebuilds were byte-identical across 88 long-read and 74 short-read files; the complete pinned suite passed `974/974` in 440.92 seconds; and all four installed-package smoke modes passed, including minimal BAM and CRAM. These are pre-freeze working-tree checks, not release evidence; exact archive/distribution validation and three fresh exact-commit audits remain pending.
+
+## Rejected candidate `223148c` and successor remediation
+
+Exact commit `223148c88cac9f483acc9550028ed31c179fb4ed` is rejected and was not pushed. Release-engineering audit `DA43BF39-6609-434E-AC89-23D37176298A`, reproducibility audit `MO-REPRO-20260723T091606Z-21a16b95-6d37-4081-86f1-0333ed888412`, and scientific audit `MT-AUDIT-223148C-20260723T085745Z` each returned HOLD. The release and reproducibility reviews showed that fuzzy “not found” matching and a PUT-time 404 could silently downgrade a supported GitHub immutable-release endpoint to the fallback. The scientific review showed that a single callable mitochondrial position could support a reference-filled Phy-Mer consensus, nonfinite ranking scores could be accepted, and reuse of one `RUN_NAME` could expose auxiliary artifacts from an earlier mode.
+
+The successor recognizes only an explicit HTTP 404 on the initial endpoint query as the documented unsupported-feature fallback; any failure after support is established stops publication. Phy-Mer now requires a configurable callable-genome fraction (default `0.95` at its configured minimum depth), masks residual low-depth bases with `N`, accepts an otherwise eligible zero-alternate consensus, rejects nonfinite scores, and records the complete eligibility denominator. Real workflow runs and final sync destinations are single-use and fail before modification when pre-existing or overlapping, while dry-run is non-mutating. Focused remediation passed `122/122`, and the complete pinned working-tree suite passed `995/995` in 446.64 seconds. A wheel installed outside the checkout then passed all four workflow modes. Two independent long- and short-read example regenerations were byte-identical; only the expected Phy-Mer summary, masked consensus FASTA, and page 13 changed from the rejected candidate. These are working-tree results and do not replace a successor exact-commit suite or three new audits.

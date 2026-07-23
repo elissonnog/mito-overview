@@ -239,11 +239,13 @@ class FakeGhRunner:
         final_sha: str = FINAL_SHA,
         main_sha: str = FINAL_SHA,
         immutable_payload: dict[str, Any] | None = None,
+        immutable_get_unavailable: bool = False,
         immutable_put_unavailable: bool = False,
     ) -> None:
         self.final_sha = final_sha
         self.main_sha = main_sha
-        self.immutable_payload = immutable_payload
+        self.immutable_payload = immutable_payload or {"enabled": False}
+        self.immutable_get_unavailable = immutable_get_unavailable
         self.immutable_put_unavailable = immutable_put_unavailable
         self.tag_ref: dict[str, Any] | None = {
             "ref": f"refs/tags/{publication.EXPECTED_TAG}",
@@ -341,7 +343,7 @@ class FakeGhRunner:
         if route.startswith("git/") and method != "GET":
             raise AssertionError("Publisher must never create or move a tag")
         if route == "immutable-releases" and method == "GET":
-            if self.immutable_payload is None:
+            if self.immutable_get_unavailable:
                 return self._result(args, returncode=1, stderr="Not Found (HTTP 404)")
             return self._result(args, self.immutable_payload)
         if route == "immutable-releases" and method == "PUT":
@@ -999,7 +1001,7 @@ def test_publisher_enables_and_records_immutable_release_protection(
 def test_unavailable_immutable_release_feature_uses_annotated_tag_hash_fallback(
     tmp_path: Path,
 ) -> None:
-    runner = FakeGhRunner(immutable_put_unavailable=True)
+    runner = FakeGhRunner(immutable_get_unavailable=True)
     runner.immutable_after_publish = False
     asset_dir, output_dir, payloads = _create_and_upload(tmp_path, runner)
 
@@ -1024,6 +1026,47 @@ def test_unavailable_immutable_release_feature_uses_annotated_tag_hash_fallback(
     assert record["published_redownload_verification"]["verified"] is True
     assert "enable_immutable_releases" not in runner.mutations
     assert runner.mutations.count("publish_release") == 1
+
+
+def test_supported_immutable_endpoint_cannot_downgrade_to_fallback_after_put_404(
+    tmp_path: Path,
+) -> None:
+    runner = FakeGhRunner(
+        immutable_payload={"enabled": False}, immutable_put_unavailable=True
+    )
+
+    with pytest.raises(publication.PublicationError, match="Unable to enable immutable"):
+        publication.publish_github_release(
+            _config(tmp_path / "publication", "create-draft"), runner
+        )
+
+    assert runner.mutations == []
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "HTTP 403: Not Found",
+        "HTTP 500: backend object not found",
+        "gh: command not found",
+    ],
+)
+def test_ambiguous_not_found_errors_never_activate_hosting_fallback(
+    tmp_path: Path, message: str
+) -> None:
+    class FailingImmutableQueryRunner(FakeGhRunner):
+        def run(self, args: Sequence[str], *, check: bool = True) -> Any:
+            if any(str(arg).endswith("/immutable-releases") for arg in args) and "GET" in args:
+                return publication.CommandResult(tuple(args), 1, "", message)
+            return super().run(args, check=check)
+
+    runner = FailingImmutableQueryRunner()
+    with pytest.raises(publication.PublicationError, match="Unable to query immutable"):
+        publication.publish_github_release(
+            _config(tmp_path / "publication", "create-draft"), runner
+        )
+
+    assert runner.mutations == []
 
 
 def test_publish_validates_then_patches_once_and_writes_report_ready_receipt(

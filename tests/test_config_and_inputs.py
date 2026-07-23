@@ -419,6 +419,16 @@ def test_matching_legacy_thresholds_remain_compatible(minimal_inputs: tuple[Path
         ("ALLELE_MIN_READ_MEAN_QUALITY", "inf", "must be finite"),
         ("PHYMER_MAJOR_VAF", "nan", "PHYMER_MAJOR_VAF"),
         ("PHYMER_MAJOR_VAF", "inf", "PHYMER_MAJOR_VAF"),
+        (
+            "PHYMER_MIN_CALLABLE_FRACTION",
+            "nan",
+            "PHYMER_MIN_CALLABLE_FRACTION",
+        ),
+        (
+            "PHYMER_MIN_CALLABLE_FRACTION",
+            "inf",
+            "PHYMER_MIN_CALLABLE_FRACTION",
+        ),
     ],
 )
 def test_nonfinite_fraction_and_quality_configuration_is_rejected(
@@ -433,6 +443,18 @@ def test_nonfinite_fraction_and_quality_configuration_is_rejected(
     mapping[key] = value
 
     with pytest.raises(ValueError, match=message):
+        PipelineConfig.from_mapping(mapping)
+
+
+@pytest.mark.parametrize("value", ["0", "-0.1", "1.01"])
+def test_invalid_phymer_callable_fraction_is_rejected(
+    minimal_inputs: tuple[Path, Path], tmp_path: Path, value: str
+) -> None:
+    ref, bam = minimal_inputs
+    mapping = minimal_mapping(tmp_path, ref, bam)
+    mapping["PHYMER_MIN_CALLABLE_FRACTION"] = value
+
+    with pytest.raises(ValueError, match="PHYMER_MIN_CALLABLE_FRACTION"):
         PipelineConfig.from_mapping(mapping)
 
 

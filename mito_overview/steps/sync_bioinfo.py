@@ -53,7 +53,11 @@ def run_step(
     mito_bai = Path(mito_bai)
     config_file = Path(config_file)
     final_dir = Path(final_dir)
-    final_dir.mkdir(parents=True, exist_ok=True)
+    if final_dir.exists():
+        raise FileExistsError(
+            f"Final output directory already exists and will not be overwritten: {final_dir}"
+        )
+    final_dir.mkdir(parents=True, exist_ok=False)
 
     print(f"[sync] syncing run={run_name} sample={sample_id} to {final_dir}")
     _replace_tree(output_dir, final_dir / "output")

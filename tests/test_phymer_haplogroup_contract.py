@@ -58,7 +58,13 @@ def prepare_case(root: Path, *, status: str = "ok", reason: str = "") -> tuple[P
     return summary, reference
 
 
-def run_phymer(root: Path, summary: Path, reference: Path) -> dict[str, Path | str]:
+def run_phymer(
+    root: Path,
+    summary: Path,
+    reference: Path,
+    *,
+    min_callable_fraction: float = 0.95,
+) -> dict[str, Path | str]:
     return phymer.run_step(
         summary_dir=summary,
         figure_dir=root / "figures",
@@ -71,7 +77,30 @@ def run_phymer(root: Path, summary: Path, reference: Path) -> dict[str, Path | s
         phymer_root=Path(__file__).parent / "fixtures" / "mock_phymer_vendor",
         min_depth=100,
         major_vaf=0.9,
+        min_callable_fraction=min_callable_fraction,
     )
+
+
+def retain_callable_positions(table: pd.DataFrame, positions: set[int]) -> pd.DataFrame:
+    table = table.copy()
+    masked = ~table["position"].isin(positions)
+    table.loc[masked, "alt_base"] = "."
+    for column in (
+        "callable_depth",
+        "depth",
+        "alt_count",
+        "alt_forward",
+        "alt_reverse",
+        "A",
+        "C",
+        "G",
+        "T",
+    ):
+        table.loc[masked, column] = 0
+    table.loc[masked, ["alt_allele_fraction", "heteroplasmy_fraction"]] = float(
+        "nan"
+    )
+    return table
 
 
 def test_valid_complete_all_site_evidence_produces_mock_haplogroup(tmp_path: Path) -> None:
@@ -84,8 +113,112 @@ def test_valid_complete_all_site_evidence_produces_mock_haplogroup(tmp_path: Pat
     assert metrics["best_haplogroup"] == "H1a1"
     assert metrics["major_variant_sites_used"] == "1"
     assert metrics["upstream_heteroplasmy_status"] == "ok"
+    assert metrics["phymer_callable_positions"] == "60"
+    assert metrics["phymer_callable_fraction"] == "1.0"
+    assert metrics["phymer_masked_positions"] == "0"
     major = pd.read_csv(outputs["input_path"], sep="\t")
     assert major["phymer_input"].tolist() == ["m.10A>C"]
+
+
+def test_sparse_reference_filled_consensus_is_not_evaluable_before_invocation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    summary, reference = prepare_case(tmp_path)
+    table_path = summary / "mito_heteroplasmy_all_sites.tsv"
+    retain_callable_positions(pd.read_csv(table_path, sep="\t"), {10}).to_csv(
+        table_path, sep="\t", index=False
+    )
+    monkeypatch.setattr(
+        phymer.subprocess,
+        "run",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("Phy-Mer invoked")),
+    )
+
+    outputs = run_phymer(tmp_path, summary, reference)
+
+    metrics = metric_map(Path(outputs["summary_path"]))
+    assert outputs["status"] == "not_evaluable"
+    assert metrics["reason_code"] == "insufficient_callable_genome_fraction"
+    assert metrics["phymer_callable_positions"] == "1"
+    assert metrics["phymer_total_positions"] == "60"
+    assert metrics["phymer_callable_fraction"] == "0.016667"
+    assert metrics["phymer_min_callable_fraction"] == "0.95"
+    assert not (summary / "mito_phymer_consensus.fasta").exists()
+
+
+def test_exact_callable_fraction_boundary_masks_low_depth_positions(tmp_path: Path) -> None:
+    summary, reference = prepare_case(tmp_path)
+    table_path = summary / "mito_heteroplasmy_all_sites.tsv"
+    retain_callable_positions(
+        pd.read_csv(table_path, sep="\t"), set(range(1, 58))
+    ).to_csv(table_path, sep="\t", index=False)
+
+    outputs = run_phymer(tmp_path, summary, reference)
+
+    metrics = metric_map(Path(outputs["summary_path"]))
+    consensus_path = summary / "mito_phymer_consensus.fasta"
+    consensus = "".join(
+        line.strip()
+        for line in consensus_path.read_text(encoding="ascii").splitlines()
+        if not line.startswith(">")
+    )
+    assert outputs["status"] == "ok"
+    assert metrics["phymer_callable_fraction"] == "0.95"
+    assert metrics["phymer_masked_positions"] == "3"
+    assert consensus[9] == "C"
+    assert consensus[-3:] == "NNN"
+
+
+def test_complete_reference_consensus_can_run_without_alternate_variants(
+    tmp_path: Path,
+) -> None:
+    summary, reference = prepare_case(tmp_path)
+    table_path = summary / "mito_heteroplasmy_all_sites.tsv"
+    table = pd.read_csv(table_path, sep="\t")
+    table.loc[table["position"] == 10, ["alt_base", "alt_count", "alt_forward", "alt_reverse", "C"]] = [
+        ".",
+        0,
+        0,
+        0,
+        0,
+    ]
+    table.loc[table["position"] == 10, ["alt_allele_fraction", "heteroplasmy_fraction"]] = 0.0
+    table.loc[table["position"] == 10, "A"] = 100
+    table.to_csv(table_path, sep="\t", index=False)
+
+    outputs = run_phymer(tmp_path, summary, reference)
+
+    assert outputs["status"] == "ok"
+    assert pd.read_csv(outputs["input_path"], sep="\t").empty
+    assert metric_map(Path(outputs["summary_path"]))["major_variant_sites_used"] == "0"
+
+
+@pytest.mark.parametrize("score", ["nan", "inf", "-inf"])
+def test_nonfinite_phymer_scores_are_not_accepted(score: str) -> None:
+    _, ranking = phymer.parse_phymer_output(f"H1a1\t{score}\tm.10A>C\n")
+
+    assert ranking.empty
+
+
+def test_nonfinite_only_ranking_is_unavailable_without_numeric_zero_score(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    summary, reference = prepare_case(tmp_path)
+    monkeypatch.setattr(
+        phymer.subprocess,
+        "run",
+        lambda *args, **kwargs: phymer.subprocess.CompletedProcess(
+            args=args[0], returncode=0, stdout="H1a1\tnan\tm.10A>C\n", stderr=""
+        ),
+    )
+
+    outputs = run_phymer(tmp_path, summary, reference)
+
+    metrics = metric_map(Path(outputs["summary_path"]))
+    assert outputs["status"] == "unavailable"
+    assert metrics["reason_code"] == "no_phymer_ranking_rows"
+    assert metrics["best_score"] == "NA"
+    assert pd.read_csv(outputs["ranking_path"], sep="\t").empty
 
 
 def test_failed_upstream_status_blocks_stale_haplogroup_and_removes_owned_outputs(
