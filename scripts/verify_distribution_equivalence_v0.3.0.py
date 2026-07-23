@@ -159,9 +159,8 @@ def sdist_members(path: Path) -> tuple[dict[str, tuple[bytes, bool]], str]:
     except (OSError, tarfile.TarError) as error:
         raise DistributionError(f"unable to read sdist {path}") from error
     metadata_name = f"{EXPECTED_SDIST_ROOT}/PKG-INFO"
-    metadata_names = {name for name in members if name.endswith("/PKG-INFO")}
-    if metadata_names != {metadata_name}:
-        raise DistributionError("sdist must contain exactly one canonical PKG-INFO member")
+    if metadata_name not in members:
+        raise DistributionError("sdist must contain the canonical root PKG-INFO member")
     return members, metadata_name
 
 

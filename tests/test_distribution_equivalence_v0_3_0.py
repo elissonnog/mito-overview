@@ -32,6 +32,9 @@ WHEEL_MEMBERS = {
 }
 SDIST_MEMBERS = {
     "mito_overview-0.3.0/PKG-INFO": b"Name: mito-overview\nVersion: 0.3.0\n",
+    "mito_overview-0.3.0/mito_overview.egg-info/PKG-INFO": (
+        b"Name: mito-overview\nVersion: 0.3.0\n"
+    ),
     "mito_overview-0.3.0/mito_overview/__init__.py": (
         b'__version__ = "0.3.0"\n'
     ),
@@ -63,12 +66,21 @@ def _write_wheel(
             archive.writestr(info, payload)
 
 
-def _write_sdist(root: Path, *, mtime: int, symlink: bool = False) -> None:
+def _write_sdist(
+    root: Path,
+    *,
+    mtime: int,
+    symlink: bool = False,
+    omit_root_metadata: bool = False,
+) -> None:
     path = root / "mito_overview-0.3.0.tar.gz"
     with path.open("wb") as raw:
         with gzip.GzipFile(filename="", mode="wb", fileobj=raw, mtime=mtime) as compressed:
             with tarfile.open(fileobj=compressed, mode="w") as archive:
-                for name, payload in sorted(SDIST_MEMBERS.items()):
+                members = dict(SDIST_MEMBERS)
+                if omit_root_metadata:
+                    members.pop("mito_overview-0.3.0/PKG-INFO")
+                for name, payload in sorted(members.items()):
                     info = tarfile.TarInfo(name)
                     info.size = len(payload)
                     info.mtime = mtime
@@ -91,6 +103,7 @@ def _write_pair(
     wheel_executable: bool = False,
     omit_wheel_metadata: bool = False,
     wheel_extra_members: dict[str, bytes] | None = None,
+    omit_sdist_root_metadata: bool = False,
 ) -> None:
     root.mkdir()
     _write_wheel(
@@ -101,7 +114,12 @@ def _write_pair(
         omit_wheel_metadata=omit_wheel_metadata,
         extra_members=wheel_extra_members,
     )
-    _write_sdist(root, mtime=mtime, symlink=sdist_symlink)
+    _write_sdist(
+        root,
+        mtime=mtime,
+        symlink=sdist_symlink,
+        omit_root_metadata=omit_sdist_root_metadata,
+    )
 
 
 def test_archive_metadata_can_differ_when_member_payloads_match(tmp_path: Path) -> None:
@@ -231,6 +249,21 @@ def test_sdist_member_outside_canonical_root_fails(tmp_path: Path) -> None:
         archive.addfile(info, io.BytesIO(payload))
 
     with pytest.raises(MODULE.DistributionError, match="outside canonical project root"):
+        MODULE.verify(canonical, rebuilt)
+
+
+def test_sdist_egg_info_cannot_replace_root_metadata(tmp_path: Path) -> None:
+    canonical = tmp_path / "canonical"
+    rebuilt = tmp_path / "rebuilt"
+    _write_pair(canonical, year=2020, mtime=1)
+    _write_pair(
+        rebuilt,
+        year=2026,
+        mtime=2,
+        omit_sdist_root_metadata=True,
+    )
+
+    with pytest.raises(MODULE.DistributionError, match="canonical root PKG-INFO"):
         MODULE.verify(canonical, rebuilt)
 
 
