@@ -133,14 +133,19 @@ def test_generated_example_bundle_has_path_free_indexed_mt_bam(
 
     output = tmp_path / f"{sample_id}_output"
     env = os.environ.copy()
+    # This test deliberately exercises checkout fallback through the shim below.
+    # Do not inherit the installed-distribution gate used by the CI smoke jobs.
+    env.pop("MITO_OVERVIEW_REQUIRE_INSTALLED", None)
     env["MITO_OVERVIEW_PYTHON"] = str(checkout_python_shim(tmp_path))
-    subprocess.run(
+    completed = subprocess.run(
         [str(REPO_ROOT / "scripts" / builder), str(output)],
         cwd=REPO_ROOT,
         env=env,
-        check=True,
         capture_output=True,
         text=True,
+    )
+    assert completed.returncode == 0, (
+        f"{builder} failed\nstdout:\n{completed.stdout}\nstderr:\n{completed.stderr}"
     )
 
     bam = output / "subset" / f"{sample_id}.MT.bam"
