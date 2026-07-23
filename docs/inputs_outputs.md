@@ -62,7 +62,7 @@ Whole-genome interpretation is enabled only when the FASTA index and alignment s
 | NUMT-warning span threshold | aligned fraction | short span `<0.50` | `mito_numt_qc_summary.tsv` |
 | copy-number window size | bp | default `100,000` | `mito_copy_number_windows.tsv` |
 
-For the experimental mt:nuclear depth ratio, a missing set of valid nuclear windows is `not_evaluable/no_valid_nuclear_windows`; valid windows whose mean nuclear depth is exactly zero are `not_evaluable/zero_nuclear_depth_denominator`. Neither condition is serialized as a numerical ratio.
+For the experimental mt:nuclear depth ratio, the mitochondrial numerator requires exactly one finite, nonnegative depth value at every integer position from 1 through `MT_LENGTH`. A present but incomplete or invalid profile is `not_evaluable/incomplete_mito_depth_profile`. A missing profile is `not_evaluable/no_mito_depth_evidence`; a missing set of valid nuclear windows is `not_evaluable/no_valid_nuclear_windows`; and valid windows whose mean nuclear depth is exactly zero are `not_evaluable/zero_nuclear_depth_denominator`. None of these conditions is serialized as a numerical ratio.
 
 The v0.3.0 filter profiles are lenient BaseQ/MAPQ/readQ `0/0/0`, default `13/20/10`, and strict `20/30/15`. Candidate thresholds remain fixed within each dataset's profile comparison.
 

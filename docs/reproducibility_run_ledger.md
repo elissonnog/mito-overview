@@ -66,6 +66,10 @@ Candidate `b639eec19f1e30add780eb4a74c48ab8aeebee8e` was then withdrawn before p
 
 The successor working tree passed `39/39` focused adversarial tests, `237/237` complete provenance/packet/tracked-report tests, and `797/797` mandatory repository tests. These tests establish fail-closed handling of the reproduced evidence defects; they do not replace exact-commit package isolation, workflow smokes, fresh read-only audits, PR/push CI, empty-cache cross-platform public reproduction, packet/report verification, or release publication.
 
+Candidate `c260ce2484838bf89f2ae0e39fbdf2a0f1737f18` was subsequently withdrawn before push. It passed `797/797` exact-tree tests, exact-archive wheel/sdist installation, installed-package helper probes, and all four workflow smokes, and its release-engineering audit had no blocker. A separate bioinformatics audit nevertheless reproduced a one-row mitochondrial depth file being accepted as a whole-mitochondrion numerator and yielding a numeric mt:nuclear ratio. Because this violates the declared estimator, the successful predefined gates were not treated as sufficient release evidence.
+
+The successor working tree now accepts a mitochondrial numerator only from a complete coordinate inventory with one finite, nonnegative depth at each position `1..MT_LENGTH` and a finite resulting mean. Nine malformed-profile classes fail closed as `not_evaluable/incomplete_mito_depth_profile`, while the `100/10=10.0` known answer is preserved. The focused copy-number suite passed `16/16`, the connected workflow/example surface passed `74/74` without tracked-output drift, and the complete mandatory suite passed `806/806` in 393.20 seconds. These remain working-tree results pending a new exact commit and fresh role-separated audits.
+
 ## Public Input Provenance
 
 - `SRR10804585` / `GSM4238454`, `SRR10804590` / `GSM4238459`, and `SRR10804657` / `GSM4238526` are separate C1 single-cell ATAC-seq libraries from the GM11906 lymphoblastoid line.

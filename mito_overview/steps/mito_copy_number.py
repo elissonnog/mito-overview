@@ -9,6 +9,7 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 import pysam
 
@@ -95,12 +96,47 @@ def run_step(
 
     mito_depth_path = summary_dir / "mito_depth_per_base.tsv"
     mt_mean_depth: float | None = None
+    mt_depth_reason_code = "no_mito_depth_evidence"
     if mito_depth_path.exists() and mito_depth_path.stat().st_size > 0:
-        mito_depth_df = pd.read_csv(mito_depth_path, sep="\t")
-        if "depth" in mito_depth_df.columns:
-            observed_depth = pd.to_numeric(mito_depth_df["depth"], errors="coerce").dropna()
-            if not observed_depth.empty:
-                mt_mean_depth = float(observed_depth.mean())
+        mt_depth_reason_code = "incomplete_mito_depth_profile"
+        try:
+            mito_depth_df = pd.read_csv(mito_depth_path, sep="\t")
+        except (OSError, pd.errors.EmptyDataError, pd.errors.ParserError):
+            mito_depth_df = pd.DataFrame()
+        if not mito_depth_df.empty and {"position", "depth"}.issubset(
+            mito_depth_df.columns
+        ):
+            positions = pd.to_numeric(
+                mito_depth_df["position"], errors="coerce"
+            ).to_numpy(dtype=float)
+            depths = pd.to_numeric(
+                mito_depth_df["depth"], errors="coerce"
+            ).to_numpy(dtype=float)
+            numeric_values_valid = bool(
+                np.isfinite(positions).all()
+                and np.isfinite(depths).all()
+                and (depths >= 0).all()
+                and (positions == np.floor(positions)).all()
+                and (positions >= 1).all()
+                and (positions <= mt_length).all()
+            )
+            expected_positions = np.arange(1, mt_length + 1, dtype=int)
+            position_inventory_valid = bool(
+                numeric_values_valid
+                and len(positions) == mt_length
+                and np.array_equal(np.sort(positions.astype(int)), expected_positions)
+            )
+            if position_inventory_valid:
+                with np.errstate(over="ignore", invalid="ignore"):
+                    candidate_mean_depth = float(depths.mean())
+                if np.isfinite(candidate_mean_depth):
+                    mt_mean_depth = candidate_mean_depth
+                    mt_depth_reason_code = ""
+        print(
+            f"[copy_number] mitochondrial depth profile rows={len(mito_depth_df)} "
+            f"expected={mt_length} status={'ok' if mt_mean_depth is not None else 'not_evaluable'} "
+            f"reason={mt_depth_reason_code or 'none'}"
+        )
 
     bam_handle = open_alignment(align_file, align_mode, ref_fasta)
     refs = {name: length for name, length in zip(bam_handle.references, bam_handle.lengths)}
@@ -152,7 +188,7 @@ def run_step(
     )
     if mt_mean_depth is None:
         status = "not_evaluable"
-        reason_code = "no_mito_depth_evidence"
+        reason_code = mt_depth_reason_code
         ratio = None
     elif reference_scope != "whole_genome":
         status = "not_evaluable"
@@ -210,9 +246,14 @@ def run_step(
         ]
     )
     if status != "ok":
+        missing_context_note = (
+            "Incomplete mitochondrial or nuclear depth evidence is represented as NA, not as zero."
+            if reason_code in {"no_mito_depth_evidence", "incomplete_mito_depth_profile"}
+            else "Missing nuclear context is represented as NA, not as zero."
+        )
         windows_note = (
             '<p class="small-note">The mt:nuclear ratio is not evaluable for this run. '
-            f"Reason: {reason_code}. Missing nuclear context is represented as NA, not as zero.</p>"
+            f"Reason: {reason_code}. {missing_context_note}</p>"
         )
     else:
         windows_note = ""

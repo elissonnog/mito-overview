@@ -5,6 +5,7 @@
 - made mvTool access explicitly mode-gated and offline by default, with deterministic fixtures and non-fabricated unavailable states for requested network failures
 - defined a portable standalone BAM/CRAM input contract with explicit sidecars and preflight checks for references, indexes, contigs, lengths, CRAM reference availability, and conflicting format overrides
 - corrected the copy-number-named output to an unscaled within-sample mt:nuclear depth ratio, with missing or zero nuclear denominators reported as `not_evaluable` rather than zero
+- require the mt:nuclear numerator to contain exactly one finite, nonnegative depth observation at every mitochondrial position; truncated, duplicate, out-of-range, fractional, or invalid profiles are `not_evaluable`
 - added explicit reference-scope handling that suppresses categorical NUMT interpretation for mt-only or custom references and emits exact zero-based, half-open mitochondrial BED intervals
 - bounded the supported claim to a reproducible, mode-gated mtDNA reporting workflow/resource; this version does not establish clinical validity, analytical sensitivity, deletion truth, absolute copy number, formal NUMT classification, or long-read/short-read equivalence
 - added tracked validation-provenance tooling, known-answer coverage for the five corrections, deterministic public-input provenance, and resource-limited public proof-of-principle reruns

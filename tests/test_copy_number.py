@@ -194,6 +194,79 @@ def test_missing_mito_depth_evidence_is_na_not_zero(tmp_path: Path) -> None:
     assert metrics["mt_to_nuclear_depth_ratio"] == ""
 
 
+@pytest.mark.parametrize(
+    "profile_case",
+    [
+        "partial",
+        "duplicate_position",
+        "out_of_range_position",
+        "fractional_position",
+        "nonnumeric_depth",
+        "negative_depth",
+        "nonfinite_depth",
+        "overflowing_mean",
+        "extra_row",
+    ],
+)
+def test_incomplete_or_invalid_mito_depth_profile_is_not_evaluable(
+    profile_case: str,
+    tmp_path: Path,
+) -> None:
+    fixture = Path(__file__).parents[1] / "examples" / "synthetic_data" / "TOY-WGS-001"
+    ref = tmp_path / "tiny_GRCh38_wgs.fa"
+    shutil.copyfile(fixture / "tiny_GRCh38_wgs.fa", ref)
+    pysam.faidx(str(ref))
+    bam = bam_from_sam(fixture / "tiny_wgs.sam", tmp_path / "known_wgs.bam")
+    summary = tmp_path / "summary"
+    summary.mkdir()
+    profile = pd.DataFrame(
+        {"position": range(1, 11), "depth": [100] * 10},
+        dtype=object,
+    )
+    if profile_case == "partial":
+        profile = profile.iloc[:1]
+    elif profile_case == "duplicate_position":
+        profile.loc[9, "position"] = 9
+    elif profile_case == "out_of_range_position":
+        profile.loc[9, "position"] = 11
+    elif profile_case == "fractional_position":
+        profile.loc[9, "position"] = 9.5
+    elif profile_case == "nonnumeric_depth":
+        profile.loc[9, "depth"] = "invalid"
+    elif profile_case == "negative_depth":
+        profile.loc[9, "depth"] = -1
+    elif profile_case == "nonfinite_depth":
+        profile.loc[9, "depth"] = float("inf")
+    elif profile_case == "overflowing_mean":
+        profile["depth"] = float.fromhex("0x1.fffffffffffffp+1023")
+    elif profile_case == "extra_row":
+        profile.loc[10] = {"position": 11, "depth": 100}
+    profile.to_csv(summary / "mito_depth_per_base.tsv", sep="\t", index=False)
+
+    outputs = run_step(
+        align_file=bam,
+        align_mode="bam",
+        ref_fasta=ref,
+        summary_dir=summary,
+        figure_dir=tmp_path / "figures",
+        report_dir=tmp_path / "reports",
+        sample_id="TOY-WGS-001",
+        mt_contig="MT",
+        mt_length=10,
+        species="human",
+        reference_scope="whole_genome",
+        window_size=10,
+        window_count=5,
+    )
+    metrics = metric_map(outputs["summary_path"])
+
+    assert outputs["status"] == "not_evaluable"
+    assert metrics["reason_code"] == "incomplete_mito_depth_profile"
+    assert metrics["mt_mean_depth"] == ""
+    assert metrics["nuclear_window_mean_depth"] == "10.0"
+    assert metrics["mt_to_nuclear_depth_ratio"] == ""
+
+
 def test_targeted_mt_profile_remains_not_applicable(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

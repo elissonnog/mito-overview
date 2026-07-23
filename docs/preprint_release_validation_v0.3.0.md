@@ -85,9 +85,9 @@ The `mito_copy_number` module reports only the within-sample mt:nuclear depth ra
 R_{mt:nuclear}=\frac{\overline{D}_{mt}}{\overline{D}_{nuclear}}
 \]
 
-The ratio is not multiplied by two and is not described as copies per diploid cell. Requested and valid nuclear-window counts are recorded. An absent valid nuclear-window set yields an empty ratio with `status=not_evaluable` and `reason_code=no_valid_nuclear_windows`; valid windows with an exactly zero mean denominator yield `status=not_evaluable` and `reason_code=zero_nuclear_depth_denominator`. Targeted-mt assays yield `not_applicable`.
+The mitochondrial numerator is accepted only when `mito_depth_per_base.tsv` contains exactly one integer coordinate for every position from 1 through `MT_LENGTH` and every depth is finite and nonnegative. Missing evidence yields `not_evaluable/no_mito_depth_evidence`; a present but truncated, duplicate, out-of-range, fractional-position, nonnumeric, negative, nonfinite, or extra-row profile yields `not_evaluable/incomplete_mito_depth_profile`. The ratio is not multiplied by two and is not described as copies per diploid cell. Requested and valid nuclear-window counts are recorded. An absent valid nuclear-window set yields an empty ratio with `status=not_evaluable` and `reason_code=no_valid_nuclear_windows`; valid windows with an exactly zero mean denominator yield `status=not_evaluable` and `reason_code=zero_nuclear_depth_denominator`. Targeted-mt assays yield `not_applicable`.
 
-The `TOY-WGS-001` known-answer test verifies mitochondrial depth 100, nuclear depth 10, and exact ratio 10.0. Negative tests verify missing mitochondrial evidence, missing and zero nuclear denominators, and targeted-mt gating. Primary tests: `tests/test_copy_number.py`.
+The `TOY-WGS-001` known-answer test verifies mitochondrial depth 100, nuclear depth 10, and exact ratio 10.0. Negative tests verify missing mitochondrial evidence; partial, duplicate, out-of-range, fractional-position, nonnumeric, negative, nonfinite, nonfinite-mean, and extra-row mitochondrial profiles; missing and zero nuclear denominators; and targeted-mt gating. Primary tests: `tests/test_copy_number.py`.
 
 ### 5. Reference scope, alignment ambiguity, and BED coordinates
 

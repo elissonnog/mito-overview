@@ -178,7 +178,7 @@ A synthetic public-core example bundle is staged at:
 
 Pages `01` through `14` in the example bundle correspond to the currently ported public report pages. In the bundled toy smoke-test path, pages `13` and `14` are exercised through local fixture resources so that a fresh clone can exercise the optional human enrichment interfaces without a private Phy-Mer checkout or live network dependency.
 
-In the short-read targeted-mt profile, pages `03`, `04`, `06`, `08`, `09`, `11`, `12`, and `13` are expected to be explicit status pages rather than active long-read analyses. In a short-read WGS profile, page `04` can report the experimental within-sample mt:nuclear depth ratio, but the long-read structural and molecule-level pages remain status-only.
+In the short-read targeted-mt profile, pages `03`, `04`, `06`, `08`, `09`, `11`, `12`, and `13` are expected to be explicit status pages rather than active long-read analyses. In a short-read WGS profile, page `04` can report the experimental within-sample mt:nuclear depth ratio, but the numerator is calculated only from a complete per-base mitochondrial depth profile containing exactly one finite, nonnegative value for every configured position. Incomplete or invalid profiles are `not_evaluable`, and the long-read structural and molecule-level pages remain status-only.
 
 In long-read mode without ONT bedmethyl sidecars, page `12` is expected to be a stable status-only methylation report while the core long-read analytical pages remain active.
 
