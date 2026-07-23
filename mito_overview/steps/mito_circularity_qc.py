@@ -13,6 +13,7 @@ import numpy as np
 import pandas as pd
 
 from mito_overview.report_common import df_to_html_table, figure_html, metric_card, render_page
+from mito_overview.table_contracts import validate_candidate_table
 
 SUMMARY_COLUMNS = ["metric", "value"]
 DEPTH_COLUMNS = ["position", "depth"]
@@ -36,6 +37,7 @@ CANDIDATE_COLUMNS = [
     "position",
     "ref_base",
     "alt_base",
+    "callable_depth",
     "depth",
     "alt_count",
     "alt_allele_fraction",
@@ -247,6 +249,12 @@ def run_step(
             mt_contig=mt_contig,
             message="no mito_depth_per_base.tsv available; writing status-only outputs",
         )
+
+    candidates_df = validate_candidate_table(
+        candidates_df,
+        table_name="mito_heteroplasmy_candidates.tsv",
+        mt_length=mt_length,
+    )
 
     position_values = depth_df["position"].to_numpy(dtype=float)
     depth_values = depth_df["depth"].to_numpy(dtype=float)

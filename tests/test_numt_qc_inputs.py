@@ -14,7 +14,7 @@ READ_ROWS = [
     {
         "read_name": "primary",
         "mapq": 10,
-        "query_length": 8000,
+        "query_length": 9000,
         "read_start": 1,
         "read_end": 7000,
         "reference_span": 7000,
@@ -22,7 +22,7 @@ READ_ROWS = [
         "aligned_span": 7000,
         "aligned_fraction_mt": round(7000 / 16569, 6),
         "softclip_bases": 2000,
-        "softclip_fraction": 0.25,
+        "softclip_fraction": round(2000 / 9000, 6),
         "has_sa_tag": 1,
         "is_primary": 1,
         "is_supplementary": 0,
@@ -265,13 +265,35 @@ def test_softclip_bases_cannot_exceed_query_length(tmp_path: Path) -> None:
     assert metrics["heuristic_numt_risk"] == "not_evaluable"
 
 
+def test_aligned_and_softclipped_query_bases_cannot_exceed_query_length(
+    tmp_path: Path,
+) -> None:
+    write_numt_inputs(tmp_path / "summary")
+    reads_path = tmp_path / "summary" / "mito_read_stats.tsv"
+    reads = pd.read_csv(reads_path, sep="\t")
+    reads.loc[0, "query_length"] = 8500
+    reads.loc[0, "softclip_fraction"] = round(2000 / 8500, 6)
+    reads.to_csv(reads_path, sep="\t", index=False)
+
+    outputs = run_numt_fixture(tmp_path)
+    metrics = metric_map(outputs["summary_path"])
+
+    assert metrics["numt_interpretation_status"] == "not_evaluable"
+    assert metrics["reason_code"] == "numt_read_stats_invalid_values"
+    assert (
+        metrics["invalid_required_read_values"]
+        == "aligned_reference_bases_plus_softclip_bases_vs_query_length"
+    )
+    assert metrics["heuristic_numt_risk"] == "not_evaluable"
+    assert metrics["heuristic_numt_risk_score"] == "NA"
+
+
 def test_inconsistent_softclip_fraction_cannot_produce_categorical_risk(
     tmp_path: Path,
 ) -> None:
     write_numt_inputs(tmp_path / "summary")
     reads_path = tmp_path / "summary" / "mito_read_stats.tsv"
     reads = pd.read_csv(reads_path, sep="\t")
-    reads.loc[0, "query_length"] = 100
     reads.loc[0, "softclip_bases"] = 100
     reads.loc[0, "softclip_fraction"] = 0
     reads.to_csv(reads_path, sep="\t", index=False)

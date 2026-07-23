@@ -391,6 +391,16 @@ def run_step(
             )
     if (
         query_lengths is not None
+        and aligned_bases is not None
+        and softclip_bases is not None
+    ):
+        if not bool((aligned_bases + softclip_bases <= query_lengths).all()):
+            invalid_read_columns = sorted(
+                set(invalid_read_columns)
+                | {"aligned_reference_bases_plus_softclip_bases_vs_query_length"}
+            )
+    if (
+        query_lengths is not None
         and softclip_bases is not None
         and softclip_fractions is not None
     ):

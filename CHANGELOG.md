@@ -31,6 +31,8 @@
 - require the complete generated 14-column candidate-observation schema, matching canonical and compatibility fractions, exact depth/base/strand identities, unique variant keys, and at most one selected alternate allele per mitochondrial position
 - require NUMT read evidence to contain consistent primary/secondary/supplementary flags, positive query lengths, bounded soft-clip counts, and soft-clip fractions that agree with their counts; require the upstream near-complete-alignment metric to carry successful module/metric states and the `primary_alignment_records` denominator
 - make the final GitHub publication transition restate the exact tag, target commit, release name, draft state, and non-prerelease state, and validate the complete assets returned by that transition before recording publication success
+- require each selected candidate alternate to have a largest observed non-reference canonical-base count, and apply the complete candidate contract in mvTool and circularity without silent deduplication
+- require aligned-reference plus soft-clipped query-consuming bases not to exceed read query length before categorical whole-genome NUMT-warning interpretation
 
 ## v0.2.1 - 2026-07-07
 - synchronized release metadata across `pyproject.toml`, `CITATION.cff`, README, release checklist, and manuscript source

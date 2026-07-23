@@ -159,3 +159,18 @@ def test_more_than_one_alternate_allele_per_position_is_rejected() -> None:
 
     with pytest.raises(ValueError, match="more than one alternate allele per position"):
         validate_candidate_table(combined, table_name="multi-alt-position")
+
+
+def test_selected_alternate_must_have_a_largest_nonreference_count() -> None:
+    candidate = valid_candidate()
+    candidate.loc[0, "alt_count"] = 2
+    candidate.loc[0, "alt_allele_fraction"] = 0.2
+    candidate.loc[0, "heteroplasmy_fraction"] = 0.2
+    candidate.loc[0, "alt_forward"] = 1
+    candidate.loc[0, "alt_reverse"] = 1
+    candidate.loc[0, "A"] = 2
+    candidate.loc[0, "C"] = 5
+    candidate.loc[0, "G"] = 3
+
+    with pytest.raises(ValueError, match="largest observed non-reference"):
+        validate_candidate_table(candidate, table_name="non-dominant-alternate")

@@ -12,6 +12,31 @@ from mito_overview.steps import mito_mvtool_annotation as mvtool
 from ._helpers import metric_map
 
 
+def complete_candidate(row: dict[str, object]) -> dict[str, object]:
+    position = int(row["position"])
+    ref_base = str(row["ref_base"])
+    alt_base = str(row["alt_base"])
+    callable_depth = int(row.get("callable_depth", 100))
+    alt_count = int(row.get("alt_count", 25))
+    counts = {base: 0 for base in ("A", "C", "G", "T")}
+    counts[ref_base] = callable_depth - alt_count
+    counts[alt_base] = alt_count
+    fraction = round(alt_count / callable_depth, 6)
+    return {
+        "position": position,
+        "ref_base": ref_base,
+        "alt_base": alt_base,
+        "callable_depth": callable_depth,
+        "depth": callable_depth,
+        "alt_count": alt_count,
+        "alt_allele_fraction": fraction,
+        "heteroplasmy_fraction": fraction,
+        "alt_forward": alt_count // 2,
+        "alt_reverse": alt_count - (alt_count // 2),
+        **counts,
+    }
+
+
 def prepare_case(
     root: Path,
     rows: list[dict[str, object]] | None = None,
@@ -20,10 +45,12 @@ def prepare_case(
     figures = root / "figures"
     reports = root / "reports"
     summary.mkdir(parents=True)
-    candidate_rows = rows or [
+    candidate_rows = rows if rows is not None else [
         {"position": 10, "ref_base": "A", "alt_base": "C", "callable_depth": 100, "alt_count": 25}
     ]
-    pd.DataFrame(candidate_rows).to_csv(summary / "mito_heteroplasmy_candidates.tsv", sep="\t", index=False)
+    pd.DataFrame([complete_candidate(row) for row in candidate_rows]).to_csv(
+        summary / "mito_heteroplasmy_candidates.tsv", sep="\t", index=False
+    )
     return summary, figures, reports
 
 
@@ -128,9 +155,10 @@ def test_network_mode_rejects_non_http_or_credentialed_urls_without_request(
     assert metrics["network_request_attempted"] == "0"
 
 
-def test_network_submits_every_candidate_once(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_network_submits_every_valid_candidate_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     candidate_rows = [
-        {"position": 10, "ref_base": "A", "alt_base": "C"},
         {"position": 10, "ref_base": "A", "alt_base": "C"},
         {"position": 20, "ref_base": "A", "alt_base": "G"},
     ]
@@ -161,6 +189,50 @@ def test_network_submits_every_candidate_once(tmp_path: Path, monkeypatch: pytes
     annotated = pd.read_csv(outputs["annot_path"], sep="\t")
     assert annotated["Input"].tolist() == submitted
     assert int(pd.read_csv(outputs["status_counts_path"], sep="\t")["candidate_sites"].sum()) == 2
+
+
+def test_duplicate_internal_candidates_are_rejected_before_network_use(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    candidate = {"position": 10, "ref_base": "A", "alt_base": "C"}
+    summary, figures, reports = prepare_case(tmp_path, [candidate, candidate])
+    monkeypatch.setattr(
+        mvtool.requests,
+        "Session",
+        lambda: (_ for _ in ()).throw(AssertionError("network session created")),
+    )
+
+    with pytest.raises(ValueError, match="duplicate variant keys"):
+        mvtool.run_step(
+            summary_dir=summary,
+            figure_dir=figures,
+            report_dir=reports,
+            sample_id="S1",
+            species="human",
+            mode="network",
+            api_url="https://mock.invalid/mvtool",
+        )
+
+
+def test_incomplete_internal_candidates_are_rejected_before_fixture_use(
+    tmp_path: Path,
+) -> None:
+    summary, figures, reports = prepare_case(tmp_path)
+    candidate_path = summary / "mito_heteroplasmy_candidates.tsv"
+    incomplete = pd.read_csv(candidate_path, sep="\t").drop(columns=["callable_depth"])
+    incomplete.to_csv(candidate_path, sep="\t", index=False)
+    fixture = Path(__file__).parent / "fixtures" / "mock_mvtool_annotations.json"
+
+    with pytest.raises(ValueError, match="lacks required columns: callable_depth"):
+        mvtool.run_step(
+            summary_dir=summary,
+            figure_dir=figures,
+            report_dir=reports,
+            sample_id="S1",
+            species="human",
+            mode="fixture",
+            fixture_json=fixture,
+        )
 
 
 @pytest.mark.parametrize(

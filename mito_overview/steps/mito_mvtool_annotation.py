@@ -17,6 +17,7 @@ import pandas as pd
 import requests
 
 from mito_overview.report_common import df_to_html_table, figure_html, metric_card, render_page
+from mito_overview.table_contracts import validate_candidate_table
 
 DEFAULT_FIELDS = [
     "Input",
@@ -34,7 +35,6 @@ DEFAULT_FIELDS = [
     "M1_cnt",
     "Mitomap_cnt",
 ]
-REQUIRED_CANDIDATE_COLUMNS = {"position", "ref_base", "alt_base"}
 STATUS_COLUMNS = ["Mitomap_status", "candidate_sites"]
 DISEASE_COLUMNS = ["Reported_association", "candidate_sites", "supporting_statuses"]
 POP_BIN_COLUMNS = ["AF_M1_bin", "candidate_sites"]
@@ -416,26 +416,12 @@ def run_step(
             ],
             message="No mitochondrial candidate variants were available for mvTool annotation.",
         )
-    if not REQUIRED_CANDIDATE_COLUMNS.issubset(candidates.columns):
-        missing = sorted(REQUIRED_CANDIDATE_COLUMNS.difference(candidates.columns))
-        return write_status_page(
-            report_path=report_path,
-            summary_path=summary_path,
-            annot_path=annot_path,
-            batch_log_path=batch_log_path,
-            sample_id=sample_id,
-            status_rows=[
-                {"metric": "status", "value": "unavailable"},
-                {"metric": "reason_code", "value": "candidate_table_missing_columns"},
-                {"metric": "missing_columns", "value": ",".join(missing)},
-            ],
-            message="The heteroplasmy candidate table is missing columns required for mvTool annotation.",
-        )
-
-    candidates = candidates.copy()
+    candidates = validate_candidate_table(
+        candidates,
+        table_name="mito_heteroplasmy_candidates.tsv",
+    )
     candidates["mvtool_input"] = [to_hgvs(r) for r in candidates.itertuples(index=False)]
-    candidates = candidates.drop_duplicates(subset=["mvtool_input"], keep="first").reset_index(drop=True)
-    unique_inputs = candidates[["mvtool_input"]].drop_duplicates().reset_index(drop=True)
+    unique_inputs = candidates[["mvtool_input"]].reset_index(drop=True)
     session = requests.Session()
     results: list[dict[str, object]] = []
     batch_rows: list[dict[str, object]] = []

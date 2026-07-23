@@ -227,6 +227,16 @@ def validate_candidate_table(
     ).astype("int64")
     if not (observed_alt == normalized["alt_count"]).all():
         raise ValueError(f"{table_name} alt_count disagrees with the alternate-base count")
+    largest_nonreference_count = normalized.apply(
+        lambda row: max(
+            int(row[base]) for base in ("A", "C", "G", "T") if base != row["ref_base"]
+        ),
+        axis=1,
+    ).astype("int64")
+    if not (normalized["alt_count"] == largest_nonreference_count).all():
+        raise ValueError(
+            f"{table_name} alternate base is not a largest observed non-reference allele"
+        )
     return normalized
 
 

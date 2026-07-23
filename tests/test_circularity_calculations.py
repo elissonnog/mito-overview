@@ -10,6 +10,30 @@ from mito_overview.steps.mito_circularity_qc import run_step
 from ._helpers import metric_map
 
 
+def candidate_table(positions: list[int]) -> pd.DataFrame:
+    rows = []
+    for position in positions:
+        rows.append(
+            {
+                "position": position,
+                "ref_base": "A",
+                "alt_base": "C",
+                "callable_depth": 10,
+                "depth": 10,
+                "alt_count": 3,
+                "alt_allele_fraction": 0.3,
+                "heteroplasmy_fraction": 0.3,
+                "alt_forward": 1,
+                "alt_reverse": 2,
+                "A": 7,
+                "C": 3,
+                "G": 0,
+                "T": 0,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
 def write_tables(
     summary_dir: Path,
     *,
@@ -47,7 +71,7 @@ def test_exact_edge_boundaries_and_valid_zero_depth(tmp_path: Path) -> None:
             {"read_name": "secondary", "read_start": 1, "read_end": 100, "softclip_fraction": 1.0, "is_primary": 0},
         ]
     )
-    candidates = pd.DataFrame({"position": [10, 11, 90, 91]})
+    candidates = candidate_table([10, 11, 90, 91])
     write_tables(tmp_path / "summary", depth=depth, reads=reads, candidates=candidates)
 
     outputs, metrics = run_circularity(tmp_path)
@@ -94,7 +118,7 @@ def test_unusable_or_missing_metric_evidence_is_na_not_zero(tmp_path: Path) -> N
             }
         ]
     )
-    candidates = pd.DataFrame({"position": ["bad"]})
+    candidates = pd.DataFrame()
     write_tables(tmp_path / "summary", depth=depth, reads=reads, candidates=candidates)
 
     outputs, metrics = run_circularity(tmp_path)
@@ -119,7 +143,7 @@ def test_unusable_or_missing_metric_evidence_is_na_not_zero(tmp_path: Path) -> N
     assert metrics["candidate_edge_fraction"] == "NA"
     assert metrics["candidate_edge_fraction_denominator_positions"] == "0"
     assert metrics["candidate_edge_fraction_status"] == "not_evaluable"
-    assert metrics["candidate_edge_fraction_reason_code"] == "invalid_candidate_positions"
+    assert metrics["candidate_edge_fraction_reason_code"] == "no_usable_candidate_positions"
     assert metrics["primary_read_start_in_edge_fraction"] == "NA"
     assert metrics["primary_read_start_in_edge_fraction_denominator_reads"] == "0"
     assert metrics["primary_read_start_in_edge_fraction_status"] == "not_evaluable"
@@ -146,7 +170,7 @@ def test_valid_zero_fractions_remain_observed_zero(tmp_path: Path) -> None:
             }
         ]
     )
-    candidates = pd.DataFrame({"position": [11, 90]})
+    candidates = candidate_table([11, 90])
     write_tables(tmp_path / "summary", depth=depth, reads=reads, candidates=candidates)
 
     outputs, metrics = run_circularity(tmp_path)
@@ -184,7 +208,7 @@ def test_malformed_optional_evidence_is_not_reported_as_observed_zero(
             }
         ]
     )
-    candidates = pd.DataFrame({"position": [10.9]})
+    candidates = pd.DataFrame()
     write_tables(tmp_path / "summary", depth=depth, reads=reads, candidates=candidates)
 
     outputs, metrics = run_circularity(tmp_path)
@@ -195,7 +219,7 @@ def test_malformed_optional_evidence_is_not_reported_as_observed_zero(
     assert metrics["candidate_edge_fraction"] == "NA"
     assert metrics["candidate_edge_fraction_denominator_positions"] == "0"
     assert metrics["candidate_edge_fraction_status"] == "not_evaluable"
-    assert metrics["candidate_edge_fraction_reason_code"] == "invalid_candidate_positions"
+    assert metrics["candidate_edge_fraction_reason_code"] == "no_usable_candidate_positions"
     assert metrics["primary_read_start_in_edge_fraction"] == "NA"
     assert metrics["primary_read_start_in_edge_fraction_status"] == "not_evaluable"
     assert metrics["primary_read_start_in_edge_fraction_reason_code"] == "invalid_primary_read_coordinate_pairs"
@@ -208,6 +232,31 @@ def test_malformed_optional_evidence_is_not_reported_as_observed_zero(
         metrics["edge_read_heavy_softclip_fraction_reason_code"]
         == "invalid_primary_read_coordinate_pairs"
     )
+
+
+@pytest.mark.parametrize(
+    ("candidate", "message"),
+    [
+        (candidate_table([10]).drop(columns=["callable_depth"]), "callable_depth"),
+        (pd.concat([candidate_table([10]), candidate_table([10])], ignore_index=True), "duplicate variant keys"),
+    ],
+    ids=("missing-generated-column", "duplicate-variant-key"),
+)
+def test_malformed_candidate_evidence_is_rejected_before_circularity_interpretation(
+    tmp_path: Path,
+    candidate: pd.DataFrame,
+    message: str,
+) -> None:
+    depth = pd.DataFrame({"position": range(1, 101), "depth": [10.0] * 100})
+    write_tables(
+        tmp_path / "summary",
+        depth=depth,
+        reads=pd.DataFrame(),
+        candidates=candidate,
+    )
+
+    with pytest.raises(ValueError, match=message):
+        run_circularity(tmp_path)
 
 
 def test_reversed_primary_read_coordinates_make_all_read_edge_metrics_undefined(
