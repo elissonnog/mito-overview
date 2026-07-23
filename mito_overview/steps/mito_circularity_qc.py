@@ -154,6 +154,49 @@ def _display_value(value: float, digits: int = 4) -> float | str:
     return "NA" if pd.isna(value) else round(float(value), digits)
 
 
+def _valid_coordinate_series(
+    df: pd.DataFrame,
+    column: str,
+    mt_length: int,
+) -> pd.Series | None:
+    """Return a complete one-based coordinate column or fail the metric closed."""
+
+    if df.empty or column not in df.columns:
+        return None
+    series = pd.to_numeric(df[column], errors="coerce")
+    values = series.to_numpy(dtype=float)
+    with np.errstate(invalid="ignore"):
+        valid = (
+            np.isfinite(values)
+            & (values == np.floor(values))
+            & (values >= 1)
+            & (values <= mt_length)
+        )
+    return series if bool(valid.all()) else None
+
+
+def _valid_unit_interval_series(df: pd.DataFrame, column: str) -> pd.Series | None:
+    """Return a complete finite fraction column constrained to zero through one."""
+
+    if df.empty or column not in df.columns:
+        return None
+    series = pd.to_numeric(df[column], errors="coerce")
+    values = series.to_numpy(dtype=float)
+    valid = np.isfinite(values) & (values >= 0) & (values <= 1)
+    return series if bool(valid.all()) else None
+
+
+def _valid_binary_series(df: pd.DataFrame, column: str) -> pd.Series | None:
+    """Return a complete exact binary indicator column."""
+
+    if df.empty or column not in df.columns:
+        return None
+    series = pd.to_numeric(df[column], errors="coerce")
+    values = series.to_numpy(dtype=float)
+    valid = np.isfinite(values) & np.isin(values, (0, 1))
+    return series if bool(valid.all()) else None
+
+
 def run_step(
     *,
     summary_dir: str | Path,
@@ -263,63 +306,100 @@ def run_step(
     edge_candidates = pd.DataFrame(columns=candidates_df.columns)
     candidate_edge_fraction = np.nan
     candidate_position_denominator = 0
-    if not candidates_df.empty and "position" in candidates_df.columns:
-        candidate_positions = pd.to_numeric(candidates_df["position"], errors="coerce")
-        valid_candidate_positions = candidate_positions.dropna()
-        candidate_position_denominator = int(len(valid_candidate_positions))
+    candidate_positions = _valid_coordinate_series(
+        candidates_df, "position", mt_length
+    )
+    if candidate_positions is not None:
+        candidate_position_denominator = int(len(candidate_positions))
         if candidate_position_denominator:
-            edge_mask = (valid_candidate_positions <= edge) | (
-                valid_candidate_positions > (mt_length - edge)
+            edge_mask = (candidate_positions <= edge) | (
+                candidate_positions > (mt_length - edge)
             )
-            edge_candidates = candidates_df.loc[edge_mask[edge_mask].index].copy()
+            edge_candidates = candidates_df.loc[edge_mask].copy()
             candidate_edge_fraction = float(
                 len(edge_candidates) / candidate_position_denominator
             )
-    candidate_status, candidate_reason = _metric_status(
-        candidate_position_denominator,
-        "no_usable_candidate_positions",
-    )
-
-    if "is_primary" in reads_df.columns:
-        primary_mask = pd.to_numeric(reads_df["is_primary"], errors="coerce") == 1
-        reads_eval = reads_df.loc[primary_mask.fillna(False)].copy()
+    if not candidates_df.empty and candidate_positions is None:
+        candidate_status, candidate_reason = (
+            "not_evaluable",
+            "invalid_candidate_positions",
+        )
     else:
-        reads_eval = reads_df.copy()
+        candidate_status, candidate_reason = _metric_status(
+            candidate_position_denominator,
+            "no_usable_candidate_positions",
+        )
+
+    primary_indicator = _valid_binary_series(reads_df, "is_primary")
+    primary_indicator_invalid = not reads_df.empty and primary_indicator is None
+    if primary_indicator is not None:
+        reads_eval = reads_df.loc[primary_indicator == 1].copy()
+    else:
+        reads_eval = reads_df.iloc[0:0].copy()
 
     edge_start_fraction = np.nan
     read_start_denominator = 0
-    if not reads_eval.empty and "read_start" in reads_eval.columns:
-        read_start = pd.to_numeric(reads_eval["read_start"], errors="coerce")
-        read_start = read_start.dropna()
+    read_start = _valid_coordinate_series(reads_eval, "read_start", mt_length)
+    if read_start is not None:
         read_start_denominator = int(len(read_start))
         if not read_start.empty:
             edge_start_fraction = float((read_start <= edge).mean())
-    read_start_status, read_start_reason = _metric_status(
-        read_start_denominator,
-        "no_usable_primary_read_starts",
-    )
+    if primary_indicator_invalid:
+        read_start_status, read_start_reason = (
+            "not_evaluable",
+            "invalid_primary_read_indicator",
+        )
+    elif not reads_eval.empty and read_start is None:
+        read_start_status, read_start_reason = (
+            "not_evaluable",
+            "invalid_primary_read_starts",
+        )
+    else:
+        read_start_status, read_start_reason = _metric_status(
+            read_start_denominator,
+            "no_usable_primary_read_starts",
+        )
 
     edge_end_fraction = np.nan
     read_end_denominator = 0
-    if not reads_eval.empty and "read_end" in reads_eval.columns:
-        read_end = pd.to_numeric(reads_eval["read_end"], errors="coerce")
-        read_end = read_end.dropna()
+    read_end = _valid_coordinate_series(reads_eval, "read_end", mt_length)
+    if read_end is not None:
         read_end_denominator = int(len(read_end))
         if not read_end.empty:
             edge_end_fraction = float((read_end > (mt_length - edge)).mean())
-    read_end_status, read_end_reason = _metric_status(
-        read_end_denominator,
-        "no_usable_primary_read_ends",
-    )
+    if primary_indicator_invalid:
+        read_end_status, read_end_reason = (
+            "not_evaluable",
+            "invalid_primary_read_indicator",
+        )
+    elif not reads_eval.empty and read_end is None:
+        read_end_status, read_end_reason = (
+            "not_evaluable",
+            "invalid_primary_read_ends",
+        )
+    else:
+        read_end_status, read_end_reason = _metric_status(
+            read_end_denominator,
+            "no_usable_primary_read_ends",
+        )
 
     edge_softclip_fraction = np.nan
     softclip_denominator = 0
-    softclip_columns = {"read_start", "read_end", "softclip_fraction"}
-    if not reads_eval.empty and softclip_columns.issubset(reads_eval.columns):
-        softclip_df = reads_eval.loc[:, ["read_start", "read_end", "softclip_fraction"]].copy()
-        for column in softclip_df.columns:
-            softclip_df[column] = pd.to_numeric(softclip_df[column], errors="coerce")
-        softclip_df = softclip_df.dropna()
+    softclip_values = _valid_unit_interval_series(reads_eval, "softclip_fraction")
+    softclip_input_valid = (
+        read_start is not None
+        and read_end is not None
+        and softclip_values is not None
+        and bool((read_end >= read_start).all())
+    )
+    if softclip_input_valid:
+        softclip_df = pd.DataFrame(
+            {
+                "read_start": read_start,
+                "read_end": read_end,
+                "softclip_fraction": softclip_values,
+            }
+        )
         softclip_denominator = int(len(softclip_df))
         if not softclip_df.empty:
             edge_softclip_fraction = float(
@@ -331,10 +411,21 @@ def run_step(
                     & (softclip_df["softclip_fraction"] > 0.20)
                 ).mean()
             )
-    softclip_status, softclip_reason = _metric_status(
-        softclip_denominator,
-        "no_usable_primary_read_softclip_records",
-    )
+    if primary_indicator_invalid:
+        softclip_status, softclip_reason = (
+            "not_evaluable",
+            "invalid_primary_read_indicator",
+        )
+    elif not reads_eval.empty and not softclip_input_valid:
+        softclip_status, softclip_reason = (
+            "not_evaluable",
+            "invalid_primary_read_softclip_records",
+        )
+    else:
+        softclip_status, softclip_reason = _metric_status(
+            softclip_denominator,
+            "no_usable_primary_read_softclip_records",
+        )
 
     first_edge_denominator = int(len(first_edge))
     last_edge_denominator = int(len(last_edge))

@@ -91,12 +91,22 @@ def normalize_modkit_counts(df: pd.DataFrame) -> pd.DataFrame:
         raise ValueError("Missing bedMethyl count column(s): " + ",".join(missing))
     for column in required:
         normalized[column] = pd.to_numeric(normalized[column], errors="raise")
+    required_values = normalized[required].to_numpy(dtype=float)
+    if not np.isfinite(required_values).all():
+        raise ValueError("bedMethyl required count columns must be finite")
+    if (normalized["valid_coverage"] < 0).any():
+        raise ValueError("bedMethyl valid coverage must be nonnegative")
 
     if "other_modified_count" not in normalized.columns:
         normalized["other_modified_count"] = np.nan
     normalized["other_modified_count"] = pd.to_numeric(
         normalized["other_modified_count"], errors="raise"
     )
+    supplied_other = normalized["other_modified_count"].notna()
+    if supplied_other.any() and not np.isfinite(
+        normalized.loc[supplied_other, "other_modified_count"].to_numpy(dtype=float)
+    ).all():
+        raise ValueError("bedMethyl supplied other-modified counts must be finite")
 
     # Legacy 13-column subsets omitted N_other_mod. Its only safe reconstruction
     # is the nonnegative residual of modkit's declared valid coverage.
@@ -200,6 +210,22 @@ def load_bedmethyl_table(
                 raise ValueError(
                     f"Malformed numeric value in bedMethyl source {src} at line {line_number}: {exc}"
                 ) from exc
+            numeric_values = {
+                "valid_coverage": valid_coverage,
+                "percent_modified": percent_modified,
+                "modified_count": modified_count,
+                "canonical_count": canonical_count,
+            }
+            if len(parts) >= 14:
+                numeric_values["other_modified_count"] = other_modified_count
+            nonfinite_fields = [
+                field for field, value in numeric_values.items() if not np.isfinite(value)
+            ]
+            if nonfinite_fields:
+                raise ValueError(
+                    f"Non-finite numeric value in bedMethyl source {src} at line "
+                    f"{line_number}: {','.join(nonfinite_fields)}"
+                )
             if mt_contig is not None and parts[0] != mt_contig:
                 raise ValueError(
                     f"Unexpected contig in bedMethyl source {src} at line {line_number}: "

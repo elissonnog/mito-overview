@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pandas as pd
+import pytest
 
 from mito_overview.steps.mito_numt_qc import run_step
 
@@ -192,5 +193,86 @@ def test_invalid_primary_indicator_cannot_produce_categorical_risk(tmp_path: Pat
     assert metrics["reason_code"] == "numt_primary_indicator_invalid"
     assert metrics["primary_indicator_valid"] == "0"
     assert metrics["primary_evidence_available"] == "0"
+    assert metrics["heuristic_numt_risk"] == "not_evaluable"
+    assert metrics["heuristic_numt_risk_score"] == "NA"
+
+
+@pytest.mark.parametrize(
+    ("column", "value"),
+    (
+        ("mapq", float("nan")),
+        ("mapq", float("inf")),
+        ("mapq", -1),
+        ("mapq", 1.5),
+        ("aligned_fraction_mt", float("nan")),
+        ("aligned_fraction_mt", float("inf")),
+        ("aligned_fraction_mt", -0.01),
+        ("aligned_fraction_mt", 1.01),
+        ("aligned_reference_bases", float("nan")),
+        ("aligned_reference_bases", float("inf")),
+        ("aligned_reference_bases", -1),
+        ("aligned_reference_bases", 1.5),
+        ("softclip_fraction", float("nan")),
+        ("softclip_fraction", float("-inf")),
+        ("softclip_fraction", -0.01),
+        ("softclip_fraction", 1.01),
+        ("has_sa_tag", float("nan")),
+        ("has_sa_tag", 2),
+        ("is_supplementary", float("nan")),
+        ("is_supplementary", 2),
+    ),
+)
+def test_invalid_required_read_domains_suppress_categorical_risk(
+    tmp_path: Path,
+    column: str,
+    value: float,
+) -> None:
+    write_numt_inputs(tmp_path / "summary")
+    reads_path = tmp_path / "summary" / "mito_read_stats.tsv"
+    reads = pd.read_csv(reads_path, sep="\t")
+    reads[column] = reads[column].astype(object)
+    reads.loc[0, column] = value
+    reads.to_csv(reads_path, sep="\t", index=False)
+
+    outputs = run_numt_fixture(tmp_path)
+    metrics = metric_map(outputs["summary_path"])
+
+    assert metrics["numt_interpretation_status"] == "not_evaluable"
+    assert metrics["reason_code"] == "numt_read_stats_invalid_values"
+    assert metrics["heuristic_numt_risk"] == "not_evaluable"
+    assert metrics["heuristic_numt_risk_score"] == "NA"
+
+
+def test_combined_malformed_numt_row_cannot_report_low_risk(tmp_path: Path) -> None:
+    write_numt_inputs(tmp_path / "summary")
+    reads_path = tmp_path / "summary" / "mito_read_stats.tsv"
+    reads = pd.read_csv(reads_path, sep="\t")
+    for column in (
+        "mapq",
+        "aligned_fraction_mt",
+        "aligned_reference_bases",
+        "softclip_fraction",
+        "has_sa_tag",
+        "is_supplementary",
+    ):
+        reads[column] = reads[column].astype(object)
+    reads.loc[0, "mapq"] = float("inf")
+    reads.loc[0, "aligned_fraction_mt"] = float("inf")
+    reads.loc[0, "aligned_reference_bases"] = -1
+    reads.loc[0, "softclip_fraction"] = -1
+    reads.loc[0, "has_sa_tag"] = 2
+    reads.loc[0, "is_supplementary"] = 2
+    reads.to_csv(reads_path, sep="\t", index=False)
+
+    outputs = run_numt_fixture(tmp_path)
+    metrics = metric_map(outputs["summary_path"])
+
+    assert metrics["numt_interpretation_status"] == "not_evaluable"
+    assert metrics["reason_code"] == "numt_read_stats_invalid_values"
+    assert metrics["low_mapq_fraction_lt20"] == "NA"
+    assert metrics["short_aligned_fraction_lt0.5_mt"] == "NA"
+    assert metrics["heavy_softclip_fraction_gt0.2"] == "NA"
+    assert metrics["sa_tag_fraction"] == "NA"
+    assert metrics["supplementary_fraction_all_reads"] == "NA"
     assert metrics["heuristic_numt_risk"] == "not_evaluable"
     assert metrics["heuristic_numt_risk_score"] == "NA"

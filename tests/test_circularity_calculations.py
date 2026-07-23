@@ -119,7 +119,7 @@ def test_unusable_or_missing_metric_evidence_is_na_not_zero(tmp_path: Path) -> N
     assert metrics["candidate_edge_fraction"] == "NA"
     assert metrics["candidate_edge_fraction_denominator_positions"] == "0"
     assert metrics["candidate_edge_fraction_status"] == "not_evaluable"
-    assert metrics["candidate_edge_fraction_reason_code"] == "no_usable_candidate_positions"
+    assert metrics["candidate_edge_fraction_reason_code"] == "invalid_candidate_positions"
     assert metrics["primary_read_start_in_edge_fraction"] == "NA"
     assert metrics["primary_read_start_in_edge_fraction_denominator_reads"] == "0"
     assert metrics["primary_read_start_in_edge_fraction_status"] == "not_evaluable"
@@ -162,6 +162,82 @@ def test_valid_zero_fractions_remain_observed_zero(tmp_path: Path) -> None:
     assert metrics["primary_read_end_in_edge_fraction_status"] == "ok"
     assert metrics["edge_read_heavy_softclip_fraction"] == "0.0"
     assert metrics["edge_read_heavy_softclip_fraction_status"] == "ok"
+
+
+def test_malformed_optional_evidence_is_not_reported_as_observed_zero(
+    tmp_path: Path,
+) -> None:
+    depth = pd.DataFrame(
+        {
+            "position": range(1, 101),
+            "depth": [10.0] * 100,
+        }
+    )
+    reads = pd.DataFrame(
+        [
+            {
+                "read_name": "malformed",
+                "read_start": -100,
+                "read_end": 1000,
+                "softclip_fraction": 2.0,
+                "is_primary": 1,
+            }
+        ]
+    )
+    candidates = pd.DataFrame({"position": [10.9]})
+    write_tables(tmp_path / "summary", depth=depth, reads=reads, candidates=candidates)
+
+    outputs, metrics = run_circularity(tmp_path)
+
+    assert outputs["status"] == "ok"
+    assert metrics["status"] == "ok"
+    assert metrics["depth_profile_complete"] == "1"
+    assert metrics["candidate_edge_fraction"] == "NA"
+    assert metrics["candidate_edge_fraction_denominator_positions"] == "0"
+    assert metrics["candidate_edge_fraction_status"] == "not_evaluable"
+    assert metrics["candidate_edge_fraction_reason_code"] == "invalid_candidate_positions"
+    assert metrics["primary_read_start_in_edge_fraction"] == "NA"
+    assert metrics["primary_read_start_in_edge_fraction_status"] == "not_evaluable"
+    assert metrics["primary_read_start_in_edge_fraction_reason_code"] == "invalid_primary_read_starts"
+    assert metrics["primary_read_end_in_edge_fraction"] == "NA"
+    assert metrics["primary_read_end_in_edge_fraction_status"] == "not_evaluable"
+    assert metrics["primary_read_end_in_edge_fraction_reason_code"] == "invalid_primary_read_ends"
+    assert metrics["edge_read_heavy_softclip_fraction"] == "NA"
+    assert metrics["edge_read_heavy_softclip_fraction_status"] == "not_evaluable"
+    assert (
+        metrics["edge_read_heavy_softclip_fraction_reason_code"]
+        == "invalid_primary_read_softclip_records"
+    )
+
+
+def test_invalid_primary_indicator_suppresses_optional_read_metrics(tmp_path: Path) -> None:
+    depth = pd.DataFrame({"position": range(1, 101), "depth": [10.0] * 100})
+    reads = pd.DataFrame(
+        [
+            {
+                "read_name": "invalid-indicator",
+                "read_start": 1,
+                "read_end": 100,
+                "softclip_fraction": 0.5,
+                "is_primary": 2,
+            }
+        ]
+    )
+    write_tables(
+        tmp_path / "summary",
+        depth=depth,
+        reads=reads,
+        candidates=pd.DataFrame(),
+    )
+
+    outputs, metrics = run_circularity(tmp_path)
+
+    assert outputs["status"] == "ok"
+    assert metrics["primary_read_rows"] == "0"
+    assert metrics["primary_read_start_in_edge_fraction"] == "NA"
+    assert metrics["primary_read_start_in_edge_fraction_reason_code"] == "invalid_primary_read_indicator"
+    assert metrics["primary_read_end_in_edge_fraction_reason_code"] == "invalid_primary_read_indicator"
+    assert metrics["edge_read_heavy_softclip_fraction_reason_code"] == "invalid_primary_read_indicator"
 
 
 def test_sparse_region_spanning_depth_profile_is_not_complete(tmp_path: Path) -> None:

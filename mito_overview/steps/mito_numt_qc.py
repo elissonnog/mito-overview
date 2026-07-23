@@ -9,6 +9,7 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 
 from mito_overview.report_common import df_to_html_table, figure_html, metric_card, render_page
@@ -97,13 +98,57 @@ def load_reads_table(path: Path) -> pd.DataFrame:
     return df
 
 
-def column_fraction(df: pd.DataFrame, column: str, predicate) -> float | None:
-    """Return a fraction only when every row has usable numeric evidence."""
+def validated_numeric_series(
+    df: pd.DataFrame,
+    column: str,
+    *,
+    minimum: float | None = None,
+    maximum: float | None = None,
+    integer: bool = False,
+    allowed_values: tuple[float, ...] | None = None,
+) -> pd.Series | None:
+    """Return numeric evidence only when every row satisfies its declared domain."""
 
     if df.empty or column not in df.columns:
         return None
     series = pd.to_numeric(df[column], errors="coerce")
-    if series.empty or series.isna().any():
+    values = series.to_numpy(dtype=float)
+    valid = np.isfinite(values)
+    if minimum is not None:
+        valid &= values >= minimum
+    if maximum is not None:
+        valid &= values <= maximum
+    if integer:
+        with np.errstate(invalid="ignore"):
+            valid &= values == np.floor(values)
+    if allowed_values is not None:
+        valid &= np.isin(values, allowed_values)
+    if series.empty or not bool(valid.all()):
+        return None
+    return series
+
+
+NUMT_READ_DOMAINS = {
+    "mapq": {"minimum": 0, "maximum": 255, "integer": True},
+    "aligned_fraction_mt": {"minimum": 0, "maximum": 1},
+    "aligned_reference_bases": {"minimum": 0, "integer": True},
+    "softclip_fraction": {"minimum": 0, "maximum": 1},
+    "has_sa_tag": {"integer": True, "allowed_values": (0, 1)},
+    "is_primary": {"integer": True, "allowed_values": (0, 1)},
+    "is_supplementary": {"integer": True, "allowed_values": (0, 1)},
+}
+
+
+def column_fraction(
+    df: pd.DataFrame,
+    column: str,
+    predicate,
+    **domain,
+) -> float | None:
+    """Return a fraction only when every row has valid in-domain evidence."""
+
+    series = validated_numeric_series(df, column, **domain)
+    if series is None:
         return None
     return float(predicate(series).mean())
 
@@ -117,7 +162,7 @@ def extract_metric_value(summary_df: pd.DataFrame, metric: str) -> float | None:
     if len(hit) != 1:
         return None
     value = pd.to_numeric(hit, errors="coerce").iloc[0]
-    if pd.isna(value):
+    if pd.isna(value) or not np.isfinite(float(value)):
         return None
     return float(value)
 
@@ -225,17 +270,25 @@ def run_step(
             reference_scope=reference_scope,
         )
 
-    primary_indicator_valid = False
-    if "is_primary" in reads_df.columns:
-        is_primary = pd.to_numeric(reads_df["is_primary"], errors="coerce")
-        primary_indicator_valid = bool(
-            not is_primary.isna().any() and is_primary.isin((0, 1)).all()
+    invalid_read_columns = sorted(
+        column
+        for column in REQUIRED_NUMT_READ_COLUMNS.intersection(reads_df.columns)
+        if validated_numeric_series(
+            reads_df,
+            column,
+            **NUMT_READ_DOMAINS[column],
         )
-        primary_df = (
-            reads_df[is_primary == 1].copy()
-            if primary_indicator_valid
-            else reads_df.iloc[0:0]
-        )
+        is None
+    )
+
+    is_primary = validated_numeric_series(
+        reads_df,
+        "is_primary",
+        **NUMT_READ_DOMAINS["is_primary"],
+    )
+    primary_indicator_valid = is_primary is not None
+    if primary_indicator_valid:
+        primary_df = reads_df[is_primary == 1].copy()
     else:
         primary_df = reads_df.iloc[0:0]
     primary_evidence_available = primary_indicator_valid and not primary_df.empty
@@ -247,16 +300,38 @@ def run_step(
         flush=True,
     )
 
-    low_mapq_fraction = column_fraction(eval_df, "mapq", lambda s: s < 20)
-    very_low_mapq_fraction = column_fraction(eval_df, "mapq", lambda s: s < 5)
-    short_span_fraction = column_fraction(eval_df, "aligned_fraction_mt", lambda s: s < 0.50)
-    heavy_softclip_fraction = column_fraction(eval_df, "softclip_fraction", lambda s: s > 0.20)
-    sa_fraction = column_fraction(eval_df, "has_sa_tag", lambda s: s == 1)
-    supplementary_fraction = column_fraction(reads_df, "is_supplementary", lambda s: s == 1)
+    low_mapq_fraction = column_fraction(
+        eval_df, "mapq", lambda s: s < 20, **NUMT_READ_DOMAINS["mapq"]
+    )
+    very_low_mapq_fraction = column_fraction(
+        eval_df, "mapq", lambda s: s < 5, **NUMT_READ_DOMAINS["mapq"]
+    )
+    short_span_fraction = column_fraction(
+        eval_df,
+        "aligned_fraction_mt",
+        lambda s: s < 0.50,
+        **NUMT_READ_DOMAINS["aligned_fraction_mt"],
+    )
+    heavy_softclip_fraction = column_fraction(
+        eval_df,
+        "softclip_fraction",
+        lambda s: s > 0.20,
+        **NUMT_READ_DOMAINS["softclip_fraction"],
+    )
+    sa_fraction = column_fraction(
+        eval_df, "has_sa_tag", lambda s: s == 1, **NUMT_READ_DOMAINS["has_sa_tag"]
+    )
+    supplementary_fraction = column_fraction(
+        reads_df,
+        "is_supplementary",
+        lambda s: s == 1,
+        **NUMT_READ_DOMAINS["is_supplementary"],
+    )
     primary_full_length_fraction = column_fraction(
         primary_df,
         "aligned_fraction_mt",
         lambda s: s >= 0.90,
+        **NUMT_READ_DOMAINS["aligned_fraction_mt"],
     )
     primary_full_length_reads: int | None = None
     if primary_full_length_fraction is not None:
@@ -301,6 +376,7 @@ def run_step(
     )
     evidence_complete = (
         not missing_read_columns
+        and not invalid_read_columns
         and not missing_summary_metrics
         and primary_evidence_available
         and not qc_fraction_mismatch
@@ -327,16 +403,18 @@ def run_step(
         reported_risk_score: int | str = "NA"
     elif not evidence_complete:
         interpretation_status = "not_evaluable"
-        if qc_fraction_mismatch:
-            reason_code = "numt_primary_full_length_fraction_mismatch"
-        elif "is_primary" in reads_df.columns and not primary_indicator_valid:
+        if "is_primary" in reads_df.columns and not primary_indicator_valid:
             reason_code = "numt_primary_indicator_invalid"
+        elif invalid_read_columns:
+            reason_code = "numt_read_stats_invalid_values"
         elif primary_indicator_valid and primary_df.empty:
             reason_code = "numt_primary_reads_unavailable"
         elif missing_read_columns and not missing_summary_metrics:
             reason_code = "numt_read_stats_missing_columns"
         elif missing_summary_metrics and not missing_read_columns:
             reason_code = "numt_qc_summary_missing_metrics"
+        elif qc_fraction_mismatch:
+            reason_code = "numt_primary_full_length_fraction_mismatch"
         else:
             reason_code = "numt_required_evidence_unavailable"
         reported_risk = "not_evaluable"
@@ -356,6 +434,7 @@ def run_step(
         f"risk={reported_risk} "
         f"score={reported_risk_score} "
         f"missing_read_columns={','.join(missing_read_columns) or 'none'} "
+        f"invalid_read_columns={','.join(invalid_read_columns) or 'none'} "
         f"missing_summary_metrics={','.join(missing_summary_metrics) or 'none'}",
         flush=True,
     )
@@ -454,11 +533,20 @@ def run_step(
     ).dropna(subset=["fraction"])
 
     scatter_fig_created = False
-    if not eval_df.empty and {"aligned_fraction_mt", "mapq"}.issubset(eval_df.columns):
-        scatter_df = eval_df.loc[:, ["aligned_fraction_mt", "mapq"]].apply(
-            pd.to_numeric, errors="coerce"
+    scatter_span = validated_numeric_series(
+        eval_df,
+        "aligned_fraction_mt",
+        **NUMT_READ_DOMAINS["aligned_fraction_mt"],
+    )
+    scatter_mapq = validated_numeric_series(
+        eval_df,
+        "mapq",
+        **NUMT_READ_DOMAINS["mapq"],
+    )
+    if scatter_span is not None and scatter_mapq is not None:
+        scatter_df = pd.DataFrame(
+            {"aligned_fraction_mt": scatter_span, "mapq": scatter_mapq}
         )
-        scatter_df = scatter_df.dropna()
         if not scatter_df.empty:
             plt.figure(figsize=(8, 5))
             plt.scatter(

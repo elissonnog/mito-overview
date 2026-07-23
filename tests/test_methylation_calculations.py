@@ -81,6 +81,48 @@ def test_track_summary_preserves_observed_zero_with_positive_denominators() -> N
     assert observed["count_weighted_status"] == "ok"
 
 
+@pytest.mark.parametrize("value", (float("nan"), float("inf"), float("-inf")))
+@pytest.mark.parametrize(
+    "column",
+    ("valid_coverage", "modified_count", "canonical_count"),
+)
+def test_track_summary_rejects_nonfinite_required_counts(
+    column: str,
+    value: float,
+) -> None:
+    row = {
+        "track": "NP_real_all_reads",
+        "position": 1,
+        "valid_coverage": 10.0,
+        "percent_modified": 30.0,
+        "modified_count": 3.0,
+        "canonical_count": 7.0,
+    }
+    row[column] = value
+
+    with pytest.raises(ValueError, match="required count columns must be finite"):
+        track_summary(methylation_rows([row]))
+
+
+def test_track_summary_rejects_negative_declared_valid_coverage() -> None:
+    rows = methylation_rows(
+        [
+            {
+                "track": "NP_real_all_reads",
+                "position": 1,
+                "valid_coverage": -1.0,
+                "percent_modified": 30.0,
+                "modified_count": 3.0,
+                "canonical_count": 7.0,
+                "other_modified_count": 0.0,
+            }
+        ]
+    )
+
+    with pytest.raises(ValueError, match="valid coverage must be nonnegative"):
+        track_summary(rows)
+
+
 def test_track_summary_marks_zero_denominators_not_evaluable() -> None:
     rows = methylation_rows(
         [

@@ -87,3 +87,30 @@ def test_load_bedmethyl_rejects_nonnumeric_data_with_source_and_line(tmp_path: P
     expected = rf"bedMethyl source {re.escape(str(source))} at line 2"
     with pytest.raises(ValueError, match=expected):
         load_bedmethyl_table(source, "NP_real_all_reads")
+
+
+@pytest.mark.parametrize("value", ("nan", "inf", "-inf"))
+@pytest.mark.parametrize(
+    ("column_index", "field"),
+    (
+        (9, "valid_coverage"),
+        (10, "percent_modified"),
+        (11, "modified_count"),
+        (12, "canonical_count"),
+        (13, "other_modified_count"),
+    ),
+)
+def test_load_bedmethyl_rejects_nonfinite_numeric_fields(
+    tmp_path: Path,
+    column_index: int,
+    field: str,
+    value: str,
+) -> None:
+    source = tmp_path / f"nonfinite-{field}-{value}.bedmethyl"
+    fields = MT_ROW.rstrip("\n").split("\t")
+    fields[column_index] = value
+    source.write_text("\t".join(fields) + "\n", encoding="utf-8")
+
+    expected = rf"bedMethyl source {re.escape(str(source))} at line 1: {field}"
+    with pytest.raises(ValueError, match=expected):
+        load_bedmethyl_table(source, "NP_real_all_reads")
