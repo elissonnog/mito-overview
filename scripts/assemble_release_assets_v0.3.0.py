@@ -2,8 +2,9 @@
 """Assemble and verify the prebuilt MitoOverview v0.3.0 release assets.
 
 This utility closes the handoff between validation-packet construction, report
-generation, and fresh-tag validation. It never builds Python distributions;
-those are rebuilt from the public tag by ``run_fresh_public_tag_validation``.
+generation, and fresh-tag validation. It promotes the exact packet-validated
+Python distributions; the fresh-tag gate rebuilds them only for an independent
+member-payload equivalence check.
 """
 
 from __future__ import annotations
@@ -35,6 +36,10 @@ FINAL_PROVENANCE_NAME = "report_provenance.json"
 ENVIRONMENT_NAME = "mito-overview-v0.3.0-environment.txt"
 ENVIRONMENT_ARCHIVE = "mito-overview-v0.3.0-environment-locks.tar.gz"
 RELEASE_NOTES_NAME = "RELEASE_NOTES_v0.3.0.md"
+DISTRIBUTION_NAMES = {
+    "mito_overview-0.3.0-py3-none-any.whl",
+    "mito_overview-0.3.0.tar.gz",
+}
 EXPECTED_LOCK_FILES = {
     f"{platform}/{name}-{platform}.{suffix}"
     for platform in ("linux-64", "osx-64", "osx-arm64")
@@ -414,6 +419,7 @@ def populate_and_verify_stage(
     release_notes: Path,
     environment_text: Path,
     environment_locks: Path,
+    distributions: dict[str, Path],
     receipt: dict[str, Any],
     report_provenance: dict[str, Any],
     audit_digest: str,
@@ -428,6 +434,8 @@ def populate_and_verify_stage(
     copy_plain_file(report_pdf, stage_root / report_pdf.name)
     copy_plain_file(release_notes, stage_root / RELEASE_NOTES_NAME)
     copy_plain_file(environment_text, stage_root / ENVIRONMENT_NAME)
+    for name in sorted(DISTRIBUTION_NAMES):
+        copy_plain_file(distributions[name], stage_root / name)
     deterministic_tar_gz(report_assets, stage_root / REPORT_ASSET_ARCHIVE, report_assets.name)
     deterministic_tar_gz(environment_locks, stage_root / ENVIRONMENT_ARCHIVE, "environment-locks")
 
@@ -478,6 +486,22 @@ def populate_and_verify_stage(
         "validation_zip_sha256": audit_digest,
         "assets": rows,
     }
+    receipt["distribution_asset_manifest"] = {
+        "schema_version": "1.0",
+        "manifest_type": "distribution_asset_manifest",
+        "repository": REPOSITORY,
+        "release_version": VERSION,
+        "release_tag": VERSION,
+        "git_commit": final_sha,
+        "assets": [
+            {
+                "name": name,
+                "bytes": (stage_root / name).stat().st_size,
+                "sha256": sha256(stage_root / name),
+            }
+            for name in sorted(DISTRIBUTION_NAMES)
+        ],
+    }
     verification_output = stage_root / VERIFICATION_NAME
     verification_output.write_text(
         json.dumps(receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8"
@@ -523,6 +547,7 @@ def assemble(
     release_notes: Path,
     environment_text: Path,
     environment_locks: Path,
+    distribution_root: Path,
     final_sha: str,
 ) -> dict[str, Any]:
     if len(final_sha) != 40 or any(character not in "0123456789abcdef" for character in final_sha):
@@ -535,6 +560,18 @@ def assemble(
     release_notes = require_plain_file(release_notes, "release notes")
     environment_text = require_plain_file(environment_text, "environment record")
     environment_locks = require_plain_directory(environment_locks, "environment lock root")
+    distribution_root = require_plain_directory(distribution_root, "distribution root")
+    distribution_entries = {path.name: path for path in distribution_root.iterdir()}
+    if set(distribution_entries) != DISTRIBUTION_NAMES:
+        raise AssemblyError(
+            "distribution root inventory mismatch; "
+            f"missing={sorted(DISTRIBUTION_NAMES - set(distribution_entries))!r}; "
+            f"unexpected={sorted(set(distribution_entries) - DISTRIBUTION_NAMES)!r}"
+        )
+    distributions = {
+        name: require_plain_file(distribution_entries[name], f"distribution {name}")
+        for name in sorted(DISTRIBUTION_NAMES)
+    }
 
     if output_root.exists() or output_root.is_symlink():
         raise AssemblyError("output root must not already exist")
@@ -546,6 +583,7 @@ def assemble(
     for source_root, label in (
         (report_root, "report root"),
         (environment_locks, "environment lock root"),
+        (distribution_root, "distribution root"),
     ):
         if output_root.is_relative_to(source_root) or source_root.is_relative_to(output_root):
             raise AssemblyError(f"output root must be disjoint from {label}")
@@ -597,6 +635,7 @@ def assemble(
             release_notes=release_notes,
             environment_text=environment_text,
             environment_locks=environment_locks,
+            distributions=distributions,
             receipt=receipt,
             report_provenance=report_provenance,
             audit_digest=audit_digest,
@@ -615,6 +654,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("release_notes", type=Path)
     parser.add_argument("environment_text", type=Path)
     parser.add_argument("environment_locks", type=Path)
+    parser.add_argument("distribution_root", type=Path)
     parser.add_argument("final_sha")
     return parser.parse_args()
 
@@ -630,6 +670,7 @@ def main() -> None:
             args.release_notes,
             args.environment_text,
             args.environment_locks,
+            args.distribution_root,
             args.final_sha,
         )
     except (AssemblyError, OSError) as error:

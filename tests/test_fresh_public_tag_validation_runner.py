@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import gzip
 import hashlib
 import io
 import json
@@ -22,6 +23,8 @@ RUNNER = ROOT / "scripts" / "run_fresh_public_tag_validation_v0.3.0.sh"
 IDENTITY_VERIFIER = ROOT / "scripts" / "verify_release_asset_identity_v0.3.0.py"
 PUBLIC_FIXTURE_URL = "https://github.com/fixture/mito-overview"
 ASSET_SOURCE_NAMES = {
+    "mito_overview-0.3.0-py3-none-any.whl",
+    "mito_overview-0.3.0.tar.gz",
     "mito-overview-v0.3.0-validation.zip",
     "MitoOverview_v0.3.0_release_validation_report.md",
     "MitoOverview_v0.3.0_release_validation_report.docx",
@@ -40,6 +43,8 @@ CANONICAL_ASSET_NAMES = ASSET_SOURCE_NAMES | {
 REPORT_ASSET_NAMES = ASSET_SOURCE_NAMES - {
     "mito-overview-v0.3.0-validation.zip",
     "mito-overview-v0.3.0-verification.json",
+    "mito_overview-0.3.0-py3-none-any.whl",
+    "mito_overview-0.3.0.tar.gz",
 }
 
 
@@ -160,6 +165,10 @@ cp -R "${{repo_root}}/examples/expected_reports/{bundle_name}/." "${{target}}/"
         ROOT / "scripts" / "verify_release_asset_identity_v0.3.0.py",
         repository / "scripts" / "verify_release_asset_identity_v0.3.0.py",
     )
+    shutil.copyfile(
+        ROOT / "scripts" / "verify_distribution_equivalence_v0.3.0.py",
+        repository / "scripts" / "verify_distribution_equivalence_v0.3.0.py",
+    )
 
     _git(repository, "add", ".")
     _git(
@@ -216,9 +225,12 @@ def _build_command_shims(root: Path, fixture_repository: Path) -> Path:
     fake_python = textwrap.dedent(
         f"""\
         #!{sys.executable}
+        import gzip
+        import io
         import os
         import sys
         import tarfile
+        import zipfile
         from pathlib import Path
 
         REAL_PYTHON = {sys.executable!r}
@@ -229,12 +241,32 @@ def _build_command_shims(root: Path, fixture_repository: Path) -> Path:
         if args[:2] == ["-m", "build"]:
             output = Path(args[args.index("--outdir") + 1])
             output.mkdir(parents=True, exist_ok=True)
-            (output / "mito_overview-0.3.0-py3-none-any.whl").write_bytes(b"fixture wheel\\n")
-            with tarfile.open(output / "mito_overview-0.3.0.tar.gz", "w:gz") as archive:
-                directory = tarfile.TarInfo("mito_overview-0.3.0")
-                directory.type = tarfile.DIRTYPE
-                directory.mode = 0o755
-                archive.addfile(directory)
+            wheel = output / "mito_overview-0.3.0-py3-none-any.whl"
+            wheel_members = {{
+                "mito_overview/__init__.py": b'__version__ = "0.3.0"\\n',
+                "mito_overview-0.3.0.dist-info/METADATA": b"Name: mito-overview\\nVersion: 0.3.0\\n",
+                "mito_overview-0.3.0.dist-info/WHEEL": b"Wheel-Version: 1.0\\nGenerator: fixture\\nRoot-Is-Purelib: true\\nTag: py3-none-any\\n",
+                "mito_overview-0.3.0.dist-info/RECORD": b"fixture-record\\n",
+            }}
+            with zipfile.ZipFile(wheel, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+                for name, payload in sorted(wheel_members.items()):
+                    info = zipfile.ZipInfo(name, date_time=(2026, 7, 21, 12, 0, 0))
+                    info.compress_type = zipfile.ZIP_DEFLATED
+                    archive.writestr(info, payload)
+            target = output / "mito_overview-0.3.0.tar.gz"
+            with target.open("wb") as raw:
+                with gzip.GzipFile(filename="", mode="wb", fileobj=raw, mtime=2) as compressed:
+                    with tarfile.open(fileobj=compressed, mode="w") as archive:
+                        members = {{
+                            "mito_overview-0.3.0/PKG-INFO": b"Name: mito-overview\\nVersion: 0.3.0\\n",
+                            "mito_overview-0.3.0/mito_overview/__init__.py": b'__version__ = "0.3.0"\\n',
+                        }}
+                        for name, payload in sorted(members.items()):
+                            info = tarfile.TarInfo(name)
+                            info.size = len(payload)
+                            info.mtime = 2
+                            info.mode = 0o644
+                            archive.addfile(info, io.BytesIO(payload))
             raise SystemExit(0)
         if args[:2] == ["-m", "venv"]:
             target = Path(args[-1]) / "bin" / "python"
@@ -271,6 +303,46 @@ def _sha256_bytes(value: bytes) -> str:
     return hashlib.sha256(value).hexdigest()
 
 
+def _write_fixture_distributions(root: Path) -> dict[str, bytes]:
+    wheel = root / "mito_overview-0.3.0-py3-none-any.whl"
+    wheel_members = {
+        "mito_overview/__init__.py": b'__version__ = "0.3.0"\n',
+        "mito_overview-0.3.0.dist-info/METADATA": (
+            b"Name: mito-overview\nVersion: 0.3.0\n"
+        ),
+        "mito_overview-0.3.0.dist-info/WHEEL": (
+            b"Wheel-Version: 1.0\nGenerator: fixture\nRoot-Is-Purelib: true\n"
+            b"Tag: py3-none-any\n"
+        ),
+        "mito_overview-0.3.0.dist-info/RECORD": b"fixture-record\n",
+    }
+    with zipfile.ZipFile(wheel, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for name, payload in sorted(wheel_members.items()):
+            info = zipfile.ZipInfo(name, date_time=(2020, 1, 1, 0, 0, 0))
+            info.compress_type = zipfile.ZIP_DEFLATED
+            archive.writestr(info, payload)
+
+    sdist = root / "mito_overview-0.3.0.tar.gz"
+    with sdist.open("wb") as raw:
+        with gzip.GzipFile(filename="", mode="wb", fileobj=raw, mtime=1) as compressed:
+            with tarfile.open(fileobj=compressed, mode="w") as archive:
+                members = {
+                    "mito_overview-0.3.0/PKG-INFO": (
+                        b"Name: mito-overview\nVersion: 0.3.0\n"
+                    ),
+                    "mito_overview-0.3.0/mito_overview/__init__.py": (
+                        b'__version__ = "0.3.0"\n'
+                    ),
+                }
+                for name, payload in sorted(members.items()):
+                    info = tarfile.TarInfo(name)
+                    info.size = len(payload)
+                    info.mtime = 1
+                    info.mode = 0o644
+                    archive.addfile(info, io.BytesIO(payload))
+    return {path.name: path.read_bytes() for path in (wheel, sdist)}
+
+
 def _build_release_asset_source(
     root: Path,
     final_sha: str,
@@ -280,6 +352,7 @@ def _build_release_asset_source(
 ) -> Path:
     source = root / "release-asset-source"
     source.mkdir()
+    distribution_payloads = _write_fixture_distributions(source)
     bound_sha = identity_sha or final_sha
     (source / "MitoOverview_v0.3.0_release_validation_report.md").write_text(
         f"# MitoOverview v0.3.0 release validation\n\nCommit: `{bound_sha}`\n",
@@ -339,6 +412,20 @@ def _build_release_asset_source(
         **run,
         "package_name": "mito-overview",
         "package_version": "0.3.0",
+        "dist_artifacts": [
+            {
+                "path": f"dist/{name}",
+                "kind": "wheel" if name.endswith(".whl") else "sdist",
+                "name": "mito-overview",
+                "version": "0.3.0",
+                "bytes": len(distribution_payloads[name]),
+                "sha256": _sha256_bytes(distribution_payloads[name]),
+                "direct_url_archive_sha256": _sha256_bytes(
+                    distribution_payloads[name]
+                ),
+            }
+            for name in sorted(distribution_payloads)
+        ],
     }
     figure_payload = b"\x89PNG\r\n\x1a\nfixture-figure\n"
     packet_files = {
@@ -347,6 +434,10 @@ def _build_release_asset_source(
             json.dumps(release_identity, sort_keys=True) + "\n"
         ).encode("utf-8"),
         "figures/source.png": figure_payload,
+        **{
+            f"dist/{name}": payload
+            for name, payload in sorted(distribution_payloads.items())
+        },
     }
     manifest_text = "".join(
         f"{_sha256_bytes(payload)}  {name}\n"
@@ -543,6 +634,22 @@ def _build_release_asset_source(
             "git_commit": bound_sha,
             "assets": report_assets,
         },
+        "distribution_asset_manifest": {
+            "schema_version": "1.0",
+            "manifest_type": "distribution_asset_manifest",
+            "repository": PUBLIC_FIXTURE_URL,
+            "release_version": "v0.3.0",
+            "release_tag": "v0.3.0",
+            "git_commit": bound_sha,
+            "assets": [
+                {
+                    "name": name,
+                    "bytes": len(distribution_payloads[name]),
+                    "sha256": _sha256_bytes(distribution_payloads[name]),
+                }
+                for name in sorted(distribution_payloads)
+            ],
+        },
     }
     (source / "mito-overview-v0.3.0-verification.json").write_text(
         json.dumps(verification, indent=2, sort_keys=True) + "\n", encoding="utf-8"
@@ -607,6 +714,7 @@ def test_runner_is_valid_shell_and_encodes_all_required_release_gates() -> None:
         "clean_tag_checkout",
         "locked_environment",
         "wheel_sdist_build",
+        "distribution_payload_equivalence",
         "installed_cli",
         "installed_sdist_cli",
         "unit_tests",
@@ -650,6 +758,8 @@ def test_runner_is_valid_shell_and_encodes_all_required_release_gates() -> None:
         "release_asset_semantic_identity.json",
         "safe_extract_validation_zip.py",
         "verify_release_asset_identity_v0.3.0.py",
+        "verify_distribution_equivalence_v0.3.0.py",
+        "distribution_payload_equivalence.json",
         "RELEASE_ASSET_SOURCE",
     ):
         assert required in text
@@ -800,8 +910,8 @@ def test_runner_success_path_emits_hash_verified_tag_bound_evidence(tmp_path: Pa
 
     with (evidence_root / "cases.tsv").open(encoding="utf-8", newline="") as handle:
         rows = list(csv.DictReader(handle, delimiter="\t"))
-    assert len(rows) == 15
-    assert len({row["case_id"] for row in rows}) == 15
+    assert len(rows) == 16
+    assert len({row["case_id"] for row in rows}) == 16
     assert {row["verdict"] for row in rows} == {"PASS"}
 
     receipt = json.loads(
@@ -809,7 +919,7 @@ def test_runner_success_path_emits_hash_verified_tag_bound_evidence(tmp_path: Pa
     )
     assert receipt["verified"] is True
     assert receipt["verdict"] == "PASS"
-    assert receipt["case_count"] == 15
+    assert receipt["case_count"] == 16
     assert receipt["git_commit"] == final_sha
     assert receipt["tag_object_sha"] == tag_object_sha
     assert receipt["trusted_asset_count"] == len(CANONICAL_ASSET_NAMES)
@@ -829,6 +939,20 @@ def test_runner_success_path_emits_hash_verified_tag_bound_evidence(tmp_path: Pa
     assert semantic["repository"] == PUBLIC_FIXTURE_URL
     assert semantic["report_asset_count"] == len(REPORT_ASSET_NAMES)
     assert {row["name"] for row in semantic["report_assets"]} == REPORT_ASSET_NAMES
+    assert semantic["distribution_bytes_match_packet"] is True
+    distribution_evidence = json.loads(
+        (evidence_root / "distribution_payload_equivalence.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert distribution_evidence["verdict"] == "PASS"
+    assert all(
+        row["member_payloads_identical"]
+        for row in distribution_evidence["distributions"]
+    )
+    assert receipt["distribution_payload_equivalence_sha256"] == hashlib.sha256(
+        (evidence_root / "distribution_payload_equivalence.json").read_bytes()
+    ).hexdigest()
 
     manifest = evidence_root / "evidence.sha256"
     assert receipt["evidence_manifest_sha256"] == hashlib.sha256(
@@ -947,3 +1071,28 @@ def test_runner_rejects_asset_substitution_after_semantic_manifest(
         rows = list(csv.DictReader(handle, delimiter="\t"))
     assert rows[-1]["case_id"] == "release_asset_semantic_identity"
     assert rows[-1]["verdict"] == "FAIL"
+
+
+@pytest.mark.parametrize(
+    "asset_name",
+    [
+        "mito_overview-0.3.0-py3-none-any.whl",
+        "mito_overview-0.3.0.tar.gz",
+    ],
+)
+def test_runner_rejects_packet_bound_distribution_substitution(
+    tmp_path: Path, asset_name: str
+) -> None:
+    completed, _, evidence_root, _, _ = _execute_fixture_runner(
+        tmp_path,
+        report_pages=14,
+        substitute_asset=asset_name,
+    )
+
+    assert completed.returncode != 0
+    assert (
+        "release distribution bytes differ from packet" in completed.stderr
+        or "distribution asset manifest mismatch" in completed.stderr
+        or "Distribution equivalence failed" in completed.stderr
+    )
+    assert not (evidence_root / "fresh_public_tag_validation.json").exists()

@@ -27,6 +27,10 @@ REPORT_ASSETS = {
     "mito-overview-v0.3.0-environment.txt",
     "mito-overview-v0.3.0-environment-locks.tar.gz",
 }
+DISTRIBUTION_ASSETS = {
+    "mito_overview-0.3.0-py3-none-any.whl": "wheel",
+    "mito_overview-0.3.0.tar.gz": "sdist",
+}
 REPORT_STEM = "MitoOverview_v0.3.0_release_validation_report"
 REPORT_ASSET_ARCHIVE = f"{REPORT_STEM}_assets.tar.gz"
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -472,6 +476,105 @@ def verify_report_provenance(
     return provenance
 
 
+def verify_distribution_assets(
+    asset_root: Path,
+    packet_root: Path,
+    verification: dict[str, Any],
+    release_identity: dict[str, Any],
+    repository_url: str,
+    final_sha: str,
+) -> list[dict[str, Any]]:
+    """Require release distributions to be the exact packet-validated bytes."""
+
+    declared = release_identity.get("dist_artifacts")
+    if not isinstance(declared, list) or not all(isinstance(row, dict) for row in declared):
+        raise IdentityError("packet release identity lacks distribution artifacts")
+    declared_by_name: dict[str, dict[str, Any]] = {}
+    expected_fields = {
+        "path",
+        "kind",
+        "name",
+        "version",
+        "bytes",
+        "sha256",
+        "direct_url_archive_sha256",
+    }
+    for row in declared:
+        if set(row) != expected_fields:
+            raise IdentityError("packet distribution artifact fields differ from schema")
+        path = row.get("path")
+        if not isinstance(path, str) or not path.startswith("dist/"):
+            raise IdentityError("packet distribution artifact path is invalid")
+        name = Path(path).name
+        if name in declared_by_name:
+            raise IdentityError(f"packet distribution artifact is duplicated: {name}")
+        declared_by_name[name] = row
+    if set(declared_by_name) != set(DISTRIBUTION_ASSETS):
+        raise IdentityError("packet distribution artifact inventory differs")
+
+    manifest = verification.get("distribution_asset_manifest")
+    if not isinstance(manifest, dict):
+        raise IdentityError("adjacent verification JSON lacks distribution_asset_manifest")
+    require_fields(
+        manifest,
+        {
+            "schema_version": "1.0",
+            "manifest_type": "distribution_asset_manifest",
+            "repository": repository_url,
+            "release_version": VERSION,
+            "release_tag": TAG,
+            "git_commit": final_sha,
+        },
+        "distribution_asset_manifest",
+    )
+    manifest_rows = manifest.get("assets")
+    if not isinstance(manifest_rows, list):
+        raise IdentityError("distribution_asset_manifest assets must be a list")
+    manifest_by_name: dict[str, dict[str, Any]] = {}
+    for row in manifest_rows:
+        if not isinstance(row, dict) or set(row) != {"name", "bytes", "sha256"}:
+            raise IdentityError("distribution_asset_manifest contains a malformed entry")
+        name = row.get("name")
+        if not isinstance(name, str) or name in manifest_by_name:
+            raise IdentityError("distribution_asset_manifest contains a duplicate or unnamed entry")
+        manifest_by_name[name] = row
+    if set(manifest_by_name) != set(DISTRIBUTION_ASSETS):
+        raise IdentityError("distribution_asset_manifest inventory differs")
+
+    verified: list[dict[str, Any]] = []
+    for name, kind in sorted(DISTRIBUTION_ASSETS.items()):
+        packet_path = packet_root / "dist" / name
+        asset_path = asset_root / name
+        for path, label in ((packet_path, "packet"), (asset_path, "release")):
+            if path.is_symlink() or not path.is_file() or path.stat().st_size == 0:
+                raise IdentityError(f"{label} distribution is not a regular file: {name}")
+        packet_sha256 = sha256(packet_path)
+        asset_sha256 = sha256(asset_path)
+        if packet_sha256 != asset_sha256 or packet_path.stat().st_size != asset_path.stat().st_size:
+            raise IdentityError(f"release distribution bytes differ from packet: {name}")
+        declared_row = declared_by_name[name]
+        if (
+            declared_row.get("path") != f"dist/{name}"
+            or declared_row.get("kind") != kind
+            or declared_row.get("version") != VERSION.removeprefix("v")
+            or str(declared_row.get("name", "")).lower().replace("_", "-")
+            != "mito-overview"
+            or declared_row.get("bytes") != packet_path.stat().st_size
+            or declared_row.get("sha256") != packet_sha256
+            or declared_row.get("direct_url_archive_sha256") != packet_sha256
+        ):
+            raise IdentityError(f"packet distribution identity mismatch: {name}")
+        manifest_row = manifest_by_name[name]
+        if manifest_row != {
+            "name": name,
+            "bytes": asset_path.stat().st_size,
+            "sha256": asset_sha256,
+        }:
+            raise IdentityError(f"distribution asset manifest mismatch: {name}")
+        verified.append(dict(declared_row))
+    return verified
+
+
 def verify(
     asset_root: Path,
     packet_root: Path,
@@ -582,6 +685,14 @@ def verify(
         if row.get("sha256") != sha256(path):
             raise IdentityError(f"report asset SHA-256 mismatch: {name}")
 
+    distributions = verify_distribution_assets(
+        asset_root,
+        packet_root,
+        verification,
+        identity,
+        repository_url,
+        final_sha,
+    )
     report_provenance = verify_report_provenance(
         asset_root,
         packet_root,
@@ -604,6 +715,9 @@ def verify(
         "packet_verifier_executed": True,
         "report_asset_count": len(REPORT_ASSETS),
         "report_assets": [by_name[name] for name in sorted(by_name)],
+        "distribution_asset_count": len(distributions),
+        "distribution_assets": distributions,
+        "distribution_bytes_match_packet": True,
         "report_provenance_verified": True,
         "report_figure_count": len(report_provenance["figures"]),
         "rendered_page_count": report_provenance["rendered_page_qa"]["page_count"],

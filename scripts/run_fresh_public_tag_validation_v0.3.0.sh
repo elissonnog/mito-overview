@@ -45,6 +45,8 @@ for other, label in ((work, "WORK_ROOT"), (evidence, "EVIDENCE_ROOT")):
         raise SystemExit(f"RELEASE_ASSET_SOURCE must be disjoint from {label}")
 
 expected = {
+    "mito_overview-0.3.0-py3-none-any.whl",
+    "mito_overview-0.3.0.tar.gz",
     "mito-overview-v0.3.0-validation.zip",
     "MitoOverview_v0.3.0_release_validation_report.md",
     "MitoOverview_v0.3.0_release_validation_report.docx",
@@ -194,11 +196,22 @@ test "\$(find $(printf '%q' "${DIST_ROOT}") -maxdepth 1 -type f -name 'mito_over
 EOF
 run_case wheel_sdist_build "wheel and source distribution built from public tag"
 
+write_command distribution_payload_equivalence <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+$(printf '%q' "${PYTHON_BIN}") \
+  $(printf '%q' "${CLONE_ROOT}/scripts/verify_distribution_equivalence_v0.3.0.py") \
+  $(printf '%q' "${ASSET_SOURCE_ROOT}") \
+  $(printf '%q' "${DIST_ROOT}") \
+  $(printf '%q' "${EVIDENCE_ROOT}/distribution_payload_equivalence.json")
+EOF
+run_case distribution_payload_equivalence "packet-bound distributions matched clean tag rebuild member payloads"
+
 write_command installed_cli <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
 $(printf '%q' "${PYTHON_BIN}") -m venv --system-site-packages $(printf '%q' "${VENV_ROOT}")
-$(printf '%q' "${VENV_ROOT}/bin/python") -m pip install --no-deps --force-reinstall $(printf '%q' "${DIST_ROOT}/mito_overview-0.3.0-py3-none-any.whl")
+$(printf '%q' "${VENV_ROOT}/bin/python") -m pip install --no-deps --force-reinstall $(printf '%q' "${ASSET_SOURCE_ROOT}/mito_overview-0.3.0-py3-none-any.whl")
 cd $(printf '%q' "${PROBE_ROOT}")
 $(printf '%q' "${VENV_ROOT}/bin/python") -I -c 'from importlib.metadata import version; import mito_overview; assert version("mito-overview") == "0.3.0"; assert "site-packages" in mito_overview.__file__'
 $(printf '%q' "${VENV_ROOT}/bin/python") -I -c 'import hashlib, sys; from pathlib import Path; from mito_overview.paths import annotation_resource_path; expected={"NC_012920.1.fa":"fc392cde8e63b4d2e3a870bb97cc0626dea33d46dfb8abdebffada040f42ec92","human_mt_reference.gtf":"6c8db180f5dd7999ae70bf9e3c7e5020c6c99b4cefd935d621eedcb1fc5408d9"}; root=Path(sys.prefix)/"share"/"mito-overview"/"annotations"; observed={name:annotation_resource_path(name) for name in expected}; assert observed=={name:root/name for name in expected}; assert {name:hashlib.sha256(path.read_bytes()).hexdigest() for name,path in observed.items()}==expected'
@@ -212,7 +225,7 @@ write_command installed_sdist_cli <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
 $(printf '%q' "${PYTHON_BIN}") -m venv --system-site-packages $(printf '%q' "${SDIST_VENV_ROOT}")
-$(printf '%q' "${SDIST_VENV_ROOT}/bin/python") -m pip install --no-deps --no-build-isolation --force-reinstall $(printf '%q' "${DIST_ROOT}/mito_overview-0.3.0.tar.gz")
+$(printf '%q' "${SDIST_VENV_ROOT}/bin/python") -m pip install --no-deps --no-build-isolation --force-reinstall $(printf '%q' "${ASSET_SOURCE_ROOT}/mito_overview-0.3.0.tar.gz")
 cd $(printf '%q' "${SDIST_PROBE_ROOT}")
 $(printf '%q' "${SDIST_VENV_ROOT}/bin/python") -I -c 'from importlib.metadata import version; from pathlib import Path; import mito_overview; p=Path(mito_overview.__file__).resolve(); assert version("mito-overview") == "0.3.0"; assert "site-packages" in p.parts; print(p)'
 $(printf '%q' "${SDIST_VENV_ROOT}/bin/python") -I -m mito_overview.cli --list-steps > installed_sdist_steps.tsv
@@ -224,7 +237,7 @@ write_command unit_tests <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
 $(printf '%q' "${PYTHON_BIN}") - \
-  $(printf '%q' "${DIST_ROOT}/mito_overview-0.3.0.tar.gz") \
+  $(printf '%q' "${ASSET_SOURCE_ROOT}/mito_overview-0.3.0.tar.gz") \
   $(printf '%q' "${SDIST_ROOT}") <<'PY'
 import tarfile
 import sys
@@ -384,6 +397,8 @@ write_command trusted_release_assets <<EOF
 set -euo pipefail
 test -z "\$(find $(printf '%q' "${RELEASE_ASSET_ROOT}") -mindepth 1 -maxdepth 1 -print -quit)"
 for name in \
+  mito_overview-0.3.0-py3-none-any.whl \
+  mito_overview-0.3.0.tar.gz \
   mito-overview-v0.3.0-validation.zip \
   MitoOverview_v0.3.0_release_validation_report.md \
   MitoOverview_v0.3.0_release_validation_report.docx \
@@ -397,8 +412,6 @@ for name in \
   test ! -L $(printf '%q' "${ASSET_SOURCE_ROOT}")/"\${name}"
   cp $(printf '%q' "${ASSET_SOURCE_ROOT}")/"\${name}" $(printf '%q' "${RELEASE_ASSET_ROOT}")/"\${name}"
 done
-cp $(printf '%q' "${DIST_ROOT}/mito_overview-0.3.0-py3-none-any.whl") $(printf '%q' "${RELEASE_ASSET_ROOT}/mito_overview-0.3.0-py3-none-any.whl")
-cp $(printf '%q' "${DIST_ROOT}/mito_overview-0.3.0.tar.gz") $(printf '%q' "${RELEASE_ASSET_ROOT}/mito_overview-0.3.0.tar.gz")
 (
   cd $(printf '%q' "${RELEASE_ASSET_ROOT}")
   find . -maxdepth 1 -type f ! -name SHA256SUMS -print0 | sort -z | \
@@ -541,6 +554,22 @@ with (receipt.parent / "cases.tsv").open(encoding="utf-8", newline="") as handle
 if not rows or any(row["verdict"] != "PASS" for row in rows):
     raise SystemExit("fresh public-tag validation contains a non-PASS case")
 trusted = json.loads(trusted_manifest.read_text(encoding="utf-8"))
+distribution_evidence_path = receipt.parent / "distribution_payload_equivalence.json"
+distribution_evidence = json.loads(
+    distribution_evidence_path.read_text(encoding="utf-8")
+)
+if (
+    distribution_evidence.get("evidence_type") != "distribution_payload_equivalence"
+    or distribution_evidence.get("release_version") != "v0.3.0"
+    or distribution_evidence.get("verdict") != "PASS"
+    or distribution_evidence.get("verified") is not True
+    or len(distribution_evidence.get("distributions", [])) != 2
+    or any(
+        row.get("member_payloads_identical") is not True
+        for row in distribution_evidence.get("distributions", [])
+    )
+):
+    raise SystemExit("distribution payload-equivalence evidence is invalid")
 expected_trusted_identity = {
     "schema_version": "1.0",
     "manifest_type": "trusted_release_asset_manifest",
@@ -579,6 +608,10 @@ payload = {
     "tag_identity_path": "tag_identity.json",
     "evidence_manifest_path": "evidence.sha256",
     "evidence_manifest_sha256": hashlib.sha256(manifest.read_bytes()).hexdigest(),
+    "distribution_payload_equivalence_path": distribution_evidence_path.name,
+    "distribution_payload_equivalence_sha256": hashlib.sha256(
+        distribution_evidence_path.read_bytes()
+    ).hexdigest(),
     "trusted_asset_manifest_path": trusted_manifest.name,
     "trusted_asset_manifest_sha256": hashlib.sha256(trusted_manifest.read_bytes()).hexdigest(),
     "trusted_asset_count": trusted["asset_count"],

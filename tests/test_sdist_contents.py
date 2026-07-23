@@ -40,6 +40,7 @@ REQUIRED_SDIST_PATHS = {
     "scripts/summarize_filter_profiles.py",
     "scripts/validation_fingerprints_v0_3_0.py",
     "scripts/verify_release_asset_identity_v0.3.0.py",
+    "scripts/verify_distribution_equivalence_v0.3.0.py",
     "tests/_helpers.py",
     "tests/conftest.py",
     "tests/fixtures/mock_mvtool_annotations.json",

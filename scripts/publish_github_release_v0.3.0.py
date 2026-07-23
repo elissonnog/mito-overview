@@ -20,7 +20,6 @@ from typing import Any, Protocol, Sequence
 
 EXPECTED_TAG = "v0.3.0"
 PUBLICATION_SCHEMA_VERSION = "1.0"
-HOSTING_FALLBACK = "annotated_tag_and_verified_asset_hashes"
 TAG_VALIDATION_SCHEMA_VERSION = "2.0"
 TAG_VALIDATION_PROFILE = "fresh_public_tag_validation_v2"
 TRUSTED_ASSET_MANIFEST_SCHEMA_VERSION = "1.0"
@@ -48,6 +47,7 @@ REQUIRED_TAG_VALIDATION_CASES = frozenset(
         "clean_tag_checkout",
         "locked_environment",
         "wheel_sdist_build",
+        "distribution_payload_equivalence",
         "installed_cli",
         "installed_sdist_cli",
         "unit_tests",
@@ -616,11 +616,11 @@ def _query_hosting_protection_state(
     result = runner.run(command, check=False)
     if _is_http_404(result):
         return {
-            "supported": False,
+            "supported": True,
             "enabled": False,
-            "reason": "immutable_releases_endpoint_unavailable",
-            "fallback_active": True,
-            "fallback": HOSTING_FALLBACK,
+            "reason": "not_enabled",
+            "fallback_active": False,
+            "fallback": None,
         }
     if result.returncode != 0:
         detail = result.stderr.strip() or result.stdout.strip() or "no command output"
@@ -646,21 +646,13 @@ def _query_hosting_protection_state(
 
 
 def _hosting_requires_immutable_release(state: dict[str, Any]) -> bool:
-    """Validate hosting state and return whether GitHub immutability is required."""
+    """Require confirmed native GitHub release immutability."""
 
     if state.get("supported") is True and state.get("enabled") is True:
         if state.get("fallback_active") not in (None, False):
-            raise PublicationError("Enabled immutable releases cannot use the fallback")
+            raise PublicationError("Enabled immutable releases cannot report a fallback")
         return True
-    if (
-        state.get("supported") is False
-        and state.get("enabled") is False
-        and state.get("reason") == "immutable_releases_endpoint_unavailable"
-        and state.get("fallback_active") is True
-        and state.get("fallback") == HOSTING_FALLBACK
-    ):
-        return False
-    raise PublicationError("Immutable-release hosting state is neither enabled nor unavailable")
+    raise PublicationError("Immutable releases are not confirmed enabled")
 
 
 def _require_hosting_protection_state(
@@ -675,10 +667,6 @@ def _ensure_hosting_protection_state(
     runner: Runner, config: PublicationConfig
 ) -> dict[str, Any]:
     state = _query_hosting_protection_state(runner, config)
-    if state.get("supported") is False:
-        fallback = {**state, "enabled_by_publisher": False}
-        _hosting_requires_immutable_release(fallback)
-        return fallback
     if state.get("enabled") is True:
         enabled = {**state, "enabled_by_publisher": False}
         _hosting_requires_immutable_release(enabled)
@@ -913,6 +901,9 @@ def _validate_tag_validation_receipt(
         "environment_path": "environment.txt",
         "tag_identity_path": "tag_identity.json",
         "evidence_manifest_path": "evidence.sha256",
+        "distribution_payload_equivalence_path": (
+            "distribution_payload_equivalence.json"
+        ),
         "trusted_asset_manifest_path": TRUSTED_ASSET_MANIFEST_NAME,
         "trusted_asset_count": len(CANONICAL_ASSET_NAMES),
     }
@@ -963,6 +954,41 @@ def _validate_tag_validation_receipt(
     manifest_sha = _sha256_file(manifest_path)
     if payload.get("evidence_manifest_sha256") != manifest_sha:
         raise PublicationError("Fresh public-tag evidence manifest digest differs")
+
+    distribution_path = root / "distribution_payload_equivalence.json"
+    distribution_digest = _sha256_file(distribution_path)
+    if payload.get("distribution_payload_equivalence_sha256") != distribution_digest:
+        raise PublicationError("Distribution payload-equivalence digest differs")
+    distribution_evidence = _load_json(
+        distribution_path, "distribution payload-equivalence evidence"
+    )
+    distribution_rows = distribution_evidence.get("distributions")
+    expected_distribution_names = {
+        "mito_overview-0.3.0-py3-none-any.whl",
+        "mito_overview-0.3.0.tar.gz",
+    }
+    if (
+        distribution_evidence.get("schema_version") != "1.0"
+        or distribution_evidence.get("evidence_type")
+        != "distribution_payload_equivalence"
+        or distribution_evidence.get("release_version") != config.tag
+        or distribution_evidence.get("verdict") != "PASS"
+        or distribution_evidence.get("verified") is not True
+        or not isinstance(distribution_rows, list)
+        or len(distribution_rows) != 2
+        or {
+            row.get("filename")
+            for row in distribution_rows
+            if isinstance(row, dict)
+        }
+        != expected_distribution_names
+        or any(
+            not isinstance(row, dict)
+            or row.get("member_payloads_identical") is not True
+            for row in distribution_rows
+        )
+    ):
+        raise PublicationError("Distribution payload-equivalence evidence is invalid")
 
     trusted_path = root / TRUSTED_ASSET_MANIFEST_NAME
     if trusted_path.is_symlink() or not trusted_path.is_file():
@@ -1080,6 +1106,7 @@ def _validate_tag_validation_receipt(
         "receipt_sha256": _sha256_file(receipt_path),
         "evidence_manifest_sha256": manifest_sha,
         "trusted_asset_manifest_sha256": trusted_digest,
+        "distribution_payload_equivalence_sha256": distribution_digest,
         "trusted_asset_manifest": {
             "manifest_name": TRUSTED_ASSET_MANIFEST_NAME,
             "sha256sums_sha256": trusted["sha256sums_sha256"],
@@ -1209,6 +1236,18 @@ def _validate_receipt_identity(record: dict[str, Any], config: PublicationConfig
         or tag_object.get("peeled_target_sha") != config.final_sha
     ):
         raise PublicationError("Publication receipt annotated-tag identity is invalid")
+    hosting = record.get("hosting_protection")
+    if (
+        not isinstance(hosting, dict)
+        or hosting.get("supported") is not True
+        or hosting.get("enabled") is not True
+        or hosting.get("fallback_active") not in (None, False)
+        or hosting.get("fallback") is not None
+        or record.get("immutable_releases") != hosting
+    ):
+        raise PublicationError(
+            "Publication receipt does not confirm native immutable releases"
+        )
 
 
 def _load_draft_record(

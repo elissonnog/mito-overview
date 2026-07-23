@@ -31,6 +31,7 @@ FRESH_TAG_RUNNER_CASE_CONTRACT = (
     "annotated_tag_identity",
     "locked_environment",
     "wheel_sdist_build",
+    "distribution_payload_equivalence",
     "installed_cli",
     "installed_sdist_cli",
     "unit_tests",
@@ -125,6 +126,32 @@ def _write_tag_validation_evidence(root: Path, asset_root: Path) -> Path:
     (root / "logs").mkdir(exist_ok=True)
     (root / "commands/run.sh").write_text("pytest -q\n", encoding="utf-8")
     (root / "logs/run.log").write_text("all checks passed\n", encoding="utf-8")
+    distribution_evidence = root / "distribution_payload_equivalence.json"
+    distribution_evidence.write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "evidence_type": "distribution_payload_equivalence",
+                "release_version": publication.EXPECTED_TAG,
+                "distributions": [
+                    {
+                        "filename": name,
+                        "member_payloads_identical": True,
+                    }
+                    for name in (
+                        "mito_overview-0.3.0-py3-none-any.whl",
+                        "mito_overview-0.3.0.tar.gz",
+                    )
+                ],
+                "verified": True,
+                "verdict": "PASS",
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
     trusted_manifest = root / publication.TRUSTED_ASSET_MANIFEST_NAME
     trusted_assets = []
     for name in sorted(publication.CANONICAL_ASSET_NAMES):
@@ -194,6 +221,12 @@ def _write_tag_validation_evidence(root: Path, asset_root: Path) -> Path:
                 "tag_identity_path": "tag_identity.json",
                 "evidence_manifest_path": "evidence.sha256",
                 "evidence_manifest_sha256": _sha256(manifest.read_bytes()),
+                "distribution_payload_equivalence_path": (
+                    "distribution_payload_equivalence.json"
+                ),
+                "distribution_payload_equivalence_sha256": _sha256(
+                    distribution_evidence.read_bytes()
+                ),
                 "trusted_asset_manifest_path": publication.TRUSTED_ASSET_MANIFEST_NAME,
                 "trusted_asset_manifest_sha256": _sha256(trusted_manifest.read_bytes()),
                 "trusted_asset_count": len(publication.CANONICAL_ASSET_NAMES),
@@ -227,6 +260,9 @@ def _reseal_tag_validation_evidence(receipt: Path) -> None:
     payload["trusted_asset_manifest_sha256"] = _sha256(
         (root / publication.TRUSTED_ASSET_MANIFEST_NAME).read_bytes()
     )
+    payload["distribution_payload_equivalence_sha256"] = _sha256(
+        (root / "distribution_payload_equivalence.json").read_bytes()
+    )
     receipt.write_text(
         json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
@@ -239,13 +275,13 @@ class FakeGhRunner:
         final_sha: str = FINAL_SHA,
         main_sha: str = FINAL_SHA,
         immutable_payload: dict[str, Any] | None = None,
-        immutable_get_unavailable: bool = False,
+        immutable_get_disabled_404: bool = False,
         immutable_put_unavailable: bool = False,
     ) -> None:
         self.final_sha = final_sha
         self.main_sha = main_sha
         self.immutable_payload = immutable_payload or {"enabled": False}
-        self.immutable_get_unavailable = immutable_get_unavailable
+        self.immutable_get_disabled_404 = immutable_get_disabled_404
         self.immutable_put_unavailable = immutable_put_unavailable
         self.tag_ref: dict[str, Any] | None = {
             "ref": f"refs/tags/{publication.EXPECTED_TAG}",
@@ -343,13 +379,14 @@ class FakeGhRunner:
         if route.startswith("git/") and method != "GET":
             raise AssertionError("Publisher must never create or move a tag")
         if route == "immutable-releases" and method == "GET":
-            if self.immutable_get_unavailable:
+            if self.immutable_get_disabled_404:
                 return self._result(args, returncode=1, stderr="Not Found (HTTP 404)")
             return self._result(args, self.immutable_payload)
         if route == "immutable-releases" and method == "PUT":
             if self.immutable_put_unavailable:
                 return self._result(args, returncode=1, stderr="Not Found (HTTP 404)")
             self.mutations.append("enable_immutable_releases")
+            self.immutable_get_disabled_404 = False
             self.immutable_payload = {
                 "enabled": True,
                 "enforced_by_owner": False,
@@ -524,6 +561,24 @@ def test_prepublication_receipt_is_read_only_and_precedes_release_assets(
     )
 
 
+def test_prepublication_get_404_records_disabled_without_mutation(tmp_path: Path) -> None:
+    runner = FakeGhRunner(immutable_get_disabled_404=True)
+
+    output = publication.publish_github_release(
+        _prepublication_config(tmp_path / "publication"), runner
+    )
+
+    payload = json.loads(output.read_text(encoding="utf-8"))
+    assert payload["hosting_protection"] == {
+        "supported": True,
+        "enabled": False,
+        "reason": "not_enabled",
+        "fallback_active": False,
+        "fallback": None,
+    }
+    assert runner.mutations == []
+
+
 def test_prepublication_receipt_rejects_an_existing_release_without_mutation(
     tmp_path: Path,
 ) -> None:
@@ -640,8 +695,8 @@ def test_missing_or_tampered_fresh_tag_evidence_blocks_before_github_mutation(
 
 
 def test_publisher_case_contract_matches_fresh_tag_runner_inventory() -> None:
-    assert len(FRESH_TAG_RUNNER_CASE_CONTRACT) == 15
-    assert len(set(FRESH_TAG_RUNNER_CASE_CONTRACT)) == 15
+    assert len(FRESH_TAG_RUNNER_CASE_CONTRACT) == 16
+    assert len(set(FRESH_TAG_RUNNER_CASE_CONTRACT)) == 16
     runner_cases = tuple(
         re.findall(
             r"^run_case ([A-Za-z0-9_]+) ",
@@ -998,34 +1053,129 @@ def test_publisher_enables_and_records_immutable_release_protection(
     assert runner.mutations.count("enable_immutable_releases") == 1
 
 
-def test_unavailable_immutable_release_feature_uses_annotated_tag_hash_fallback(
+def test_get_404_enables_and_confirms_immutable_releases(
     tmp_path: Path,
 ) -> None:
-    runner = FakeGhRunner(immutable_get_unavailable=True)
-    runner.immutable_after_publish = False
-    asset_dir, output_dir, payloads = _create_and_upload(tmp_path, runner)
-
+    runner = FakeGhRunner(immutable_get_disabled_404=True)
     record_path = publication.publish_github_release(
-        _config(output_dir, "publish", asset_dir=asset_dir), runner
+        _config(tmp_path / "publication", "create-draft"), runner
     )
-
     record = json.loads(record_path.read_text(encoding="utf-8"))
     protection = record["hosting_protection"]
     assert protection == {
+        "supported": True,
+        "enabled": True,
+        "reason": "queried",
+        "fallback_active": False,
+        "fallback": None,
+        "api_payload": {"enabled": True, "enforced_by_owner": False},
+        "enabled_by_publisher": True,
+    }
+    assert runner.mutations.count("enable_immutable_releases") == 1
+    assert runner.mutations.count("create_release") == 1
+    assert runner.mutations.index("enable_immutable_releases") < runner.mutations.index(
+        "create_release"
+    )
+
+
+def test_get_404_cannot_activate_a_hosting_fallback(tmp_path: Path) -> None:
+    runner = FakeGhRunner(
+        immutable_get_disabled_404=True,
+        immutable_put_unavailable=True,
+    )
+
+    with pytest.raises(publication.PublicationError, match="Unable to enable immutable"):
+        publication.publish_github_release(
+            _config(tmp_path / "publication", "create-draft"), runner
+        )
+
+    assert runner.mutations == []
+
+
+@pytest.mark.parametrize("confirmation", ["disabled", "malformed", "404"])
+def test_put_requires_a_confirmed_enabled_followup_query(
+    tmp_path: Path, confirmation: str
+) -> None:
+    class UnconfirmedEnableRunner(FakeGhRunner):
+        def __init__(self) -> None:
+            super().__init__(immutable_payload={"enabled": False})
+            self.after_put = False
+
+        def run(self, args: Sequence[str], *, check: bool = True) -> Any:
+            is_route = any(
+                str(arg).endswith("/immutable-releases") for arg in args
+            )
+            method = args[args.index("--method") + 1] if is_route else None
+            if is_route and method == "PUT":
+                result = super().run(args, check=check)
+                self.after_put = True
+                return result
+            if is_route and method == "GET" and self.after_put:
+                if confirmation == "404":
+                    return publication.CommandResult(
+                        tuple(args), 1, "", "Not Found (HTTP 404)"
+                    )
+                payload = {} if confirmation == "malformed" else {"enabled": False}
+                return publication.CommandResult(
+                    tuple(args), 0, json.dumps(payload), ""
+                )
+            return super().run(args, check=check)
+
+    runner = UnconfirmedEnableRunner()
+    with pytest.raises(
+        publication.PublicationError,
+        match="did not become enabled",
+    ):
+        publication.publish_github_release(
+            _config(tmp_path / "publication", "create-draft"), runner
+        )
+    assert runner.mutations == ["enable_immutable_releases"]
+
+
+def test_later_get_404_cannot_continue_or_downgrade(tmp_path: Path) -> None:
+    runner = FakeGhRunner()
+    asset_dir, output_dir, _ = _create_and_upload(tmp_path, runner)
+    mutations_before = list(runner.mutations)
+    runner.immutable_get_disabled_404 = True
+
+    with pytest.raises(
+        publication.PublicationError,
+        match="not confirmed enabled",
+    ):
+        publication.publish_github_release(
+            _config(output_dir, "publish", asset_dir=asset_dir), runner
+        )
+    assert runner.mutations == mutations_before
+
+
+def test_legacy_fallback_draft_receipt_is_rejected(tmp_path: Path) -> None:
+    runner = FakeGhRunner()
+    asset_dir = tmp_path / "assets"
+    _write_assets(asset_dir)
+    output_dir = tmp_path / "publication"
+    publication.publish_github_release(
+        _config(output_dir, "create-draft", asset_dir=asset_dir), runner
+    )
+    path = output_dir / "github_publication.draft.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    fallback = {
         "supported": False,
         "enabled": False,
         "reason": "immutable_releases_endpoint_unavailable",
         "fallback_active": True,
         "fallback": "annotated_tag_and_verified_asset_hashes",
     }
-    assert record["release"]["immutable"] is False
-    assert record["tag_object"]["peeled_target_sha"] == FINAL_SHA
-    assert record["verified"] is True
-    assert record["verification_state"] == "verified_published"
-    assert {item["name"] for item in record["remote_assets"]} == set(payloads)
-    assert record["published_redownload_verification"]["verified"] is True
-    assert "enable_immutable_releases" not in runner.mutations
-    assert runner.mutations.count("publish_release") == 1
+    payload["hosting_protection"] = fallback
+    payload["immutable_releases"] = fallback
+    path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+
+    with pytest.raises(
+        publication.PublicationError,
+        match="does not confirm native immutable releases",
+    ):
+        publication.publish_github_release(
+            _config(output_dir, "upload-verify", asset_dir=asset_dir), runner
+        )
 
 
 def test_supported_immutable_endpoint_cannot_downgrade_to_fallback_after_put_404(

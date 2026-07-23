@@ -26,6 +26,10 @@ from urllib.parse import urlsplit
 
 EXPECTED_RELEASE_VERSION = "v0.3.0"
 EXPECTED_PACKAGE_NAME = "mito-overview"
+EXPECTED_DISTRIBUTIONS = {
+    "mito_overview-0.3.0-py3-none-any.whl": "wheel",
+    "mito_overview-0.3.0.tar.gz": "sdist",
+}
 EXPECTED_LICENSE = "MIT"
 EXPECTED_CREATORS = ("Elisson Lopes", "Xiaowu Gai")
 PACKET_SCHEMA_VERSION = "2.0"
@@ -1928,25 +1932,35 @@ def validate_distributions(
     expected_name: str,
     expected_version: str,
 ) -> list[dict[str, object]]:
-    if not dist_root.is_dir():
+    if dist_root.is_symlink() or not dist_root.is_dir():
         raise FileNotFoundError(f"Required distribution directory not found: {dist_root}")
-    files = sorted(path for path in dist_root.rglob("*") if path.is_file())
-    if not files:
-        raise ValueError(f"Distribution directory contains no artifacts: {dist_root}")
+    entries = sorted(dist_root.iterdir(), key=lambda path: path.name)
+    actual_names = {path.name for path in entries}
+    expected_names = set(EXPECTED_DISTRIBUTIONS)
+    if actual_names != expected_names or len(entries) != len(expected_names):
+        raise ValueError(
+            "Distribution inventory does not match the two canonical release artifacts; "
+            f"missing={sorted(expected_names - actual_names)!r}; "
+            f"unexpected={sorted(actual_names - expected_names)!r}"
+        )
+    files = [dist_root / name for name in sorted(EXPECTED_DISTRIBUTIONS)]
+    for path in files:
+        if path.is_symlink() or not path.is_file():
+            raise ValueError(f"Distribution artifact must be a regular file: {path}")
 
     artifacts: list[dict[str, object]] = []
-    kinds: set[str] = set()
     for path in files:
         if path.stat().st_size == 0:
             raise ValueError(f"Distribution artifact is empty: {path}")
         kind, name, version = inspect_distribution(path)
+        if kind != EXPECTED_DISTRIBUTIONS[path.name]:
+            raise ValueError(f"Distribution kind mismatch in {path}: {kind!r}")
         if normalize_project_name(name) != normalize_project_name(expected_name):
             raise ValueError(f"Distribution name mismatch in {path}: {name!r}")
         if version != expected_version:
             raise ValueError(
                 f"Distribution version mismatch in {path}: {version!r} != {expected_version!r}"
             )
-        kinds.add(kind)
         artifacts.append(
             {
                 "path": f"dist/{path.relative_to(dist_root).as_posix()}",
@@ -1957,9 +1971,6 @@ def validate_distributions(
                 "sha256": sha256(path),
             }
         )
-    missing_kinds = sorted({"wheel", "sdist"} - kinds)
-    if missing_kinds:
-        raise ValueError(f"Distribution evidence is missing: {', '.join(missing_kinds)}")
     return artifacts
 
 
@@ -8589,7 +8600,22 @@ def inspect_dist(path):
     name, version = metadata_fields(text, path)
     return kind, name, version
 
-dist_files = sorted(candidate for candidate in (root / "dist").rglob("*") if candidate.is_file())
+dist_root = root / "dist"
+expected_dist_paths = {
+    "dist/mito_overview-0.3.0-py3-none-any.whl",
+    "dist/mito_overview-0.3.0.tar.gz",
+}
+if dist_root.is_symlink() or not dist_root.is_dir():
+    raise SystemExit("distribution directory is missing or is a symlink")
+dist_entries = sorted(dist_root.iterdir(), key=lambda candidate: candidate.name)
+actual_dist_paths = {
+    candidate.relative_to(root).as_posix() for candidate in dist_entries
+}
+if actual_dist_paths != expected_dist_paths or len(dist_entries) != 2:
+    raise SystemExit("distribution directory must contain only the canonical wheel and sdist")
+if any(candidate.is_symlink() or not candidate.is_file() for candidate in dist_entries):
+    raise SystemExit("distribution artifacts must be regular files")
+dist_files = dist_entries
 declared_dist = identity.get("dist_artifacts", [])
 if fresh.get("distributions") != declared_dist:
     raise SystemExit("fresh-clone and release-identity distribution inventories differ")
@@ -8602,8 +8628,7 @@ if not isinstance(declared_dist, list) or not all(
 ):
     raise SystemExit("distribution inventory fields do not match schema")
 declared_paths = {entry.get("path") for entry in declared_dist}
-actual_dist_paths = {candidate.relative_to(root).as_posix() for candidate in dist_files}
-if declared_paths != actual_dist_paths or len(declared_paths) != len(declared_dist):
+if declared_paths != expected_dist_paths or len(declared_paths) != len(declared_dist):
     raise SystemExit("distribution inventory does not match release identity")
 dist_kinds = set()
 for entry in declared_dist:

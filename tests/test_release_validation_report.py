@@ -553,7 +553,9 @@ def make_packet(tmp_path: Path) -> tuple[Path, Path, list[Path]]:
                 "hosting_protection": {
                     "supported": True,
                     "enabled": False,
-                    "reason": "disabled",
+                    "reason": "not_enabled",
+                    "fallback_active": False,
+                    "fallback": None,
                 },
                 "release": {
                     "id": None,
@@ -634,6 +636,25 @@ def test_builds_markdown_docx_and_embeds_verified_packet_figures(tmp_path: Path)
     assert "w:evenAndOddHeaders" in settings_xml
     assert 'w:headerReference w:type="even"' in document_xml
     assert 'w:footerReference w:type="even"' in document_xml
+
+
+def test_report_rejects_legacy_immutable_release_fallback(tmp_path: Path) -> None:
+    packet, publication, _ = make_packet(tmp_path)
+    payload = json.loads(publication.read_text(encoding="utf-8"))
+    payload["hosting_protection"] = {
+        "supported": False,
+        "enabled": False,
+        "reason": "immutable_releases_endpoint_unavailable",
+        "fallback_active": True,
+        "fallback": "annotated_tag_and_verified_asset_hashes",
+    }
+    publication.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+
+    with pytest.raises(
+        report_builder.ReportValidationError,
+        match="hosting-state query is invalid",
+    ):
+        report_builder.generate_report(packet, publication, tmp_path / "report")
 
 
 @pytest.mark.parametrize(

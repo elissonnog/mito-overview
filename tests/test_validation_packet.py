@@ -260,6 +260,42 @@ def replace_distribution_with_same_identity(path: Path) -> None:
     raise AssertionError(f"Unsupported distribution fixture: {path}")
 
 
+@pytest.mark.parametrize(
+    "mutation",
+    ("extra_file", "extra_wheel", "nested_file", "renamed_wheel", "symlink_wheel"),
+)
+def test_distribution_inventory_requires_exact_canonical_files(
+    tmp_path: Path, mutation: str
+) -> None:
+    dist_root = tmp_path / "dist"
+    write_distribution_artifacts(dist_root)
+    wheel = dist_root / "mito_overview-0.3.0-py3-none-any.whl"
+    if mutation == "extra_file":
+        (dist_root / "notes.txt").write_text("unexpected\n", encoding="ascii")
+    elif mutation == "extra_wheel":
+        shutil.copy2(wheel, dist_root / "mito_overview-0.3.0-py2-none-any.whl")
+    elif mutation == "nested_file":
+        nested = dist_root / "nested"
+        nested.mkdir()
+        (nested / "payload.txt").write_text("unexpected\n", encoding="ascii")
+    elif mutation == "renamed_wheel":
+        wheel.rename(dist_root / "mito-overview-0.3.0-py3-none-any.whl")
+    elif mutation == "symlink_wheel":
+        external = tmp_path / "external.whl"
+        shutil.copy2(wheel, external)
+        wheel.unlink()
+        wheel.symlink_to(external)
+    else:
+        raise AssertionError(mutation)
+
+    with pytest.raises((FileNotFoundError, ValueError), match="Distribution"):
+        packet_builder.validate_distributions(
+            dist_root,
+            packet_builder.EXPECTED_PACKAGE_NAME,
+            packet_builder.EXPECTED_RELEASE_VERSION.removeprefix("v"),
+        )
+
+
 def provenance_record(name: str, content: bytes | None = None) -> dict[str, object]:
     payload = content if content is not None else name.encode()
     return {
@@ -2639,6 +2675,39 @@ def test_extracted_verifier_rejects_resealed_same_identity_distribution(
     checked = verify_packet(packet)
     assert checked.returncode != 0
     assert "distribution identity mismatch" in checked.stderr
+
+
+def test_extracted_verifier_rejects_resealed_extra_distribution(
+    tmp_path: Path,
+) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    output = tmp_path / "output"
+    packet_builder.build_packet(packet_args(validation, repo, output))
+    packet = output / "packet"
+    identity_path = packet / "release_identity.json"
+    fresh_path = packet / "acceptance/fresh_clone.json"
+    identity = read_json(identity_path)
+    fresh = read_json(fresh_path)
+    assert isinstance(identity, dict) and isinstance(fresh, dict)
+
+    source_row = next(
+        item for item in identity["dist_artifacts"] if item["kind"] == "wheel"
+    )
+    source = packet / source_row["path"]
+    extra = packet / "dist/mito_overview-0.3.0-py2-none-any.whl"
+    shutil.copy2(source, extra)
+    extra_row = dict(source_row)
+    extra_row["path"] = "dist/mito_overview-0.3.0-py2-none-any.whl"
+    identity["dist_artifacts"].append(extra_row)
+    fresh["distributions"].append(dict(extra_row))
+    write_json(identity_path, identity)
+    write_json(fresh_path, fresh)
+    rewrite_manifest(packet)
+
+    checked = verify_packet(packet)
+    assert checked.returncode != 0
+    assert "distribution directory must contain only" in checked.stderr
 
 
 def test_packet_requires_all_resolved_ci_platforms(tmp_path: Path) -> None:

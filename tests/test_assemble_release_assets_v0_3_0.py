@@ -29,6 +29,14 @@ EXPECTED_ASSETS = {
     "RELEASE_NOTES_v0.3.0.md",
     "mito-overview-v0.3.0-environment.txt",
     "mito-overview-v0.3.0-environment-locks.tar.gz",
+    "mito_overview-0.3.0-py3-none-any.whl",
+    "mito_overview-0.3.0.tar.gz",
+}
+REPORT_ASSETS = EXPECTED_ASSETS - {
+    "mito-overview-v0.3.0-validation.zip",
+    "mito-overview-v0.3.0-verification.json",
+    "mito_overview-0.3.0-py3-none-any.whl",
+    "mito_overview-0.3.0.tar.gz",
 }
 
 
@@ -52,7 +60,15 @@ def _png_bytes(size: tuple[int, int]) -> bytes:
 
 def _write_packet(
     root: Path,
-) -> tuple[Path, Path, dict[str, dict[str, object]], bytes]:
+) -> tuple[Path, Path, dict[str, dict[str, object]], bytes, dict[str, bytes]]:
+    distributions = {
+        "mito_overview-0.3.0-py3-none-any.whl": b"fixture wheel bytes\n",
+        "mito_overview-0.3.0.tar.gz": b"fixture source distribution bytes\n",
+    }
+    distribution_kinds = {
+        "mito_overview-0.3.0-py3-none-any.whl": "wheel",
+        "mito_overview-0.3.0.tar.gz": "sdist",
+    }
     objects = {
         "run.json": {
             "schema_version": "2.0",
@@ -69,6 +85,20 @@ def _write_packet(
             "repository": REPOSITORY,
             "package_name": "mito-overview",
             "package_version": "0.3.0",
+            "dist_artifacts": [
+                {
+                    "path": f"dist/{name}",
+                    "kind": distribution_kinds[name],
+                    "name": "mito-overview",
+                    "version": "0.3.0",
+                    "bytes": len(distributions[name]),
+                    "sha256": hashlib.sha256(distributions[name]).hexdigest(),
+                    "direct_url_archive_sha256": hashlib.sha256(
+                        distributions[name]
+                    ).hexdigest(),
+                }
+                for name in sorted(distributions)
+            ],
         },
     }
     source_figure = _png_bytes((800, 450))
@@ -77,6 +107,7 @@ def _write_packet(
         for name, payload in objects.items()
     }
     payloads["figures/source.png"] = source_figure
+    payloads.update({f"dist/{name}": payload for name, payload in distributions.items()})
     payloads["artifacts.sha256"] = "".join(
         f"{hashlib.sha256(payload).hexdigest()}  {name}\n"
         for name, payload in sorted(payloads.items())
@@ -116,12 +147,12 @@ def _write_packet(
         }
         for name in ("run.json", "release_identity.json", "artifacts.sha256")
     }
-    return archive, receipt, packet_records, source_figure
+    return archive, receipt, packet_records, source_figure, distributions
 
 
 def _write_inputs(root: Path) -> dict[str, Path]:
     root.mkdir(parents=True, exist_ok=True)
-    archive, receipt, packet_records, source_figure = _write_packet(root)
+    archive, receipt, packet_records, source_figure, distributions = _write_packet(root)
     report = root / "report"
     assets = report / f"{REPORT_STEM}_assets"
     assets.mkdir(parents=True)
@@ -281,6 +312,10 @@ def _write_inputs(root: Path) -> dict[str, Path]:
             )
             + "\n"
         )
+    dist = root / "dist"
+    dist.mkdir()
+    for name, payload in distributions.items():
+        (dist / name).write_bytes(payload)
     return {
         "archive": archive,
         "receipt": receipt,
@@ -288,6 +323,7 @@ def _write_inputs(root: Path) -> dict[str, Path]:
         "notes": notes,
         "environment": environment,
         "locks": locks,
+        "dist": dist,
     }
 
 
@@ -304,6 +340,7 @@ def _run(root: Path, inputs: dict[str, Path], *, final_sha: str = FINAL_SHA):
             str(inputs["notes"]),
             str(inputs["environment"]),
             str(inputs["locks"]),
+            str(inputs["dist"]),
             final_sha,
         ],
         check=False,
@@ -328,14 +365,17 @@ def test_assembler_builds_exact_semantically_bound_inventory(tmp_path: Path) -> 
     manifest = receipt["report_asset_manifest"]
     assert manifest["git_commit"] == FINAL_SHA
     assert manifest["validation_zip_sha256"] == _sha256(inputs["archive"])
-    assert {row["name"] for row in manifest["assets"]} == EXPECTED_ASSETS - {
-        "mito-overview-v0.3.0-validation.zip",
-        "mito-overview-v0.3.0-verification.json",
-    }
+    assert {row["name"] for row in manifest["assets"]} == REPORT_ASSETS
     for row in manifest["assets"]:
         path = output / row["name"]
         assert row["size"] == path.stat().st_size
         assert row["sha256"] == _sha256(path)
+    distribution_manifest = receipt["distribution_asset_manifest"]
+    assert {row["name"] for row in distribution_manifest["assets"]} == {
+        "mito_overview-0.3.0-py3-none-any.whl",
+        "mito_overview-0.3.0.tar.gz",
+    }
+    assert result["distribution_bytes_match_packet"] is True
 
     with tarfile.open(output / f"{REPORT_STEM}_assets.tar.gz", "r:gz") as handle:
         names = set(handle.getnames())
@@ -361,6 +401,38 @@ def test_assembler_archives_are_deterministic(tmp_path: Path) -> None:
         "mito-overview-v0.3.0-environment-locks.tar.gz",
     ):
         assert _sha256(first_output / name) == _sha256(second_output / name)
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "mito_overview-0.3.0-py3-none-any.whl",
+        "mito_overview-0.3.0.tar.gz",
+    ],
+)
+def test_assembler_rejects_distribution_bytes_not_bound_in_packet(
+    tmp_path: Path, name: str
+) -> None:
+    inputs = _write_inputs(tmp_path)
+    path = inputs["dist"] / name
+    path.write_bytes(path.read_bytes() + b"substituted\n")
+
+    completed, output = _run(tmp_path, inputs)
+
+    assert completed.returncode != 0
+    assert "release distribution bytes differ from packet" in completed.stderr
+    assert not output.exists()
+
+
+def test_assembler_rejects_extra_distribution_file(tmp_path: Path) -> None:
+    inputs = _write_inputs(tmp_path)
+    (inputs["dist"] / "poison.txt").write_text("poison\n", encoding="ascii")
+
+    completed, output = _run(tmp_path, inputs)
+
+    assert completed.returncode != 0
+    assert "distribution root inventory mismatch" in completed.stderr
+    assert not output.exists()
 
 
 @pytest.mark.parametrize("target", ["report", "notes", "environment"])

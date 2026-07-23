@@ -782,21 +782,13 @@ def validate_publication(
         raise ReportValidationError("GitHub publication annotated-tag identity is invalid")
 
     hosting = publication["hosting_protection"]
-    hosting_query_valid = isinstance(hosting, dict) and (
-        (
-            hosting.get("supported") is True
-            and hosting.get("enabled") in {True, False, None}
-            and hosting.get("fallback_active") in {None, False}
-        )
-        or (
-            hosting.get("supported") is False
-            and hosting.get("enabled") is False
-            and hosting.get("reason")
-            == "immutable_releases_endpoint_unavailable"
-            and hosting.get("fallback_active") is True
-            and hosting.get("fallback")
-            == "annotated_tag_and_verified_asset_hashes"
-        )
+    hosting_query_valid = (
+        isinstance(hosting, dict)
+        and hosting.get("supported") is True
+        and hosting.get("enabled") in {True, False}
+        and hosting.get("fallback_active") in {None, False}
+        and hosting.get("fallback") in {None}
+        and hosting.get("reason") in {"queried", "not_enabled"}
     )
     if not hosting_query_valid:
         raise ReportValidationError("GitHub prepublication hosting-state query is invalid")
@@ -1702,9 +1694,9 @@ def build_report_blocks(
             "is itself a hashed release asset. The separate post-publication receipt "
             "github_publication.json verifies the uploaded asset inventory, authenticated "
             "redownload hashes, annotated tag, and final hosting-protection state without "
-            "making this report self-referential. Native release immutability is required "
-            "when the GitHub endpoint is available; otherwise the receipt identifies the "
-            "bounded annotated-tag and verified-asset-hash fallback explicitly."
+            "making this report self-referential. Native GitHub release immutability must "
+            "be enabled and confirmed before draft creation; publication fails closed if "
+            "enablement or the post-publication immutability query does not succeed."
         ),
         TableBlock(
             "Bounded claim-to-evidence mapping",

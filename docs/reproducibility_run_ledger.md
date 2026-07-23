@@ -138,14 +138,17 @@ The runner must reject legacy DOI/Zenodo arguments, require an absent raw-cache 
    `report_build_provenance.json`, render every DOCX page, inspect every page,
    and run `scripts/finalize_release_validation_report_v0.3.0.py` to bind the
    PDF and rendered-page PASS inventory to the exact validation ZIP.
-8. Assemble the non-distribution assets and run
+8. Assemble the complete eleven-file source, including the exact packet-bound
+   wheel and source distribution, and run
    `scripts/assemble_release_assets_v0.3.0.py`; its atomic output is the only
    accepted input to `scripts/run_fresh_public_tag_validation_v0.3.0.sh`
    against the public HTTPS tag. The assembler requires exactly five resolved
    environment records per platform and revalidates the packet-to-figure-to-
-   DOCX-to-PDF-to-rendered-page provenance. Retain its semantic identity result
-   plus the fresh-tag cases, commands, logs, environment, annotated-tag
-   identity, trusted 12-asset manifest, hashes, and PASS receipt.
+   DOCX-to-PDF-to-rendered-page provenance. Fresh-tag validation installs those
+   exact packet-bound distributions and separately rebuilds the public tag only
+   to prove member-payload equivalence. Retain that evidence plus the fresh-tag
+   cases, commands, logs, environment, annotated-tag identity, trusted 12-asset
+   manifest, hashes, and PASS receipt.
 9. Supply the sealed assets and receipt to create the draft, establish the
    recorded hosting-protection state, upload and authenticated-redownload all
    assets, publish, and write the independently queried post-publication proof
@@ -153,9 +156,8 @@ The runner must reject legacy DOI/Zenodo arguments, require an absent raw-cache 
 
 The report builder accepts only a verified read-only prepublication receipt.
 This avoids self-reference because the report is itself a hashed release asset.
-Final upload hashes, tag identity, and the native-immutability or explicit
-unsupported-feature fallback state are verified separately in
-`github_publication.json`.
+Final upload hashes, tag identity, and the confirmed enabled native GitHub
+immutability state are verified separately in `github_publication.json`.
 
 Any commit after `FINAL_SHA` invalidates the release evidence. Any defect after publication is corrected forward as `v0.3.1`; the `v0.3.0` tag is never moved.
 
@@ -176,3 +178,9 @@ The successor recognizes only an explicit HTTP 404 on the initial endpoint query
 Exact commit `7cecb5ba5e353a6761b981394a942df4c049ce09` is rejected and was not pushed. Release-engineering audit `MO-RELENG-7CECB5B-20260723T101337Z-95F29A02-DF3B-45AA-86F5-9B75817A9BBF` and reproducibility audit `MO-REPRO-7CECB5B-20260723T100351Z-0854f9c9-d0ec-44c0-8de3-1c87cec8fecd` returned role-specific PASS. Scientific audit `MO-SCI-7CECB5B-20260723T101602Z-164F9485-F02C-4FFA-9E5F-832DCB037A35` returned HOLD after reproducing acceptance of finite out-of-domain scores, non-fixture use of the 0.30 callable threshold, stale direct-step outputs, and an incomplete official-runtime dependency contract. No verdict transfers to a successor tree.
 
 The successor bounds Phy-Mer scores to `[0,1]`, separates exact-hash synthetic fixture mode from external mode, enforces the external 0.95 callable floor, removes every owned output before validation, pins BioPython 1.87, and adapts only the official script's removed `rU` mode at runtime. The complete all-site contract permits an exactly reference-matching unresolved `N`, but excludes it from the callable numerator and masks it rather than treating it as a variant; all other ambiguity symbols fail. An untouched-official-tree compatibility probe against bundled `NC_012920.1` passed with top ranking `H2a2a1`, score `0.999632`, `16568/16569` callable positions, and position 3107 retained as `N`. Focused contracts passed `76/76`. The first complete run correctly detected stale generated page-13 evidence (`1008` passed, one failed); two independent source-mode rebuilds were byte-identical at 88 long-read and 74 short-read files, and only the expected Phy-Mer summary and HTML required refresh. The clean complete rerun passed `1009/1009` in 450.40 seconds. Fresh wheel and source-distribution installations in separate pinned external environments each resolved only from `site-packages`, listed all 18 steps, and passed all four workflow modes. This remains pre-freeze evidence pending a new exact commit, exact archive/distribution repetition, and three new exact-SHA audits.
+
+## Rejected candidate `9569164` and release-byte remediation
+
+Exact commit `95691642839befa9d3abc935ef0e2c781a783ffd` (tree `b24e1281eae451643ca01ef7a4c5e20c7c5941c3`) is rejected and was not pushed. Its complete `1009/1009` test result, exact archive/source-distribution checks, isolated package installations, workflow smokes, and deterministic example checks did not override the release-engineering HOLD `mito-v030-release-audit-20260723T112050Z-360ac52d-b537-4e7c-8022-c21f79614b45` or reproducibility HOLD `93c5d98d-dd20-4e6a-9f28-2bda150a17e6`. Scientific audit `MITO-V030-9569164-1db1ea4a-35f7-4e52-af9b-d2566878e12a` passed only its bounded role and does not transfer to changed code. The blockers were release logic that treated GitHub's documented immutable-release `GET 404` disabled state as an unsupported-feature fallback and a fresh-tag stage that could replace packet-bound distribution bytes with separately rebuilt archives.
+
+The successor working tree treats `GET 404` as disabled, requires `PUT` enablement followed by a successful authenticated confirmation query, and has no annotated-tag fallback. The validation packet and assembler require exactly one canonical regular wheel and one canonical regular source archive. Those packet-bound bytes are the only distributions installed and published; a public-tag rebuild is retained only when its safe archive member inventory, payload hashes, sizes, and executable states are equivalent. Nested, renamed, duplicate-kind, symlinked, case-colliding, unsafe-path, special-member, and extra distribution evidence fails closed. The updated focused packet/publisher/tag suite passed `370/370` in 340.01 seconds, and the complete pre-freeze working-tree suite passed `1038/1038` in 452.80 seconds without generated-output or manuscript drift. This is pre-freeze working-tree evidence; exact successor archive/package/workflow gates and three new exact-SHA audits remain required before push.

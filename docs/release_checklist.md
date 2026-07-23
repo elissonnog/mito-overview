@@ -135,8 +135,9 @@ release date.
   review; the resulting `report_provenance.json` binds the final PDF and every
   reviewed page to the source DOCX and validation ZIP. The PDF page-tree count
   must equal both the contiguous PNG inventory and its recorded QA count.
-- [ ] `scripts/assemble_release_assets_v0.3.0.py` creates the exact nine-file
-  prebuilt asset source atomically, executes the packet verifier, confirms the
+- [ ] `scripts/assemble_release_assets_v0.3.0.py` creates the exact eleven-file
+  prebuilt asset source atomically, including the exact packet-bound wheel and
+  source distribution. It executes the packet verifier, confirms the
   Markdown/DOCX/PDF/figure/page provenance, release-note/environment
   identities, verifies the exact five-file inventory for all three platform
   lock records, and embeds both report provenance and a size/SHA-256
@@ -148,22 +149,24 @@ release date.
   archive and rejects any post-assembly mutation.
 - [ ] Fresh-tag evidence seals all 12 canonical asset names, sizes, and SHA-256
   values to `FINAL_SHA` and the annotated tag object before any release mutation.
-- [ ] If repository immutable releases are supported, they are enabled before
-  draft creation and the queried published release reports `immutable=true`.
-  If the GitHub endpoint is genuinely unavailable, `github_publication.json`
-  records `fallback_active=true` and
-  `fallback=annotated_tag_and_verified_asset_hashes`; the exact annotated tag,
-  canonical asset inventory, authenticated redownloads, and SHA-256 manifest
-  remain mandatory.
+- [ ] Repository native immutable releases are enabled and confirmed by a
+  second authenticated query before draft creation; an initial `404` means
+  disabled and triggers `PUT`, not an annotated-tag fallback. Any failed
+  enablement or failed confirmation stops publication. The queried published
+  release reports `immutable=true`.
+- [ ] Fresh-tag validation installs the exact packet-bound wheel and source
+  distribution. Its independently rebuilt tag distributions are retained only
+  as evidence that canonical member paths, payloads, sizes, and executable
+  states are equivalent; rebuilt container bytes never replace release assets.
 - [ ] Canonical assets include wheel, sdist, validation ZIP, Markdown/DOCX/PDF
   report, the Markdown report's sibling figure directory as a tar archive,
   machine-readable verification record, release notes, environment records,
   and `SHA256SUMS`.
 - [ ] `SHA256SUMS` covers every other uploaded asset; the downloaded manifest
   is byte-identical to the prepared manifest and verifies every listed asset.
-- [ ] The published release, tag target, asset inventory, hashes, and either the
-  enabled hosting-immutability state or the explicit unsupported-feature fallback
-  are queried from GitHub and captured in `github_publication.json`.
+- [ ] The published release, tag target, asset inventory, hashes, and confirmed
+  enabled native hosting-immutability state are queried from GitHub and captured
+  in `github_publication.json`.
 
 ## Stop rules
 

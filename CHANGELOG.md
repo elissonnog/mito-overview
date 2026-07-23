@@ -37,7 +37,8 @@
 - require successful upstream heteroplasmy provenance before Phy-Mer, mvTool, or circularity can interpret candidate evidence; failed or malformed upstream states cannot reuse stale tables
 - validate the complete one-row-per-position all-site allele contract and REF-to-FASTA identity before Phy-Mer consensus construction, rejecting duplicate, out-of-range, partial, and reference-inconsistent evidence
 - distinguish missing candidate files from valid observed zero-candidate tables in mvTool and circularity, and remove heteroplasmy-owned outputs before recomputation
-- prefer GitHub immutable releases when supported while recording a bounded annotated-tag and verified-asset-hash fallback when the hosting endpoint is genuinely unavailable
+- require GitHub native immutable releases to be enabled and re-queried successfully before publication; a disabled `GET` response triggers enablement rather than an annotated-tag fallback
+- publish only the exact wheel and source distribution already bound inside the validation packet, while treating a clean public-tag rebuild as member-payload equivalence evidence rather than replacement release bytes
 - make README links to repository-only manuscript assets absolute and release-tagged so source distributions contain no broken relative `paper/**` references
 
 ## v0.2.1 - 2026-07-07
