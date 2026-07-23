@@ -269,8 +269,16 @@ def provenance_record(name: str, content: bytes | None = None) -> dict[str, obje
     }
 
 
-def file_provenance_record(path: Path, source_name: str) -> dict[str, object]:
-    return provenance_record(source_name, path.read_bytes())
+def file_provenance_record(
+    path: Path,
+    source_name: str,
+    *,
+    include_md5: bool = False,
+) -> dict[str, object]:
+    record = provenance_record(source_name, path.read_bytes())
+    if include_md5:
+        record["md5"] = hashlib.md5(path.read_bytes()).hexdigest()
+    return record
 
 
 def frozen_input_record(filename: str) -> dict[str, object]:
@@ -432,6 +440,7 @@ def write_public_provenance(public_root: Path) -> None:
     selected_names = file_provenance_record(
         paths["selected_query_names"],
         "SRR18110025.deterministic-qnames-1000.fastq.gz.selected_qnames.txt",
+        include_md5=True,
     )
     subset = {
         "schema_version": "1.0",
@@ -1525,24 +1534,23 @@ def write_evidence_tables(root: Path) -> None:
             ]
         )
 
+    with (root / "public" / "filter_profile_results.tsv").open(
+        encoding="utf-8", newline=""
+    ) as handle:
+        profile_rows = list(csv.DictReader(handle, delimiter="\t"))
+    handoff_rows = packet_builder.expected_handoff_rows(profile_rows)
     rows_by_name = {
         "claim_evidence_matrix.tsv": [
-            ["C1", "Deterministic fixture output", "unit_known_answer", "Not clinical"]
+            [row[field] for field in packet_builder.EVIDENCE_TABLES["claim_evidence_matrix.tsv"]]
+            for row in packet_builder.FROZEN_CLAIM_EVIDENCE_ROWS
         ],
         "module_status_matrix.tsv": module_rows,
         "figure_provenance.tsv": figure_rows,
         "table_provenance.tsv": table_rows,
         "public_data_sources.tsv": public_source_rows,
         "manuscript_handoff.tsv": [
-            [
-                "R1",
-                "GM11906",
-                "candidate_sites",
-                "33",
-                "sites",
-                "filter_profile_results.tsv",
-                "descriptive only",
-            ]
+            [row[field] for field in packet_builder.EVIDENCE_TABLES["manuscript_handoff.tsv"]]
+            for row in handoff_rows
         ],
         "limitations.tsv": [
             ["L1", "clinical", "No clinical validation", "Research use claims only"]
@@ -1645,6 +1653,14 @@ def create_validation_root(tmp_path: Path, repo: Path, commit: str) -> Path:
         "public/observed_normalized/gm11906_default_run1",
     ):
         (root / relative).mkdir(parents=True, exist_ok=True)
+    shutil.copy2(
+        ROOT / "examples/synthetic_data/TOY-SR-001/expected_alleles.tsv",
+        root / "expected/TOY-SR-001.expected_alleles.tsv",
+    )
+    shutil.copy2(
+        ROOT / "examples/synthetic_data/TOY-WGS-001/expected_copy_proxy.tsv",
+        root / "expected/TOY-WGS-001.expected_copy_proxy.tsv",
+    )
     write_public_input_evidence(root / "public")
     write_public_oracle_evidence(root / "public")
     write_public_environment(root / "public")
@@ -1692,9 +1708,6 @@ def create_validation_root(tmp_path: Path, repo: Path, commit: str) -> Path:
     )
     (root / "public" / "logs" / "gm11906_default_run1.log").write_text(
         "public fixture passed\n", encoding="utf-8"
-    )
-    (root / "expected" / "TOY-SR-001.tsv").write_text(
-        "position\talt_count\n1\t1\n", encoding="utf-8"
     )
     write_resource_evidence(root, commit)
     return root
@@ -3616,6 +3629,58 @@ def test_packet_rejects_alignment_derivation_drift(
         packet_builder.build_packet(packet_args(validation, repo, tmp_path / "output"))
 
 
+@pytest.mark.parametrize("provenance_key", ("shortread_alignment", "longread_alignment"))
+def test_packet_rejects_duplicate_alignment_input_labels(
+    tmp_path: Path,
+    provenance_key: str,
+) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    path = (
+        validation
+        / "public"
+        / packet_builder.PUBLIC_PROVENANCE_FILES[provenance_key]["source"]
+    )
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["public_inputs"].append(dict(payload["public_inputs"][0]))
+    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="duplicate input label"):
+        packet_builder.build_packet(packet_args(validation, repo, tmp_path / "output"))
+
+
+@pytest.mark.parametrize("evidence_name", ("claim", "handoff"))
+def test_packet_rejects_semantically_forged_narrative_evidence(
+    tmp_path: Path,
+    evidence_name: str,
+) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    if evidence_name == "claim":
+        mutate_tsv_value(
+            validation / "claim_evidence_matrix.tsv",
+            "claim_id",
+            "C1",
+            "bounded_claim",
+            "Unsupported replacement claim",
+        )
+        expected = "frozen bounded contract"
+    else:
+        handoff = validation / "manuscript_handoff.tsv"
+        first = read_tsv(handoff)[0]
+        mutate_tsv_value(
+            handoff,
+            "result_id",
+            first["result_id"],
+            "value",
+            "999999",
+        )
+        expected = "do not match filter_profile_results.tsv"
+
+    with pytest.raises(ValueError, match=expected):
+        packet_builder.build_packet(packet_args(validation, repo, tmp_path / "output"))
+
+
 def test_packet_rejects_self_consistent_noncanonical_selected_name_ledger(
     tmp_path: Path,
 ) -> None:
@@ -3638,6 +3703,7 @@ def test_packet_rejects_self_consistent_noncanonical_selected_name_ledger(
     selected_record = file_provenance_record(
         names_path,
         "SRR18110025.deterministic-qnames-1000.fastq.gz.selected_qnames.txt",
+        include_md5=True,
     )
     subset = json.loads(subset_path.read_text(encoding="utf-8"))
     subset["selected_query_names"] = selected_record
@@ -4306,6 +4372,43 @@ def test_extracted_verifier_rejects_rehashed_scientific_oracle_mutation(
     assert "oracle assertion value drift" in checked.stderr
 
 
+@pytest.mark.parametrize("evidence_name", ("claim", "handoff"))
+def test_extracted_verifier_rejects_rehashed_narrative_evidence_forgery(
+    tmp_path: Path,
+    evidence_name: str,
+) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    output = tmp_path / "output"
+    packet_builder.build_packet(packet_args(validation, repo, output))
+    packet = output / "packet"
+    if evidence_name == "claim":
+        mutate_tsv_value(
+            packet / "claim_evidence_matrix.tsv",
+            "claim_id",
+            "C1",
+            "bounded_claim",
+            "Unsupported replacement claim",
+        )
+        expected = "frozen bounded contract"
+    else:
+        handoff = packet / "manuscript_handoff.tsv"
+        first = read_tsv(handoff)[0]
+        mutate_tsv_value(
+            handoff,
+            "result_id",
+            first["result_id"],
+            "value",
+            "999999",
+        )
+        expected = "do not match filter_profile_results.tsv"
+    rewrite_manifest(packet)
+
+    checked = verify_packet(packet)
+    assert checked.returncode != 0
+    assert expected in checked.stderr
+
+
 def test_extracted_verifier_rejects_unexpected_oracle_assertion(
     tmp_path: Path,
 ) -> None:
@@ -4435,6 +4538,33 @@ def test_extracted_verifier_rejects_rehashed_shortread_provenance_mutation(
     assert "short-read alignment input inventory is incomplete" in checked.stderr
 
 
+@pytest.mark.parametrize("dataset", ("short", "long"))
+def test_extracted_verifier_rejects_rehashed_duplicate_alignment_input_label(
+    tmp_path: Path,
+    dataset: str,
+) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    output = tmp_path / "output"
+    packet_builder.build_packet(packet_args(validation, repo, output))
+    packet = output / "packet"
+    filename = (
+        "GM11906_MERRF_shortread.alignment.provenance.json"
+        if dataset == "short"
+        else "GM12878_ONT_longread.reduced_alignment.provenance.json"
+    )
+    path = packet / "public_provenance" / filename
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["public_inputs"].append(dict(payload["public_inputs"][0]))
+    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    rebind_packet_public_provenance(packet, path)
+    rewrite_manifest(packet)
+
+    checked = verify_packet(packet)
+    assert checked.returncode != 0
+    assert "duplicate input label" in checked.stderr
+
+
 def test_extracted_verifier_rejects_resealed_derivation_and_subset_semantic_drift(
     tmp_path: Path,
 ) -> None:
@@ -4494,6 +4624,7 @@ def test_extracted_verifier_rejects_resealed_derivation_and_subset_semantic_drif
             selected_record = file_provenance_record(
                 names_path,
                 "SRR18110025.deterministic-qnames-1000.fastq.gz.selected_qnames.txt",
+                include_md5=True,
             )
             subset = json.loads(subset_path.read_text(encoding="utf-8"))
             subset["selected_query_names"] = selected_record

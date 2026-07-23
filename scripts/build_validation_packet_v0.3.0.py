@@ -386,6 +386,7 @@ FROZEN_GM12878_SUBSET_FASTQ_RECORD = {
 FROZEN_GM12878_SELECTED_QUERY_NAMES_RECORD = {
     "name": "SRR18110025.deterministic-qnames-1000.fastq.gz.selected_qnames.txt",
     "bytes": 18422,
+    "md5": "64d606e56bf8dd58ad68baad28898e18",
     "sha256": "3444cc7db3dcf78bea807d8bcc6686883a7759d128288c1d26aeae077a771a19",
 }
 PUBLIC_ALIGNMENT_DERIVATIONS = {
@@ -616,6 +617,88 @@ EVIDENCE_TABLES = {
         "release_effect",
     ),
 }
+
+FROZEN_CLAIM_EVIDENCE_ROWS = (
+    {
+        "claim_id": "C1",
+        "bounded_claim": (
+            "Shared filtered allele counting is deterministic on known-answer fixtures"
+        ),
+        "evidence": (
+            "unit_known_answer; synthetic_longread_smoke; "
+            "expected/TOY-SR-001.expected_alleles.tsv"
+        ),
+        "limitation": "Reporting thresholds are not clinically calibrated",
+    },
+    {
+        "claim_id": "C2",
+        "bounded_claim": (
+            "mvTool is offline by default with deterministic fixture coverage"
+        ),
+        "evidence": "unit_known_answer; synthetic_longread_smoke",
+        "limitation": "No claim of live service availability",
+    },
+    {
+        "claim_id": "C3",
+        "bounded_claim": "Minimal standalone alignment contracts are preflighted",
+        "evidence": (
+            "unit_known_answer; strict_generic_dry_run; standalone_minimal_smoke"
+        ),
+        "limitation": "Optional sidecars remain user supplied",
+    },
+    {
+        "claim_id": "C4",
+        "bounded_claim": (
+            "The WGS fixture reports a 100/10 mt:nuclear depth ratio of 10.0"
+        ),
+        "evidence": (
+            "unit_known_answer; expected/TOY-WGS-001.expected_copy_proxy.tsv"
+        ),
+        "limitation": (
+            "Experimental depth proxy, not absolute copies per diploid cell"
+        ),
+    },
+    {
+        "claim_id": "C5",
+        "bounded_claim": "mt-only references suppress categorical NUMT interpretation",
+        "evidence": (
+            "unit_known_answer; gm12878_default_run1; gm12878_repeatability"
+        ),
+        "limitation": "Alignment-ambiguity QC is not a formal NUMT classifier",
+    },
+    {
+        "claim_id": "C6",
+        "bounded_claim": (
+            "Public proof-of-principle workflows reproduce normalized TSVs"
+        ),
+        "evidence": (
+            "gm11906_repeatability; gm12878_repeatability; "
+            "filter_profile_results.tsv"
+        ),
+        "limitation": "Not an analytical-performance or diagnostic benchmark",
+    },
+)
+HANDOFF_METRICS = (
+    ("candidate_sites", "sites"),
+    ("accepted_observations", "observations"),
+    ("excluded_observations", "observations"),
+    ("m8344_A_G_alt_allele_fraction", "fraction"),
+)
+HANDOFF_SOURCE_TABLE = "filter_profile_results.tsv"
+HANDOFF_CLAIM_BOUNDARY = "descriptive fixed-input result; not diagnostic performance"
+FILTER_PROFILE_HEADER = (
+    "case_id",
+    "dataset",
+    "profile",
+    "min_base_quality",
+    "min_mapping_quality",
+    "min_read_mean_quality",
+    "candidate_sites",
+    "accepted_observations",
+    "excluded_observations",
+    "m8344_A_G_present",
+    "m8344_A_G_alt_allele_fraction",
+)
 
 FRESH_CLONE_CASE_ID = "fresh_clone_candidate_commit"
 GITHUB_ACTIONS_LINUX_CASE_ID = "github_actions_linux_candidate_commit"
@@ -2384,20 +2467,7 @@ def validate_filter_profiles(
     path: Path,
     oracle_rows: list[dict[str, str]],
 ) -> None:
-    expected_header = (
-        "case_id",
-        "dataset",
-        "profile",
-        "min_base_quality",
-        "min_mapping_quality",
-        "min_read_mean_quality",
-        "candidate_sites",
-        "accepted_observations",
-        "excluded_observations",
-        "m8344_A_G_present",
-        "m8344_A_G_alt_allele_fraction",
-    )
-    rows = read_tsv_rows(path, expected_header, "filter_profile_results.tsv")
+    rows = read_tsv_rows(path, FILTER_PROFILE_HEADER, "filter_profile_results.tsv")
     observed = {(row["dataset"], row["profile"]): row for row in rows}
     oracle = {(row["dataset"], row["profile"]): row for row in oracle_rows}
     if len(observed) != len(rows) or set(observed) != set(oracle):
@@ -2899,6 +2969,26 @@ def validate_digest_record(value: object, label: str) -> dict[str, object]:
     return value
 
 
+def index_unique_labeled_records(
+    value: object,
+    label: str,
+) -> dict[str, dict[str, object]]:
+    if not isinstance(value, list) or not value:
+        raise ValueError(f"Public {label} inputs are missing")
+    indexed: dict[str, dict[str, object]] = {}
+    for index, record in enumerate(value):
+        validated = validate_digest_record(record, f"{label} input {index}")
+        record_label = validated.get("label")
+        if not isinstance(record_label, str) or not record_label:
+            raise ValueError(f"Public {label} alignment input label is invalid")
+        if record_label in indexed:
+            raise ValueError(
+                f"Public {label} alignment contains duplicate input label: {record_label}"
+            )
+        indexed[record_label] = validated
+    return indexed
+
+
 def _require_record_content(record: dict[str, object], path: Path, label: str) -> None:
     if record["bytes"] != path.stat().st_size or record["sha256"] != sha256(path):
         raise ValueError(f"Public provenance {label} does not match packaged evidence")
@@ -3019,20 +3109,12 @@ def validate_public_provenance(
             validate_digest_record(manifest.get(field), f"{label} {field}")
         if manifest.get("derivation") != PUBLIC_ALIGNMENT_DERIVATIONS[dataset_id]:
             raise ValueError(f"Public {label} alignment derivation is invalid")
-        public_inputs = manifest.get("public_inputs")
-        if not isinstance(public_inputs, list) or not public_inputs:
-            raise ValueError(f"Public {label} alignment inputs are missing")
-        for index, record in enumerate(public_inputs):
-            validated = validate_digest_record(record, f"{label} input {index}")
-            if not isinstance(validated.get("label"), str) or not validated["label"]:
-                raise ValueError(f"Public {label} alignment input label is invalid")
+        index_unique_labeled_records(manifest.get("public_inputs"), label)
 
     input_by_filename = {row["filename"]: row for row in public_input_rows}
-    short_inputs = {
-        record.get("label"): record
-        for record in short["public_inputs"]
-        if isinstance(record, dict) and isinstance(record.get("label"), str)
-    }
+    short_inputs = index_unique_labeled_records(
+        short.get("public_inputs"), "short-read"
+    )
     expected_short_labels = {
         "SRR10804585_R1": "SRR10804585_1.fastq.gz",
         "SRR10804585_R2": "SRR10804585_2.fastq.gz",
@@ -3107,11 +3189,9 @@ def validate_public_provenance(
     if len(query_names) != selected_count:
         raise ValueError("Public long-read selected-query-name ledger count is invalid")
 
-    long_inputs = {
-        record.get("label"): record
-        for record in long["public_inputs"]
-        if isinstance(record, dict) and isinstance(record.get("label"), str)
-    }
+    long_inputs = index_unique_labeled_records(
+        long.get("public_inputs"), "long-read"
+    )
     required_labels = {
         "SRR18110025_full_fastq",
         "deterministic_subset_fastq",
@@ -4649,6 +4729,102 @@ def validate_cases(
     return len(rows), counts
 
 
+def expected_handoff_rows(
+    profile_rows: list[dict[str, str]],
+) -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
+    for profile in profile_rows:
+        case_id = profile.get("case_id", "")
+        dataset = profile.get("dataset", "")
+        if not case_id or not dataset:
+            raise ValueError("Filter-profile handoff source has an empty identity")
+        for metric, unit in HANDOFF_METRICS:
+            value = profile.get(metric, "")
+            if value == "":
+                continue
+            rows.append(
+                {
+                    "result_id": f"{case_id}:{metric}",
+                    "dataset": dataset,
+                    "metric": metric,
+                    "value": value,
+                    "unit": unit,
+                    "source_table": HANDOFF_SOURCE_TABLE,
+                    "claim_boundary": HANDOFF_CLAIM_BOUNDARY,
+                }
+            )
+    if not rows:
+        raise ValueError("No manuscript-handoff rows can be derived")
+    return rows
+
+
+def validate_claim_and_handoff_evidence(validation_root: Path) -> None:
+    claim_rows = read_tsv_rows(
+        validation_root / "claim_evidence_matrix.tsv",
+        EVIDENCE_TABLES["claim_evidence_matrix.tsv"],
+        "claim_evidence_matrix.tsv",
+    )
+    if claim_rows != [dict(row) for row in FROZEN_CLAIM_EVIDENCE_ROWS]:
+        raise ValueError("Claim-evidence matrix does not match the frozen bounded contract")
+
+    case_rows = read_tsv_rows(
+        validation_root / "cases.tsv",
+        (
+            "case_id",
+            "category",
+            "input_available",
+            "expected_available",
+            "verdict",
+            "detail",
+        ),
+        "cases.tsv",
+    )
+    cases_by_id = {row["case_id"]: row for row in case_rows}
+    if len(cases_by_id) != len(case_rows):
+        raise ValueError("Claim evidence cannot resolve duplicate validation cases")
+    for row in claim_rows:
+        for token in (part.strip() for part in row["evidence"].split(";")):
+            if not token:
+                raise ValueError(f"Claim {row['claim_id']} has an empty evidence token")
+            if token in cases_by_id:
+                if cases_by_id[token]["verdict"] != "PASS":
+                    raise ValueError(
+                        f"Claim {row['claim_id']} references non-PASS case {token}"
+                    )
+                continue
+            if token.startswith("expected/"):
+                evidence_path = validation_root / token
+            elif token == HANDOFF_SOURCE_TABLE:
+                evidence_path = validation_root / "public" / token
+            else:
+                raise ValueError(
+                    f"Claim {row['claim_id']} references unknown evidence token {token}"
+                )
+            if (
+                not evidence_path.is_file()
+                or evidence_path.is_symlink()
+                or evidence_path.stat().st_size == 0
+            ):
+                raise ValueError(
+                    f"Claim {row['claim_id']} evidence file is unavailable: {token}"
+                )
+
+    profile_rows = read_tsv_rows(
+        validation_root / "public" / HANDOFF_SOURCE_TABLE,
+        FILTER_PROFILE_HEADER,
+        HANDOFF_SOURCE_TABLE,
+    )
+    handoff_rows = read_tsv_rows(
+        validation_root / "manuscript_handoff.tsv",
+        EVIDENCE_TABLES["manuscript_handoff.tsv"],
+        "manuscript_handoff.tsv",
+    )
+    if handoff_rows != expected_handoff_rows(profile_rows):
+        raise ValueError(
+            "Manuscript-handoff values do not match filter_profile_results.tsv"
+        )
+
+
 def validate_evidence_tables(validation_root: Path) -> None:
     allowed_module_states = {
         "ok",
@@ -4830,6 +5006,7 @@ def validate_evidence_tables(validation_root: Path) -> None:
                     raise ValueError(f"Unsafe packet_path in {name}: {row['packet_path']!r}")
                 if re.fullmatch(r"[0-9a-f]{64}", row["sha256"]) is None:
                     raise ValueError(f"Invalid SHA-256 in {name}: {row['sha256']!r}")
+    validate_claim_and_handoff_evidence(validation_root)
 
 
 def validate_resource_bindings(
@@ -6518,6 +6695,95 @@ for name, expected_header in table_headers.items():
         raise SystemExit(f"evidence table is empty or has missing identities: {name}")
     evidence_rows[name] = rows
 
+expected_claim_rows = [
+    {
+        "claim_id": "C1",
+        "bounded_claim": "Shared filtered allele counting is deterministic on known-answer fixtures",
+        "evidence": "unit_known_answer; synthetic_longread_smoke; expected/TOY-SR-001.expected_alleles.tsv",
+        "limitation": "Reporting thresholds are not clinically calibrated",
+    },
+    {
+        "claim_id": "C2",
+        "bounded_claim": "mvTool is offline by default with deterministic fixture coverage",
+        "evidence": "unit_known_answer; synthetic_longread_smoke",
+        "limitation": "No claim of live service availability",
+    },
+    {
+        "claim_id": "C3",
+        "bounded_claim": "Minimal standalone alignment contracts are preflighted",
+        "evidence": "unit_known_answer; strict_generic_dry_run; standalone_minimal_smoke",
+        "limitation": "Optional sidecars remain user supplied",
+    },
+    {
+        "claim_id": "C4",
+        "bounded_claim": "The WGS fixture reports a 100/10 mt:nuclear depth ratio of 10.0",
+        "evidence": "unit_known_answer; expected/TOY-WGS-001.expected_copy_proxy.tsv",
+        "limitation": "Experimental depth proxy, not absolute copies per diploid cell",
+    },
+    {
+        "claim_id": "C5",
+        "bounded_claim": "mt-only references suppress categorical NUMT interpretation",
+        "evidence": "unit_known_answer; gm12878_default_run1; gm12878_repeatability",
+        "limitation": "Alignment-ambiguity QC is not a formal NUMT classifier",
+    },
+    {
+        "claim_id": "C6",
+        "bounded_claim": "Public proof-of-principle workflows reproduce normalized TSVs",
+        "evidence": "gm11906_repeatability; gm12878_repeatability; filter_profile_results.tsv",
+        "limitation": "Not an analytical-performance or diagnostic benchmark",
+    },
+]
+if evidence_rows["claim_evidence_matrix.tsv"] != expected_claim_rows:
+    raise SystemExit("claim-evidence matrix does not match the frozen bounded contract")
+
+with (root / "cases.tsv").open(encoding="utf-8", newline="") as handle:
+    claim_case_reader = csv.DictReader(handle, delimiter="\t")
+    if tuple(claim_case_reader.fieldnames or ()) != (
+        "case_id", "category", "input_available", "expected_available", "verdict", "detail",
+    ):
+        raise SystemExit("cases.tsv schema mismatch while resolving claim evidence")
+    claim_case_rows = list(claim_case_reader)
+claim_cases = {row["case_id"]: row for row in claim_case_rows}
+if len(claim_cases) != len(claim_case_rows):
+    raise SystemExit("duplicate validation case while resolving claim evidence")
+for row in expected_claim_rows:
+    for token in (part.strip() for part in row["evidence"].split(";")):
+        if token in claim_cases:
+            if claim_cases[token]["verdict"] != "PASS":
+                raise SystemExit(f"claim references non-PASS case: {token}")
+        elif token.startswith("expected/") or token == "filter_profile_results.tsv":
+            path = root / token
+            if not path.is_file() or path.stat().st_size == 0:
+                raise SystemExit(f"claim evidence file is unavailable: {token}")
+        else:
+            raise SystemExit(f"claim references unknown evidence token: {token}")
+
+handoff_metrics = (
+    ("candidate_sites", "sites"),
+    ("accepted_observations", "observations"),
+    ("excluded_observations", "observations"),
+    ("m8344_A_G_alt_allele_fraction", "fraction"),
+)
+expected_handoff_rows = []
+for profile_row in profile_rows:
+    for metric, unit in handoff_metrics:
+        value = profile_row.get(metric, "")
+        if value == "":
+            continue
+        expected_handoff_rows.append(
+            {
+                "result_id": f"{profile_row['case_id']}:{metric}",
+                "dataset": profile_row["dataset"],
+                "metric": metric,
+                "value": value,
+                "unit": unit,
+                "source_table": "filter_profile_results.tsv",
+                "claim_boundary": "descriptive fixed-input result; not diagnostic performance",
+            }
+        )
+if evidence_rows["manuscript_handoff.tsv"] != expected_handoff_rows:
+    raise SystemExit("manuscript-handoff values do not match filter_profile_results.tsv")
+
 states = {"ok", "not_configured", "not_applicable", "not_evaluable", "unavailable", "failed"}
 invalid_states = sorted(
     {
@@ -6783,11 +7049,24 @@ if (
     or short_manifest.get("derivation") != expected_short_derivation
 ):
     raise SystemExit("short-read alignment derivation mismatch")
-short_inputs = {
-    record.get("label"): record
-    for record in short_manifest.get("public_inputs", [])
-    if isinstance(record, dict)
-}
+def unique_labeled_inputs(value, description):
+    if not isinstance(value, list) or not value:
+        raise SystemExit(f"{description} alignment inputs are missing")
+    indexed = {}
+    for record in value:
+        if not isinstance(record, dict):
+            raise SystemExit(f"{description} alignment input is not an object")
+        label = record.get("label")
+        if not isinstance(label, str) or not label:
+            raise SystemExit(f"{description} alignment input label is invalid")
+        if label in indexed:
+            raise SystemExit(f"{description} alignment has duplicate input label: {label}")
+        indexed[label] = record
+    return indexed
+
+short_inputs = unique_labeled_inputs(
+    short_manifest.get("public_inputs", []), "short-read"
+)
 short_labels = {
     "SRR10804585_R1": "SRR10804585_1.fastq.gz",
     "SRR10804585_R2": "SRR10804585_2.fastq.gz",
@@ -6886,6 +7165,7 @@ expected_subset_fastq = {
 expected_selected_names = {
     "name": "SRR18110025.deterministic-qnames-1000.fastq.gz.selected_qnames.txt",
     "bytes": 18422,
+    "md5": "64d606e56bf8dd58ad68baad28898e18",
     "sha256": "3444cc7db3dcf78bea807d8bcc6686883a7759d128288c1d26aeae077a771a19",
 }
 expected_selection = {
@@ -6935,11 +7215,9 @@ if (
     or long_manifest.get("derivation") != expected_long_derivation
 ):
     raise SystemExit("long-read alignment derivation mismatch")
-long_inputs = {
-    record.get("label"): record
-    for record in long_manifest.get("public_inputs", [])
-    if isinstance(record, dict)
-}
+long_inputs = unique_labeled_inputs(
+    long_manifest.get("public_inputs", []), "long-read"
+)
 expected_long_labels = {
     "SRR18110025_full_fastq",
     "deterministic_subset_fastq",

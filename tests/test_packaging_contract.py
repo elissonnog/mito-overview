@@ -318,6 +318,73 @@ def test_launcher_validation_mode_rejects_missing_or_shadowed_install(
     assert len(shadowed_calls) == 1
 
 
+@pytest.mark.parametrize(
+    "script_name",
+    (
+        "public_alignment_provenance.py",
+        "select_deterministic_fastq_subset.py",
+        "select_deterministic_bam_subset.py",
+    ),
+)
+def test_public_helpers_use_external_package_in_installed_mode(
+    tmp_path: Path,
+    script_name: str,
+) -> None:
+    site = tmp_path / "external-site"
+    package = site / "mito_overview"
+    package.mkdir(parents=True)
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    (package / "validation_provenance.py").write_text(
+        """
+class ProvenanceError(Exception):
+    pass
+
+def placeholder(*args, **kwargs):
+    return None
+
+create_alignment_provenance = placeholder
+parse_key_values = placeholder
+parse_labeled_paths = placeholder
+verify_alignment_provenance = placeholder
+create_deterministic_fastq_subset = placeholder
+verify_deterministic_fastq_subset = placeholder
+create_deterministic_subset = placeholder
+verify_deterministic_subset = placeholder
+""".lstrip(),
+        encoding="utf-8",
+    )
+    probe = """
+import runpy
+import sys
+from pathlib import Path
+
+sys.path.insert(0, sys.argv[1])
+runpy.run_path(sys.argv[2], run_name="audit_probe")
+import mito_overview.validation_provenance as module
+print(Path(module.__file__).resolve())
+"""
+    environment = os.environ.copy()
+    environment["MITO_OVERVIEW_REQUIRE_INSTALLED"] = "1"
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-I",
+            "-c",
+            probe,
+            str(site),
+            str(REPO_ROOT / "scripts" / script_name),
+        ],
+        cwd=tmp_path,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert Path(result.stdout.strip()).is_relative_to(package)
+
+
 def test_standalone_smoke_direct_cli_probes_use_isolated_mode() -> None:
     smoke = (REPO_ROOT / "tests" / "smoke_standalone_minimal.sh").read_text(
         encoding="utf-8"

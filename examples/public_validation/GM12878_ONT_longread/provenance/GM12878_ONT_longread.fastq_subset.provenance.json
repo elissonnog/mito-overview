@@ -5,6 +5,7 @@
   "schema_version": "1.0",
   "selected_query_names": {
     "bytes": 18422,
+    "md5": "64d606e56bf8dd58ad68baad28898e18",
     "name": "SRR18110025.deterministic-qnames-1000.fastq.gz.selected_qnames.txt",
     "sha256": "3444cc7db3dcf78bea807d8bcc6686883a7759d128288c1d26aeae077a771a19"
   },

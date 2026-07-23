@@ -122,6 +122,29 @@ def test_alignment_provenance_rejects_derivation_tampering(
         )
 
 
+def test_alignment_provenance_rejects_duplicate_public_input_labels(
+    tmp_path: Path,
+) -> None:
+    reference, alignment, fastq = _alignment_fixture(tmp_path)
+    manifest = _record_source(tmp_path, reference, alignment, fastq)
+    payload = json.loads(manifest.read_text(encoding="utf-8"))
+    payload["public_inputs"].append(dict(payload["public_inputs"][0]))
+    manifest.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ProvenanceError, match="Duplicate public input label"):
+        verify_alignment_provenance(
+            manifest_path=manifest,
+            dataset_id="PUBLIC-001",
+            alignment_path=alignment,
+            reference_path=reference,
+            inputs={"run_1": fastq},
+            derivation_id="test-aligner-v1",
+            command_template="test-aligner {reference} {fastq} | test-sort {alignment}",
+            parameters={"threads": "1"},
+            tools=(),
+        )
+
+
 def test_deterministic_subset_selects_exact_seeded_query_names(tmp_path: Path) -> None:
     reference, alignment, fastq = _alignment_fixture(tmp_path, read_count=20)
     source_manifest = _record_source(tmp_path, reference, alignment, fastq)
@@ -256,6 +279,9 @@ def test_deterministic_fastq_subset_is_exact_and_reproducible(tmp_path: Path) ->
         headers = [line[1:].split()[0] for line in handle if line.startswith("@")]
     assert headers == [name for name in (f"read-{index:03d}" for index in range(20)) if name in expected]
     assert payload["selection"]["source_records_seen"] == 20
+    assert payload["selected_query_names"]["md5"] == hashlib.md5(
+        names.read_bytes()
+    ).hexdigest()
     verify_deterministic_fastq_subset(
         source_fastq=source,
         output_fastq=subset,

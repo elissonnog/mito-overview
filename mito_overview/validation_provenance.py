@@ -270,11 +270,20 @@ def verify_alignment_provenance(
     manifest_inputs = payload.get("public_inputs")
     if not isinstance(manifest_inputs, list):
         raise ProvenanceError("Manifest public_inputs must be a list")
-    records_by_label = {
-        str(record.get("label")): record
-        for record in manifest_inputs
-        if isinstance(record, dict) and record.get("label")
-    }
+    records_by_label: dict[str, dict[str, object]] = {}
+    for index, record in enumerate(manifest_inputs):
+        if not isinstance(record, dict):
+            raise ProvenanceError(
+                f"Manifest public input {index} must be an object"
+            )
+        label = record.get("label")
+        if not isinstance(label, str) or not label:
+            raise ProvenanceError(
+                f"Manifest public input {index} has an invalid label"
+            )
+        if label in records_by_label:
+            raise ProvenanceError(f"Duplicate public input label: {label}")
+        records_by_label[label] = record
     if set(records_by_label) != set(inputs):
         raise ProvenanceError(
             "Public input labels differ: "
@@ -433,7 +442,7 @@ def create_deterministic_fastq_subset(
         },
         "source_fastq": digest_file(source_fastq, include_md5=True),
         "subset_fastq": digest_file(output_fastq, include_md5=True),
-        "selected_query_names": digest_file(selected_names_path),
+        "selected_query_names": digest_file(selected_names_path, include_md5=True),
     }
     _write_json_exclusive(output_manifest, payload)
     return payload

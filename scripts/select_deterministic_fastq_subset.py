@@ -4,19 +4,30 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-if str(REPO_ROOT) not in sys.path:
+REQUIRE_INSTALLED = os.environ.get("MITO_OVERVIEW_REQUIRE_INSTALLED", "0") == "1"
+if not REQUIRE_INSTALLED and str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+import mito_overview.validation_provenance as _provenance  # noqa: E402
 from mito_overview.validation_provenance import (  # noqa: E402
     ProvenanceError,
     create_deterministic_fastq_subset,
     verify_deterministic_fastq_subset,
 )
+
+if REQUIRE_INSTALLED:
+    module_path = Path(_provenance.__file__).resolve()
+    if module_path == REPO_ROOT / "mito_overview" / "validation_provenance.py":
+        raise SystemExit(
+            "MITO_OVERVIEW_REQUIRE_INSTALLED=1 but subset code resolved "
+            "from the source checkout"
+        )
 
 
 def parse_args() -> argparse.Namespace:
