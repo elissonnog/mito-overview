@@ -40,7 +40,6 @@ def test_current_tracked_tree_passes_release_hygiene() -> None:
             b"prefix\x00/Users/" + b"elopes/private\x00",
             "absolute_user_home_path",
         ),
-        ("paper/draft.md", b"Edited with Chat" + b"GPT", "manuscript_process_wording"),
         (
             "logs/linux.txt",
             b"output=/ho" + b"me/realresearcher/run/output.tsv",
@@ -98,6 +97,17 @@ def test_release_hygiene_rejects_tracked_private_material(
 ) -> None:
     repo = make_repo(tmp_path, relative_path, payload)
     assert hygiene.find_violations(repo) == [f"{relative_path}: {rule}"]
+
+
+def test_manuscript_wording_is_opt_in_and_not_a_software_release_gate(
+    tmp_path: Path,
+) -> None:
+    repo = make_repo(tmp_path, "paper/draft.md", b"Edited with Chat" + b"GPT")
+
+    assert hygiene.find_violations(repo) == []
+    assert hygiene.find_violations(repo, include_manuscript_rules=True) == [
+        "paper/draft.md: manuscript_process_wording"
+    ]
 
 
 def test_ignored_private_output_is_not_scanned(tmp_path: Path) -> None:

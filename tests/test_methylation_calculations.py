@@ -123,6 +123,25 @@ def test_track_summary_rejects_negative_declared_valid_coverage() -> None:
         track_summary(rows)
 
 
+def test_supplied_other_modified_count_must_match_declared_valid_coverage() -> None:
+    rows = methylation_rows(
+        [
+            {
+                "track": "NP_real_all_reads",
+                "position": 1,
+                "valid_coverage": 100.0,
+                "percent_modified": 2.0,
+                "modified_count": 2.0,
+                "canonical_count": 8.0,
+                "other_modified_count": 0.0,
+            }
+        ]
+    )
+
+    with pytest.raises(ValueError, match="valid coverage must equal"):
+        track_summary(rows)
+
+
 @pytest.mark.parametrize(
     "column",
     ("valid_coverage", "modified_count", "canonical_count", "other_modified_count"),

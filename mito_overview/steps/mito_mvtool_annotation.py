@@ -13,6 +13,7 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 import requests
 
@@ -636,8 +637,16 @@ def run_step(
                 freq_df.assign(
                     AF_M1_bin=pd.cut(
                         freq_df["AF_M1"],
-                        bins=[-0.000001, 0.001, 0.01, 0.05, 0.10, 1.0],
-                        labels=["<0.1%", "0.1-1%", "1-5%", "5-10%", ">=10%"],
+                        bins=[0.0, 0.001, 0.01, 0.05, 0.10, np.inf],
+                        labels=[
+                            "<0.1%",
+                            "0.1-<1%",
+                            "1-<5%",
+                            "5-<10%",
+                            ">=10%",
+                        ],
+                        right=False,
+                        include_lowest=True,
                     )
                 )
                 .groupby("AF_M1_bin", observed=False, as_index=False)

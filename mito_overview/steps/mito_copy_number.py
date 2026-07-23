@@ -83,6 +83,10 @@ def run_step(
 ) -> dict[str, Path | str]:
     """Estimate the mt:nuclear depth proxy from the original alignment source."""
 
+    for name, value in (("window_size", window_size), ("window_count", window_count)):
+        if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+            raise ValueError(f"{name} must be a positive integer")
+
     print(
         f"[copy_number] starting sample={sample_id} species={species} reference_scope={reference_scope} "
         f"window_size={window_size} window_count={window_count}"

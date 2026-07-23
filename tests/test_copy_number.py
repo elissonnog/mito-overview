@@ -23,6 +23,42 @@ def write_mito_depth(summary_dir: Path, depth: int, length: int = 10) -> None:
     )
 
 
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("window_size", 0),
+        ("window_size", -1),
+        ("window_size", True),
+        ("window_count", 0),
+        ("window_count", -1),
+        ("window_count", False),
+    ],
+)
+def test_direct_step_rejects_nonpositive_or_boolean_window_settings(
+    tmp_path: Path,
+    field: str,
+    value: int | bool,
+) -> None:
+    kwargs = {"window_size": 10, "window_count": 5}
+    kwargs[field] = value
+
+    with pytest.raises(ValueError, match=rf"{field} must be a positive integer"):
+        run_step(
+            align_file=tmp_path / "unused.bam",
+            align_mode="bam",
+            ref_fasta=tmp_path / "unused.fa",
+            summary_dir=tmp_path / "summary",
+            figure_dir=tmp_path / "figures",
+            report_dir=tmp_path / "reports",
+            sample_id="INVALID-WINDOWS",
+            mt_contig="MT",
+            mt_length=10,
+            species="human",
+            reference_scope="whole_genome",
+            **kwargs,
+        )
+
+
 def test_known_100_over_10_depth_ratio_is_10(tmp_path: Path) -> None:
     fixture = Path(__file__).parents[1] / "examples" / "synthetic_data" / "TOY-WGS-001"
     ref = tmp_path / "tiny_GRCh38_wgs.fa"

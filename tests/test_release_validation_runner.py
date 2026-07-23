@@ -711,6 +711,7 @@ def test_runner_excludes_manuscript_state_from_release_acceptance() -> None:
     assert "FROZEN_PAPER_TREE" not in text
     assert "rev-parse HEAD:paper" not in text
     assert "Frozen paper tree mismatch" not in text
+    assert "--include-manuscript-rules" not in text
 
 
 def test_public_matrix_is_bound_to_public_clone_and_force_installed_wheel() -> None:

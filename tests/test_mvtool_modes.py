@@ -97,6 +97,55 @@ def test_fixture_mode_returns_exact_annotation(tmp_path: Path) -> None:
     assert metric_map(outputs["summary_path"])["network_request_attempted"] == "0"
 
 
+def test_population_frequency_bins_use_explicit_left_closed_boundaries(
+    tmp_path: Path,
+) -> None:
+    rows = [
+        {"position": position, "ref_base": "A", "alt_base": "C"}
+        for position in range(10, 15)
+    ]
+    summary, figures, reports = prepare_case(tmp_path, rows)
+    fixture = tmp_path / "frequency-boundaries.json"
+    frequencies = [0.0009, 0.001, 0.01, 0.05, 0.10]
+    fixture.write_text(
+        json.dumps(
+            {
+                "records": {
+                    f"m.{position}A>C": {
+                        "Input": f"m.{position}A>C",
+                        "AF_M1": frequency,
+                    }
+                    for position, frequency in zip(range(10, 15), frequencies)
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    outputs = mvtool.run_step(
+        summary_dir=summary,
+        figure_dir=figures,
+        report_dir=reports,
+        sample_id="AF-BOUNDARIES",
+        species="human",
+        mode="fixture",
+        fixture_json=fixture,
+    )
+    observed = pd.read_csv(
+        summary / "mito_mvtool_population_bins.tsv",
+        sep="\t",
+    )
+
+    assert outputs["status"] == "ok"
+    assert observed.to_dict("records") == [
+        {"AF_M1_bin": "<0.1%", "candidate_sites": 1},
+        {"AF_M1_bin": "0.1-<1%", "candidate_sites": 1},
+        {"AF_M1_bin": "1-<5%", "candidate_sites": 1},
+        {"AF_M1_bin": "5-<10%", "candidate_sites": 1},
+        {"AF_M1_bin": ">=10%", "candidate_sites": 1},
+    ]
+
+
 class FakeResponse:
     status_code = 200
 

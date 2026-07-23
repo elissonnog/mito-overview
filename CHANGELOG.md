@@ -41,6 +41,11 @@
 - require GitHub native immutable releases to be enabled and re-queried successfully before publication; a disabled `GET` response triggers enablement rather than an annotated-tag fallback
 - publish only the exact wheel and source distribution already bound inside the validation packet, while treating a clean public-tag rebuild as member-payload equivalence evidence rather than replacement release bytes
 - make README links to repository-only manuscript assets absolute and release-tagged so source distributions contain no broken relative `paper/**` references
+- separate manuscript-specific wording checks from the default software-release hygiene gate so `paper/**` cannot transitively determine GitHub release acceptance
+- require complete, internally consistent Phy-Mer provenance before retaining a formal haplogroup assignment; synthetic fixtures, duplicate metadata, and incomplete or contradictory provenance are non-evaluable
+- reject bedMethyl rows whose declared valid coverage disagrees with supplied modified, canonical, and other-modification counts
+- require positive integer nuclear-window size and count at the copy-proxy step boundary, including direct programmatic execution
+- define mvTool alternate-allele-frequency bins with explicit left-closed boundaries: `<0.1%`, `0.1-<1%`, `1-<5%`, `5-<10%`, and `>=10%`
 
 ## v0.2.1 - 2026-07-07
 - synchronized release metadata across `pyproject.toml`, `CITATION.cff`, README, release checklist, and manuscript source

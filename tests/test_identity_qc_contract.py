@@ -346,8 +346,18 @@ def test_identity_qc_does_not_treat_synthetic_phymer_fixture_as_formal_assignmen
             {"metric": "status", "value": "ok"},
             {"metric": "reason_code", "value": ""},
             {"metric": "best_haplogroup", "value": "H1a1"},
+            {"metric": "phymer_mode", "value": "fixture"},
+            {
+                "metric": "phymer_vendor_provenance",
+                "value": "bundled_exact_hash_fixture",
+            },
+            {
+                "metric": "phymer_fixture_id",
+                "value": "mito-overview-phymer-wiring-v1",
+            },
             {"metric": "phymer_result_scope", "value": "synthetic_wiring_fixture"},
             {"metric": "biological_validation_status", "value": "not_applicable"},
+            {"metric": "phymer_python_compatibility", "value": "not_required"},
         ]
     ).to_csv(
         summary_dir / "mito_phymer_haplogroup_summary.tsv",
@@ -372,6 +382,116 @@ def test_identity_qc_does_not_treat_synthetic_phymer_fixture_as_formal_assignmen
         summary["formal_haplogroup_reason_code"]
         == "synthetic_phymer_fixture_not_biological"
     )
+    assert summary["formal_haplogroup_best_match"] == "NA"
+
+
+def test_identity_qc_retains_exact_external_phymer_assignment(tmp_path: Path) -> None:
+    summary_dir = tmp_path / "summary"
+    summary_dir.mkdir()
+    pd.DataFrame(
+        [
+            {"metric": "status", "value": "ok"},
+            {"metric": "reason_code", "value": ""},
+            {"metric": "best_haplogroup", "value": "H1a1"},
+            {"metric": "phymer_mode", "value": "external"},
+            {
+                "metric": "phymer_vendor_provenance",
+                "value": "user_supplied_local_vendor",
+            },
+            {"metric": "phymer_fixture_id", "value": "NA"},
+            {
+                "metric": "phymer_result_scope",
+                "value": "external_classifier_output",
+            },
+            {"metric": "biological_validation_status", "value": "not_established"},
+            {
+                "metric": "phymer_python_compatibility",
+                "value": "legacy_universal_newline_adapter",
+            },
+        ]
+    ).to_csv(
+        summary_dir / "mito_phymer_haplogroup_summary.tsv",
+        sep="\t",
+        index=False,
+    )
+
+    outputs = run_step(
+        summary_dir=summary_dir,
+        figure_dir=tmp_path / "figures",
+        report_dir=tmp_path / "report",
+        sample_id="EXTERNAL-PHYMER",
+        mt_contig="MT",
+        phased_snp_vcf=None,
+        np_snp_vcf=None,
+    )
+    summary = metric_map(Path(outputs["summary_path"]))
+
+    assert outputs["status"] == "ok"
+    assert summary["formal_haplogroup_assignment_status"] == "ok"
+    assert summary["formal_haplogroup_reason_code"] == ""
+    assert summary["formal_haplogroup_best_match"] == "H1a1"
+
+
+@pytest.mark.parametrize(
+    ("mutation", "reason"),
+    [
+        ("missing_scope", "phymer_provenance_invalid"),
+        ("contradictory_scope", "phymer_provenance_invalid"),
+        ("duplicate_mode", "phymer_summary_duplicate_metric"),
+    ],
+)
+def test_identity_qc_rejects_incomplete_or_contradictory_phymer_provenance(
+    tmp_path: Path,
+    mutation: str,
+    reason: str,
+) -> None:
+    summary_dir = tmp_path / "summary"
+    summary_dir.mkdir()
+    rows = [
+        {"metric": "status", "value": "ok"},
+        {"metric": "reason_code", "value": ""},
+        {"metric": "best_haplogroup", "value": "H1a1"},
+        {"metric": "phymer_mode", "value": "fixture"},
+        {
+            "metric": "phymer_vendor_provenance",
+            "value": "bundled_exact_hash_fixture",
+        },
+        {
+            "metric": "phymer_fixture_id",
+            "value": "mito-overview-phymer-wiring-v1",
+        },
+        {"metric": "phymer_result_scope", "value": "synthetic_wiring_fixture"},
+        {"metric": "biological_validation_status", "value": "not_applicable"},
+        {"metric": "phymer_python_compatibility", "value": "not_required"},
+    ]
+    if mutation == "missing_scope":
+        rows = [row for row in rows if row["metric"] != "phymer_result_scope"]
+    elif mutation == "contradictory_scope":
+        next(row for row in rows if row["metric"] == "phymer_result_scope")[
+            "value"
+        ] = "external_classifier_output"
+    else:
+        rows.append({"metric": "phymer_mode", "value": "external"})
+    pd.DataFrame(rows).to_csv(
+        summary_dir / "mito_phymer_haplogroup_summary.tsv",
+        sep="\t",
+        index=False,
+    )
+
+    outputs = run_step(
+        summary_dir=summary_dir,
+        figure_dir=tmp_path / "figures",
+        report_dir=tmp_path / "report",
+        sample_id="INVALID-PHYMER",
+        mt_contig="MT",
+        phased_snp_vcf=None,
+        np_snp_vcf=None,
+    )
+    summary = metric_map(Path(outputs["summary_path"]))
+
+    assert outputs["status"] == "not_evaluable"
+    assert summary["formal_haplogroup_assignment_status"] == "not_evaluable"
+    assert summary["formal_haplogroup_reason_code"] == reason
     assert summary["formal_haplogroup_best_match"] == "NA"
 
 

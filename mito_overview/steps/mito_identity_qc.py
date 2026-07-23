@@ -17,6 +17,7 @@ import pandas as pd
 import pysam
 
 from mito_overview.report_common import df_to_html_table, figure_html, metric_card, render_page
+from mito_overview.steps.mito_phymer_haplogroup import FIXTURE_ID
 from mito_overview.table_contracts import (
     ensure_alt_fraction_columns,
     load_metric_module_state,
@@ -25,6 +26,30 @@ from mito_overview.table_contracts import (
 )
 
 SUMMARY_COLUMNS = ["metric", "value"]
+PHYMER_PROVENANCE_FIELDS = (
+    "phymer_mode",
+    "phymer_vendor_provenance",
+    "phymer_fixture_id",
+    "phymer_result_scope",
+    "biological_validation_status",
+    "phymer_python_compatibility",
+)
+PHYMER_FIXTURE_PROVENANCE = {
+    "phymer_mode": "fixture",
+    "phymer_vendor_provenance": "bundled_exact_hash_fixture",
+    "phymer_fixture_id": FIXTURE_ID,
+    "phymer_result_scope": "synthetic_wiring_fixture",
+    "biological_validation_status": "not_applicable",
+    "phymer_python_compatibility": "not_required",
+}
+PHYMER_EXTERNAL_PROVENANCE = {
+    "phymer_mode": "external",
+    "phymer_vendor_provenance": "user_supplied_local_vendor",
+    "phymer_fixture_id": "NA",
+    "phymer_result_scope": "external_classifier_output",
+    "biological_validation_status": "not_established",
+    "phymer_python_compatibility": "legacy_universal_newline_adapter",
+}
 VARIANT_COLUMNS = ["position", "ref", "alt"]
 FINGERPRINT_COLUMNS = [
     "position",
@@ -456,19 +481,45 @@ def run_step(
     phymer_status = "not_configured"
     phymer_reason = "phymer_summary_missing"
     if not phymer_summary.empty and {"metric", "value"}.issubset(phymer_summary.columns):
-        metric_map = dict(zip(phymer_summary["metric"], phymer_summary["value"]))
+        metric_names = phymer_summary["metric"].astype(str)
+        if metric_names.duplicated().any():
+            phymer_status = "not_evaluable"
+            phymer_reason = "phymer_summary_duplicate_metric"
+            metric_map: dict[str, object] = {}
+        else:
+            metric_map = dict(zip(metric_names, phymer_summary["value"]))
         phymer_best = str(metric_map.get("best_haplogroup", "NA"))
         raw_phymer_status = str(metric_map.get("status", "not_configured"))
-        try:
-            phymer_status = validate_module_state(raw_phymer_status)
-            raw_phymer_reason = metric_map.get("reason_code", "")
-            phymer_reason = "" if pd.isna(raw_phymer_reason) else str(raw_phymer_reason).strip()
-        except ValueError:
-            phymer_status = "not_evaluable"
-            phymer_reason = "phymer_summary_status_invalid"
-        if str(metric_map.get("phymer_result_scope", "")).strip() == "synthetic_wiring_fixture":
-            phymer_status = "not_evaluable"
-            phymer_reason = "synthetic_phymer_fixture_not_biological"
+        if metric_map:
+            try:
+                phymer_status = validate_module_state(raw_phymer_status)
+                raw_phymer_reason = metric_map.get("reason_code", "")
+                phymer_reason = (
+                    "" if pd.isna(raw_phymer_reason) else str(raw_phymer_reason).strip()
+                )
+            except ValueError:
+                phymer_status = "not_evaluable"
+                phymer_reason = "phymer_summary_status_invalid"
+        observed_provenance: dict[str, str] = {}
+        for field in PHYMER_PROVENANCE_FIELDS:
+            if field not in metric_map:
+                observed_provenance[field] = ""
+                continue
+            raw_value = metric_map[field]
+            observed_provenance[field] = (
+                "NA" if field == "phymer_fixture_id" and pd.isna(raw_value)
+                else str(raw_value).strip()
+            )
+        if phymer_status == "ok":
+            if observed_provenance == PHYMER_FIXTURE_PROVENANCE:
+                phymer_status = "not_evaluable"
+                phymer_reason = "synthetic_phymer_fixture_not_biological"
+                phymer_best = "NA"
+            elif observed_provenance != PHYMER_EXTERNAL_PROVENANCE:
+                phymer_status = "not_evaluable"
+                phymer_reason = "phymer_provenance_invalid"
+                phymer_best = "NA"
+        else:
             phymer_best = "NA"
 
     phased_vcf_present = bool(phased_snp_vcf and Path(phased_snp_vcf).is_file())

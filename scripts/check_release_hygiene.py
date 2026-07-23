@@ -225,6 +225,9 @@ RULES = (
         _SECRET_ASSIGNMENT_PATTERN,
         predicate=_secret_assignment_is_private,
     ),
+)
+
+MANUSCRIPT_RULES = (
     Rule(
         "manuscript_process_wording",
         re.compile(rb"\b(?:Codex|ChatGPT|large language model|LLM)\b", re.I),
@@ -269,11 +272,16 @@ def tracked_paths(repo_root: Path) -> list[str]:
     ]
 
 
-def find_violations(repo_root: Path) -> list[str]:
+def find_violations(
+    repo_root: Path,
+    *,
+    include_manuscript_rules: bool = False,
+) -> list[str]:
     violations: list[str] = []
+    rules = RULES + (MANUSCRIPT_RULES if include_manuscript_rules else ())
     for relative_path in tracked_paths(repo_root):
         payload = (repo_root / relative_path).read_bytes()
-        for rule in RULES:
+        for rule in rules:
             if rule.applies_to(relative_path) and rule.finds_violation(payload):
                 violations.append(f"{relative_path}: {rule.name}")
     return violations
@@ -282,10 +290,18 @@ def find_violations(repo_root: Path) -> list[str]:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("repo", nargs="?", default=".", type=Path)
+    parser.add_argument(
+        "--include-manuscript-rules",
+        action="store_true",
+        help="Run optional paper-specific wording checks outside software release acceptance.",
+    )
     args = parser.parse_args()
     repo_root = args.repo.expanduser().resolve()
     paths = tracked_paths(repo_root)
-    violations = find_violations(repo_root)
+    violations = find_violations(
+        repo_root,
+        include_manuscript_rules=args.include_manuscript_rules,
+    )
     if violations:
         print("Release hygiene failed:")
         for violation in violations:

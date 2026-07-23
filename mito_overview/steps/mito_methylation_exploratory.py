@@ -133,7 +133,16 @@ def normalize_modkit_counts(df: pd.DataFrame) -> pd.DataFrame:
     if (normalized[count_columns] < 0).any(axis=None):
         raise ValueError("bedMethyl count columns must be nonnegative")
 
-    normalized["valid_coverage"] = normalized[count_columns].sum(axis=1)
+    component_coverage = normalized[count_columns].sum(axis=1)
+    contradictory_coverage = supplied_other & (
+        normalized["valid_coverage"] != component_coverage
+    )
+    if contradictory_coverage.any():
+        raise ValueError(
+            "bedMethyl valid coverage must equal modified, canonical, and "
+            "other-modified component counts when N_other_mod is supplied"
+        )
+    normalized["valid_coverage"] = component_coverage
     normalized["percent_modified"] = pd.Series(
         np.nan, index=normalized.index, dtype=float
     )
