@@ -106,6 +106,29 @@ def test_default_pytest_scope_excludes_repository_only_optional_checks() -> None
     assert configuration["tool"]["pytest"]["ini_options"]["testpaths"] == ["tests"]
 
 
+def test_sdist_readme_does_not_reference_excluded_paper_paths_relatively(
+    tmp_path: Path,
+) -> None:
+    sdist = _build_sdist(Path(__file__).parents[1], tmp_path)
+    with tarfile.open(sdist, "r:gz") as archive:
+        readme_member = next(
+            member for member in archive.getmembers() if member.name.endswith("/README.md")
+        )
+        handle = archive.extractfile(readme_member)
+        assert handle is not None
+        readme = handle.read().decode("utf-8")
+
+    assert "](paper/" not in readme
+    assert (
+        "https://raw.githubusercontent.com/elissonnog/mito-overview/v0.3.0/"
+        "paper/figures/figure0_workflow_architecture.png"
+    ) in readme
+    assert (
+        "https://github.com/elissonnog/mito-overview/blob/v0.3.0/"
+        "paper/preprint_draft.md"
+    ) in readme
+
+
 def test_extracted_sdist_runs_the_standalone_oracle_checker_in_isolated_mode(
     tmp_path: Path,
 ) -> None:

@@ -781,11 +781,23 @@ def validate_publication(
         raise ReportValidationError("GitHub publication annotated-tag identity is invalid")
 
     hosting = publication["hosting_protection"]
-    if (
-        not isinstance(hosting, dict)
-        or hosting.get("supported") is not True
-        or hosting.get("enabled") not in {True, False, None}
-    ):
+    hosting_query_valid = isinstance(hosting, dict) and (
+        (
+            hosting.get("supported") is True
+            and hosting.get("enabled") in {True, False, None}
+            and hosting.get("fallback_active") in {None, False}
+        )
+        or (
+            hosting.get("supported") is False
+            and hosting.get("enabled") is False
+            and hosting.get("reason")
+            == "immutable_releases_endpoint_unavailable"
+            and hosting.get("fallback_active") is True
+            and hosting.get("fallback")
+            == "annotated_tag_and_verified_asset_hashes"
+        )
+    )
+    if not hosting_query_valid:
         raise ReportValidationError("GitHub prepublication hosting-state query is invalid")
 
     release_record = publication["release"]

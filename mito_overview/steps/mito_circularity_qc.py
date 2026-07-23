@@ -13,7 +13,7 @@ import numpy as np
 import pandas as pd
 
 from mito_overview.report_common import df_to_html_table, figure_html, metric_card, render_page
-from mito_overview.table_contracts import validate_candidate_table
+from mito_overview.table_contracts import load_metric_module_state, validate_candidate_table
 
 SUMMARY_COLUMNS = ["metric", "value"]
 DEPTH_COLUMNS = ["position", "depth"]
@@ -237,6 +237,7 @@ def run_step(
     depth_path = summary_dir / "mito_depth_per_base.tsv"
     reads_path = summary_dir / "mito_read_stats.tsv"
     candidates_path = summary_dir / "mito_heteroplasmy_candidates.tsv"
+    heteroplasmy_summary_path = summary_dir / "mito_heteroplasmy_summary.tsv"
     summary_path = summary_dir / "mito_circularity_qc_summary.tsv"
     report_path = report_dir / "11_mito_circularity_qc.html"
     depth_fig = figure_dir / "mito_circularity_edge_depth.png"
@@ -244,20 +245,27 @@ def run_step(
 
     depth_df = load_depth_table(depth_path)
     reads_df = load_optional_table(reads_path, READ_COLUMNS)
-    candidates_df = load_candidate_table(candidates_path)
-    print(
-        f"[circularity_qc] loaded depth_rows={len(depth_df)} reads_rows={len(reads_df)} "
-        f"candidate_rows={len(candidates_df)} depth_exists={depth_path.exists()} "
-        f"reads_exists={reads_path.exists()} candidates_exists={candidates_path.exists()}",
-        flush=True,
+    heteroplasmy_status, heteroplasmy_reason = load_metric_module_state(
+        heteroplasmy_summary_path,
+        module_name="heteroplasmy",
     )
-
-    if candidates_path.exists():
+    candidate_table_exists = candidates_path.is_file()
+    candidate_evidence_trusted = heteroplasmy_status == "ok" and candidate_table_exists
+    candidates_df = pd.DataFrame(columns=CANDIDATE_COLUMNS)
+    if candidate_evidence_trusted:
         candidates_df = validate_candidate_table(
-            candidates_df,
+            load_candidate_table(candidates_path),
             table_name="mito_heteroplasmy_candidates.tsv",
             mt_length=mt_length,
         )
+    print(
+        f"[circularity_qc] loaded depth_rows={len(depth_df)} reads_rows={len(reads_df)} "
+        f"candidate_rows={len(candidates_df)} depth_exists={depth_path.exists()} "
+        f"reads_exists={reads_path.exists()} candidates_exists={candidate_table_exists} "
+        f"heteroplasmy_status={heteroplasmy_status} "
+        f"candidate_evidence_trusted={int(candidate_evidence_trusted)}",
+        flush=True,
+    )
 
     if depth_df.empty:
         return render_status_page(
@@ -339,7 +347,16 @@ def run_step(
             candidate_edge_fraction = float(
                 len(edge_candidates) / candidate_position_denominator
             )
-    if not candidates_df.empty and candidate_positions is None:
+    if heteroplasmy_status != "ok":
+        candidate_status = heteroplasmy_status
+        candidate_reason = f"upstream_heteroplasmy_{heteroplasmy_status}"
+    elif not candidate_table_exists:
+        candidate_status = "not_evaluable"
+        candidate_reason = "candidate_table_missing"
+    elif candidates_df.empty:
+        candidate_status = "not_applicable"
+        candidate_reason = "no_candidate_sites_observed"
+    elif candidate_positions is None:
         candidate_status, candidate_reason = (
             "not_evaluable",
             "invalid_candidate_positions",
@@ -494,6 +511,11 @@ def run_step(
         first_depth_reason = last_depth_reason = interior_depth_reason = "incomplete_depth_profile"
     module_status = "ok" if depth_profile_complete else "not_evaluable"
     module_reason = "" if depth_profile_complete else "incomplete_depth_profile"
+    candidate_sites_total = int(len(candidates_df)) if candidate_evidence_trusted else "NA"
+    candidate_position_denominator_summary = (
+        candidate_position_denominator if candidate_evidence_trusted else "NA"
+    )
+    candidate_sites_in_edges = int(len(edge_candidates)) if candidate_evidence_trusted else "NA"
     print(
         f"[circularity_qc] edge_bp={edge} first_edge_mean={mean_depth_first_edge:.3f} "
         f"last_edge_mean={mean_depth_last_edge:.3f} interior_mean={mean_depth_interior:.3f} "
@@ -527,9 +549,13 @@ def run_step(
             {"metric": "mean_depth_interior_denominator_positions", "value": interior_denominator},
             {"metric": "mean_depth_interior_status", "value": interior_depth_status},
             {"metric": "mean_depth_interior_reason_code", "value": interior_depth_reason},
-            {"metric": "candidate_sites_total", "value": int(len(candidates_df))},
-            {"metric": "candidate_edge_fraction_denominator_positions", "value": candidate_position_denominator},
-            {"metric": "candidate_sites_in_edges", "value": int(len(edge_candidates))},
+            {"metric": "upstream_heteroplasmy_status", "value": heteroplasmy_status},
+            {"metric": "upstream_heteroplasmy_reason_code", "value": heteroplasmy_reason},
+            {"metric": "candidate_table_present", "value": int(candidate_table_exists)},
+            {"metric": "candidate_evidence_trusted", "value": int(candidate_evidence_trusted)},
+            {"metric": "candidate_sites_total", "value": candidate_sites_total},
+            {"metric": "candidate_edge_fraction_denominator_positions", "value": candidate_position_denominator_summary},
+            {"metric": "candidate_sites_in_edges", "value": candidate_sites_in_edges},
             {"metric": "candidate_edge_fraction", "value": _summary_value(round(candidate_edge_fraction, 6))},
             {"metric": "candidate_edge_fraction_status", "value": candidate_status},
             {"metric": "candidate_edge_fraction_reason_code", "value": candidate_reason},

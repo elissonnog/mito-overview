@@ -21,6 +21,10 @@ mean_depth_interior	2.917
 mean_depth_interior_denominator_positions	48
 mean_depth_interior_status	ok
 mean_depth_interior_reason_code	
+upstream_heteroplasmy_status	ok
+upstream_heteroplasmy_reason_code	
+candidate_table_present	1
+candidate_evidence_trusted	1
 candidate_sites_total	1
 candidate_edge_fraction_denominator_positions	1
 candidate_sites_in_edges	0

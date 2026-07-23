@@ -11,6 +11,7 @@ from mito_overview.allele_counting import (
     collect_site_read_calls,
     count_contig_alleles,
 )
+from mito_overview.steps import mito_heteroplasmy as heteroplasmy
 from mito_overview.steps.mito_heteroplasmy import run_step
 
 from ._helpers import ReadSpec, metric_map, write_alignment, write_fasta
@@ -588,3 +589,46 @@ def test_equal_candidate_metrics_are_ordered_by_position(tmp_path: Path) -> None
     )
     candidates = pd.read_csv(outputs["candidate_path"], sep="\t")
     assert candidates["position"].tolist() == [1, 4]
+
+
+def test_failed_recomputation_removes_prior_heteroplasmy_outputs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    reference = write_fasta(tmp_path / "reference.fa", {"MT": "AAAA"})
+    summary_dir = tmp_path / "summary"
+    figure_dir = tmp_path / "figures"
+    report_dir = tmp_path / "report"
+    summary_dir.mkdir()
+    figure_dir.mkdir()
+    report_dir.mkdir()
+    owned_outputs = (
+        summary_dir / "mito_heteroplasmy_all_sites.tsv",
+        summary_dir / "mito_heteroplasmy_candidates.tsv",
+        summary_dir / "mito_heteroplasmy_summary.tsv",
+        report_dir / "02_mito_heteroplasmy.html",
+        figure_dir / "mito_heteroplasmy_landscape.png",
+        figure_dir / "mito_heteroplasmy_top_candidates.png",
+    )
+    for path in owned_outputs:
+        path.write_text("stale\n", encoding="ascii")
+    monkeypatch.setattr(
+        heteroplasmy,
+        "count_contig_alleles",
+        lambda **kwargs: (_ for _ in ()).throw(RuntimeError("counting failed")),
+    )
+
+    with pytest.raises(RuntimeError, match="counting failed"):
+        heteroplasmy.run_step(
+            bam=tmp_path / "unused.bam",
+            ref_fasta=reference,
+            summary_dir=summary_dir,
+            figure_dir=figure_dir,
+            report_dir=report_dir,
+            sample_id="STALE",
+            mt_contig="MT",
+            mt_length=4,
+            min_depth=1,
+            min_vaf=0.02,
+        )
+
+    assert all(not path.exists() for path in owned_outputs)

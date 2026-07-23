@@ -45,6 +45,13 @@ def write_tables(
     depth.to_csv(summary_dir / "mito_depth_per_base.tsv", sep="\t", index=False)
     reads.to_csv(summary_dir / "mito_read_stats.tsv", sep="\t", index=False)
     candidates.to_csv(summary_dir / "mito_heteroplasmy_candidates.tsv", sep="\t", index=False)
+    pd.DataFrame(
+        [
+            {"metric": "status", "value": "ok"},
+            {"metric": "reason_code", "value": ""},
+            {"metric": "candidate_sites", "value": len(candidates)},
+        ]
+    ).to_csv(summary_dir / "mito_heteroplasmy_summary.tsv", sep="\t", index=False)
 
 
 def run_circularity(tmp_path: Path) -> tuple[dict[str, Path | str], dict[str, str]]:
@@ -142,8 +149,8 @@ def test_unusable_or_missing_metric_evidence_is_na_not_zero(tmp_path: Path) -> N
     assert metrics["mean_depth_interior_reason_code"] == "incomplete_depth_profile"
     assert metrics["candidate_edge_fraction"] == "NA"
     assert metrics["candidate_edge_fraction_denominator_positions"] == "0"
-    assert metrics["candidate_edge_fraction_status"] == "not_evaluable"
-    assert metrics["candidate_edge_fraction_reason_code"] == "no_usable_candidate_positions"
+    assert metrics["candidate_edge_fraction_status"] == "not_applicable"
+    assert metrics["candidate_edge_fraction_reason_code"] == "no_candidate_sites_observed"
     assert metrics["primary_read_start_in_edge_fraction"] == "NA"
     assert metrics["primary_read_start_in_edge_fraction_denominator_reads"] == "0"
     assert metrics["primary_read_start_in_edge_fraction_status"] == "not_evaluable"
@@ -218,8 +225,8 @@ def test_malformed_optional_evidence_is_not_reported_as_observed_zero(
     assert metrics["depth_profile_complete"] == "1"
     assert metrics["candidate_edge_fraction"] == "NA"
     assert metrics["candidate_edge_fraction_denominator_positions"] == "0"
-    assert metrics["candidate_edge_fraction_status"] == "not_evaluable"
-    assert metrics["candidate_edge_fraction_reason_code"] == "no_usable_candidate_positions"
+    assert metrics["candidate_edge_fraction_status"] == "not_applicable"
+    assert metrics["candidate_edge_fraction_reason_code"] == "no_candidate_sites_observed"
     assert metrics["primary_read_start_in_edge_fraction"] == "NA"
     assert metrics["primary_read_start_in_edge_fraction_status"] == "not_evaluable"
     assert metrics["primary_read_start_in_edge_fraction_reason_code"] == "invalid_primary_read_coordinate_pairs"
@@ -258,6 +265,58 @@ def test_malformed_candidate_evidence_is_rejected_before_circularity_interpretat
 
     with pytest.raises(ValueError, match=message):
         run_circularity(tmp_path)
+
+
+def test_failed_upstream_status_suppresses_stale_candidate_metrics(tmp_path: Path) -> None:
+    depth = pd.DataFrame({"position": range(1, 101), "depth": [10.0] * 100})
+    write_tables(
+        tmp_path / "summary",
+        depth=depth,
+        reads=pd.DataFrame(),
+        candidates=candidate_table([20]),
+    )
+    pd.DataFrame(
+        [
+            {"metric": "status", "value": "failed"},
+            {"metric": "reason_code", "value": "allele_counting_failed"},
+        ]
+    ).to_csv(
+        tmp_path / "summary" / "mito_heteroplasmy_summary.tsv",
+        sep="\t",
+        index=False,
+    )
+
+    outputs, metrics = run_circularity(tmp_path)
+
+    assert outputs["status"] == "ok"
+    assert metrics["upstream_heteroplasmy_status"] == "failed"
+    assert metrics["upstream_heteroplasmy_reason_code"] == "allele_counting_failed"
+    assert metrics["candidate_evidence_trusted"] == "0"
+    assert metrics["candidate_sites_total"] == "NA"
+    assert metrics["candidate_sites_in_edges"] == "NA"
+    assert metrics["candidate_edge_fraction"] == "NA"
+    assert metrics["candidate_edge_fraction_status"] == "failed"
+    assert metrics["candidate_edge_fraction_reason_code"] == "upstream_heteroplasmy_failed"
+
+
+def test_missing_candidate_table_is_distinct_from_observed_zero(tmp_path: Path) -> None:
+    depth = pd.DataFrame({"position": range(1, 101), "depth": [10.0] * 100})
+    write_tables(
+        tmp_path / "summary",
+        depth=depth,
+        reads=pd.DataFrame(),
+        candidates=candidate_table([]),
+    )
+    (tmp_path / "summary" / "mito_heteroplasmy_candidates.tsv").unlink()
+
+    _, metrics = run_circularity(tmp_path)
+
+    assert metrics["upstream_heteroplasmy_status"] == "ok"
+    assert metrics["candidate_table_present"] == "0"
+    assert metrics["candidate_evidence_trusted"] == "0"
+    assert metrics["candidate_sites_total"] == "NA"
+    assert metrics["candidate_edge_fraction_status"] == "not_evaluable"
+    assert metrics["candidate_edge_fraction_reason_code"] == "candidate_table_missing"
 
 
 def test_reversed_primary_read_coordinates_make_all_read_edge_metrics_undefined(

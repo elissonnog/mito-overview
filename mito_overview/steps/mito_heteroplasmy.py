@@ -96,6 +96,24 @@ def run_step(
     figure_dir.mkdir(parents=True, exist_ok=True)
     report_dir.mkdir(parents=True, exist_ok=True)
 
+    all_path = summary_dir / "mito_heteroplasmy_all_sites.tsv"
+    cand_path = summary_dir / "mito_heteroplasmy_candidates.tsv"
+    summary_path = summary_dir / "mito_heteroplasmy_summary.tsv"
+    report_path = report_dir / "02_mito_heteroplasmy.html"
+    landscape_figure = figure_dir / "mito_heteroplasmy_landscape.png"
+    candidate_figure_path = figure_dir / "mito_heteroplasmy_top_candidates.png"
+    # A failed recomputation must not leave a prior run's allele evidence available
+    # to downstream annotation or circularity modules.
+    for owned_output in (
+        all_path,
+        cand_path,
+        summary_path,
+        report_path,
+        landscape_figure,
+        candidate_figure_path,
+    ):
+        owned_output.unlink(missing_ok=True)
+
     policy = AlleleFilterPolicy(
         min_base_quality=min_base_quality,
         min_mapping_quality=min_mapping_quality,
@@ -299,10 +317,6 @@ def run_step(
     summary_rows.extend(policy_rows(policy, counting.stats))
     summary_df = pd.DataFrame(summary_rows)
 
-    all_path = summary_dir / "mito_heteroplasmy_all_sites.tsv"
-    cand_path = summary_dir / "mito_heteroplasmy_candidates.tsv"
-    summary_path = summary_dir / "mito_heteroplasmy_summary.tsv"
-    report_path = report_dir / "02_mito_heteroplasmy.html"
     all_df.to_csv(all_path, sep="\t", index=False, na_rep="NA")
     cand_df.to_csv(cand_path, sep="\t", index=False, na_rep="NA")
     summary_df.to_csv(summary_path, sep="\t", index=False, na_rep="NA")
@@ -314,7 +328,6 @@ def run_step(
     plt.ylabel("Observed alternate allele fraction")
     plt.title(f"{sample_id} mitochondrial alternate-allele landscape")
     plt.tight_layout()
-    landscape_figure = figure_dir / "mito_heteroplasmy_landscape.png"
     plt.savefig(landscape_figure, dpi=150)
     plt.close()
 
@@ -327,7 +340,7 @@ def run_step(
         plt.ylabel("Observed alternate allele fraction")
         plt.title(f"{sample_id} top candidate sites")
         plt.tight_layout()
-        candidate_figure = figure_dir / "mito_heteroplasmy_top_candidates.png"
+        candidate_figure = candidate_figure_path
         plt.savefig(candidate_figure, dpi=150)
         plt.close()
 

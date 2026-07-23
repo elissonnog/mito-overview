@@ -239,10 +239,12 @@ class FakeGhRunner:
         final_sha: str = FINAL_SHA,
         main_sha: str = FINAL_SHA,
         immutable_payload: dict[str, Any] | None = None,
+        immutable_put_unavailable: bool = False,
     ) -> None:
         self.final_sha = final_sha
         self.main_sha = main_sha
         self.immutable_payload = immutable_payload
+        self.immutable_put_unavailable = immutable_put_unavailable
         self.tag_ref: dict[str, Any] | None = {
             "ref": f"refs/tags/{publication.EXPECTED_TAG}",
             "url": "https://api.github.test/tag-ref",
@@ -343,6 +345,8 @@ class FakeGhRunner:
                 return self._result(args, returncode=1, stderr="Not Found (HTTP 404)")
             return self._result(args, self.immutable_payload)
         if route == "immutable-releases" and method == "PUT":
+            if self.immutable_put_unavailable:
+                return self._result(args, returncode=1, stderr="Not Found (HTTP 404)")
             self.mutations.append("enable_immutable_releases")
             self.immutable_payload = {
                 "enabled": True,
@@ -604,6 +608,8 @@ def test_create_draft_requires_existing_annotated_tag_and_records_report_identit
         "supported": True,
         "enabled": True,
         "reason": "queried",
+        "fallback_active": False,
+        "fallback": None,
         "api_payload": {"enabled": True, "enforced_by_owner": False},
         "enabled_by_publisher": True,
     }
@@ -988,6 +994,36 @@ def test_publisher_enables_and_records_immutable_release_protection(
     assert record["hosting_protection"]["enabled_by_publisher"] is True
     assert "release_attestations" not in record
     assert runner.mutations.count("enable_immutable_releases") == 1
+
+
+def test_unavailable_immutable_release_feature_uses_annotated_tag_hash_fallback(
+    tmp_path: Path,
+) -> None:
+    runner = FakeGhRunner(immutable_put_unavailable=True)
+    runner.immutable_after_publish = False
+    asset_dir, output_dir, payloads = _create_and_upload(tmp_path, runner)
+
+    record_path = publication.publish_github_release(
+        _config(output_dir, "publish", asset_dir=asset_dir), runner
+    )
+
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+    protection = record["hosting_protection"]
+    assert protection == {
+        "supported": False,
+        "enabled": False,
+        "reason": "immutable_releases_endpoint_unavailable",
+        "fallback_active": True,
+        "fallback": "annotated_tag_and_verified_asset_hashes",
+    }
+    assert record["release"]["immutable"] is False
+    assert record["tag_object"]["peeled_target_sha"] == FINAL_SHA
+    assert record["verified"] is True
+    assert record["verification_state"] == "verified_published"
+    assert {item["name"] for item in record["remote_assets"]} == set(payloads)
+    assert record["published_redownload_verification"]["verified"] is True
+    assert "enable_immutable_releases" not in runner.mutations
+    assert runner.mutations.count("publish_release") == 1
 
 
 def test_publish_validates_then_patches_once_and_writes_report_ready_receipt(

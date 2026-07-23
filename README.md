@@ -77,7 +77,7 @@ Optional human-only enrichment pages are exercised locally in this repository wi
 ## Report views
 The lead figure below shows public ONT long-read report-native panels from the fixed GM12878 qn1000 asset pack.
 
-![mito-overview public ONT report-native views](paper/figures/figure0_workflow_architecture.png)
+![mito-overview public ONT report-native views](https://raw.githubusercontent.com/elissonnog/mito-overview/v0.3.0/paper/figures/figure0_workflow_architecture.png)
 
 The panels show depth, alternate-allele fractions, selected-site read co-occurrence, and alignment span-versus-MAPQ QC. These are descriptive workflow outputs from the fixed reduced input.
 
@@ -195,7 +195,7 @@ In long-read mode without ONT bedmethyl sidecars, page `12` is expected to be a 
 - current repository now includes a synthetic public example bundle generated from the public-core workflow
 - current repository now includes a short-read synthetic bundle plus bounded public long-read and short-read proof-of-principle asset packs
 - cite the software metadata in [`CITATION.cff`](CITATION.cff) and use tagged releases for archived versions
-- canonical free-format manuscript source is [`paper/preprint_draft.md`](paper/preprint_draft.md)
+- the free-format manuscript source is maintained in the repository but excluded from installable distributions: [`paper/preprint_draft.md`](https://github.com/elissonnog/mito-overview/blob/v0.3.0/paper/preprint_draft.md)
 - design notes for the public package are in [`docs/overview.md`](docs/overview.md) and [`docs/methodology.md`](docs/methodology.md)
 - public long-read proof-of-principle notes are in [`docs/validation_public_longread.md`](docs/validation_public_longread.md)
 - public reduced short-read proof-of-principle notes are in [`docs/validation_public_shortread.md`](docs/validation_public_shortread.md)

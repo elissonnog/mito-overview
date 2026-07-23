@@ -51,6 +51,13 @@ def prepare_case(
     pd.DataFrame([complete_candidate(row) for row in candidate_rows]).to_csv(
         summary / "mito_heteroplasmy_candidates.tsv", sep="\t", index=False
     )
+    pd.DataFrame(
+        [
+            {"metric": "status", "value": "ok"},
+            {"metric": "reason_code", "value": ""},
+            {"metric": "candidate_sites", "value": len(candidate_rows)},
+        ]
+    ).to_csv(summary / "mito_heteroplasmy_summary.tsv", sep="\t", index=False)
     return summary, figures, reports
 
 
@@ -281,8 +288,71 @@ def test_valid_header_only_candidate_table_is_an_empty_result(
         fixture_json=fixture,
     )
 
+    assert outputs["status"] == "not_applicable"
+    metrics = metric_map(outputs["summary_path"])
+    assert metrics["reason_code"] == "no_candidate_sites_observed"
+    assert metrics["submitted_candidates"] == "0"
+    assert metrics["network_request_attempted"] == "0"
+
+
+def test_failed_upstream_status_blocks_stale_candidate_annotation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    summary, figures, reports = prepare_case(tmp_path)
+    pd.DataFrame(
+        [
+            {"metric": "status", "value": "failed"},
+            {"metric": "reason_code", "value": "allele_counting_failed"},
+        ]
+    ).to_csv(summary / "mito_heteroplasmy_summary.tsv", sep="\t", index=False)
+    monkeypatch.setattr(
+        mvtool.requests,
+        "Session",
+        lambda: (_ for _ in ()).throw(AssertionError("network session created")),
+    )
+
+    outputs = mvtool.run_step(
+        summary_dir=summary,
+        figure_dir=figures,
+        report_dir=reports,
+        sample_id="STALE",
+        species="human",
+        mode="fixture",
+        fixture_json=Path(__file__).parent / "fixtures" / "mock_mvtool_annotations.json",
+    )
+
+    metrics = metric_map(outputs["summary_path"])
+    assert outputs["status"] == "failed"
+    assert metrics["reason_code"] == "upstream_heteroplasmy_failed"
+    assert metrics["upstream_heteroplasmy_reason_code"] == "allele_counting_failed"
+    assert metrics["network_request_attempted"] == "0"
+
+
+def test_missing_candidate_table_is_distinct_from_observed_zero(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    summary, figures, reports = prepare_case(tmp_path)
+    (summary / "mito_heteroplasmy_candidates.tsv").unlink()
+    monkeypatch.setattr(
+        mvtool.requests,
+        "Session",
+        lambda: (_ for _ in ()).throw(AssertionError("network session created")),
+    )
+
+    outputs = mvtool.run_step(
+        summary_dir=summary,
+        figure_dir=figures,
+        report_dir=reports,
+        sample_id="MISSING",
+        species="human",
+        mode="fixture",
+        fixture_json=Path(__file__).parent / "fixtures" / "mock_mvtool_annotations.json",
+    )
+
+    metrics = metric_map(outputs["summary_path"])
     assert outputs["status"] == "not_evaluable"
-    assert metric_map(outputs["summary_path"])["reason_code"] == "no_candidate_sites_available"
+    assert metrics["reason_code"] == "candidate_table_missing"
+    assert metrics["network_request_attempted"] == "0"
 
 
 @pytest.mark.parametrize(

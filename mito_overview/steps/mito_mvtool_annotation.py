@@ -17,7 +17,7 @@ import pandas as pd
 import requests
 
 from mito_overview.report_common import df_to_html_table, figure_html, metric_card, render_page
-from mito_overview.table_contracts import validate_candidate_table
+from mito_overview.table_contracts import load_metric_module_state, validate_candidate_table
 
 DEFAULT_FIELDS = [
     "Input",
@@ -297,6 +297,10 @@ def run_step(
     status_counts_path = summary_dir / "mito_mvtool_status_counts.tsv"
     disease_summary_path = summary_dir / "mito_mvtool_disease_summary.tsv"
     population_bins_path = summary_dir / "mito_mvtool_population_bins.tsv"
+    status_figure_path = figure_dir / "mito_mvtool_status_counts.png"
+    population_figure_path = figure_dir / "mito_mvtool_population_context.png"
+    for owned_figure in (status_figure_path, population_figure_path):
+        owned_figure.unlink(missing_ok=True)
 
     mode = mode.strip().lower()
     if mode == "disabled":
@@ -402,14 +406,41 @@ def run_step(
             message="mvTool annotation is currently enabled only for human mitochondrial samples.",
         )
 
-    candidates_path = summary_dir / "mito_heteroplasmy_candidates.tsv"
-    candidates = load_table(candidates_path)
-    if candidates_path.exists():
-        candidates = validate_candidate_table(
-            candidates,
-            table_name="mito_heteroplasmy_candidates.tsv",
+    heteroplasmy_status, heteroplasmy_reason = load_metric_module_state(
+        summary_dir / "mito_heteroplasmy_summary.tsv",
+        module_name="heteroplasmy",
+    )
+    if heteroplasmy_status != "ok":
+        return write_status_page(
+            report_path=report_path,
+            summary_path=summary_path,
+            annot_path=annot_path,
+            batch_log_path=batch_log_path,
+            sample_id=sample_id,
+            status_rows=[
+                {"metric": "status", "value": heteroplasmy_status},
+                {
+                    "metric": "reason_code",
+                    "value": f"upstream_heteroplasmy_{heteroplasmy_status}",
+                },
+                {
+                    "metric": "upstream_heteroplasmy_status",
+                    "value": heteroplasmy_status,
+                },
+                {
+                    "metric": "upstream_heteroplasmy_reason_code",
+                    "value": heteroplasmy_reason,
+                },
+                {"metric": "network_request_attempted", "value": 0},
+            ],
+            message=(
+                "mvTool annotation was not attempted because the upstream "
+                f"alternate-allele module reported {heteroplasmy_status!r}."
+            ),
         )
-    if candidates.empty:
+
+    candidates_path = summary_dir / "mito_heteroplasmy_candidates.tsv"
+    if not candidates_path.is_file():
         return write_status_page(
             report_path=report_path,
             summary_path=summary_path,
@@ -418,9 +449,38 @@ def run_step(
             sample_id=sample_id,
             status_rows=[
                 {"metric": "status", "value": "not_evaluable"},
-                {"metric": "reason_code", "value": "no_candidate_sites_available"},
+                {"metric": "reason_code", "value": "candidate_table_missing"},
+                {"metric": "upstream_heteroplasmy_status", "value": "ok"},
+                {"metric": "network_request_attempted", "value": 0},
             ],
-            message="No mitochondrial candidate variants were available for mvTool annotation.",
+            message=(
+                "The upstream alternate-allele summary was valid, but its candidate "
+                "table was missing, so annotation was not attempted."
+            ),
+        )
+    candidates = load_table(candidates_path)
+    candidates = validate_candidate_table(
+        candidates,
+        table_name="mito_heteroplasmy_candidates.tsv",
+    )
+    if candidates.empty:
+        return write_status_page(
+            report_path=report_path,
+            summary_path=summary_path,
+            annot_path=annot_path,
+            batch_log_path=batch_log_path,
+            sample_id=sample_id,
+            status_rows=[
+                {"metric": "status", "value": "not_applicable"},
+                {"metric": "reason_code", "value": "no_candidate_sites_observed"},
+                {"metric": "upstream_heteroplasmy_status", "value": "ok"},
+                {"metric": "submitted_candidates", "value": 0},
+                {"metric": "network_request_attempted", "value": 0},
+            ],
+            message=(
+                "The upstream candidate table was valid and contained zero observed "
+                "candidate sites, so mvTool annotation was not applicable."
+            ),
         )
     candidates["mvtool_input"] = [to_hgvs(r) for r in candidates.itertuples(index=False)]
     unique_inputs = candidates[["mvtool_input"]].reset_index(drop=True)
@@ -594,6 +654,9 @@ def run_step(
     summary_df = pd.DataFrame(
         [
             {"metric": "status", "value": "ok"},
+            {"metric": "reason_code", "value": ""},
+            {"metric": "upstream_heteroplasmy_status", "value": "ok"},
+            {"metric": "upstream_heteroplasmy_reason_code", "value": heteroplasmy_reason},
             {"metric": "candidate_sites_submitted", "value": int(len(unique_inputs))},
             {"metric": "rows_returned_by_mvtool", "value": int(len(annot_df))},
             {"metric": "sites_with_usable_mitomap_status", "value": usable_status_rows},
@@ -609,7 +672,7 @@ def run_step(
 
     status_fig = None
     if not status_counts.empty:
-        status_fig = figure_dir / "mito_mvtool_status_counts.png"
+        status_fig = status_figure_path
         plot_df = status_counts.head(8)
         plt.figure(figsize=(9, 4))
         plt.bar(plot_df["Mitomap_status"], plot_df["candidate_sites"], color="#7c3aed")
@@ -622,7 +685,7 @@ def run_step(
 
     af_fig = None
     if not population_bin_summary.empty:
-        af_fig = figure_dir / "mito_mvtool_population_context.png"
+        af_fig = population_figure_path
         plt.figure(figsize=(7, 4))
         plt.bar(population_bin_summary["AF_M1_bin"].astype(str), population_bin_summary["candidate_sites"], color="#0f766e")
         plt.xlabel("mvTool AF_M1 population-frequency bin")

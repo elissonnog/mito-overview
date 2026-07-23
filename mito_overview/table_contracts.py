@@ -19,6 +19,22 @@ MODULE_STATES = frozenset(
     }
 )
 CANONICAL_BASES = frozenset({"A", "C", "G", "T"})
+ALLELE_TABLE_COLUMNS = (
+    "position",
+    "ref_base",
+    "alt_base",
+    "callable_depth",
+    "depth",
+    "alt_count",
+    "alt_allele_fraction",
+    "heteroplasmy_fraction",
+    "alt_forward",
+    "alt_reverse",
+    "A",
+    "C",
+    "G",
+    "T",
+)
 
 
 def _strict_numeric_column(
@@ -238,6 +254,167 @@ def validate_candidate_table(
             f"{table_name} alternate base is not a largest observed non-reference allele"
         )
     return normalized
+
+
+def validate_all_site_table(
+    frame: pd.DataFrame,
+    *,
+    table_name: str = "all-site allele table",
+    mt_length: int,
+    reference_sequence: str,
+) -> pd.DataFrame:
+    """Validate complete per-base allele evidence used for consensus reconstruction.
+
+    Unlike the candidate contract, this table contains every mitochondrial
+    position and permits a literal ``.`` ALT with zero alternate observations.
+    It must still be complete, unique, reference-consistent, and internally
+    coherent before a downstream module can make a categorical interpretation.
+    """
+
+    if not isinstance(mt_length, int) or isinstance(mt_length, bool) or mt_length <= 0:
+        raise ValueError(f"{table_name} requires a positive integer mt_length")
+    normalized = frame.copy()
+    missing = sorted(set(ALLELE_TABLE_COLUMNS) - set(normalized.columns))
+    if missing:
+        raise ValueError(f"{table_name} lacks required columns: {','.join(missing)}")
+
+    reference_sequence = str(reference_sequence).strip().upper()
+    if len(reference_sequence) != mt_length:
+        raise ValueError(
+            f"{table_name} reference length mismatch: "
+            f"expected {mt_length}, observed {len(reference_sequence)}"
+        )
+    if set(reference_sequence) - CANONICAL_BASES:
+        raise ValueError(f"{table_name} reference contains noncanonical bases")
+
+    normalized["position"] = _strict_numeric_column(
+        normalized,
+        "position",
+        table_name=table_name,
+        integer=True,
+        minimum=1,
+        maximum=mt_length,
+    )
+    if normalized["position"].duplicated().any():
+        raise ValueError(f"{table_name} contains duplicate positions")
+    expected_positions = set(range(1, mt_length + 1))
+    observed_positions = set(normalized["position"].tolist())
+    if observed_positions != expected_positions or len(normalized) != mt_length:
+        missing_positions = len(expected_positions - observed_positions)
+        unexpected_positions = len(observed_positions - expected_positions)
+        raise ValueError(
+            f"{table_name} does not cover every mitochondrial position exactly once: "
+            f"expected_rows={mt_length}, observed_rows={len(normalized)}, "
+            f"missing_positions={missing_positions}, "
+            f"unexpected_positions={unexpected_positions}"
+        )
+
+    normalized["ref_base"] = normalized["ref_base"].astype(str).str.strip().str.upper()
+    if not normalized["ref_base"].isin(CANONICAL_BASES).all():
+        raise ValueError(f"{table_name} ref_base must contain canonical bases")
+    expected_ref = normalized["position"].map(
+        lambda position: reference_sequence[int(position) - 1]
+    )
+    if not (normalized["ref_base"] == expected_ref).all():
+        raise ValueError(f"{table_name} REF alleles disagree with the configured reference")
+
+    normalized["alt_base"] = normalized["alt_base"].astype(str).str.strip().str.upper()
+    if not normalized["alt_base"].isin(CANONICAL_BASES | {"."}).all():
+        raise ValueError(f"{table_name} alt_base must contain canonical bases or '.'")
+    canonical_alt = normalized["alt_base"] != "."
+    if (normalized.loc[canonical_alt, "alt_base"] == normalized.loc[canonical_alt, "ref_base"]).any():
+        raise ValueError(f"{table_name} contains REF-equal-ALT rows")
+
+    for column in ("depth", "callable_depth", "alt_count", "alt_forward", "alt_reverse"):
+        normalized[column] = _strict_numeric_column(
+            normalized,
+            column,
+            table_name=table_name,
+            integer=True,
+            minimum=0,
+        )
+    if not (normalized["depth"] == normalized["callable_depth"]).all():
+        raise ValueError(f"{table_name} depth conflicts with callable_depth")
+    if (normalized["alt_count"] > normalized["callable_depth"]).any():
+        raise ValueError(f"{table_name} alt_count exceeds callable_depth")
+    if not (
+        normalized["alt_count"]
+        == normalized["alt_forward"] + normalized["alt_reverse"]
+    ).all():
+        raise ValueError(f"{table_name} strand counts do not sum to alt_count")
+
+    base_columns = ["A", "C", "G", "T"]
+    for column in base_columns:
+        normalized[column] = _strict_numeric_column(
+            normalized,
+            column,
+            table_name=table_name,
+            integer=True,
+            minimum=0,
+        )
+    if not (normalized[base_columns].sum(axis=1) == normalized["callable_depth"]).all():
+        raise ValueError(f"{table_name} A/C/G/T counts do not sum to callable_depth")
+
+    canonical_fraction = pd.to_numeric(normalized["alt_allele_fraction"], errors="coerce")
+    legacy_fraction = pd.to_numeric(normalized["heteroplasmy_fraction"], errors="coerce")
+    positive_depth = normalized["callable_depth"] > 0
+    finite_canonical = np.isfinite(canonical_fraction.to_numpy(dtype=float))
+    finite_legacy = np.isfinite(legacy_fraction.to_numpy(dtype=float))
+    if not bool((finite_canonical[positive_depth] & finite_legacy[positive_depth]).all()):
+        raise ValueError(f"{table_name} has undefined alternate fractions at callable positions")
+    if bool((finite_canonical[~positive_depth] | finite_legacy[~positive_depth]).any()):
+        raise ValueError(f"{table_name} defines alternate fractions at zero-depth positions")
+    if positive_depth.any():
+        observed_canonical = canonical_fraction.loc[positive_depth].astype("float64")
+        observed_legacy = legacy_fraction.loc[positive_depth].astype("float64")
+        if ((observed_canonical < 0) | (observed_canonical > 1)).any():
+            raise ValueError(f"{table_name} alternate fractions are outside [0,1]")
+        if not np.isclose(
+            observed_canonical,
+            observed_legacy,
+            rtol=0,
+            atol=1e-9,
+        ).all():
+            raise ValueError(f"{table_name} alternate-fraction aliases conflict")
+        expected_fraction = (
+            normalized.loc[positive_depth, "alt_count"]
+            / normalized.loc[positive_depth, "callable_depth"]
+        )
+        if not np.isclose(
+            observed_canonical,
+            expected_fraction,
+            rtol=0,
+            atol=5.1e-7,
+        ).all():
+            raise ValueError(f"{table_name} alternate fraction conflicts with allele counts")
+    normalized["alt_allele_fraction"] = canonical_fraction.astype("float64")
+    normalized["heteroplasmy_fraction"] = legacy_fraction.astype("float64")
+
+    largest_nonreference_count = normalized.apply(
+        lambda row: max(
+            int(row[base])
+            for base in ("A", "C", "G", "T")
+            if base != row["ref_base"]
+        ),
+        axis=1,
+    ).astype("int64")
+    if not (normalized["alt_count"] == largest_nonreference_count).all():
+        raise ValueError(
+            f"{table_name} alternate count is not the largest observed non-reference count"
+        )
+
+    zero_alt = normalized["alt_count"] == 0
+    if not (normalized.loc[zero_alt, "alt_base"] == ".").all():
+        raise ValueError(f"{table_name} zero-alternate rows must use alt_base='.'")
+    if not (normalized.loc[~zero_alt, "alt_base"] != ".").all():
+        raise ValueError(f"{table_name} observed alternate rows require a canonical alt_base")
+    if (~zero_alt).any():
+        observed_alt = normalized.loc[~zero_alt].apply(
+            lambda row: row[str(row["alt_base"])], axis=1
+        ).astype("int64")
+        if not (observed_alt == normalized.loc[~zero_alt, "alt_count"]).all():
+            raise ValueError(f"{table_name} alt_count disagrees with the alternate-base count")
+    return normalized.sort_values("position").reset_index(drop=True)
 
 
 def ensure_alt_fraction_columns(frame: pd.DataFrame) -> pd.DataFrame:

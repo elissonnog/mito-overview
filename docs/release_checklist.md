@@ -140,17 +140,22 @@ release date.
   archive and rejects any post-assembly mutation.
 - [ ] Fresh-tag evidence seals all 12 canonical asset names, sizes, and SHA-256
   values to `FINAL_SHA` and the annotated tag object before any release mutation.
-- [ ] Repository immutable releases are enabled before draft creation, and the
-  queried published release reports `immutable=true`.
+- [ ] If repository immutable releases are supported, they are enabled before
+  draft creation and the queried published release reports `immutable=true`.
+  If the GitHub endpoint is genuinely unavailable, `github_publication.json`
+  records `fallback_active=true` and
+  `fallback=annotated_tag_and_verified_asset_hashes`; the exact annotated tag,
+  canonical asset inventory, authenticated redownloads, and SHA-256 manifest
+  remain mandatory.
 - [ ] Canonical assets include wheel, sdist, validation ZIP, Markdown/DOCX/PDF
   report, the Markdown report's sibling figure directory as a tar archive,
   machine-readable verification record, release notes, environment records,
   and `SHA256SUMS`.
 - [ ] `SHA256SUMS` covers every other uploaded asset; the downloaded manifest
   is byte-identical to the prepared manifest and verifies every listed asset.
-- [ ] The published release, tag target, asset inventory, hashes, and hosting
-  immutability/protection state are queried from GitHub and captured in
-  `github_publication.json`.
+- [ ] The published release, tag target, asset inventory, hashes, and either the
+  enabled hosting-immutability state or the explicit unsupported-feature fallback
+  are queried from GitHub and captured in `github_publication.json`.
 
 ## Stop rules
 

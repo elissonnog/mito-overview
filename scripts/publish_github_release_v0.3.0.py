@@ -20,6 +20,7 @@ from typing import Any, Protocol, Sequence
 
 EXPECTED_TAG = "v0.3.0"
 PUBLICATION_SCHEMA_VERSION = "1.0"
+HOSTING_FALLBACK = "annotated_tag_and_verified_asset_hashes"
 TAG_VALIDATION_SCHEMA_VERSION = "2.0"
 TAG_VALIDATION_PROFILE = "fresh_public_tag_validation_v2"
 TRUSTED_ASSET_MANIFEST_SCHEMA_VERSION = "1.0"
@@ -565,7 +566,12 @@ def _require_release_identity(
             raise PublicationError("Release immutable state is inconsistent with draft state")
 
 
-def _create_draft_release(runner: Runner, config: PublicationConfig) -> dict[str, Any]:
+def _create_draft_release(
+    runner: Runner,
+    config: PublicationConfig,
+    *,
+    require_immutable: bool,
+) -> dict[str, Any]:
     release = _api_object(
         runner,
         config.repository,
@@ -583,7 +589,12 @@ def _create_draft_release(runner: Runner, config: PublicationConfig) -> dict[str
     )
     if release is None:
         raise PublicationError("GitHub did not return the created draft release")
-    _require_release_identity(release, config, state="draft")
+    _require_release_identity(
+        release,
+        config,
+        state="draft",
+        require_immutable=require_immutable,
+    )
     return release
 
 
@@ -594,9 +605,11 @@ def _query_hosting_protection_state(
     result = runner.run(command, check=False)
     if _is_http_404(result):
         return {
-            "supported": True,
+            "supported": False,
             "enabled": False,
-            "reason": "disabled",
+            "reason": "immutable_releases_endpoint_unavailable",
+            "fallback_active": True,
+            "fallback": HOSTING_FALLBACK,
         }
     if result.returncode != 0:
         detail = result.stderr.strip() or result.stdout.strip() or "no command output"
@@ -615,16 +628,35 @@ def _query_hosting_protection_state(
         "supported": True,
         "enabled": payload["enabled"],
         "reason": "queried",
+        "fallback_active": False,
+        "fallback": None,
         "api_payload": payload,
     }
+
+
+def _hosting_requires_immutable_release(state: dict[str, Any]) -> bool:
+    """Validate hosting state and return whether GitHub immutability is required."""
+
+    if state.get("supported") is True and state.get("enabled") is True:
+        if state.get("fallback_active") not in (None, False):
+            raise PublicationError("Enabled immutable releases cannot use the fallback")
+        return True
+    if (
+        state.get("supported") is False
+        and state.get("enabled") is False
+        and state.get("reason") == "immutable_releases_endpoint_unavailable"
+        and state.get("fallback_active") is True
+        and state.get("fallback") == HOSTING_FALLBACK
+    ):
+        return False
+    raise PublicationError("Immutable-release hosting state is neither enabled nor unavailable")
 
 
 def _require_hosting_protection_state(
     runner: Runner, config: PublicationConfig
 ) -> dict[str, Any]:
     state = _query_hosting_protection_state(runner, config)
-    if state.get("enabled") is not True:
-        raise PublicationError("Immutable releases must remain enabled for v0.3.0 publication")
+    _hosting_requires_immutable_release(state)
     return state
 
 
@@ -633,16 +665,31 @@ def _ensure_hosting_protection_state(
 ) -> dict[str, Any]:
     state = _query_hosting_protection_state(runner, config)
     if state.get("enabled") is True:
-        return {**state, "enabled_by_publisher": False}
+        enabled = {**state, "enabled_by_publisher": False}
+        _hosting_requires_immutable_release(enabled)
+        return enabled
     command = _api_command(config.repository, "immutable-releases", "PUT")
     result = runner.run(command, check=False)
+    if _is_http_404(result):
+        fallback = {
+            "supported": False,
+            "enabled": False,
+            "reason": "immutable_releases_endpoint_unavailable",
+            "fallback_active": True,
+            "fallback": HOSTING_FALLBACK,
+            "enabled_by_publisher": False,
+        }
+        _hosting_requires_immutable_release(fallback)
+        return fallback
     if result.returncode != 0:
         detail = result.stderr.strip() or result.stdout.strip() or "no command output"
         raise PublicationError(f"Unable to enable immutable releases: {detail}")
     enabled = _query_hosting_protection_state(runner, config)
     if enabled.get("enabled") is not True:
         raise PublicationError("Immutable releases did not become enabled after PUT")
-    return {**enabled, "enabled_by_publisher": True}
+    confirmed = {**enabled, "enabled_by_publisher": True}
+    _hosting_requires_immutable_release(confirmed)
+    return confirmed
 
 
 def _normalized_remote_assets(
@@ -1268,10 +1315,16 @@ def _create_draft_mode(
     _assert_tag_matches_validation_receipt(config, tag_ref)
     _assert_inventory_unchanged(inventory)
     hosting_state = _ensure_hosting_protection_state(runner, config)
+    require_immutable = _hosting_requires_immutable_release(hosting_state)
     release = _find_release(runner, config)
     existing_draft_path = config.output_directory / "github_publication.draft.json"
     if release is not None:
-        _require_release_identity(release, config, state="either")
+        _require_release_identity(
+            release,
+            config,
+            state="either",
+            require_immutable=require_immutable,
+        )
         if release.get("draft") is not True:
             raise PublicationError("The v0.3.0 release is already published")
         if existing_draft_path.exists():
@@ -1288,7 +1341,11 @@ def _create_draft_mode(
             )
     else:
         _assert_inventory_unchanged(inventory)
-        release = _create_draft_release(runner, config)
+        release = _create_draft_release(
+            runner,
+            config,
+            require_immutable=require_immutable,
+        )
         # Persist the transition before any follow-up query can fail.
         _write_draft_receipt(
             config,
@@ -1303,11 +1360,21 @@ def _create_draft_mode(
             inventory=inventory,
         )
 
-    _require_release_identity(release, config, state="draft")
+    _require_release_identity(
+        release,
+        config,
+        state="draft",
+        require_immutable=require_immutable,
+    )
     if release.get("assets") != []:
         raise PublicationError("Draft release must be empty before upload verification")
     release = _query_release_by_id(runner, config, int(release["id"]))
-    _require_release_identity(release, config, state="draft")
+    _require_release_identity(
+        release,
+        config,
+        state="draft",
+        require_immutable=require_immutable,
+    )
     if release.get("assets") != []:
         raise PublicationError("Queried draft release is not empty")
     ref_payload, tag_payload = _verify_tag(runner, config)
@@ -1316,6 +1383,7 @@ def _create_draft_mode(
     if queried_ref != tag_ref or queried_object != tag_object:
         raise PublicationError("Annotated tag changed while creating the draft")
     confirmed_hosting_state = _require_hosting_protection_state(runner, config)
+    _hosting_requires_immutable_release(confirmed_hosting_state)
     confirmed_hosting_state["enabled_by_publisher"] = bool(
         hosting_state.get("enabled_by_publisher")
     )
@@ -1348,10 +1416,17 @@ def _upload_verify_mode(
     ref_payload, tag_payload = _verify_tag(runner, config)
     tag_ref, tag_object = _assert_tag_matches_receipt(draft, ref_payload, tag_payload)
     _assert_tag_matches_validation_receipt(config, tag_ref)
+    hosting_state = _require_hosting_protection_state(runner, config)
+    require_immutable = _hosting_requires_immutable_release(hosting_state)
     release = _find_release(runner, config)
     if release is None:
         raise PublicationError("The recorded draft release no longer exists")
-    _require_release_identity(release, config, state="draft")
+    _require_release_identity(
+        release,
+        config,
+        state="draft",
+        require_immutable=require_immutable,
+    )
     _assert_release_matches_receipt(draft, release)
 
     remote_assets = _normalized_remote_assets(release, inventory, allow_subset=True)
@@ -1359,7 +1434,6 @@ def _upload_verify_mode(
     if existing_names:
         _download_assets(runner, config, inventory, existing_names)
     missing_names = sorted(set(inventory.by_name) - set(existing_names))
-    hosting_state = _require_hosting_protection_state(runner, config)
     uploaded_names = list(existing_names)
     for name in missing_names:
         _assert_inventory_unchanged(inventory)
@@ -1389,7 +1463,12 @@ def _upload_verify_mode(
             uploaded_asset_names=uploaded_names,
         )
         release = _query_release_by_id(runner, config, int(release["id"]))
-        _require_release_identity(release, config, state="draft")
+        _require_release_identity(
+            release,
+            config,
+            state="draft",
+            require_immutable=require_immutable,
+        )
         remote_assets = _normalized_remote_assets(release, inventory, allow_subset=True)
         if set(uploaded_names) != {item["name"] for item in remote_assets}:
             raise PublicationError("Uploaded asset was not reflected in the draft inventory")
@@ -1474,10 +1553,17 @@ def _publish_mode(
     _require_remote_commit(runner, config)
     ref_payload, tag_payload = _verify_tag(runner, config)
     tag_ref, tag_object = _assert_tag_matches_receipt(draft, ref_payload, tag_payload)
+    hosting_before = _require_hosting_protection_state(runner, config)
+    require_immutable = _hosting_requires_immutable_release(hosting_before)
     release = _find_release(runner, config)
     if release is None:
         raise PublicationError("The recorded release no longer exists")
-    _require_release_identity(release, config, state="either")
+    _require_release_identity(
+        release,
+        config,
+        state="either",
+        require_immutable=require_immutable,
+    )
     _assert_release_matches_receipt(draft, release)
     remote_assets = _normalized_remote_assets(release, inventory, allow_subset=False)
     if remote_assets != draft.get("remote_assets"):
@@ -1485,7 +1571,6 @@ def _publish_mode(
     prepublish_download = _download_assets(
         runner, config, inventory, sorted(inventory.by_name)
     )
-    hosting_before = _require_hosting_protection_state(runner, config)
     _assert_inventory_unchanged(inventory)
     _require_remote_commit(runner, config)
     ref_payload, tag_payload = _verify_tag(runner, config)
@@ -1538,9 +1623,19 @@ def _publish_mode(
                 prepublish_download,
             ),
         )
-        _require_release_identity(release, config, state="published")
+        _require_release_identity(
+            release,
+            config,
+            state="published",
+            require_immutable=require_immutable,
+        )
     else:
-        _require_release_identity(release, config, state="published")
+        _require_release_identity(
+            release,
+            config,
+            state="published",
+            require_immutable=require_immutable,
+        )
         if existing_final is None:
             _atomic_write_json(
                 final_path,
@@ -1557,11 +1652,23 @@ def _publish_mode(
             )
 
     release = _query_release_by_id(runner, config, int(release["id"]))
-    _require_release_identity(release, config, state="published")
+    hosting_after = _require_hosting_protection_state(runner, config)
+    require_immutable_after = _hosting_requires_immutable_release(hosting_after)
+    _require_release_identity(
+        release,
+        config,
+        state="published",
+        require_immutable=require_immutable_after,
+    )
     enumerated = _find_release(runner, config)
     if enumerated is None or enumerated.get("id") != release.get("id"):
         raise PublicationError("Published release enumeration did not return the same release")
-    _require_release_identity(enumerated, config, state="published")
+    _require_release_identity(
+        enumerated,
+        config,
+        state="published",
+        require_immutable=require_immutable_after,
+    )
     _require_remote_commit(runner, config)
     ref_payload, tag_payload = _verify_tag(runner, config)
     tag_ref, tag_object = _assert_tag_matches_receipt(draft, ref_payload, tag_payload)
@@ -1570,8 +1677,6 @@ def _publish_mode(
     published_download = _download_assets(
         runner, config, inventory, sorted(inventory.by_name)
     )
-    hosting_after = _require_hosting_protection_state(runner, config)
-
     payload = _base_receipt(
         config,
         phase="publish",

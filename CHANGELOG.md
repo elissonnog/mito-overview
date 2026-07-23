@@ -34,6 +34,11 @@
 - require each selected candidate alternate to have a largest observed non-reference canonical-base count, and apply the complete candidate contract in mvTool and circularity without silent deduplication
 - require aligned-reference plus soft-clipped query-consuming bases not to exceed read query length before categorical whole-genome NUMT-warning interpretation
 - distinguish a valid complete-schema zero-candidate result from malformed zero-byte or partial-header candidate files in mvTool and circularity, validating every existing file before empty-result handling
+- require successful upstream heteroplasmy provenance before Phy-Mer, mvTool, or circularity can interpret candidate evidence; failed or malformed upstream states cannot reuse stale tables
+- validate the complete one-row-per-position all-site allele contract and REF-to-FASTA identity before Phy-Mer consensus construction, rejecting duplicate, out-of-range, partial, and reference-inconsistent evidence
+- distinguish missing candidate files from valid observed zero-candidate tables in mvTool and circularity, and remove heteroplasmy-owned outputs before recomputation
+- prefer GitHub immutable releases when supported while recording a bounded annotated-tag and verified-asset-hash fallback when the hosting endpoint is genuinely unavailable
+- make README links to repository-only manuscript assets absolute and release-tagged so source distributions contain no broken relative `paper/**` references
 
 ## v0.2.1 - 2026-07-07
 - synchronized release metadata across `pyproject.toml`, `CITATION.cff`, README, release checklist, and manuscript source

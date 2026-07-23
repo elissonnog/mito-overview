@@ -15,7 +15,7 @@ import pandas as pd
 import pysam
 
 from mito_overview.report_common import df_to_html_table, figure_html, metric_card, render_page
-from mito_overview.table_contracts import ensure_alt_fraction_columns
+from mito_overview.table_contracts import load_metric_module_state, validate_all_site_table
 
 RANKING_COLUMNS = ["rank", "haplogroup", "score", "defining_snps"]
 MAJOR_COLUMNS = [
@@ -27,7 +27,6 @@ MAJOR_COLUMNS = [
     "heteroplasmy_fraction",
     "phymer_input",
 ]
-REQUIRED_ALL_SITE_COLUMNS = {"position", "ref_base", "alt_base", "depth", "alt_allele_fraction"}
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -91,23 +90,33 @@ def build_consensus_fasta(
     all_sites: pd.DataFrame,
     ref_fasta: str | Path,
     mt_contig: str,
+    mt_length: int,
     out_fasta: str | Path,
     min_depth: int,
     major_vaf: float,
 ) -> pd.DataFrame:
-    all_sites = ensure_alt_fraction_columns(all_sites)
+    with pysam.FastaFile(str(ref_fasta)) as fasta:
+        observed_length = fasta.get_reference_length(mt_contig)
+        if observed_length != mt_length:
+            raise ValueError(
+                "Phy-Mer reference length mismatch: "
+                f"expected {mt_length}, observed {observed_length}"
+            )
+        reference_sequence = fasta.fetch(mt_contig, 0, mt_length).upper()
+    all_sites = validate_all_site_table(
+        all_sites,
+        table_name="mito_heteroplasmy_all_sites.tsv",
+        mt_length=mt_length,
+        reference_sequence=reference_sequence,
+    )
     major = all_sites[
         (all_sites["depth"] >= min_depth) & (all_sites["alt_allele_fraction"] >= major_vaf)
     ].copy()
-    major = major.sort_values(["position", "alt_allele_fraction"], ascending=[True, False]).drop_duplicates(
-        ["position"]
-    )
+    major = major.sort_values("position")
     major["heteroplasmy_fraction"] = major["alt_allele_fraction"]
     major = major[(major["alt_base"] != ".") & (major["ref_base"] != major["alt_base"])].reset_index(drop=True)
 
-    fasta = pysam.FastaFile(str(ref_fasta))
-    seq = list(fasta.fetch(mt_contig).upper())
-    fasta.close()
+    seq = list(reference_sequence)
 
     for row in major.itertuples(index=False):
         seq[int(row.position) - 1] = str(row.alt_base)
@@ -190,6 +199,10 @@ def run_step(
     raw_output_path = summary_dir / "mito_phymer_raw_output.txt"
     raw_error_path = summary_dir / "mito_phymer_raw_error.txt"
     fasta_path = summary_dir / "mito_phymer_consensus.fasta"
+    rank_fig = figure_dir / "mito_phymer_haplogroup_scores.png"
+
+    for owned_output in (raw_output_path, raw_error_path, fasta_path, rank_fig):
+        owned_output.unlink(missing_ok=True)
 
     if species.lower() != "human":
         return _write_status_outputs(
@@ -206,8 +219,41 @@ def run_step(
             region=region,
         )
 
-    all_sites = ensure_alt_fraction_columns(load_table(summary_dir / "mito_heteroplasmy_all_sites.tsv"))
-    if all_sites.empty:
+    heteroplasmy_status, heteroplasmy_reason = load_metric_module_state(
+        summary_dir / "mito_heteroplasmy_summary.tsv",
+        module_name="heteroplasmy",
+    )
+    if heteroplasmy_status != "ok":
+        return _write_status_outputs(
+            report_path=report_path,
+            summary_path=summary_path,
+            ranking_path=ranking_path,
+            input_path=input_path,
+            status_rows=[
+                {"metric": "status", "value": heteroplasmy_status},
+                {
+                    "metric": "reason_code",
+                    "value": f"upstream_heteroplasmy_{heteroplasmy_status}",
+                },
+                {
+                    "metric": "upstream_heteroplasmy_status",
+                    "value": heteroplasmy_status,
+                },
+                {
+                    "metric": "upstream_heteroplasmy_reason_code",
+                    "value": heteroplasmy_reason,
+                },
+            ],
+            message=(
+                "Phy-Mer was not run because the upstream alternate-allele module "
+                f"reported {heteroplasmy_status!r}."
+            ),
+            sample_id=sample_id,
+            region=region,
+        )
+
+    all_sites_path = summary_dir / "mito_heteroplasmy_all_sites.tsv"
+    if not all_sites_path.is_file():
         return _write_status_outputs(
             report_path=report_path,
             summary_path=summary_path,
@@ -215,28 +261,22 @@ def run_step(
             input_path=input_path,
             status_rows=[
                 {"metric": "status", "value": "not_evaluable"},
-                {"metric": "reason_code", "value": "no_all_site_table_available"},
+                {"metric": "reason_code", "value": "all_site_table_missing"},
+                {"metric": "upstream_heteroplasmy_status", "value": "ok"},
             ],
-            message="No mitochondrial all-site table was available to build a consensus-style haplogroup input sequence.",
+            message=(
+                "The upstream alternate-allele summary was valid, but its required "
+                "all-site evidence table was missing."
+            ),
             sample_id=sample_id,
             region=region,
         )
-    if not REQUIRED_ALL_SITE_COLUMNS.issubset(all_sites.columns):
-        missing = sorted(REQUIRED_ALL_SITE_COLUMNS.difference(all_sites.columns))
-        return _write_status_outputs(
-            report_path=report_path,
-            summary_path=summary_path,
-            ranking_path=ranking_path,
-            input_path=input_path,
-            status_rows=[
-                {"metric": "status", "value": "unavailable"},
-                {"metric": "reason_code", "value": "all_site_table_missing_columns"},
-                {"metric": "missing_columns", "value": ",".join(missing)},
-            ],
-            message="The alternate-allele all-site table is missing required columns for consensus haplogroup reconstruction.",
-            sample_id=sample_id,
-            region=region,
-        )
+    try:
+        all_sites = pd.read_csv(all_sites_path, sep="\t")
+    except (OSError, pd.errors.EmptyDataError, pd.errors.ParserError) as exc:
+        raise ValueError(
+            "mito_heteroplasmy_all_sites.tsv could not be parsed as internal allele evidence"
+        ) from exc
 
     phymer_root_path = Path(phymer_root) if phymer_root else None
     phymer_script = phymer_root_path / "Phy-Mer.py" if phymer_root_path else None
@@ -270,6 +310,7 @@ def run_step(
         all_sites=all_sites,
         ref_fasta=ref_fasta,
         mt_contig=mt_contig,
+        mt_length=mt_length,
         out_fasta=fasta_path,
         min_depth=min_depth,
         major_vaf=major_vaf,
@@ -336,6 +377,8 @@ def run_step(
         [
             {"metric": "status", "value": "ok" if not ranking.empty else "unavailable"},
             {"metric": "reason_code", "value": "" if not ranking.empty else "no_phymer_ranking_rows"},
+            {"metric": "upstream_heteroplasmy_status", "value": "ok"},
+            {"metric": "upstream_heteroplasmy_reason_code", "value": heteroplasmy_reason},
             {"metric": "sample_label", "value": sample_label},
             {"metric": "best_haplogroup", "value": best_hg},
             {"metric": "best_score", "value": round(best_score, 6)},
@@ -346,16 +389,16 @@ def run_step(
     )
     summary_path.write_text(status_df.to_csv(sep="\t", index=False), encoding="utf-8")
 
-    rank_fig = None
+    rank_fig_output = None
     if not ranking.empty:
-        rank_fig = figure_dir / "mito_phymer_haplogroup_scores.png"
+        rank_fig_output = rank_fig
         plot_df = ranking.head(5).copy()
         plt.figure(figsize=(8, 4))
         plt.bar(plot_df["haplogroup"], plot_df["score"], color="#2563eb")
         plt.ylabel("Phy-Mer score")
         plt.title(f"{sample_id} Phy-Mer top haplogroup ranking")
         plt.tight_layout()
-        plt.savefig(rank_fig, dpi=150)
+        plt.savefig(rank_fig_output, dpi=150)
         plt.close()
 
     metrics_html = "".join(
@@ -376,11 +419,11 @@ def run_step(
         "<section><h2>Consensus major-variant input</h2>" + df_to_html_table(major, max_rows=40) + "</section>",
         "<section><h2>Phy-Mer ranking table</h2>" + df_to_html_table(ranking, max_rows=20) + "</section>",
     ]
-    if rank_fig:
+    if rank_fig_output:
         body_parts.insert(
             2,
             "<section><h2>Top haplogroup scores</h2>"
-            + figure_html(rank_fig, "Top Phy-Mer haplogroup score ranking")
+            + figure_html(rank_fig_output, "Top Phy-Mer haplogroup score ranking")
             + "</section>",
         )
     render_page(report_path, "Mito Phy-Mer Haplogroup", sample_id, region, intro_html, "".join(body_parts))
