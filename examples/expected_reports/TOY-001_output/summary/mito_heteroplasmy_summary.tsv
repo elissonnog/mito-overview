@@ -4,6 +4,8 @@ reason_code
 positions_tested	60
 callable_positions	20
 uncallable_positions	40
+canonical_reference_positions	60
+noncanonical_reference_positions	0
 candidate_evaluable_positions	20
 candidate_non_evaluable_positions	40
 candidate_evaluable_fraction	0.333333

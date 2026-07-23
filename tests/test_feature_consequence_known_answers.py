@@ -70,9 +70,11 @@ def write_feature_gating_fixture(
 ) -> tuple[Path, Path, Path]:
     summary_dir = tmp_path / "summary"
     summary_dir.mkdir(parents=True)
+    ref_base = sequence[candidate_position - 1].upper()
+    alt_base = "A" if ref_base != "A" else "C"
     (summary_dir / "mito_heteroplasmy_candidates.tsv").write_text(
         "position\tref_base\talt_base\tdepth\talt_allele_fraction\theteroplasmy_fraction\n"
-        f"{candidate_position}\tA\tC\t100\t0.25\t0.25\n",
+        f"{candidate_position}\t{ref_base}\t{alt_base}\t100\t0.25\t0.25\n",
         encoding="ascii",
     )
     write_heteroplasmy_status(summary_dir)

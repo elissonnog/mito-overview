@@ -341,6 +341,12 @@ def test_coordinate_placed_unmapped_record_is_not_precounted(tmp_path: Path) -> 
     assert result.stats.unique_reads_excluded_flag == 0
 
 
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
+def test_nonfinite_read_mean_quality_policy_is_rejected(value: float) -> None:
+    with pytest.raises(ValueError, match="must be finite"):
+        AlleleFilterPolicy(min_read_mean_quality=value)
+
+
 def test_all_reference_positions_have_no_fabricated_alternate_candidate(tmp_path: Path) -> None:
     ref = write_fasta(tmp_path / "reference.fa", {"MT": "AAAA"})
     bam = write_alignment(
@@ -397,6 +403,41 @@ def test_zero_callable_depth_has_undefined_fraction_not_observed_zero(tmp_path: 
     assert summary["callable_positions"] == "0"
     assert summary["uncallable_positions"] == "4"
     assert summary["max_alt_allele_fraction"] == "NA"
+
+
+def test_noncanonical_reference_positions_cannot_support_zero_candidate_claim(
+    tmp_path: Path,
+) -> None:
+    ref = write_fasta(tmp_path / "noncanonical.fa", {"MT": "NNNN"})
+    bam = write_alignment(
+        tmp_path / "noncanonical.bam",
+        {"MT": 4},
+        [ReadSpec("observed", "MT", 0, "AAAA")],
+    )
+
+    outputs = run_step(
+        bam=bam,
+        ref_fasta=ref,
+        summary_dir=tmp_path / "summary",
+        figure_dir=tmp_path / "figures",
+        report_dir=tmp_path / "report",
+        sample_id="NONCANONICAL-REF",
+        mt_contig="MT",
+        mt_length=4,
+        min_depth=1,
+        min_vaf=0.02,
+    )
+    summary = metric_map(outputs["summary_path"])
+
+    assert outputs["status"] == "not_evaluable"
+    assert summary["reason_code"] == "no_canonical_reference_positions"
+    assert summary["canonical_reference_positions"] == "0"
+    assert summary["candidate_evaluable_positions"] == "0"
+    assert summary["candidate_coverage_scope"] == "none"
+    assert (
+        summary["whole_mtdna_zero_candidate_interpretation_status"]
+        == "not_supported_no_evaluable_positions"
+    )
 
 
 def test_no_position_meeting_minimum_depth_is_not_a_successful_zero_candidate_run(

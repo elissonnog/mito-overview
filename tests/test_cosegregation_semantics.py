@@ -108,6 +108,12 @@ def test_run_step_is_not_evaluable_when_shared_pairs_have_no_alt_support(
             },
         ]
     ).to_csv(summary_dir / "mito_heteroplasmy_candidates.tsv", sep="\t", index=False)
+    pd.DataFrame(
+        [
+            {"metric": "status", "value": "ok"},
+            {"metric": "reason_code", "value": ""},
+        ]
+    ).to_csv(summary_dir / "mito_heteroplasmy_summary.tsv", sep="\t", index=False)
     bam = write_alignment(
         tmp_path / "reference-only.bam",
         {"MT": 30},
@@ -134,6 +140,46 @@ def test_run_step_is_not_evaluable_when_shared_pairs_have_no_alt_support(
     assert summary["pairwise_edges_with_evaluable_alt_jaccard"] == "0"
     assert pd.isna(pairwise.loc[0, "alt_jaccard_within_shared_spanning_reads"])
     assert pairwise.loc[0, "alt_jaccard_status"] == "not_evaluable_zero_alt_union"
+
+
+def test_stale_candidates_are_not_used_when_upstream_heteroplasmy_failed(
+    tmp_path: Path,
+) -> None:
+    summary_dir = tmp_path / "summary"
+    summary_dir.mkdir()
+    pd.DataFrame(
+        [
+            {
+                "position": 10,
+                "ref_base": "A",
+                "alt_base": "C",
+                "alt_allele_fraction": 0.2,
+                "callable_depth": 25,
+            }
+        ]
+    ).to_csv(summary_dir / "mito_heteroplasmy_candidates.tsv", sep="\t", index=False)
+    pd.DataFrame(
+        [
+            {"metric": "status", "value": "not_evaluable"},
+            {"metric": "reason_code", "value": "no_callable_positions"},
+        ]
+    ).to_csv(summary_dir / "mito_heteroplasmy_summary.tsv", sep="\t", index=False)
+    bam = write_alignment(tmp_path / "empty.bam", {"MT": 30}, [])
+
+    outputs = cosegregation.run_step(
+        bam=bam,
+        summary_dir=summary_dir,
+        figure_dir=tmp_path / "figures",
+        report_dir=tmp_path / "reports",
+        sample_id="STALE",
+        mt_contig="MT",
+    )
+    summary = metric_map(outputs["summary_path"])
+
+    assert outputs["status"] == "not_evaluable"
+    assert summary["reason_code"] == "no_callable_positions"
+    assert summary["selected_sites"] == "0"
+    assert pd.read_csv(outputs["selected_path"], sep="\t").empty
 
 
 @pytest.mark.parametrize(

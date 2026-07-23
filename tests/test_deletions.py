@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pandas as pd
+import pytest
 
 from mito_overview.steps.mito_deletions import run_step
 
@@ -222,6 +223,34 @@ def test_primary_support_fraction_excludes_supplementary_only_read_names(tmp_pat
     assert float(summary["max_support_fraction_primary"]) == 1.0
     assert "supplementary-only records remain in the event evidence" in report
     assert "cannot make this fraction exceed one" in report
+
+
+def test_deletion_extending_beyond_mt_length_is_rejected(tmp_path: Path) -> None:
+    bam = write_alignment(
+        tmp_path / "out-of-range.bam",
+        {"MT": 100},
+        [
+            ReadSpec(
+                "out-of-range",
+                "MT",
+                85,
+                "A" * 10,
+                cigar=((0, 5), (2, 20), (0, 5)),
+            )
+        ],
+    )
+
+    with pytest.raises(ValueError, match="extends outside.*mt_length=100"):
+        run_step(
+            bam=bam,
+            summary_dir=tmp_path / "summary",
+            figure_dir=tmp_path / "figures",
+            report_dir=tmp_path / "report",
+            sample_id="OUT-OF-RANGE",
+            mt_contig="MT",
+            mt_length=100,
+            min_deletion_size=10,
+        )
 
 
 def test_supplementary_only_deletion_has_no_primary_support_denominator(

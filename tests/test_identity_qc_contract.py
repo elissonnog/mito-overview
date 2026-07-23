@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pandas as pd
 import pysam
+import pytest
 
 from mito_overview.steps.mito_identity_qc import (
     FINGERPRINT_COLUMNS,
@@ -252,6 +253,65 @@ def test_populated_fingerprint_uses_the_same_canonical_schema_as_empty_states(
     summary = metric_map(Path(outputs["summary_path"]))
     assert summary["heteroplasmy_summary_status"] == "ok"
     assert summary["heteroplasmy_summary_reason_code"] == ""
+
+
+@pytest.mark.parametrize(
+    ("column", "value", "message"),
+    [
+        ("position", 10.5, "invalid position"),
+        ("depth", 120.5, "invalid position, depth"),
+        ("alt_allele_fraction", 1.1, "invalid position, depth, or allele-fraction"),
+        ("alt_base", "A", "REF-equal-ALT"),
+    ],
+)
+def test_identity_fingerprint_rejects_malformed_internal_allele_evidence(
+    tmp_path: Path,
+    column: str,
+    value: object,
+    message: str,
+) -> None:
+    summary_dir = tmp_path / "summary"
+    summary_dir.mkdir()
+    row = {
+        "position": 10,
+        "ref_base": "A",
+        "alt_base": "C",
+        "callable_depth": 120,
+        "depth": 120,
+        "alt_count": 114,
+        "alt_allele_fraction": 0.95,
+        "heteroplasmy_fraction": 0.95,
+        "alt_forward": 57,
+        "alt_reverse": 57,
+        "A": 6,
+        "C": 114,
+        "G": 0,
+        "T": 0,
+    }
+    row[column] = value
+    if column == "alt_allele_fraction":
+        row["heteroplasmy_fraction"] = value
+    pd.DataFrame([row]).to_csv(
+        summary_dir / "mito_heteroplasmy_all_sites.tsv", sep="\t", index=False
+    )
+    pd.DataFrame(
+        [
+            {"metric": "status", "value": "ok"},
+            {"metric": "reason_code", "value": ""},
+            {"metric": "callable_positions", "value": 1},
+        ]
+    ).to_csv(summary_dir / "mito_heteroplasmy_summary.tsv", sep="\t", index=False)
+
+    with pytest.raises(ValueError, match=message):
+        run_step(
+            summary_dir=summary_dir,
+            figure_dir=tmp_path / "figures",
+            report_dir=tmp_path / "report",
+            sample_id="MALFORMED-ID",
+            mt_contig="MT",
+            phased_snp_vcf=None,
+            np_snp_vcf=None,
+        )
 
 
 def test_identity_qc_without_any_evidence_is_not_evaluable(tmp_path: Path) -> None:

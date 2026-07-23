@@ -198,16 +198,51 @@ def test_malformed_optional_evidence_is_not_reported_as_observed_zero(
     assert metrics["candidate_edge_fraction_reason_code"] == "invalid_candidate_positions"
     assert metrics["primary_read_start_in_edge_fraction"] == "NA"
     assert metrics["primary_read_start_in_edge_fraction_status"] == "not_evaluable"
-    assert metrics["primary_read_start_in_edge_fraction_reason_code"] == "invalid_primary_read_starts"
+    assert metrics["primary_read_start_in_edge_fraction_reason_code"] == "invalid_primary_read_coordinate_pairs"
     assert metrics["primary_read_end_in_edge_fraction"] == "NA"
     assert metrics["primary_read_end_in_edge_fraction_status"] == "not_evaluable"
-    assert metrics["primary_read_end_in_edge_fraction_reason_code"] == "invalid_primary_read_ends"
+    assert metrics["primary_read_end_in_edge_fraction_reason_code"] == "invalid_primary_read_coordinate_pairs"
     assert metrics["edge_read_heavy_softclip_fraction"] == "NA"
     assert metrics["edge_read_heavy_softclip_fraction_status"] == "not_evaluable"
     assert (
         metrics["edge_read_heavy_softclip_fraction_reason_code"]
-        == "invalid_primary_read_softclip_records"
+        == "invalid_primary_read_coordinate_pairs"
     )
+
+
+def test_reversed_primary_read_coordinates_make_all_read_edge_metrics_undefined(
+    tmp_path: Path,
+) -> None:
+    depth = pd.DataFrame({"position": range(1, 101), "depth": [10.0] * 100})
+    reads = pd.DataFrame(
+        [
+            {
+                "read_name": "reversed",
+                "read_start": 90,
+                "read_end": 10,
+                "softclip_fraction": 0.0,
+                "is_primary": 1,
+            }
+        ]
+    )
+    write_tables(
+        tmp_path / "summary",
+        depth=depth,
+        reads=reads,
+        candidates=pd.DataFrame(),
+    )
+
+    outputs, metrics = run_circularity(tmp_path)
+
+    assert outputs["status"] == "ok"
+    for prefix in (
+        "primary_read_start_in_edge_fraction",
+        "primary_read_end_in_edge_fraction",
+        "edge_read_heavy_softclip_fraction",
+    ):
+        assert metrics[prefix] == "NA"
+        assert metrics[f"{prefix}_status"] == "not_evaluable"
+        assert metrics[f"{prefix}_reason_code"] == "invalid_primary_read_coordinate_pairs"
 
 
 def test_invalid_primary_indicator_suppresses_optional_read_metrics(tmp_path: Path) -> None:

@@ -20,7 +20,7 @@ READ_ROWS = [
         "reference_span": 7000,
         "aligned_reference_bases": 7000,
         "aligned_span": 7000,
-        "aligned_fraction_mt": 0.4,
+        "aligned_fraction_mt": round(7000 / 16569, 6),
         "softclip_bases": 2000,
         "softclip_fraction": 0.25,
         "has_sa_tag": 1,
@@ -38,7 +38,7 @@ READ_ROWS = [
         "reference_span": 7000,
         "aligned_reference_bases": 7000,
         "aligned_span": 7000,
-        "aligned_fraction_mt": 0.95,
+        "aligned_fraction_mt": round(7000 / 16569, 6),
         "softclip_bases": 0,
         "softclip_fraction": 0.0,
         "has_sa_tag": 0,
@@ -129,7 +129,7 @@ def test_missing_read_column_suppresses_risk_without_zero_filling(tmp_path: Path
     assert metrics["full_length_fraction"] == "0.0"
 
 
-def test_missing_qc_primary_fraction_uses_primary_read_stats_without_legacy_alias(
+def test_missing_qc_primary_fraction_suppresses_categorical_risk(
     tmp_path: Path,
 ) -> None:
     write_numt_inputs(
@@ -139,11 +139,12 @@ def test_missing_qc_primary_fraction_uses_primary_read_stats_without_legacy_alia
     outputs = run_numt_fixture(tmp_path)
     metrics = metric_map(outputs["summary_path"])
 
-    assert metrics["numt_interpretation_status"] == "ok"
-    assert metrics["reason_code"] == ""
+    assert metrics["numt_interpretation_status"] == "not_evaluable"
+    assert metrics["reason_code"] == "numt_qc_summary_missing_metrics"
     assert metrics["missing_required_read_columns"] == "none"
-    assert metrics["missing_required_summary_metrics"] == "none"
-    assert metrics["heuristic_numt_risk"] == "high"
+    assert metrics["missing_required_summary_metrics"] == "primary_full_length_fraction"
+    assert metrics["heuristic_numt_risk"] == "not_evaluable"
+    assert metrics["heuristic_numt_risk_score"] == "NA"
     assert metrics["low_mapq_fraction_lt20"] == "1.0"
     assert metrics["supplementary_fraction_all_reads"] == "0.5"
     assert metrics["primary_full_length_fraction"] == "0.0"
@@ -204,6 +205,7 @@ def test_invalid_primary_indicator_cannot_produce_categorical_risk(tmp_path: Pat
         ("mapq", float("inf")),
         ("mapq", -1),
         ("mapq", 1.5),
+        ("mapq", 255),
         ("aligned_fraction_mt", float("nan")),
         ("aligned_fraction_mt", float("inf")),
         ("aligned_fraction_mt", -0.01),
@@ -276,3 +278,44 @@ def test_combined_malformed_numt_row_cannot_report_low_risk(tmp_path: Path) -> N
     assert metrics["supplementary_fraction_all_reads"] == "NA"
     assert metrics["heuristic_numt_risk"] == "not_evaluable"
     assert metrics["heuristic_numt_risk_score"] == "NA"
+
+
+def test_inconsistent_aligned_bases_and_fraction_suppress_categorical_risk(
+    tmp_path: Path,
+) -> None:
+    write_numt_inputs(tmp_path / "summary")
+    reads_path = tmp_path / "summary" / "mito_read_stats.tsv"
+    reads = pd.read_csv(reads_path, sep="\t")
+    reads.loc[0, "aligned_fraction_mt"] = 0.99
+    reads.to_csv(reads_path, sep="\t", index=False)
+
+    outputs = run_numt_fixture(tmp_path)
+    metrics = metric_map(outputs["summary_path"])
+
+    assert metrics["numt_interpretation_status"] == "not_evaluable"
+    assert metrics["reason_code"] == "numt_read_stats_invalid_values"
+    assert metrics["aligned_span_fraction_consistent"] == "0"
+    assert "aligned_reference_bases_vs_aligned_fraction_mt" in metrics[
+        "invalid_required_read_values"
+    ]
+    assert metrics["heuristic_numt_risk"] == "not_evaluable"
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), -0.1, 1.1])
+def test_invalid_required_qc_fraction_suppresses_categorical_risk(
+    tmp_path: Path,
+    value: float,
+) -> None:
+    write_numt_inputs(tmp_path / "summary")
+    qc_path = tmp_path / "summary" / "mito_qc_summary.tsv"
+    qc = pd.read_csv(qc_path, sep="\t")
+    qc.loc[qc["metric"] == "primary_full_length_fraction", "value"] = value
+    qc.to_csv(qc_path, sep="\t", index=False)
+
+    outputs = run_numt_fixture(tmp_path)
+    metrics = metric_map(outputs["summary_path"])
+
+    assert metrics["numt_interpretation_status"] == "not_evaluable"
+    assert metrics["reason_code"] == "numt_qc_summary_invalid_values"
+    assert metrics["invalid_required_summary_values"] == "primary_full_length_fraction"
+    assert metrics["heuristic_numt_risk"] == "not_evaluable"

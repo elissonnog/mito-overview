@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
@@ -11,6 +12,7 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 import pysam
 
@@ -18,6 +20,7 @@ from mito_overview.report_common import df_to_html_table, figure_html, metric_ca
 from mito_overview.table_contracts import (
     ensure_alt_fraction_columns,
     load_metric_module_state,
+    validate_candidate_table,
     validate_module_state,
 )
 
@@ -225,6 +228,15 @@ def run_step(
 ) -> dict[str, Path | str]:
     """Run the public mitochondrial identity-QC step."""
 
+    if (
+        not isinstance(fingerprint_depth, int)
+        or isinstance(fingerprint_depth, bool)
+        or fingerprint_depth < 0
+    ):
+        raise ValueError("fingerprint_depth must be a nonnegative integer")
+    if not math.isfinite(major_vaf) or not 0 <= major_vaf <= 1:
+        raise ValueError("major_vaf must be finite and between 0 and 1")
+
     print(
         f"[identity_qc] starting sample={sample_id} contig={mt_contig} "
         f"fingerprint_depth={fingerprint_depth} major_vaf={major_vaf}",
@@ -321,19 +333,46 @@ def run_step(
         major_df["alt_allele_fraction"] = pd.to_numeric(
             major_df["alt_allele_fraction"], errors="coerce"
         )
-        major_df = major_df.dropna(subset=["position", "depth", "alt_allele_fraction"])
-        if major_df.empty and heteroplasmy_status == "ok":
-            fingerprint_status = "not_evaluable"
-            fingerprint_reason = "heteroplasmy_all_sites_no_measured_observations"
+        positions = major_df["position"].to_numpy(dtype=float)
+        depths = major_df["depth"].to_numpy(dtype=float)
+        fractions = major_df["alt_allele_fraction"].to_numpy(dtype=float)
+        valid_fraction = (
+            ((depths == 0) & np.isnan(fractions))
+            | (
+                (depths > 0)
+                & np.isfinite(fractions)
+                & (fractions >= 0)
+                & (fractions <= 1)
+            )
+        )
+        if not (
+            np.isfinite(positions).all()
+            and (positions == np.floor(positions)).all()
+            and (positions >= 1).all()
+            and np.isfinite(depths).all()
+            and (depths == np.floor(depths)).all()
+            and (depths >= 0).all()
+            and valid_fraction.all()
+        ):
+            raise ValueError(
+                "mito_heteroplasmy_all_sites.tsv contains invalid position, depth, "
+                "or allele-fraction evidence"
+            )
+        major_df["position"] = major_df["position"].astype("int64")
+        major_df["depth"] = major_df["depth"].astype("int64")
         major_df = major_df[
-            (major_df["depth"] >= fingerprint_depth) & (major_df["alt_allele_fraction"] >= major_vaf)
+            (major_df["depth"] >= fingerprint_depth)
+            & (major_df["alt_allele_fraction"] >= major_vaf)
         ].copy()
+        major_df = validate_candidate_table(
+            major_df,
+            table_name="mito_heteroplasmy_all_sites.tsv major-fingerprint rows",
+        )
         major_df = major_df.sort_values(
             ["alt_allele_fraction", "depth", "position"],
             ascending=[False, False, True],
         ).reset_index(drop=True)
         major_df["heteroplasmy_fraction"] = major_df["alt_allele_fraction"]
-        major_df["position"] = major_df["position"].astype(int)
         major_df = major_df.loc[:, FINGERPRINT_COLUMNS]
     elif fingerprint_input_present and not fingerprint_input_usable:
         print(

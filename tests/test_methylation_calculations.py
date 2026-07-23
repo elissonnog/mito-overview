@@ -123,6 +123,26 @@ def test_track_summary_rejects_negative_declared_valid_coverage() -> None:
         track_summary(rows)
 
 
+@pytest.mark.parametrize(
+    "column",
+    ("valid_coverage", "modified_count", "canonical_count", "other_modified_count"),
+)
+def test_track_summary_rejects_fractional_modkit_counts(column: str) -> None:
+    row = {
+        "track": "NP_real_all_reads",
+        "position": 1,
+        "valid_coverage": 10.0,
+        "percent_modified": 30.0,
+        "modified_count": 3.0,
+        "canonical_count": 7.0,
+        "other_modified_count": 0.0,
+    }
+    row[column] = 1.5
+
+    with pytest.raises(ValueError, match="integer-valued counts"):
+        track_summary(methylation_rows([row]))
+
+
 def test_track_summary_marks_zero_denominators_not_evaluable() -> None:
     rows = methylation_rows(
         [

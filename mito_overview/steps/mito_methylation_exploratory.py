@@ -126,6 +126,10 @@ def normalize_modkit_counts(df: pd.DataFrame) -> pd.DataFrame:
     ].clip(lower=0.0)
 
     count_columns = ["modified_count", "canonical_count", "other_modified_count"]
+    integer_count_columns = ["valid_coverage", *count_columns]
+    count_values = normalized[integer_count_columns].to_numpy(dtype=float)
+    if not (count_values == np.floor(count_values)).all():
+        raise ValueError("bedMethyl count columns must contain integer-valued counts")
     if (normalized[count_columns] < 0).any(axis=None):
         raise ValueError("bedMethyl count columns must be nonnegative")
 

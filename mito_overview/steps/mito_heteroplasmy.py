@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import math
 import time
 from pathlib import Path
 
@@ -81,6 +82,11 @@ def run_step(
     ignore_overlaps: bool = True,
 ) -> dict[str, Path]:
     """Count and report observed mtDNA alternate-allele fractions."""
+
+    if not isinstance(min_depth, int) or isinstance(min_depth, bool) or min_depth < 0:
+        raise ValueError("min_depth must be a nonnegative integer")
+    if not math.isfinite(min_vaf) or not 0 <= min_vaf <= 1:
+        raise ValueError("min_vaf must be finite and between 0 and 1")
 
     start_time = time.time()
     summary_dir = Path(summary_dir)
@@ -198,9 +204,13 @@ def run_step(
 
     callable_positions = int((all_df["callable_depth"] > 0).sum())
     uncallable_positions = int(len(all_df) - callable_positions)
+    canonical_reference_mask = all_df["ref_base"].isin(canonical_bases)
+    canonical_reference_positions = int(canonical_reference_mask.sum())
+    noncanonical_reference_positions = int(len(all_df) - canonical_reference_positions)
     candidate_evaluable_positions = int(
         (
-            (all_df["callable_depth"] > 0)
+            canonical_reference_mask
+            & (all_df["callable_depth"] > 0)
             & (all_df["callable_depth"] >= min_depth)
         ).sum()
     )
@@ -227,6 +237,9 @@ def run_step(
     if callable_positions == 0:
         module_status = "not_evaluable"
         module_reason = "no_callable_positions"
+    elif canonical_reference_positions == 0:
+        module_status = "not_evaluable"
+        module_reason = "no_canonical_reference_positions"
     elif candidate_evaluable_positions == 0:
         module_status = "not_evaluable"
         module_reason = "no_positions_meet_min_callable_depth"
@@ -249,6 +262,14 @@ def run_step(
         {"metric": "positions_tested", "value": len(all_df)},
         {"metric": "callable_positions", "value": callable_positions},
         {"metric": "uncallable_positions", "value": uncallable_positions},
+        {
+            "metric": "canonical_reference_positions",
+            "value": canonical_reference_positions,
+        },
+        {
+            "metric": "noncanonical_reference_positions",
+            "value": noncanonical_reference_positions,
+        },
         {
             "metric": "candidate_evaluable_positions",
             "value": candidate_evaluable_positions,

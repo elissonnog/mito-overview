@@ -114,3 +114,17 @@ def test_load_bedmethyl_rejects_nonfinite_numeric_fields(
     expected = rf"bedMethyl source {re.escape(str(source))} at line 1: {field}"
     with pytest.raises(ValueError, match=expected):
         load_bedmethyl_table(source, "NP_real_all_reads")
+
+
+@pytest.mark.parametrize("column_index", [9, 11, 12, 13])
+def test_load_bedmethyl_rejects_fractional_count_fields(
+    tmp_path: Path,
+    column_index: int,
+) -> None:
+    source = tmp_path / f"fractional-count-{column_index}.bedmethyl"
+    fields = MT_ROW.rstrip("\n").split("\t")
+    fields[column_index] = "1.5"
+    source.write_text("\t".join(fields) + "\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="integer-valued counts"):
+        load_bedmethyl_table(source, "NP_real_all_reads")

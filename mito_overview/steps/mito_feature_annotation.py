@@ -18,8 +18,8 @@ import pysam
 from mito_overview.paths import annotation_resource_path
 from mito_overview.report_common import df_to_html_table, figure_html, metric_card, render_page
 from mito_overview.table_contracts import (
-    ensure_alt_fraction_columns,
     load_metric_module_state,
+    validate_candidate_table,
     validate_module_state,
 )
 
@@ -457,11 +457,8 @@ def run_step(
         )
         return {**outputs, "catalog_path": catalog_path, "overlap_path": overlap_path}
     try:
-        candidates_df = ensure_alt_fraction_columns(pd.read_csv(candidates_path, sep="\t"))
-        required = {"position", "ref_base", "alt_base", "alt_allele_fraction", "depth"}
-        if not required.issubset(candidates_df.columns):
-            raise ValueError("candidate table lacks required columns")
-    except (OSError, ValueError, pd.errors.EmptyDataError, pd.errors.ParserError) as error:
+        candidates_df = pd.read_csv(candidates_path, sep="\t")
+    except (OSError, pd.errors.EmptyDataError, pd.errors.ParserError) as error:
         print(f"[feature_annotation] candidate table is unusable: {error}", flush=True)
         pd.DataFrame(columns=OVERLAP_COLUMNS).to_csv(overlap_path, sep="\t", index=False)
         outputs = _status_page(
@@ -476,19 +473,25 @@ def run_step(
             control_region_decision=control_region_decision,
         )
         return {**outputs, "catalog_path": catalog_path, "overlap_path": overlap_path}
+    candidates_df = validate_candidate_table(
+        candidates_df,
+        table_name="mito_heteroplasmy_candidates.tsv",
+        mt_length=mt_length,
+        reference_sequence=_load_configured_mt_sequence(ref_fasta, mt_contig),
+    )
 
     overlap_rows: list[dict[str, object]] = []
     for idx, row in enumerate(candidates_df.itertuples(index=False), start=1):
         if idx % 50 == 0:
             print(f"[feature_annotation] annotated candidate sites={idx}")
         for biotype, label in classify_position(
-            int(row.position),
+            row.position,
             features_df,
             control_region_intervals=control_region_decision.intervals,
         ):
             overlap_rows.append(
                 {
-                    "position": int(row.position),
+                    "position": row.position,
                     "ref_base": row.ref_base,
                     "alt_base": row.alt_base,
                     "alt_allele_fraction": row.alt_allele_fraction,

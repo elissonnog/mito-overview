@@ -340,7 +340,14 @@ def run_step(
     edge_start_fraction = np.nan
     read_start_denominator = 0
     read_start = _valid_coordinate_series(reads_eval, "read_start", mt_length)
-    if read_start is not None:
+    read_end = _valid_coordinate_series(reads_eval, "read_end", mt_length)
+    coordinate_pairs_valid = (
+        read_start is not None
+        and read_end is not None
+        and len(read_start) == len(read_end)
+        and bool((read_end >= read_start).all())
+    )
+    if coordinate_pairs_valid:
         read_start_denominator = int(len(read_start))
         if not read_start.empty:
             edge_start_fraction = float((read_start <= edge).mean())
@@ -349,10 +356,10 @@ def run_step(
             "not_evaluable",
             "invalid_primary_read_indicator",
         )
-    elif not reads_eval.empty and read_start is None:
+    elif not reads_eval.empty and not coordinate_pairs_valid:
         read_start_status, read_start_reason = (
             "not_evaluable",
-            "invalid_primary_read_starts",
+            "invalid_primary_read_coordinate_pairs",
         )
     else:
         read_start_status, read_start_reason = _metric_status(
@@ -362,8 +369,7 @@ def run_step(
 
     edge_end_fraction = np.nan
     read_end_denominator = 0
-    read_end = _valid_coordinate_series(reads_eval, "read_end", mt_length)
-    if read_end is not None:
+    if coordinate_pairs_valid:
         read_end_denominator = int(len(read_end))
         if not read_end.empty:
             edge_end_fraction = float((read_end > (mt_length - edge)).mean())
@@ -372,10 +378,10 @@ def run_step(
             "not_evaluable",
             "invalid_primary_read_indicator",
         )
-    elif not reads_eval.empty and read_end is None:
+    elif not reads_eval.empty and not coordinate_pairs_valid:
         read_end_status, read_end_reason = (
             "not_evaluable",
-            "invalid_primary_read_ends",
+            "invalid_primary_read_coordinate_pairs",
         )
     else:
         read_end_status, read_end_reason = _metric_status(
@@ -387,10 +393,8 @@ def run_step(
     softclip_denominator = 0
     softclip_values = _valid_unit_interval_series(reads_eval, "softclip_fraction")
     softclip_input_valid = (
-        read_start is not None
-        and read_end is not None
+        coordinate_pairs_valid
         and softclip_values is not None
-        and bool((read_end >= read_start).all())
     )
     if softclip_input_valid:
         softclip_df = pd.DataFrame(
@@ -419,7 +423,11 @@ def run_step(
     elif not reads_eval.empty and not softclip_input_valid:
         softclip_status, softclip_reason = (
             "not_evaluable",
-            "invalid_primary_read_softclip_records",
+            (
+                "invalid_primary_read_coordinate_pairs"
+                if not coordinate_pairs_valid
+                else "invalid_primary_read_softclip_records"
+            ),
         )
     else:
         softclip_status, softclip_reason = _metric_status(

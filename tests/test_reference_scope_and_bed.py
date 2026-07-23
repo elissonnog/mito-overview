@@ -340,7 +340,7 @@ def write_numt_inputs(summary_dir: Path) -> None:
                 "reference_span": 16000,
                 "aligned_reference_bases": 16000,
                 "aligned_span": 16000,
-                "aligned_fraction_mt": 0.966,
+                "aligned_fraction_mt": round(16000 / 16569, 6),
                 "softclip_bases": 0,
                 "softclip_fraction": 0.0,
                 "has_sa_tag": 0,
@@ -351,7 +351,12 @@ def write_numt_inputs(summary_dir: Path) -> None:
             }
         ]
     ).to_csv(summary_dir / "mito_read_stats.tsv", sep="\t", index=False)
-    pd.DataFrame([{"metric": "full_length_fraction", "value": 1.0}]).to_csv(
+    pd.DataFrame(
+        [
+            {"metric": "primary_full_length_fraction", "value": 1.0},
+            {"metric": "full_length_fraction", "value": 1.0},
+        ]
+    ).to_csv(
         summary_dir / "mito_qc_summary.tsv", sep="\t", index=False
     )
 

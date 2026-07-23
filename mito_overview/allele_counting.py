@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from statistics import fmean
@@ -29,6 +30,18 @@ class AlleleFilterPolicy:
     max_depth: int = 0
     exclude_flags: int = 3844
     ignore_overlaps: bool = True
+
+    def __post_init__(self) -> None:
+        for label, value in (
+            ("min_base_quality", self.min_base_quality),
+            ("min_mapping_quality", self.min_mapping_quality),
+            ("max_depth", self.max_depth),
+            ("exclude_flags", self.exclude_flags),
+        ):
+            if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+                raise ValueError(f"{label} must be a nonnegative integer")
+        if not math.isfinite(self.min_read_mean_quality) or self.min_read_mean_quality < 0:
+            raise ValueError("min_read_mean_quality must be finite and nonnegative")
 
 
 @dataclass

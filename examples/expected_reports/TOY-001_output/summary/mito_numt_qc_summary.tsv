@@ -5,6 +5,9 @@ numt_interpretation_status	not_evaluable
 reason_code	reference_scope_mt_only
 missing_required_read_columns	none
 missing_required_summary_metrics	none
+invalid_required_read_values	none
+invalid_required_summary_values	none
+aligned_span_fraction_consistent	1
 primary_indicator_valid	1
 primary_evidence_available	1
 reads_evaluated	10

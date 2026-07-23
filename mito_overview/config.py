@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import gzip
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, TypeVar
@@ -675,7 +676,9 @@ class PipelineConfig:
             raise ValueError("MT_LENGTH must be positive")
         if self.min_callable_depth < 0:
             raise ValueError("MIN_CALLABLE_DEPTH cannot be negative")
-        if not 0 <= self.min_alt_allele_fraction <= 1:
+        if not math.isfinite(self.min_alt_allele_fraction) or not (
+            0 <= self.min_alt_allele_fraction <= 1
+        ):
             raise ValueError("MIN_ALT_ALLELE_FRACTION must be between 0 and 1")
         for label, value in (
             ("ALLELE_MIN_BASE_QUALITY", self.allele_min_base_quality),
@@ -683,8 +686,12 @@ class PipelineConfig:
             ("ALLELE_MIN_READ_MEAN_QUALITY", self.allele_min_read_mean_quality),
             ("ALLELE_MAX_DEPTH", self.allele_max_depth),
         ):
+            if isinstance(value, float) and not math.isfinite(value):
+                raise ValueError(f"{label} must be finite")
             if value < 0:
                 raise ValueError(f"{label} cannot be negative")
+        if not math.isfinite(self.phymer_major_vaf) or not 0 <= self.phymer_major_vaf <= 1:
+            raise ValueError("PHYMER_MAJOR_VAF must be finite and between 0 and 1")
         if self.threads <= 0 or self.nuclear_window_size <= 0 or self.nuclear_window_count <= 0:
             raise ValueError("THREADS and nuclear window settings must be positive")
 

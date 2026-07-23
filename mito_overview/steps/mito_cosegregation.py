@@ -15,6 +15,7 @@ import pandas as pd
 
 from mito_overview.allele_counting import AlleleFilterPolicy, collect_site_read_calls, policy_rows
 from mito_overview.report_common import df_to_html_table, figure_html, metric_card, render_page
+from mito_overview.table_contracts import load_metric_module_state, validate_candidate_table
 
 TOP_SITES_LIMIT = 8
 MIN_SHARED_READS_THRESHOLD = 25
@@ -90,51 +91,42 @@ def _site_label(position: int, ref_base: str, alt_base: str) -> str:
     return f"{position}:{ref_base}>{alt_base}"
 
 
-def _load_selected_sites(summary_dir: Path, top_sites_limit: int) -> tuple[pd.DataFrame, str | None]:
+def _load_selected_sites(
+    summary_dir: Path,
+    top_sites_limit: int,
+) -> tuple[pd.DataFrame, str | None, str | None, str | None]:
+    upstream_status, upstream_reason = load_metric_module_state(
+        summary_dir / "mito_heteroplasmy_summary.tsv",
+        module_name="heteroplasmy",
+    )
+    if upstream_status != "ok":
+        message = (
+            "Upstream alternate-allele counting was not successful, so stale candidate rows "
+            f"were not evaluated (status={upstream_status}, reason={upstream_reason})."
+        )
+        print(f"[cosegregation] {message}", flush=True)
+        return _empty_selected_sites(), message, upstream_status, upstream_reason
+
     candidates_path = summary_dir / "mito_heteroplasmy_candidates.tsv"
     if not candidates_path.exists():
         message = (
             "No heteroplasmy candidate table was found, so the co-segregation step wrote stable empty outputs."
         )
         print(f"[cosegregation] {message} path={candidates_path}", flush=True)
-        return _empty_selected_sites(), message
+        return _empty_selected_sites(), message, None, None
 
     candidates_df = pd.read_csv(candidates_path, sep="\t")
-    if "alt_allele_fraction" not in candidates_df.columns and "heteroplasmy_fraction" in candidates_df.columns:
-        candidates_df["alt_allele_fraction"] = candidates_df["heteroplasmy_fraction"]
-    if "heteroplasmy_fraction" not in candidates_df.columns and "alt_allele_fraction" in candidates_df.columns:
-        candidates_df["heteroplasmy_fraction"] = candidates_df["alt_allele_fraction"]
-    if "callable_depth" not in candidates_df.columns and "depth" in candidates_df.columns:
-        candidates_df["callable_depth"] = candidates_df["depth"]
-    if "depth" not in candidates_df.columns and "callable_depth" in candidates_df.columns:
-        candidates_df["depth"] = candidates_df["callable_depth"]
-    required = {"position", "ref_base", "alt_base", "alt_allele_fraction", "callable_depth"}
-    missing = sorted(required - set(candidates_df.columns))
-    if missing:
-        message = (
-            "The heteroplasmy candidate table is missing required columns "
-            + ",".join(missing)
-            + "; stable empty outputs were written."
-        )
-        print(f"[cosegregation] {message}", flush=True)
-        return _empty_selected_sites(), message
-
-    filtered = candidates_df.copy()
-    filtered = filtered.dropna(subset=["position", "ref_base", "alt_base", "alt_allele_fraction", "callable_depth"])
-    filtered["alt_base"] = filtered["alt_base"].astype(str).str.upper()
-    filtered["ref_base"] = filtered["ref_base"].astype(str).str.upper()
-    filtered = filtered[filtered["alt_base"] != "."]
+    filtered = validate_candidate_table(
+        candidates_df,
+        table_name="mito_heteroplasmy_candidates.tsv",
+    )
     if filtered.empty:
         message = "The heteroplasmy candidate table is present but empty after filtering; stable empty outputs were written."
         print(f"[cosegregation] {message}", flush=True)
-        return _empty_selected_sites(), message
+        return _empty_selected_sites(), message, None, None
 
-    filtered["position"] = filtered["position"].astype(int)
-    filtered["callable_depth"] = filtered["callable_depth"].astype(int)
-    filtered["depth"] = filtered["callable_depth"]
-    filtered["alt_allele_fraction"] = filtered["alt_allele_fraction"].astype(float).round(6)
-    filtered["heteroplasmy_fraction"] = filtered["alt_allele_fraction"]
-    filtered = filtered.drop_duplicates(subset=["position", "alt_base"])
+    if filtered.duplicated(subset=["position", "ref_base", "alt_base"]).any():
+        raise ValueError("mito_heteroplasmy_candidates.tsv contains duplicate variant keys")
     filtered = filtered.sort_values(
         ["alt_allele_fraction", "callable_depth", "position"],
         ascending=[False, False, True],
@@ -148,7 +140,7 @@ def _load_selected_sites(summary_dir: Path, top_sites_limit: int) -> tuple[pd.Da
     filtered["alt_reads"] = 0
     selected_df = filtered[SELECTED_SITE_COLUMNS].copy()
     print(f"[cosegregation] selected_sites={len(selected_df)} from={candidates_path}", flush=True)
-    return selected_df, None
+    return selected_df, None, None, None
 
 
 def _collect_read_support(
@@ -301,7 +293,16 @@ def _evaluation_status(
     valid_pair_count: int,
     evaluable_jaccard_pair_count: int,
     upstream_message: str | None,
+    upstream_status: str | None = None,
+    upstream_reason: str | None = None,
 ) -> tuple[str, str, str, str | None]:
+    if upstream_status:
+        return (
+            upstream_status,
+            "shared-spanning-read conditional co-segregation inherited an upstream status",
+            upstream_reason or f"heteroplasmy_status_{upstream_status}",
+            upstream_message,
+        )
     if upstream_message:
         return (
             "not_evaluable",
@@ -424,7 +425,9 @@ def run_step(
         exclude_flags=exclude_flags,
         ignore_overlaps=ignore_overlaps,
     )
-    selected_df, status_message = _load_selected_sites(summary_dir, TOP_SITES_LIMIT)
+    selected_df, status_message, upstream_status, upstream_reason = _load_selected_sites(
+        summary_dir, TOP_SITES_LIMIT
+    )
     coverage_by_site, alt_by_site, filter_stats = _collect_read_support(bam, mt_contig, selected_df, policy)
     if not selected_df.empty:
         selected_df = selected_df.copy()
@@ -470,6 +473,8 @@ def run_step(
         valid_pair_count=len(pairwise_df),
         evaluable_jaccard_pair_count=len(evaluable_pairwise_df),
         upstream_message=status_message,
+        upstream_status=upstream_status,
+        upstream_reason=upstream_reason,
     )
     summary_rows = [
         {"metric": "status", "value": status},

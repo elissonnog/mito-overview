@@ -13,7 +13,12 @@ import pandas as pd
 import pysam
 
 from mito_overview.report_common import df_to_html_table, figure_html, metric_card, render_page
-from mito_overview.table_contracts import ensure_alt_fraction_columns, validate_module_state
+from mito_overview.table_contracts import (
+    ensure_alt_fraction_columns,
+    validate_candidate_table,
+    validate_module_state,
+    validate_variant_key_table,
+)
 
 SUMMARY_COLUMNS = ["metric", "value"]
 VARIANT_KEY_COLUMNS = ["position", "ref_base", "alt_base"]
@@ -475,41 +480,31 @@ def run_step(
             message=message,
         )
 
-    required_candidate_cols = {"position", "ref_base", "alt_base", "depth", "alt_allele_fraction"}
-    missing_candidate_cols = sorted(required_candidate_cols - set(candidates_df.columns))
-    if missing_candidate_cols:
-        message = (
-            "The alternate-allele candidate table is missing required columns "
-            + ",".join(missing_candidate_cols)
-            + "; stable empty outputs were written."
+    fasta = pysam.FastaFile(str(ref_fasta))
+    try:
+        resolved_mt_length = (
+            int(mt_length)
+            if mt_length and mt_length > 0
+            else int(fasta.get_reference_length(mt_contig))
         )
-        print(f"[variant_consequence] {message}", flush=True)
-        return status_page(
-            summary_dir=summary_dir,
-            report_dir=report_dir,
-            sample_id=sample_id,
-            mt_contig=mt_contig,
-            mt_length=mt_length,
-            status="failed",
-            reason_code="candidate_table_missing_columns",
-            message=message,
-        )
+        ref_seq = fasta.fetch(mt_contig, 0, resolved_mt_length).upper()
+    finally:
+        fasta.close()
+    print(
+        f"[variant_consequence] loaded reference sequence length={resolved_mt_length} from={Path(ref_fasta).name}",
+        flush=True,
+    )
 
-    filtered = candidates_df.copy()
-    filtered["position"] = pd.to_numeric(filtered["position"], errors="coerce")
-    filtered["depth"] = pd.to_numeric(filtered["depth"], errors="coerce")
-    filtered["alt_allele_fraction"] = pd.to_numeric(filtered["alt_allele_fraction"], errors="coerce")
-    filtered["ref_base"] = filtered["ref_base"].astype(str).str.upper()
-    filtered["alt_base"] = filtered["alt_base"].astype(str).str.upper()
-    filtered = filtered.dropna(subset=["position", "depth", "alt_allele_fraction"]).copy()
-    filtered = filtered[filtered["ref_base"].isin(["A", "C", "G", "T"])]
-    filtered = filtered[filtered["alt_base"].isin(["A", "C", "G", "T"])]
-    filtered["position"] = filtered["position"].astype(int)
-    filtered["depth"] = filtered["depth"].astype(int)
-    filtered["alt_allele_fraction"] = filtered["alt_allele_fraction"].astype(float).round(6)
-    filtered["heteroplasmy_fraction"] = filtered["alt_allele_fraction"]
-    filtered = filtered.drop_duplicates(subset=VARIANT_KEY_COLUMNS).reset_index(drop=True)
-    print(f"[variant_consequence] retained candidate rows={len(filtered)} after filtering", flush=True)
+    filtered = validate_candidate_table(
+        candidates_df,
+        table_name="mito_heteroplasmy_candidates.tsv",
+        mt_length=resolved_mt_length,
+        reference_sequence=ref_seq,
+    )
+    if filtered.duplicated(subset=VARIANT_KEY_COLUMNS).any():
+        raise ValueError("mito_heteroplasmy_candidates.tsv contains duplicate variant keys")
+    filtered = filtered.reset_index(drop=True)
+    print(f"[variant_consequence] validated candidate rows={len(filtered)}", flush=True)
 
     if filtered.empty:
         message = "No alternate-allele candidate sites were available for mitochondrial consequence annotation."
@@ -524,17 +519,6 @@ def run_step(
             reason_code="no_candidate_sites_available",
             message=message,
         )
-
-    fasta = pysam.FastaFile(str(ref_fasta))
-    try:
-        resolved_mt_length = int(mt_length) if mt_length and mt_length > 0 else int(fasta.get_reference_length(mt_contig))
-        ref_seq = fasta.fetch(mt_contig, 0, resolved_mt_length).upper()
-    finally:
-        fasta.close()
-    print(
-        f"[variant_consequence] loaded reference sequence length={resolved_mt_length} from={Path(ref_fasta).name}",
-        flush=True,
-    )
 
     missing_overlap_cols = sorted(set(OVERLAP_COLUMNS) - set(overlap_df.columns))
     if missing_overlap_cols:
@@ -555,12 +539,12 @@ def run_step(
             message=message,
         )
 
-    overlap_lookup = overlap_df[OVERLAP_COLUMNS].copy()
-    overlap_lookup["position"] = pd.to_numeric(overlap_lookup["position"], errors="coerce")
-    overlap_lookup["ref_base"] = overlap_lookup["ref_base"].astype(str).str.upper()
-    overlap_lookup["alt_base"] = overlap_lookup["alt_base"].astype(str).str.upper()
-    overlap_lookup = overlap_lookup.dropna(subset=["position"]).copy()
-    overlap_lookup["position"] = overlap_lookup["position"].astype(int)
+    overlap_lookup = validate_variant_key_table(
+        overlap_df[OVERLAP_COLUMNS].copy(),
+        table_name="mito_feature_overlap_candidates.tsv",
+        mt_length=resolved_mt_length,
+        reference_sequence=ref_seq,
+    )
     overlap_lookup = overlap_lookup.drop_duplicates(subset=OVERLAP_COLUMNS).reset_index(drop=True)
     invalid_feature_rows = (
         overlap_lookup["feature_class"].isna()

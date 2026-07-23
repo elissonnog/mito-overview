@@ -78,6 +78,15 @@ def run_step(
 ) -> dict[str, Path | str]:
     """Run the public mitochondrial deletion screen."""
 
+    if not isinstance(mt_length, int) or isinstance(mt_length, bool) or mt_length <= 0:
+        raise ValueError("mt_length must be a positive integer")
+    if (
+        not isinstance(min_deletion_size, int)
+        or isinstance(min_deletion_size, bool)
+        or min_deletion_size <= 0
+    ):
+        raise ValueError("min_deletion_size must be a positive integer")
+
     print(
         f"[deletions] starting sample={sample_id} contig={mt_contig} "
         f"length={mt_length} min_deletion_size={min_deletion_size}"
@@ -119,6 +128,13 @@ def run_step(
                 if op == CIGAR_DEL and length >= min_deletion_size:
                     start = ref_pos
                     end = ref_pos + length - 1
+                    if start < 1 or end > mt_length or end < start:
+                        bam_handle.close()
+                        raise ValueError(
+                            "CIGAR deletion extends outside the configured mitochondrial "
+                            f"interval for read {read.query_name!r}: "
+                            f"start={start}, end={end}, mt_length={mt_length}"
+                        )
                     key = (breakpoint_bin_anchor(start), breakpoint_bin_anchor(end))
                     event_counter[key] += 1
                     event_rows.append(

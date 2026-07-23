@@ -410,6 +410,32 @@ def test_matching_legacy_thresholds_remain_compatible(minimal_inputs: tuple[Path
     assert config.min_alt_allele_fraction == pytest.approx(0.05)
 
 
+@pytest.mark.parametrize(
+    ("key", "value", "message"),
+    [
+        ("MIN_ALT_ALLELE_FRACTION", "nan", "MIN_ALT_ALLELE_FRACTION"),
+        ("MIN_ALT_ALLELE_FRACTION", "inf", "MIN_ALT_ALLELE_FRACTION"),
+        ("ALLELE_MIN_READ_MEAN_QUALITY", "nan", "must be finite"),
+        ("ALLELE_MIN_READ_MEAN_QUALITY", "inf", "must be finite"),
+        ("PHYMER_MAJOR_VAF", "nan", "PHYMER_MAJOR_VAF"),
+        ("PHYMER_MAJOR_VAF", "inf", "PHYMER_MAJOR_VAF"),
+    ],
+)
+def test_nonfinite_fraction_and_quality_configuration_is_rejected(
+    minimal_inputs: tuple[Path, Path],
+    tmp_path: Path,
+    key: str,
+    value: str,
+    message: str,
+) -> None:
+    ref, bam = minimal_inputs
+    mapping = minimal_mapping(tmp_path, ref, bam)
+    mapping[key] = value
+
+    with pytest.raises(ValueError, match=message):
+        PipelineConfig.from_mapping(mapping)
+
+
 def test_explicit_sidecar_overrides_legacy_and_missing_is_nonfatal(
     minimal_inputs: tuple[Path, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
