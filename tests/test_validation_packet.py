@@ -228,10 +228,102 @@ def write_distribution_artifacts(dist_root: Path, version: str = "0.3.0") -> Non
         archive.writestr(f"mito_overview-{version}.dist-info/METADATA", metadata)
     sdist = dist_root / f"mito_overview-{version}.tar.gz"
     payload = metadata.encode()
-    member = tarfile.TarInfo(f"mito_overview-{version}/PKG-INFO")
-    member.size = len(payload)
     with tarfile.open(sdist, "w:gz") as archive:
-        archive.addfile(member, io.BytesIO(payload))
+        for name in (
+            f"mito_overview-{version}/PKG-INFO",
+            f"mito_overview-{version}/mito_overview.egg-info/PKG-INFO",
+        ):
+            member = tarfile.TarInfo(name)
+            member.size = len(payload)
+            archive.addfile(member, io.BytesIO(payload))
+
+
+def rewrite_sdist(
+    path: Path,
+    *,
+    drop: set[str] | None = None,
+    additions: dict[str, bytes] | None = None,
+) -> None:
+    drop = drop or set()
+    additions = additions or {}
+    with tarfile.open(path, "r:gz") as archive:
+        members = []
+        for member in archive.getmembers():
+            if member.name in drop:
+                continue
+            handle = archive.extractfile(member)
+            assert handle is not None
+            members.append((member, handle.read()))
+    with tarfile.open(path, "w:gz") as archive:
+        for member, payload in members:
+            member.size = len(payload)
+            archive.addfile(member, io.BytesIO(payload))
+        for name, payload in additions.items():
+            member = tarfile.TarInfo(name)
+            member.size = len(payload)
+            archive.addfile(member, io.BytesIO(payload))
+
+
+def test_sdist_accepts_setuptools_nested_pkg_info(tmp_path: Path) -> None:
+    dist_root = tmp_path / "dist"
+    write_distribution_artifacts(dist_root)
+
+    artifacts = packet_builder.validate_distributions(
+        dist_root,
+        packet_builder.EXPECTED_PACKAGE_NAME,
+        packet_builder.EXPECTED_RELEASE_VERSION.removeprefix("v"),
+    )
+
+    assert {artifact["kind"] for artifact in artifacts} == {"wheel", "sdist"}
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ("missing_root", "wrong_root_only", "duplicate_root", "nonregular_root"),
+)
+def test_sdist_requires_one_canonical_root_pkg_info(
+    tmp_path: Path, mutation: str
+) -> None:
+    dist_root = tmp_path / "dist"
+    write_distribution_artifacts(dist_root)
+    sdist = dist_root / "mito_overview-0.3.0.tar.gz"
+    canonical = "mito_overview-0.3.0/PKG-INFO"
+    metadata = b"Metadata-Version: 2.1\nName: mito-overview\nVersion: 0.3.0\n"
+    if mutation == "missing_root":
+        rewrite_sdist(sdist, drop={canonical})
+    elif mutation == "wrong_root_only":
+        rewrite_sdist(
+            sdist,
+            drop={canonical},
+            additions={"wrong-root/PKG-INFO": metadata},
+        )
+    elif mutation == "duplicate_root":
+        with tarfile.open(sdist, "w:gz") as archive:
+            for name in (
+                canonical,
+                canonical,
+                "mito_overview-0.3.0/mito_overview.egg-info/PKG-INFO",
+            ):
+                member = tarfile.TarInfo(name)
+                member.size = len(metadata)
+                archive.addfile(member, io.BytesIO(metadata))
+    else:
+        nested = "mito_overview-0.3.0/mito_overview.egg-info/PKG-INFO"
+        with tarfile.open(sdist, "w:gz") as archive:
+            member = tarfile.TarInfo(canonical)
+            member.type = tarfile.SYMTYPE
+            member.linkname = nested
+            archive.addfile(member)
+            member = tarfile.TarInfo(nested)
+            member.size = len(metadata)
+            archive.addfile(member, io.BytesIO(metadata))
+
+    with pytest.raises(ValueError, match="[Cc]anonical root PKG-INFO"):
+        packet_builder.validate_distributions(
+            dist_root,
+            packet_builder.EXPECTED_PACKAGE_NAME,
+            packet_builder.EXPECTED_RELEASE_VERSION.removeprefix("v"),
+        )
 
 
 def replace_distribution_with_same_identity(path: Path) -> None:
@@ -2784,6 +2876,57 @@ def test_extracted_verifier_rejects_resealed_extra_distribution(
     checked = verify_packet(packet)
     assert checked.returncode != 0
     assert "distribution directory must contain only" in checked.stderr
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ("wrong_root_only", "duplicate_root", "nonregular_root"),
+)
+def test_extracted_verifier_rejects_noncanonical_sdist_metadata(
+    tmp_path: Path, mutation: str
+) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    output = tmp_path / "output"
+    packet_builder.build_packet(packet_args(validation, repo, output))
+    packet = output / "packet"
+    artifact = packet / "dist/mito_overview-0.3.0.tar.gz"
+    canonical = "mito_overview-0.3.0/PKG-INFO"
+    metadata = b"Metadata-Version: 2.1\nName: mito-overview\nVersion: 0.3.0\n"
+    if mutation == "wrong_root_only":
+        rewrite_sdist(
+            artifact,
+            drop={canonical},
+            additions={"wrong-root/PKG-INFO": metadata},
+        )
+    elif mutation == "duplicate_root":
+        with tarfile.open(artifact, "w:gz") as archive:
+            for name in (
+                canonical,
+                canonical,
+                "mito_overview-0.3.0/mito_overview.egg-info/PKG-INFO",
+            ):
+                member = tarfile.TarInfo(name)
+                member.size = len(metadata)
+                archive.addfile(member, io.BytesIO(metadata))
+    else:
+        nested = "mito_overview-0.3.0/mito_overview.egg-info/PKG-INFO"
+        with tarfile.open(artifact, "w:gz") as archive:
+            member = tarfile.TarInfo(canonical)
+            member.type = tarfile.LNKTYPE
+            member.linkname = nested
+            archive.addfile(member)
+            member = tarfile.TarInfo(nested)
+            member.size = len(metadata)
+            archive.addfile(member, io.BytesIO(metadata))
+    rewrite_manifest(packet)
+
+    checked = verify_packet(packet)
+    assert checked.returncode != 0
+    if mutation == "nonregular_root":
+        assert "canonical sdist metadata is not a regular file" in checked.stderr
+    else:
+        assert "invalid canonical sdist metadata inventory" in checked.stderr
 
 
 def test_packet_requires_all_resolved_ci_platforms(tmp_path: Path) -> None:
