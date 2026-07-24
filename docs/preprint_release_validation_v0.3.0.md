@@ -386,7 +386,7 @@ The release runner also scrubs its four GitHub selection environment variables
 after validating and copying their values. This prevents release-control
 metadata from leaking into child package tests or the sealed-cache public
 matrix. A regression harness verifies that the selectors are absent before the
-first fresh-clone child process; the normalized private values remain available
+first external child process; the normalized private values remain available
 to bind the PR, PR-head run, final-push run, and public-validation run in the
 packet.
 

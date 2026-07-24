@@ -132,7 +132,8 @@ After validating those four positive selector values, the runner copies them
 into private shell variables and removes the original
 `MITO_OVERVIEW_GITHUB_RUN_ID`, `MITO_OVERVIEW_PR_NUMBER`,
 `MITO_OVERVIEW_PR_RUN_ID`, and `MITO_OVERVIEW_PUBLIC_RUN_ID` names from the
-child environment. This preserves exact evidence binding while preventing
+environment before invoking the runner's first external child command. This
+preserves exact evidence binding while preventing
 release-control metadata from contaminating package tests or offline public
 matrix processes that deliberately reject unexpected ambient validation
 settings.

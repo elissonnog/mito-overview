@@ -115,7 +115,20 @@ def create_fake_gh_harness(tmp_path: Path) -> tuple[Path, Path, dict[str, str]]:
     fake_bin = tmp_path / "fake-bin"
     fake_bin.mkdir()
     real_git = shutil.which("git")
-    assert real_git is not None
+    real_dirname = shutil.which("dirname")
+    assert real_git is not None and real_dirname is not None
+    write_executable(
+        fake_bin / "dirname",
+        "#!/usr/bin/env bash\n"
+        "for name in MITO_OVERVIEW_GITHUB_RUN_ID MITO_OVERVIEW_PR_NUMBER "
+        "MITO_OVERVIEW_PR_RUN_ID MITO_OVERVIEW_PUBLIC_RUN_ID; do\n"
+        "  if [[ -n ${!name+x} ]]; then\n"
+        "    echo \"release selector leaked into earliest child: $name\" >&2\n"
+        "    exit 95\n"
+        "  fi\n"
+        "done\n"
+        f"exec {real_dirname!s} \"$@\"\n",
+    )
     write_executable(
         fake_bin / "git",
         "#!/usr/bin/env bash\n"
