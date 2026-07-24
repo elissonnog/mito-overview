@@ -835,6 +835,28 @@ def test_runner_excludes_manuscript_state_from_release_acceptance() -> None:
     assert "--include-manuscript-rules" not in text
 
 
+def test_runner_keeps_transient_work_outside_validation_evidence_tree() -> None:
+    text = RUNNER.read_text(encoding="utf-8")
+    assert 'TRANSIENT_ROOT="$(resolve_path "Transient work root" "${VALIDATION_ROOT}.transient")"' in text
+    assert '"transient work root": transient_root' in text
+    assert 'for directory in "${VALIDATION_ROOT}" "${TRANSIENT_ROOT}" "${PACKET_ROOT}"' in text
+    assert '"${VALIDATION_ROOT}/work' not in text
+    for path in (
+        "fresh_clone",
+        "fresh_environment",
+        "installed_probe",
+        "installed_sdist_probe",
+        "strict_generic",
+        "public_network_isolation.tsv",
+        "public_home",
+        "public_tmp",
+        "public_xdg_cache",
+        "public_matrix",
+        "audit_zip_verify",
+    ):
+        assert f'${{TRANSIENT_ROOT}}/{path}' in text
+
+
 def test_public_matrix_is_bound_to_public_clone_and_force_installed_wheel() -> None:
     text = RUNNER.read_text(encoding="utf-8")
     assert 'PREPARE_SCRIPT="${FRESH_CLONE_ROOT}/scripts/' in text

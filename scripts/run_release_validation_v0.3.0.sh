@@ -91,6 +91,7 @@ PY
 }
 
 VALIDATION_ROOT="$(resolve_path "Validation root" "$1")"
+TRANSIENT_ROOT="$(resolve_path "Transient work root" "${VALIDATION_ROOT}.transient")"
 RAW_CACHE_ARGUMENT="$2"
 "${PYTHON_BIN}" - "${RAW_CACHE_ARGUMENT}" <<'PY'
 import sys
@@ -111,16 +112,18 @@ PACKET_VERIFY_LOG="${AUDIT_ZIP}.verify.log"
 PACKET_SHA256="${AUDIT_ZIP}.sha256"
 PACKET_RECEIPT="${AUDIT_ZIP}.verification.json"
 
-"${PYTHON_BIN}" -   "${REPO_ROOT}" "${VALIDATION_ROOT}" "${CACHE_ROOT}"   "${PACKET_ROOT}" "${AUDIT_ZIP}" "${EXPECTED_AUDIT_ZIP}" <<'PY'
+"${PYTHON_BIN}" -   "${REPO_ROOT}" "${VALIDATION_ROOT}" "${TRANSIENT_ROOT}" \
+  "${CACHE_ROOT}" "${PACKET_ROOT}" "${AUDIT_ZIP}" "${EXPECTED_AUDIT_ZIP}" <<'PY'
 import sys
 from pathlib import Path
 
-repo_root, validation_root, cache_root, packet_root, audit_zip = map(
-    Path, sys.argv[1:6]
+repo_root, validation_root, transient_root, cache_root, packet_root, audit_zip = map(
+    Path, sys.argv[1:7]
 )
-expected_zip = sys.argv[6]
+expected_zip = sys.argv[7]
 directory_roots = {
     "validation root": validation_root,
+    "transient work root": transient_root,
     "raw cache root": cache_root,
     "packet root": packet_root,
 }
@@ -159,7 +162,7 @@ if [[ ! "${CANDIDATE_COMMIT}" =~ ^[0-9a-f]{40}$ ]]; then
   echo "Release candidate must resolve to a full 40-character Git commit." >&2
   exit 1
 fi
-for directory in "${VALIDATION_ROOT}" "${PACKET_ROOT}"; do
+for directory in "${VALIDATION_ROOT}" "${TRANSIENT_ROOT}" "${PACKET_ROOT}"; do
   if [[ -d "${directory}" && -n "$(find "${directory}" -mindepth 1 -maxdepth 1 -print -quit)" ]]; then
     echo "Release output directory must be absent or empty: ${directory}" >&2
     exit 1
@@ -184,11 +187,11 @@ if ! command -v gh >/dev/null 2>&1; then
   exit 1
 fi
 
-mkdir -p   "${VALIDATION_ROOT}/acceptance"   "${VALIDATION_ROOT}/commands"   "${VALIDATION_ROOT}/logs"   "${VALIDATION_ROOT}/resources"   "${VALIDATION_ROOT}/expected"   "${VALIDATION_ROOT}/work"   "${VALIDATION_ROOT}/dist"
+mkdir -p   "${VALIDATION_ROOT}/acceptance"   "${VALIDATION_ROOT}/commands"   "${VALIDATION_ROOT}/logs"   "${VALIDATION_ROOT}/resources"   "${VALIDATION_ROOT}/expected"   "${VALIDATION_ROOT}/dist"   "${TRANSIENT_ROOT}"
 mkdir -p "$(dirname "${AUDIT_ZIP}")"
 
-FRESH_CLONE_ROOT="${VALIDATION_ROOT}/work/fresh_clone"
-FRESH_ENV_ROOT="${VALIDATION_ROOT}/work/fresh_environment"
+FRESH_CLONE_ROOT="${TRANSIENT_ROOT}/fresh_clone"
+FRESH_ENV_ROOT="${TRANSIENT_ROOT}/fresh_environment"
 FRESH_VENV_ROOT="${FRESH_ENV_ROOT}/venv"
 FRESH_SDIST_VENV_ROOT="${FRESH_ENV_ROOT}/sdist-venv"
 FRESH_PYTHON="${FRESH_VENV_ROOT}/bin/python"
@@ -944,8 +947,8 @@ run_fresh_clone_validation() {
   local cache_root="${FRESH_ENV_ROOT}/cache"
   local venv_root="${FRESH_VENV_ROOT}"
   local sdist_venv_root="${FRESH_SDIST_VENV_ROOT}"
-  local probe_root="${VALIDATION_ROOT}/work/installed_probe"
-  local sdist_probe_root="${VALIDATION_ROOT}/work/installed_sdist_probe"
+  local probe_root="${TRANSIENT_ROOT}/installed_probe"
+  local sdist_probe_root="${TRANSIENT_ROOT}/installed_sdist_probe"
   local command_file="${VALIDATION_ROOT}/commands/${FRESH_CLONE_CASE_ID}.sh"
   local log_file="${VALIDATION_ROOT}/logs/${FRESH_CLONE_CASE_ID}.log"
   local package_command_file="${VALIDATION_ROOT}/commands/package_build.sh"
@@ -1464,7 +1467,7 @@ run_logged cli_step_listing cli not_applicable \
   "${FRESH_PYTHON}" -I -m mito_overview.cli --list-steps
 
 source "${REPO_ROOT}/scripts/lib/prepare_synthetic_toy_sample.sh"
-STRICT_ROOT="${VALIDATION_ROOT}/work/strict_generic"
+STRICT_ROOT="${TRANSIENT_ROOT}/strict_generic"
 mkdir -p "${STRICT_ROOT}"
 prepare_synthetic_toy_sample "${REPO_ROOT}" "${STRICT_ROOT}"
 cat > "${STRICT_ROOT}/standalone.env" <<EOF
@@ -1536,15 +1539,15 @@ case "$(uname -s)/$(uname -m)" in
 esac
 
 PUBLIC_ROOT="${VALIDATION_ROOT}/public"
-NETWORK_ISOLATION_EVIDENCE="${VALIDATION_ROOT}/work/public_network_isolation.tsv"
-mkdir -p "${VALIDATION_ROOT}/work/public_home" \
-  "${VALIDATION_ROOT}/work/public_tmp" \
-  "${VALIDATION_ROOT}/work/public_xdg_cache"
+NETWORK_ISOLATION_EVIDENCE="${TRANSIENT_ROOT}/public_network_isolation.tsv"
+mkdir -p "${TRANSIENT_ROOT}/public_home" \
+  "${TRANSIENT_ROOT}/public_tmp" \
+  "${TRANSIENT_ROOT}/public_xdg_cache"
 run_logged public_validation_matrix public 4 \
   env -i \
-    HOME="${VALIDATION_ROOT}/work/public_home" \
-    TMPDIR="${VALIDATION_ROOT}/work/public_tmp" \
-    XDG_CACHE_HOME="${VALIDATION_ROOT}/work/public_xdg_cache" \
+    HOME="${TRANSIENT_ROOT}/public_home" \
+    TMPDIR="${TRANSIENT_ROOT}/public_tmp" \
+    XDG_CACHE_HOME="${TRANSIENT_ROOT}/public_xdg_cache" \
     PATH="${PATH}" PYTHONNOUSERSITE=1 PYTHONPATH= \
     PIP_DISABLE_PIP_VERSION_CHECK=1 LC_ALL=C LANG=C TZ=UTC THREADS=4 \
     MITO_OVERVIEW_PYTHON="${FRESH_PYTHON}" \
@@ -1555,7 +1558,7 @@ run_logged public_validation_matrix public 4 \
       "${PUBLIC_MATRIX}" \
         --mode offline \
         --cache "${CACHE_ROOT}" \
-        --work "${VALIDATION_ROOT}/work/public_matrix" \
+        --work "${TRANSIENT_ROOT}/public_matrix" \
         --output "${PUBLIC_ROOT}" \
         --oracle "${ORACLE}"
 grep -Fqx $'network_isolation_verdict\tPASS' \
@@ -2047,7 +2050,7 @@ if ! "${PACKET_ROOT}/verify_bundle.sh" >> "${PACKET_VERIFY_LOG}" 2>&1; then
   exit 1
 fi
 
-ZIP_VERIFY_ROOT="${VALIDATION_ROOT}/work/audit_zip_verify"
+ZIP_VERIFY_ROOT="${TRANSIENT_ROOT}/audit_zip_verify"
 "${PYTHON_BIN}" "${REPO_ROOT}/scripts/safe_extract_validation_zip.py"   "${AUDIT_ZIP}" "${ZIP_VERIFY_ROOT}"
 echo "[fresh-extract-verifier] verify_bundle.sh" >> "${PACKET_VERIFY_LOG}"
 if ! bash "${ZIP_VERIFY_ROOT}/verify_bundle.sh" >> "${PACKET_VERIFY_LOG}" 2>&1; then
