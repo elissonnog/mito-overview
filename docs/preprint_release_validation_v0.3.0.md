@@ -382,6 +382,14 @@ explicit positive validation input and is cross-checked against the fetched PR,
 environment record, packet identity, and embedded verifier rather than fixed to
 a historical PR number.
 
+The release runner also scrubs its four GitHub selection environment variables
+after validating and copying their values. This prevents release-control
+metadata from leaking into child package tests or the sealed-cache public
+matrix. A regression harness verifies that the selectors are absent before the
+first external child process; the normalized private values remain available
+to bind the PR, PR-head run, final-push run, and public-validation run in the
+packet.
+
 ## Rejected candidate `db62aa4`
 
 Candidate `db62aa4e47eb3d88aac767840c3a360c721d8257` was not pushed. It passed its exact archive/source-distribution suites (`1042/1042`), separate installed-package checks, four workflow modes, and deterministic `88/88` long-read plus `74/74` short-read example comparisons. Release-engineering audit `MITO-REL-20260723T171401Z-4d3d9b67-5b0c-4a98-9eda-e8e3434e21bf` passed. Scientific audit `MITO-SCI-DB62AA4-20260723T170408Z-0D07AF88-F49A-4D3A-A91B-3609CC90C05B` and reproducibility audit `MITO-RO-20260723T172150Z-0dd9978f-b5e0-4bbc-af14-230942131b63` returned HOLD, so the candidate was rejected.
