@@ -302,7 +302,7 @@ if args[0] == "api":
             head_sha=observed_head,
             head_branch=pr_branch,
         )
-        payload["pull_requests"] = [{{
+        association = {{
             "number": pr_number,
             "url": f"{{api_root}}/pulls/{{pr_number}}",
             "head": {{
@@ -315,7 +315,21 @@ if args[0] == "api":
                 "sha": pr_base,
                 "repo": {{"name": "mito-overview", "url": api_root}},
             }},
-        }}]
+        }}
+        if mode == "merged_pr_empty_associations":
+            payload["pull_requests"] = []
+        elif mode == "pr_association_null":
+            payload["pull_requests"] = None
+        elif mode == "pr_association_multiple":
+            payload["pull_requests"] = [association, association]
+        elif mode == "pr_association_wrong_url":
+            association["url"] = f"{{api_root}}/pulls/999"
+            payload["pull_requests"] = [association]
+        elif mode == "pr_association_wrong_head":
+            association["head"]["sha"] = "f" * 40
+            payload["pull_requests"] = [association]
+        else:
+            payload["pull_requests"] = [association]
     elif endpoint == f"repos/{{repository}}/actions/runs/{{pr_run_id}}/jobs?filter=latest&per_page=100":
         payload = jobs_record(pr_run_id, pr_head)
     elif endpoint == f"repos/{{repository}}/actions/runs/{{public_run_id}}":
@@ -407,9 +421,11 @@ def invoke_harness(
     tmp_path: Path,
     *,
     mode: str = "valid",
+    environment: dict[str, str] | None = None,
 ) -> tuple[subprocess.CompletedProcess[str], Path, Path]:
     runner, call_log, env = create_fake_gh_harness(tmp_path)
     env["FAKE_GH_MODE"] = mode
+    env.update(environment or {})
     output_root = tmp_path / "runner-output"
     paths = [
         output_root / "validation",
@@ -488,13 +504,50 @@ def test_wrong_public_run_id_identity_fails_before_cache_creation(tmp_path: Path
     assert not cache.exists()
 
 
-def test_runner_rejects_nonrelease_pull_request_number(tmp_path: Path) -> None:
-    completed = invoke(
+def test_runner_accepts_explicit_positive_pull_request_number(tmp_path: Path) -> None:
+    completed, _, cache = invoke_harness(
         tmp_path,
         environment={"MITO_OVERVIEW_PR_NUMBER": "31"},
     )
-    assert completed.returncode == 2
-    assert "must be 3 for the v0.3.0 release gate" in completed.stderr
+    assert completed.returncode == 1
+    assert "intentional fake-git clone stop" in completed.stderr
+    assert cache.is_dir()
+
+
+def test_post_merge_empty_pr_association_passes_preflight(tmp_path: Path) -> None:
+    completed, _, cache = invoke_harness(
+        tmp_path,
+        mode="merged_pr_empty_associations",
+    )
+    assert completed.returncode == 1
+    assert "intentional fake-git clone stop" in completed.stderr
+    preflight_log = (
+        cache.parent
+        / "validation"
+        / "logs"
+        / "pull_request_release_evidence.log"
+    ).read_text(encoding="utf-8")
+    assert "association_mode=merged_pr_independent_identity" in preflight_log
+    assert cache.is_dir()
+
+
+@pytest.mark.parametrize(
+    "mode",
+    (
+        "pr_association_null",
+        "pr_association_multiple",
+        "pr_association_wrong_url",
+        "pr_association_wrong_head",
+    ),
+)
+def test_invalid_pr_association_fails_before_cache_creation(
+    tmp_path: Path,
+    mode: str,
+) -> None:
+    completed, _, cache = invoke_harness(tmp_path, mode=mode)
+    assert completed.returncode != 0
+    assert "association" in completed.stderr
+    assert not cache.exists()
 
 
 def test_public_main_drift_fails_before_cache_creation(tmp_path: Path) -> None:

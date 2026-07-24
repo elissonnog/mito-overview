@@ -108,7 +108,7 @@ The successor working tree validates every existing candidate file before testin
 export PATH="<locked-env-prefix>/bin:$PATH"
 export MITO_OVERVIEW_PYTHON="<locked-env-prefix>/bin/python"
 
-MITO_OVERVIEW_PR_NUMBER=3 \
+MITO_OVERVIEW_PR_NUMBER=<merged-release-pr-number> \
 MITO_OVERVIEW_PR_RUN_ID=<successful-pr-smoke-run-id> \
 MITO_OVERVIEW_GITHUB_RUN_ID=<successful-main-push-smoke-run-id> \
 MITO_OVERVIEW_PUBLIC_RUN_ID=<successful-ubuntu-public-run-id> \
@@ -119,6 +119,15 @@ MITO_OVERVIEW_PUBLIC_RUN_ID=<successful-ubuntu-public-run-id> \
 
 The runner must reject legacy DOI/Zenodo arguments, require an absent raw-cache path, clone public GitHub HTTPS at an exact 40-character commit, build/install distributions outside the checkout, collect exact PR-head, final-push, and Ubuntu-public-run evidence, build schema `2.0` profile `github_release_validation_v1`, and verify both the packet root and a fresh ZIP extraction. The environment prefix must have been solved from the matching platform specification and must satisfy the runner's exact runtime-version checks; ambient Mac tools are not accepted.
 
+GitHub Actions may return an empty `pull_requests` association array after a
+pull request has been merged. In that post-merge state, the release validator
+accepts the run only when the separately fetched PR is closed and merged and
+the canonical repository, PR number, base branch, PR-head branch/SHA, merge
+SHA, workflow identity, run ID, and all three pinned jobs agree exactly. A
+nonempty association must contain exactly one canonical matching PR; malformed,
+multiple, or conflicting associations fail. The selected PR number is therefore
+an explicit positive run input rather than a release-wide hardcoded constant.
+
 ## Ordered Finish Gate
 
 1. Stabilize and review the GitHub-only software branch; manuscript state is
@@ -128,7 +137,7 @@ The runner must reject legacy DOI/Zenodo arguments, require an absent raw-cache 
    bioinformatics, and reproducibility. Bind unique audit-instance IDs to the
    reviewed PR-head tree, resolve every blocker, and rerun affected gates;
    owner-posted GitHub records are not represented as external peer review.
-4. Push PR #3 and require green Ubuntu/macOS CI at the exact head.
+4. Push the release PR and require green Ubuntu/macOS CI at the exact head.
 5. Merge to `main`; record `FINAL_SHA`; require successful push-event CI at that exact SHA.
 6. Run a fresh macOS public clean-room reproduction from an empty cache and the Ubuntu public workflow at `FINAL_SHA`; compare normalized outputs and module states.
 7. Build and verify the audit ZIP, then tag exactly `FINAL_SHA` as annotated

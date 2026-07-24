@@ -745,7 +745,6 @@ READ_ONLY_AUDIT_CASE_IDS = {
     "bioinformatics": "read_only_audit_bioinformatics",
     "reproducibility": "read_only_audit_reproducibility",
 }
-EXPECTED_PULL_REQUEST_NUMBER = 3
 EXPECTED_PUBLIC_VALIDATION_WORKFLOW = "public-validation"
 EXPECTED_PUBLIC_VALIDATION_WORKFLOW_PATH = ".github/workflows/public-validation.yml"
 REQUIRED_ACCEPTANCE_FILES = {
@@ -3409,11 +3408,6 @@ def validate_pull_request_evidence(
         pull_request.get("number"),
         "pull request number",
     )
-    if pull_number != EXPECTED_PULL_REQUEST_NUMBER:
-        raise ValueError(
-            f"Release evidence must come from pull request {EXPECTED_PULL_REQUEST_NUMBER}, "
-            f"observed {pull_number}"
-        )
     canonical_urls = {
         "url": f"{repository_api}/pulls/{pull_number}",
         "html_url": f"https://github.com/{repository_slug}/pull/{pull_number}",
@@ -3545,36 +3539,56 @@ def validate_pull_request_github_actions_evidence(
         raise ValueError("Pull-request workflow head repository identity mismatch")
 
     associations = run.get("pull_requests")
-    if not isinstance(associations, list) or len(associations) != 1:
-        raise ValueError("Pull-request workflow must be associated with exactly one PR")
-    association = associations[0]
-    if not isinstance(association, dict):
-        raise ValueError("Pull-request workflow association is malformed")
-    if (
-        association.get("number") != pull_number
-        or association.get("url") != f"{repository_api}/pulls/{pull_number}"
-    ):
-        raise ValueError("Pull-request workflow association has the wrong PR identity")
-    association_head = association.get("head")
-    association_base = association.get("base")
-    if not isinstance(association_head, dict) or not isinstance(association_base, dict):
-        raise ValueError("Pull-request workflow association lacks base/head metadata")
-    if (
-        association_head.get("ref") != head_ref
-        or association_head.get("sha") != head_sha
-        or association_base.get("ref") != EXPECTED_GITHUB_BRANCH
-        or association_base.get("sha") != base_sha
-    ):
-        raise ValueError("Pull-request workflow association does not match the reviewed head")
-    for label, nested in (("head", association_head), ("base", association_base)):
-        nested_repo = nested.get("repo")
-        if not isinstance(nested_repo, dict):
-            raise ValueError(f"Pull-request workflow {label} repository is malformed")
+    if not isinstance(associations, list):
+        raise ValueError("Pull-request workflow association inventory is malformed")
+    if not associations:
+        # GitHub can clear Actions pull_requests associations after merge. The
+        # separately validated merged PR and exact run/job identities are the
+        # fail-closed evidence path in that post-merge state.
+        association_evidence_mode = "merged_pr_independent_identity"
+    elif len(associations) == 1:
+        association = associations[0]
+        if not isinstance(association, dict):
+            raise ValueError("Pull-request workflow association is malformed")
         if (
-            nested_repo.get("name") != repository_slug.split("/", 1)[1]
-            or nested_repo.get("url") != repository_api
+            association.get("number") != pull_number
+            or association.get("url") != f"{repository_api}/pulls/{pull_number}"
         ):
-            raise ValueError(f"Pull-request workflow {label} repository identity mismatch")
+            raise ValueError("Pull-request workflow association has the wrong PR identity")
+        association_head = association.get("head")
+        association_base = association.get("base")
+        if not isinstance(association_head, dict) or not isinstance(
+            association_base, dict
+        ):
+            raise ValueError("Pull-request workflow association lacks base/head metadata")
+        if (
+            association_head.get("ref") != head_ref
+            or association_head.get("sha") != head_sha
+            or association_base.get("ref") != EXPECTED_GITHUB_BRANCH
+            or association_base.get("sha") != base_sha
+        ):
+            raise ValueError(
+                "Pull-request workflow association does not match the reviewed head"
+            )
+        for label, nested in (("head", association_head), ("base", association_base)):
+            nested_repo = nested.get("repo")
+            if not isinstance(nested_repo, dict):
+                raise ValueError(
+                    f"Pull-request workflow {label} repository is malformed"
+                )
+            if (
+                nested_repo.get("name") != repository_slug.split("/", 1)[1]
+                or nested_repo.get("url") != repository_api
+            ):
+                raise ValueError(
+                    f"Pull-request workflow {label} repository identity mismatch"
+                )
+        association_evidence_mode = "actions_pull_requests_canonical"
+    else:
+        raise ValueError(
+            "Pull-request workflow association inventory must be empty or contain "
+            "exactly one canonical PR"
+        )
 
     jobs = jobs_payload.get("jobs")
     if not isinstance(jobs, list) or not all(isinstance(job, dict) for job in jobs):
@@ -3629,6 +3643,7 @@ def validate_pull_request_github_actions_evidence(
         "workflow_path": EXPECTED_GITHUB_WORKFLOW_PATH,
         "event": "pull_request",
         "pull_request_number": pull_number,
+        "association_evidence_mode": association_evidence_mode,
         "branch": head_ref,
         "head_sha": head_sha,
         "status": "completed",
@@ -3645,7 +3660,8 @@ def validate_pull_request_github_actions_evidence(
         "detail": (
             f"{run_relative}; {jobs_relative}; run_id={run_id}; "
             f"pull_request={pull_number}; jobs=3; event=pull_request; "
-            f"reviewed_commit={head_sha}"
+            f"reviewed_commit={head_sha}; "
+            f"association_mode={association_evidence_mode}"
         ),
     }
     return row, identity
@@ -8204,8 +8220,6 @@ pull_request = json.loads(
     (root / "acceptance/pull_request.json").read_text(encoding="utf-8")
 )
 pull_number = positive_integer(pull_request.get("number"), "pull request number")
-if pull_number != 3:
-    raise SystemExit(f"release evidence is not bound to pull request 3: {pull_number}")
 pull_api = f"{repository_api}/pulls/{pull_number}"
 pull_html = f"https://github.com/{repository_slug}/pull/{pull_number}"
 issue_api = f"{repository_api}/issues/{pull_number}"
@@ -8305,30 +8319,39 @@ if (
 ):
     raise SystemExit("pull-request GitHub Actions repository identity mismatch")
 associations = pr_actions_run.get("pull_requests")
-if not isinstance(associations, list) or len(associations) != 1:
-    raise SystemExit("pull-request GitHub Actions association inventory mismatch")
-association = associations[0]
-association_head = association.get("head") if isinstance(association, dict) else None
-association_base = association.get("base") if isinstance(association, dict) else None
-if (
-    not isinstance(association_head, dict)
-    or not isinstance(association_base, dict)
-    or association.get("number") != pull_number
-    or association.get("url") != pull_api
-    or association_head.get("ref") != head_ref
-    or association_head.get("sha") != head_sha
-    or association_base.get("ref") != "main"
-    or association_base.get("sha") != base_sha
-):
-    raise SystemExit("pull-request GitHub Actions association identity mismatch")
-for label, nested in (("head", association_head), ("base", association_base)):
-    nested_repo = nested.get("repo")
+if not isinstance(associations, list):
+    raise SystemExit("pull-request GitHub Actions association inventory is malformed")
+if not associations:
+    association_evidence_mode = "merged_pr_independent_identity"
+elif len(associations) == 1:
+    association = associations[0]
+    association_head = association.get("head") if isinstance(association, dict) else None
+    association_base = association.get("base") if isinstance(association, dict) else None
     if (
-        not isinstance(nested_repo, dict)
-        or nested_repo.get("name") != "mito-overview"
-        or nested_repo.get("url") != repository_api
+        not isinstance(association_head, dict)
+        or not isinstance(association_base, dict)
+        or association.get("number") != pull_number
+        or association.get("url") != pull_api
+        or association_head.get("ref") != head_ref
+        or association_head.get("sha") != head_sha
+        or association_base.get("ref") != "main"
+        or association_base.get("sha") != base_sha
     ):
-        raise SystemExit(f"pull-request GitHub Actions {label} repository mismatch")
+        raise SystemExit("pull-request GitHub Actions association identity mismatch")
+    for label, nested in (("head", association_head), ("base", association_base)):
+        nested_repo = nested.get("repo")
+        if (
+            not isinstance(nested_repo, dict)
+            or nested_repo.get("name") != "mito-overview"
+            or nested_repo.get("url") != repository_api
+        ):
+            raise SystemExit(f"pull-request GitHub Actions {label} repository mismatch")
+    association_evidence_mode = "actions_pull_requests_canonical"
+else:
+    raise SystemExit(
+        "pull-request GitHub Actions association inventory must be empty or contain "
+        "exactly one canonical PR"
+    )
 pr_jobs = pr_actions_jobs.get("jobs")
 expected_job_names = {name for name, _ in job_expectations.values()}
 if (
@@ -8366,6 +8389,7 @@ expected_pr_ci = {
     "run_attempt": pr_run_attempt, "workflow": "smoke-tests",
     "workflow_path": ".github/workflows/smoke-tests.yml",
     "event": "pull_request", "pull_request_number": pull_number,
+    "association_evidence_mode": association_evidence_mode,
     "branch": head_ref, "head_sha": head_sha, "status": "completed",
     "conclusion": "success", "url": pr_run_url, "jobs": pr_selected_jobs,
 }

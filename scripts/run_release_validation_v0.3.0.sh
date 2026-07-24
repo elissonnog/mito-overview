@@ -42,7 +42,6 @@ GITHUB_RUN_ID="${MITO_OVERVIEW_GITHUB_RUN_ID:-}"
 PR_NUMBER="${MITO_OVERVIEW_PR_NUMBER:-}"
 PR_RUN_ID="${MITO_OVERVIEW_PR_RUN_ID:-}"
 PUBLIC_RUN_ID="${MITO_OVERVIEW_PUBLIC_RUN_ID:-}"
-EXPECTED_PR_NUMBER="3"
 FRESH_CLONE_CASE_ID="fresh_clone_candidate_commit"
 EXPECTED_AUDIT_ZIP="mito-overview-v0.3.0-validation.zip"
 SCHEMA_VERSION="2.0"
@@ -70,10 +69,6 @@ require_positive_integer \
 require_positive_integer \
   MITO_OVERVIEW_PUBLIC_RUN_ID "${PUBLIC_RUN_ID}" \
   "the completed workflow_dispatch public-validation run"
-if [[ "${PR_NUMBER}" != "${EXPECTED_PR_NUMBER}" ]]; then
-  echo "MITO_OVERVIEW_PR_NUMBER must be ${EXPECTED_PR_NUMBER} for the v0.3.0 release gate." >&2
-  exit 2
-fi
 
 resolve_path() {
   local label="$1"
@@ -641,13 +636,46 @@ if run.get("url") != run_api_url or run.get("jobs_url") != f"{run_api_url}/jobs"
 if run.get("html_url") != f"{html_root}/actions/runs/{expected_run_id}":
     raise SystemExit("Pull-request smoke run HTML URL is not canonical")
 associations = run.get("pull_requests")
-if not isinstance(associations, list) or not any(
-    isinstance(item, dict)
-    and item.get("number") == expected_pr_number
-    and item.get("url") == f"{api_root}/pulls/{expected_pr_number}"
-    for item in associations
-):
-    raise SystemExit("Pull-request smoke run is not associated with the selected PR")
+if not isinstance(associations, list):
+    raise SystemExit("Pull-request smoke run association inventory is malformed")
+if not associations:
+    # GitHub may return an empty Actions association list after the PR is merged.
+    # The independently fetched merged PR, exact run, repository, branch, SHA,
+    # and pinned job identities remain mandatory.
+    association_evidence_mode = "merged_pr_independent_identity"
+elif len(associations) == 1:
+    association = associations[0]
+    if not isinstance(association, dict):
+        raise SystemExit("Pull-request smoke run association is malformed")
+    association_head = association.get("head")
+    association_base = association.get("base")
+    if (
+        association.get("number") != expected_pr_number
+        or association.get("url") != f"{api_root}/pulls/{expected_pr_number}"
+        or not isinstance(association_head, dict)
+        or not isinstance(association_base, dict)
+        or association_head.get("ref") != pr_head_branch
+        or association_head.get("sha") != pr_head_sha
+        or association_base.get("ref") != "main"
+        or association_base.get("sha") != base.get("sha")
+    ):
+        raise SystemExit("Pull-request smoke run association identity mismatch")
+    for label, nested in (("head", association_head), ("base", association_base)):
+        nested_repo = nested.get("repo")
+        if (
+            not isinstance(nested_repo, dict)
+            or nested_repo.get("name") != repository.split("/", 1)[1]
+            or nested_repo.get("url") != api_root
+        ):
+            raise SystemExit(
+                f"Pull-request smoke run {label} association repository mismatch"
+            )
+    association_evidence_mode = "actions_pull_requests_canonical"
+else:
+    raise SystemExit(
+        "Pull-request smoke run association inventory must be empty or contain "
+        "exactly one canonical PR"
+    )
 run_attempt = run.get("run_attempt")
 if not isinstance(run_attempt, int) or isinstance(run_attempt, bool) or run_attempt <= 0:
     raise SystemExit("Pull-request smoke run attempt is invalid")
@@ -677,7 +705,10 @@ for expected_name in expected_jobs:
         or job.get("conclusion") != "success"
     ):
         raise SystemExit(f"Pull-request smoke job identity is invalid: {expected_name}")
-print(f"pull_request_evidence=PASS comments={len(comments)} pr_head_sha={pr_head_sha}")
+print(
+    f"pull_request_evidence=PASS comments={len(comments)} "
+    f"pr_head_sha={pr_head_sha} association_mode={association_evidence_mode}"
+)
 PY
     then
       mv "${comments_tmp}" "${comments_path}"
