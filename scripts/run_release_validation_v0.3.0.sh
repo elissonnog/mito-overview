@@ -1,19 +1,28 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-usage() {
-  cat >&2 <<EOF
-Usage: MITO_OVERVIEW_GITHUB_RUN_ID=PUSH_RUN_ID \
-  MITO_OVERVIEW_PR_NUMBER=PR_NUMBER \
-  MITO_OVERVIEW_PR_RUN_ID=PR_SMOKE_RUN_ID \
-  MITO_OVERVIEW_PUBLIC_RUN_ID=PUBLIC_VALIDATION_RUN_ID \
-  $0 VALIDATION_ROOT RAW_CACHE_ROOT PACKET_ROOT \
-  mito-overview-v0.3.0-validation.zip
+GITHUB_RUN_ID="${MITO_OVERVIEW_GITHUB_RUN_ID:-}"
+PR_NUMBER="${MITO_OVERVIEW_PR_NUMBER:-}"
+PR_RUN_ID="${MITO_OVERVIEW_PR_RUN_ID:-}"
+PUBLIC_RUN_ID="${MITO_OVERVIEW_PUBLIC_RUN_ID:-}"
+unset \
+  MITO_OVERVIEW_GITHUB_RUN_ID \
+  MITO_OVERVIEW_PR_NUMBER \
+  MITO_OVERVIEW_PR_RUN_ID \
+  MITO_OVERVIEW_PUBLIC_RUN_ID
 
-This is the GitHub-only v0.3.0 release-validation interface. Manuscript,
-Zenodo, DOI, archive, and fixed release-date inputs are not accepted.
-RAW_CACHE_ROOT must not exist when this command is invoked.
-EOF
+usage() {
+  printf >&2 '%s\n' \
+    "Usage: MITO_OVERVIEW_GITHUB_RUN_ID=PUSH_RUN_ID \\" \
+    "  MITO_OVERVIEW_PR_NUMBER=PR_NUMBER \\" \
+    "  MITO_OVERVIEW_PR_RUN_ID=PR_SMOKE_RUN_ID \\" \
+    "  MITO_OVERVIEW_PUBLIC_RUN_ID=PUBLIC_VALIDATION_RUN_ID \\" \
+    "  $0 VALIDATION_ROOT RAW_CACHE_ROOT PACKET_ROOT \\" \
+    "  mito-overview-v0.3.0-validation.zip" \
+    "" \
+    "This is the GitHub-only v0.3.0 release-validation interface. Manuscript," \
+    "Zenodo, DOI, archive, and fixed release-date inputs are not accepted." \
+    "RAW_CACHE_ROOT must not exist when this command is invoked."
 }
 
 if [[ $# -eq 5 ]]; then
@@ -31,11 +40,6 @@ for legacy_name in   MITO_OVERVIEW_ARCHIVE_DOI   MITO_OVERVIEW_ZENODO_RESERVATIO
     exit 2
   fi
 done
-
-GITHUB_RUN_ID="${MITO_OVERVIEW_GITHUB_RUN_ID:-}"
-PR_NUMBER="${MITO_OVERVIEW_PR_NUMBER:-}"
-PR_RUN_ID="${MITO_OVERVIEW_PR_RUN_ID:-}"
-PUBLIC_RUN_ID="${MITO_OVERVIEW_PUBLIC_RUN_ID:-}"
 
 require_positive_integer() {
   local name="$1"
@@ -59,14 +63,6 @@ require_positive_integer \
 require_positive_integer \
   MITO_OVERVIEW_PUBLIC_RUN_ID "${PUBLIC_RUN_ID}" \
   "the completed workflow_dispatch public-validation run"
-
-# Release selectors are copied into private shell variables above. Scrub them
-# before the runner invokes its first external child command.
-unset \
-  MITO_OVERVIEW_GITHUB_RUN_ID \
-  MITO_OVERVIEW_PR_NUMBER \
-  MITO_OVERVIEW_PR_RUN_ID \
-  MITO_OVERVIEW_PUBLIC_RUN_ID
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"

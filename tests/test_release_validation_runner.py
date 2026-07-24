@@ -446,6 +446,7 @@ def invoke_harness(
     *,
     mode: str = "valid",
     environment: dict[str, str] | None = None,
+    argument_count: int = 4,
 ) -> tuple[subprocess.CompletedProcess[str], Path, Path]:
     runner, call_log, env = create_fake_gh_harness(tmp_path)
     env["FAKE_GH_MODE"] = mode
@@ -467,8 +468,16 @@ def invoke_harness(
         output_root / "packet",
         output_root / "mito-overview-v0.3.0-validation.zip",
     ]
+    arguments = [str(path) for path in paths]
+    if argument_count <= len(arguments):
+        arguments = arguments[:argument_count]
+    else:
+        arguments.extend(
+            str(output_root / f"extra-{index}")
+            for index in range(argument_count - len(arguments))
+        )
     completed = subprocess.run(
-        ["bash", str(runner), *(str(path) for path in paths)],
+        ["bash", str(runner), *arguments],
         cwd=tmp_path,
         env={**os.environ, **env},
         capture_output=True,
@@ -644,6 +653,21 @@ def test_release_selectors_are_scrubbed_before_child_execution(
     assert "intentional fake-git clone stop" in completed.stderr
     assert "release selector leaked" not in completed.stderr
     assert cache.is_dir()
+
+
+@pytest.mark.parametrize("argument_count", (0, 3, 5))
+def test_release_selectors_are_scrubbed_on_usage_error_paths(
+    tmp_path: Path,
+    argument_count: int,
+) -> None:
+    completed, _, cache = invoke_harness(
+        tmp_path,
+        argument_count=argument_count,
+    )
+    assert completed.returncode == 2
+    assert "Usage: MITO_OVERVIEW_GITHUB_RUN_ID" in completed.stderr
+    assert "release selector leaked" not in completed.stderr
+    assert not cache.exists()
 
 
 def test_runner_declares_public_clone_and_isolated_installed_probe() -> None:
