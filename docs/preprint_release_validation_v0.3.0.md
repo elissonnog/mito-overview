@@ -367,6 +367,21 @@ Candidate `616f798794931475b5c2abe8352b2520073f934f` is rejected and was not pus
 
 The successor removes manuscript state from GitHub release acceptance without changing `paper/**`, labels synthetic fixture haplogroup output as non-evaluable formal evidence with no best match, and fails closed on nonpositive circularity edge windows. Focused remediation passed `74/74`. The first full run passed `1041` tests and identified only the expected stale long-read identity summary and page 09; those two tracked artifacts were regenerated, while all other long-read files and the complete short-read bundle remained unchanged. The clean complete rerun passed `1042/1042` in 472.39 seconds. Exact package/workflow gates and three new independent audits are required before PR #3 is updated.
 
+### Post-merge GitHub Actions association handling
+
+The release evidence contract does not assume that GitHub will retain a
+`pull_requests` association object on a completed Actions run after its pull
+request is merged. Two evidence modes are accepted and recorded:
+`actions_pull_requests_canonical`, requiring exactly one complete canonical
+association, and `merged_pr_independent_identity`, requiring an empty
+association inventory plus exact agreement among separately fetched merged-PR
+metadata, repository identity, base/head branches and commits, merge commit,
+workflow run, and all pinned successful jobs. Nonempty malformed, multiple, or
+conflicting associations remain release failures. The release PR number is an
+explicit positive validation input and is cross-checked against the fetched PR,
+environment record, packet identity, and embedded verifier rather than fixed to
+a historical PR number.
+
 ## Rejected candidate `db62aa4`
 
 Candidate `db62aa4e47eb3d88aac767840c3a360c721d8257` was not pushed. It passed its exact archive/source-distribution suites (`1042/1042`), separate installed-package checks, four workflow modes, and deterministic `88/88` long-read plus `74/74` short-read example comparisons. Release-engineering audit `MITO-REL-20260723T171401Z-4d3d9b67-5b0c-4a98-9eda-e8e3434e21bf` passed. Scientific audit `MITO-SCI-DB62AA4-20260723T170408Z-0D07AF88-F49A-4D3A-A91B-3609CC90C05B` and reproducibility audit `MITO-RO-20260723T172150Z-0dd9978f-b5e0-4bbc-af14-230942131b63` returned HOLD, so the candidate was rejected.

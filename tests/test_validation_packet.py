@@ -1750,6 +1750,78 @@ def create_validation_root(tmp_path: Path, repo: Path, commit: str) -> Path:
     return root
 
 
+def rebind_pull_request_number(
+    validation: Path,
+    repo: Path,
+    commit: str,
+    pull_number: int,
+) -> None:
+    repository_api = f"https://api.github.com/repos/{GITHUB_REPOSITORY}"
+    pull_api = f"{repository_api}/pulls/{pull_number}"
+    pull_html = f"{REPOSITORY}/pull/{pull_number}"
+    issue_api = f"{repository_api}/issues/{pull_number}"
+
+    pull_path = validation / "acceptance/pull_request.json"
+    pull = read_json(pull_path)
+    assert isinstance(pull, dict)
+    pull.update(
+        {
+            "number": pull_number,
+            "url": pull_api,
+            "html_url": pull_html,
+            "issue_url": issue_api,
+            "comments_url": f"{issue_api}/comments",
+        }
+    )
+    write_json(pull_path, pull)
+
+    comments_path = validation / "acceptance/pull_request_comments.json"
+    comments = read_json(comments_path)
+    assert isinstance(comments, list)
+    for comment in comments:
+        assert isinstance(comment, dict)
+        comment["issue_url"] = issue_api
+        comment["html_url"] = (
+            f"{pull_html}#issuecomment-{comment['id']}"
+        )
+    write_json(comments_path, comments)
+
+    run_path = validation / "acceptance/pull_request_github_actions_run.json"
+    run_payload = read_json(run_path)
+    assert isinstance(run_payload, dict)
+    associations = run_payload["pull_requests"]
+    assert isinstance(associations, list) and len(associations) == 1
+    association = associations[0]
+    assert isinstance(association, dict)
+    association["number"] = pull_number
+    association["url"] = pull_api
+    write_json(run_path, run_payload)
+
+    environment_path = validation / "environment.txt"
+    environment_path.write_text(
+        environment_path.read_text(encoding="utf-8").replace(
+            f"pull_request_number={PULL_REQUEST_NUMBER}",
+            f"pull_request_number={pull_number}",
+        ),
+        encoding="utf-8",
+    )
+
+    rows = [
+        row
+        for row in required_pass_rows()
+        if row["case_id"] not in packet_builder.ACCEPTANCE_CASE_IDS
+    ]
+    rows.extend(
+        packet_builder.validate_acceptance_evidence(
+            validation,
+            repo,
+            commit,
+            REPOSITORY,
+        )
+    )
+    write_cases(validation / "cases.tsv", rows)
+
+
 def packet_args(
     validation_root: Path, repo: Path, output: Path
 ) -> argparse.Namespace:
@@ -1998,6 +2070,10 @@ def test_github_only_packet_builds_and_verifies_from_fresh_extraction(
     )
     assert identity["pull_request_github_actions"]["head_sha"] == run(
         ["git", "rev-parse", f"{commit}^2"], repo
+    )
+    assert (
+        identity["pull_request_github_actions"]["association_evidence_mode"]
+        == "actions_pull_requests_canonical"
     )
     assert identity["public_validation_github_actions"]["run_id"] == (
         PUBLIC_VALIDATION_RUN_ID
@@ -3031,7 +3107,9 @@ def test_packet_rejects_wrong_pull_request_identity(
         packet_builder.build_packet(packet_args(validation, repo, tmp_path / "output"))
 
 
-def test_packet_rejects_pull_request_other_than_three(tmp_path: Path) -> None:
+def test_packet_rejects_pull_request_number_inconsistent_with_ci_evidence(
+    tmp_path: Path,
+) -> None:
     repo, commit = create_release_repo(tmp_path)
     validation = create_validation_root(tmp_path, repo, commit)
     pull_path = validation / "acceptance/pull_request.json"
@@ -3043,8 +3121,64 @@ def test_packet_rejects_pull_request_other_than_three(tmp_path: Path) -> None:
     pull["issue_url"] = f"https://api.github.com/repos/{GITHUB_REPOSITORY}/issues/31"
     pull["comments_url"] = f"{pull['issue_url']}/comments"
     write_json(pull_path, pull)
-    with pytest.raises(ValueError, match="must come from pull request 3"):
+    with pytest.raises(ValueError, match="Pull-request workflow association"):
         packet_builder.build_packet(packet_args(validation, repo, tmp_path / "output"))
+
+
+def test_packet_accepts_post_merge_empty_pr_association(tmp_path: Path) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    run_path = validation / "acceptance/pull_request_github_actions_run.json"
+    payload = read_json(run_path)
+    assert isinstance(payload, dict)
+    payload["pull_requests"] = []
+    write_json(run_path, payload)
+    rows = [
+        row
+        for row in required_pass_rows()
+        if row["case_id"] not in packet_builder.ACCEPTANCE_CASE_IDS
+    ]
+    rows.extend(
+        packet_builder.validate_acceptance_evidence(
+            validation,
+            repo,
+            commit,
+            REPOSITORY,
+        )
+    )
+    write_cases(validation / "cases.tsv", rows)
+    output = tmp_path / "output"
+    packet_builder.build_packet(packet_args(validation, repo, output))
+    packet = output / "packet"
+    identity = read_json(packet / "release_identity.json")
+    assert isinstance(identity, dict)
+    pr_ci = identity["pull_request_github_actions"]
+    assert isinstance(pr_ci, dict)
+    assert (
+        pr_ci["association_evidence_mode"]
+        == "merged_pr_independent_identity"
+    )
+    checked = verify_packet(packet)
+    assert checked.returncode == 0, checked.stderr
+
+
+def test_packet_and_extracted_verifier_accept_nonhistorical_pr_number(
+    tmp_path: Path,
+) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    rebind_pull_request_number(validation, repo, commit, 31)
+    output = tmp_path / "output"
+    packet_builder.build_packet(packet_args(validation, repo, output))
+    packet = output / "packet"
+    run_record = read_json(packet / "run.json")
+    identity = read_json(packet / "release_identity.json")
+    assert isinstance(run_record, dict) and isinstance(identity, dict)
+    assert run_record["pull_request_number"] == 31
+    assert identity["pull_request"]["number"] == 31
+    assert identity["pull_request_github_actions"]["pull_request_number"] == 31
+    checked = verify_packet(packet)
+    assert checked.returncode == 0, checked.stderr
 
 
 def test_packet_rejects_fresh_clone_public_main_drift(tmp_path: Path) -> None:
@@ -3061,7 +3195,18 @@ def test_packet_rejects_fresh_clone_public_main_drift(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize(
     "mutation",
-    ("event", "head_sha", "associated_pr"),
+    (
+        "event",
+        "head_sha",
+        "associated_pr",
+        "multiple_associations",
+        "association_null",
+        "association_object",
+        "association_wrong_url",
+        "association_wrong_head",
+        "association_wrong_base",
+        "association_wrong_repository",
+    ),
 )
 def test_packet_rejects_wrong_pull_request_ci_identity(
     tmp_path: Path,
@@ -3076,10 +3221,30 @@ def test_packet_rejects_wrong_pull_request_ci_identity(
         payload["event"] = "push"
     elif mutation == "head_sha":
         payload["head_sha"] = "f" * 40
-    else:
+    elif mutation == "associated_pr":
         associations = payload["pull_requests"]
         assert isinstance(associations, list) and isinstance(associations[0], dict)
         associations[0]["number"] = 999
+    elif mutation == "multiple_associations":
+        associations = payload["pull_requests"]
+        assert isinstance(associations, list) and isinstance(associations[0], dict)
+        associations.append(dict(associations[0]))
+    elif mutation == "association_null":
+        payload["pull_requests"] = None
+    elif mutation == "association_object":
+        payload["pull_requests"] = {}
+    else:
+        associations = payload["pull_requests"]
+        assert isinstance(associations, list) and isinstance(associations[0], dict)
+        association = associations[0]
+        if mutation == "association_wrong_url":
+            association["url"] = "https://api.github.com/repos/elissonnog/mito-overview/pulls/999"
+        elif mutation == "association_wrong_head":
+            association["head"]["sha"] = "f" * 40
+        elif mutation == "association_wrong_base":
+            association["base"]["ref"] = "develop"
+        else:
+            association["head"]["repo"]["name"] = "different-repository"
     write_json(run_path, payload)
     with pytest.raises(ValueError, match="Pull-request (?:GitHub Actions|workflow)"):
         packet_builder.build_packet(packet_args(validation, repo, tmp_path / "output"))
@@ -3473,6 +3638,25 @@ def test_extracted_verifier_rejects_rehashed_pr_ci_head_drift(
     checked = verify_packet(packet)
     assert checked.returncode != 0
     assert "pull-request GitHub Actions run identity mismatch" in checked.stderr
+
+
+def test_extracted_verifier_rejects_rehashed_pr_association_malformed(
+    tmp_path: Path,
+) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    output = tmp_path / "output"
+    packet_builder.build_packet(packet_args(validation, repo, output))
+    packet = output / "packet"
+    run_path = packet / "acceptance/pull_request_github_actions_run.json"
+    payload = read_json(run_path)
+    assert isinstance(payload, dict)
+    payload["pull_requests"] = None
+    write_json(run_path, payload)
+    rewrite_manifest(packet)
+    checked = verify_packet(packet)
+    assert checked.returncode != 0
+    assert "association inventory is malformed" in checked.stderr
 
 
 def test_extracted_verifier_rejects_rehashed_merge_relation_drift(
