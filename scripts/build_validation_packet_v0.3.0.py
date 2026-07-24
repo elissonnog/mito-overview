@@ -1907,13 +1907,25 @@ def inspect_distribution(path: Path) -> tuple[str, str, str]:
             text = archive.read(members[0]).decode("utf-8")
         kind = "wheel"
     elif path.name.endswith(".tar.gz"):
+        canonical_name = f"{path.name.removesuffix('.tar.gz')}/PKG-INFO"
         with tarfile.open(path, "r:gz") as archive:
             members = sorted(
-                (member for member in archive.getmembers() if member.name.endswith("/PKG-INFO")),
+                (
+                    member
+                    for member in archive.getmembers()
+                    if member.name == canonical_name
+                ),
                 key=lambda member: member.name,
             )
             if len(members) != 1:
-                raise ValueError(f"Source archive must contain exactly one PKG-INFO file: {path}")
+                raise ValueError(
+                    "Source archive must contain exactly one canonical root "
+                    f"PKG-INFO file: {path}"
+                )
+            if not members[0].isfile():
+                raise ValueError(
+                    f"Canonical root PKG-INFO must be a regular file: {path}"
+                )
             handle = archive.extractfile(members[0])
             if handle is None:
                 raise ValueError(f"Unable to read PKG-INFO from source archive: {path}")
@@ -8603,16 +8615,23 @@ def inspect_dist(path):
             text = archive.read(members[0]).decode("utf-8")
         kind = "wheel"
     elif path.name.endswith(".tar.gz"):
+        canonical_name = f"{path.name.removesuffix('.tar.gz')}/PKG-INFO"
         with tarfile.open(path, "r:gz") as archive:
             members = sorted(
                 (
                     member for member in archive.getmembers()
-                    if member.name.endswith("/PKG-INFO")
+                    if member.name == canonical_name
                 ),
                 key=lambda member: member.name,
             )
             if len(members) != 1:
-                raise SystemExit(f"invalid sdist metadata inventory: {path.name}")
+                raise SystemExit(
+                    f"invalid canonical sdist metadata inventory: {path.name}"
+                )
+            if not members[0].isfile():
+                raise SystemExit(
+                    f"canonical sdist metadata is not a regular file: {path.name}"
+                )
             handle = archive.extractfile(members[0])
             if handle is None:
                 raise SystemExit(f"unreadable sdist metadata: {path.name}")
