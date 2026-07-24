@@ -37,6 +37,7 @@ REQUIRED_SDIST_PATHS = {
     "scripts/run_mito_pipeline.sh",
     "scripts/safe_extract_validation_zip.py",
     "scripts/sanitize_validation_evidence.py",
+    "scripts/stage_public_visual_artifacts_v0.3.0.py",
     "scripts/summarize_filter_profiles.py",
     "scripts/validation_fingerprints_v0_3_0.py",
     "scripts/verify_release_asset_identity_v0.3.0.py",
