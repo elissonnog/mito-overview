@@ -126,6 +126,13 @@ def create_fake_gh_harness(tmp_path: Path) -> tuple[Path, Path, dict[str, str]]:
         "  exit 0\n"
         "fi\n"
         "if [[ ${1:-} == clone ]]; then\n"
+        "  for name in MITO_OVERVIEW_GITHUB_RUN_ID MITO_OVERVIEW_PR_NUMBER "
+        "MITO_OVERVIEW_PR_RUN_ID MITO_OVERVIEW_PUBLIC_RUN_ID; do\n"
+        "    if [[ -n ${!name+x} ]]; then\n"
+        "      echo \"release selector leaked into clone environment: $name\" >&2\n"
+        "      exit 96\n"
+        "    fi\n"
+        "  done\n"
         "  echo 'intentional fake-git clone stop' >&2\n"
         "  exit 97\n"
         "fi\n"
@@ -143,10 +150,10 @@ repository = {REPOSITORY!r}
 api_root = f"https://api.github.com/repos/{{repository}}"
 html_root = f"https://github.com/{{repository}}"
 candidate = os.environ["FAKE_CANDIDATE_COMMIT"]
-push_run_id = int(os.environ["MITO_OVERVIEW_GITHUB_RUN_ID"])
-pr_number = int(os.environ["MITO_OVERVIEW_PR_NUMBER"])
-pr_run_id = int(os.environ["MITO_OVERVIEW_PR_RUN_ID"])
-public_run_id = int(os.environ["MITO_OVERVIEW_PUBLIC_RUN_ID"])
+push_run_id = int(os.environ["FAKE_PUSH_RUN_ID"])
+pr_number = int(os.environ["FAKE_PR_NUMBER"])
+pr_run_id = int(os.environ["FAKE_PR_RUN_ID"])
+public_run_id = int(os.environ["FAKE_PUBLIC_RUN_ID"])
 mode = os.environ.get("FAKE_GH_MODE", "valid")
 pr_head = os.environ["FAKE_PR_HEAD_COMMIT"]
 pr_base = os.environ["FAKE_PR_BASE_COMMIT"]
@@ -406,6 +413,10 @@ raise SystemExit(f"unexpected fake-gh command: {{args}}")
     call_log = tmp_path / "fake-gh-calls.log"
     env = {
         **DEFAULT_IDS,
+        "FAKE_PUSH_RUN_ID": DEFAULT_IDS["MITO_OVERVIEW_GITHUB_RUN_ID"],
+        "FAKE_PR_NUMBER": DEFAULT_IDS["MITO_OVERVIEW_PR_NUMBER"],
+        "FAKE_PR_RUN_ID": DEFAULT_IDS["MITO_OVERVIEW_PR_RUN_ID"],
+        "FAKE_PUBLIC_RUN_ID": DEFAULT_IDS["MITO_OVERVIEW_PUBLIC_RUN_ID"],
         "MITO_OVERVIEW_PYTHON": sys.executable,
         "FAKE_CANDIDATE_COMMIT": candidate,
         "FAKE_CANDIDATE_TREE": candidate_tree,
@@ -426,6 +437,16 @@ def invoke_harness(
     runner, call_log, env = create_fake_gh_harness(tmp_path)
     env["FAKE_GH_MODE"] = mode
     env.update(environment or {})
+    if environment:
+        selector_to_fake = {
+            "MITO_OVERVIEW_GITHUB_RUN_ID": "FAKE_PUSH_RUN_ID",
+            "MITO_OVERVIEW_PR_NUMBER": "FAKE_PR_NUMBER",
+            "MITO_OVERVIEW_PR_RUN_ID": "FAKE_PR_RUN_ID",
+            "MITO_OVERVIEW_PUBLIC_RUN_ID": "FAKE_PUBLIC_RUN_ID",
+        }
+        for selector, fake_name in selector_to_fake.items():
+            if selector in environment:
+                env[fake_name] = environment[selector]
     output_root = tmp_path / "runner-output"
     paths = [
         output_root / "validation",
@@ -600,6 +621,16 @@ def test_fake_gh_preflight_uses_exact_ids_without_list_or_search_fallback(
     )
     assert len(comments) == 3
     assert all("mito-overview-read-only-audit-v1" in item["body"] for item in comments)
+
+
+def test_release_selectors_are_scrubbed_before_child_execution(
+    tmp_path: Path,
+) -> None:
+    completed, _, cache = invoke_harness(tmp_path)
+    assert completed.returncode == 1
+    assert "intentional fake-git clone stop" in completed.stderr
+    assert "release selector leaked" not in completed.stderr
+    assert cache.is_dir()
 
 
 def test_runner_declares_public_clone_and_isolated_installed_probe() -> None:

@@ -128,6 +128,15 @@ nonempty association must contain exactly one canonical matching PR; malformed,
 multiple, or conflicting associations fail. The selected PR number is therefore
 an explicit positive run input rather than a release-wide hardcoded constant.
 
+After validating those four positive selector values, the runner copies them
+into private shell variables and removes the original
+`MITO_OVERVIEW_GITHUB_RUN_ID`, `MITO_OVERVIEW_PR_NUMBER`,
+`MITO_OVERVIEW_PR_RUN_ID`, and `MITO_OVERVIEW_PUBLIC_RUN_ID` names from the
+child environment. This preserves exact evidence binding while preventing
+release-control metadata from contaminating package tests or offline public
+matrix processes that deliberately reject unexpected ambient validation
+settings.
+
 ## Ordered Finish Gate
 
 1. Stabilize and review the GitHub-only software branch; manuscript state is

@@ -70,6 +70,14 @@ require_positive_integer \
   MITO_OVERVIEW_PUBLIC_RUN_ID "${PUBLIC_RUN_ID}" \
   "the completed workflow_dispatch public-validation run"
 
+# Release selectors are copied into private shell variables above. Do not leak
+# them into child package tests or offline validation environments.
+unset \
+  MITO_OVERVIEW_GITHUB_RUN_ID \
+  MITO_OVERVIEW_PR_NUMBER \
+  MITO_OVERVIEW_PR_RUN_ID \
+  MITO_OVERVIEW_PUBLIC_RUN_ID
+
 resolve_path() {
   local label="$1"
   local value="$2"
