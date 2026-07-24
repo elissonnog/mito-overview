@@ -159,16 +159,8 @@ jobs:
               [[ -d "$RESULTS_ROOT/$directory" ]] \
                 && cp -R "$RESULTS_ROOT/$directory" "$ARTIFACT_ROOT/results/"
             done
-            while IFS= read -r -d '' source; do
-              relative="${source#"$RESULTS_ROOT"/}"
-              destination="$ARTIFACT_ROOT/results/report_artifacts/$relative"
-              mkdir -p "$(dirname "$destination")"
-              cp "$source" "$destination"
-            done < <(
-              find "$RESULTS_ROOT/outputs" -type f \
-                \( -name '*.html' -o -name '*.png' \) \
-                -print0 2>/dev/null || true
-            )
+            python scripts/stage_public_visual_artifacts_v0.3.0.py \
+              "$RESULTS_ROOT" "$ARTIFACT_ROOT"
           fi
           if find "$ARTIFACT_ROOT" -type f \
             \( -iname '*.fastq' -o -iname '*.fastq.gz' -o -iname '*.fq' \

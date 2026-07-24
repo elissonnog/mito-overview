@@ -34,6 +34,7 @@ packet_builder = importlib.util.module_from_spec(PACKET_BUILDER_SPEC)
 PACKET_BUILDER_SPEC.loader.exec_module(packet_builder)
 PREPARE = REPO_ROOT / "scripts" / "prepare_public_validation_cache_v0.3.0.sh"
 MATRIX = REPO_ROOT / "scripts" / "run_public_validation_matrix_v0.3.0.sh"
+PUBLIC_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "public-validation.yml"
 ISOLATION_WRAPPER = REPO_ROOT / "scripts" / "run_network_isolated_v0.3.0.sh"
 SHORT_RUNNER = REPO_ROOT / "scripts" / "run_public_shortread_validation_gm11906.sh"
 LONG_RUNNER = REPO_ROOT / "scripts" / "run_public_longread_validation_gm12878.sh"
@@ -137,6 +138,14 @@ def matrix_command(tmp_path: Path, cache: Path) -> list[str]:
         "--oracle",
         str(ORACLE),
     ]
+
+
+def test_public_workflow_stages_only_inventory_bound_visual_cases() -> None:
+    workflow = PUBLIC_WORKFLOW.read_text(encoding="utf-8")
+
+    assert "python scripts/stage_public_visual_artifacts_v0.3.0.py \\" in workflow
+    assert '"$RESULTS_ROOT" "$ARTIFACT_ROOT"' in workflow
+    assert 'find "$RESULTS_ROOT/outputs" -type f \\' not in workflow
 
 
 def write_metric_table(path: Path, values: dict[str, object]) -> None:
