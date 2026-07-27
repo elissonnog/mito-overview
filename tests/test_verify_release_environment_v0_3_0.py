@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -43,6 +44,25 @@ def manifest(package: str, digest: str = HASH_A) -> str:
         "# platform: linux-64\n"
         "@EXPLICIT\n"
         f"https://conda.anaconda.org/conda-forge/linux-64/{package}#{digest}\n"
+    )
+
+
+def write_conda_metadata(prefix: Path, record: str) -> None:
+    metadata = prefix / "conda-meta"
+    metadata.mkdir(parents=True, exist_ok=True)
+    url, digest = record.rsplit("#", 1)
+    filename = Path(verifier.urlsplit(url).path).name
+    payload = {
+        "name": filename.split("-", 1)[0],
+        "version": "1.0",
+        "build": "0",
+        "fn": filename,
+        "url": url,
+        "sha256": digest,
+    }
+    (metadata / f"{filename}.json").write_text(
+        json.dumps(payload, sort_keys=True) + "\n",
+        encoding="utf-8",
     )
 
 
@@ -118,7 +138,11 @@ def test_verify_rejects_same_version_from_different_build(
         manifest("python-3.12.13-approved_0.conda"), encoding="utf-8"
     )
     prefix = tmp_path / "conda-prefix"
-    (prefix / "conda-meta").mkdir(parents=True)
+    wrong = manifest("python-3.12.13-other_0.conda", HASH_B)
+    write_conda_metadata(
+        prefix,
+        next(line for line in wrong.splitlines() if line.startswith("https://")),
+    )
 
     monkeypatch.setattr(verifier, "platform_id", lambda: "linux-64")
     monkeypatch.setattr(verifier.sys, "prefix", str(prefix))
@@ -128,19 +152,12 @@ def test_verify_rejects_same_version_from_different_build(
     monkeypatch.setattr(
         verifier.platform, "python_version", lambda: "3.12.13"
     )
-    monkeypatch.setattr(verifier.shutil, "which", lambda _: "/fixture/conda")
     def fake_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
-        if command[0] == "git":
-            stdout = TREE + "\n" if command[-1] == "HEAD^{tree}" else COMMIT + "\n"
-            if command[-1] == "--untracked-files=all":
-                stdout = ""
-            return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
-        return subprocess.CompletedProcess(
-            command,
-            0,
-            stdout=manifest("python-3.12.13-other_0.conda", HASH_B),
-            stderr="",
-        )
+        assert command[0] == "git"
+        stdout = TREE + "\n" if command[-1] == "HEAD^{tree}" else COMMIT + "\n"
+        if command[-1] == "--untracked-files=all":
+            stdout = ""
+        return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
 
     monkeypatch.setattr(verifier.subprocess, "run", fake_run)
 
@@ -158,7 +175,10 @@ def test_verify_accepts_exact_url_and_hash_set(
     lock_path = locks / "environment-linux-64.explicit.txt"
     lock_path.write_text(locked, encoding="utf-8")
     prefix = tmp_path / "conda-prefix"
-    (prefix / "conda-meta").mkdir(parents=True)
+    write_conda_metadata(
+        prefix,
+        next(line for line in locked.splitlines() if line.startswith("https://")),
+    )
 
     monkeypatch.setattr(verifier, "platform_id", lambda: "linux-64")
     monkeypatch.setattr(verifier.sys, "prefix", str(prefix))
@@ -168,14 +188,12 @@ def test_verify_accepts_exact_url_and_hash_set(
     monkeypatch.setattr(
         verifier.platform, "python_version", lambda: "3.12.13"
     )
-    monkeypatch.setattr(verifier.shutil, "which", lambda _: "/fixture/conda")
     def fake_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
-        if command[0] == "git":
-            stdout = TREE + "\n" if command[-1] == "HEAD^{tree}" else COMMIT + "\n"
-            if command[-1] == "--untracked-files=all":
-                stdout = ""
-            return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
-        return subprocess.CompletedProcess(command, 0, stdout=locked, stderr="")
+        assert command[0] == "git"
+        stdout = TREE + "\n" if command[-1] == "HEAD^{tree}" else COMMIT + "\n"
+        if command[-1] == "--untracked-files=all":
+            stdout = ""
+        return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
 
     monkeypatch.setattr(verifier.subprocess, "run", fake_run)
 
@@ -186,3 +204,63 @@ def test_verify_accepts_exact_url_and_hash_set(
     assert record["repository_commit"] == COMMIT
     assert record["repository_tree"] == TREE
     assert record["repository_clean"] is True
+
+
+def test_verify_ignores_hostile_python_hooks_and_conda_executable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = tmp_path / "repo"
+    locks = repo / "locks"
+    locks.mkdir(parents=True)
+    locked = manifest("python-3.12.13-approved_0.conda")
+    (locks / "environment-linux-64.explicit.txt").write_text(
+        locked, encoding="utf-8"
+    )
+    prefix = tmp_path / "conda-prefix"
+    write_conda_metadata(
+        prefix,
+        next(line for line in locked.splitlines() if line.startswith("https://")),
+    )
+
+    hostile = tmp_path / "hostile"
+    hostile.mkdir()
+    startup_marker = tmp_path / "sitecustomize-loaded"
+    (hostile / "sitecustomize.py").write_text(
+        "from pathlib import Path\n"
+        f"Path({str(startup_marker)!r}).write_text('loaded', encoding='utf-8')\n",
+        encoding="utf-8",
+    )
+    conda_marker = tmp_path / "hostile-conda-ran"
+    fake_conda = tmp_path / "conda"
+    fake_conda.write_text(
+        "#!/bin/sh\n"
+        f"printf ran > {str(conda_marker)!r}\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    fake_conda.chmod(0o755)
+    monkeypatch.setenv("PYTHONPATH", str(hostile))
+    monkeypatch.setenv("PYTHONHOME", str(hostile))
+    monkeypatch.setenv("CONDA_EXE", str(fake_conda))
+    monkeypatch.setattr(verifier, "platform_id", lambda: "linux-64")
+    monkeypatch.setattr(verifier.sys, "prefix", str(prefix))
+    monkeypatch.setattr(
+        verifier.sys, "version_info", (3, 12, 13, "final", 0)
+    )
+    monkeypatch.setattr(
+        verifier.platform, "python_version", lambda: "3.12.13"
+    )
+
+    def fake_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        assert command[0] == "git"
+        stdout = TREE + "\n" if command[-1] == "HEAD^{tree}" else COMMIT + "\n"
+        if command[-1] == "--untracked-files=all":
+            stdout = ""
+        return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
+
+    monkeypatch.setattr(verifier.subprocess, "run", fake_run)
+    record = verifier.verify(repo, Path(sys.executable), COMMIT)
+
+    assert record["verified"] is True
+    assert not startup_marker.exists()
+    assert not conda_marker.exists()

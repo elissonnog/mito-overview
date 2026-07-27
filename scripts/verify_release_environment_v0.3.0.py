@@ -6,10 +6,8 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import os
 import platform
 import re
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -93,6 +91,50 @@ def artifact_urls(text: str, *, label: str, expected_platform: str) -> set[str]:
     return set(records)
 
 
+def conda_metadata_artifact_urls(
+    prefix: Path, *, expected_platform: str
+) -> set[str]:
+    """Read the active prefix's package records without invoking child Python."""
+
+    metadata_root = prefix / "conda-meta"
+    if not metadata_root.is_dir() or metadata_root.is_symlink():
+        raise ValueError(f"Conda package metadata directory is invalid: {metadata_root}")
+    records: list[str] = []
+    metadata_paths = sorted(metadata_root.glob("*.json"))
+    if not metadata_paths:
+        raise ValueError("Active Conda prefix has no package metadata records")
+    for path in metadata_paths:
+        if path.is_symlink() or not path.is_file():
+            raise ValueError(f"Conda package metadata record is not regular: {path.name}")
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ValueError(
+                f"Conda package metadata record is unreadable: {path.name}"
+            ) from exc
+        if not isinstance(payload, dict):
+            raise ValueError(f"Conda package metadata record is malformed: {path.name}")
+        url = payload.get("url")
+        digest = payload.get("sha256")
+        filename = payload.get("fn")
+        if (
+            not isinstance(url, str)
+            or not isinstance(digest, str)
+            or SHA256_RE.fullmatch(digest) is None
+            or not isinstance(filename, str)
+            or Path(urlsplit(url).path).name != filename
+        ):
+            raise ValueError(
+                f"Conda package metadata lacks exact URL/hash identity: {path.name}"
+            )
+        records.append(f"{url}#{digest}")
+    return artifact_urls(
+        "@EXPLICIT\n" + "\n".join(records) + "\n",
+        label=f"Active-prefix {expected_platform} package metadata",
+        expected_platform=expected_platform,
+    )
+
+
 def verify(
     repo_root: Path, python_executable: Path, expected_commit: str
 ) -> dict[str, object]:
@@ -146,36 +188,14 @@ def verify(
             f"Release Python is not inside a Conda prefix: {python_executable}"
         )
 
-    conda_executable = os.environ.get("CONDA_EXE") or shutil.which("conda")
-    if not conda_executable:
-        raise ValueError("conda is required to verify the release environment")
-    completed = subprocess.run(
-        [
-            conda_executable,
-            "list",
-            "-p",
-            str(prefix),
-            "--explicit",
-            "--sha256",
-        ],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    if completed.returncode != 0:
-        detail = completed.stderr.strip() or completed.stdout.strip()
-        raise ValueError(f"conda artifact inventory failed: {detail}")
-
     expected_text = lock_path.read_text(encoding="utf-8")
-    observed_text = completed.stdout
     expected_urls = artifact_urls(
         expected_text,
         label=f"Tracked {observed_platform} artifact lock",
         expected_platform=observed_platform,
     )
-    observed_urls = artifact_urls(
-        observed_text,
-        label=f"Runtime {observed_platform} artifact inventory",
+    observed_urls = conda_metadata_artifact_urls(
+        prefix,
         expected_platform=observed_platform,
     )
     if observed_urls != expected_urls:
