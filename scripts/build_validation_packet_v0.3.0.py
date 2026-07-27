@@ -4143,7 +4143,9 @@ def validate_resolved_ci_environments(
     expected_commit: str,
     expected_run_id: int,
 ) -> list[dict[str, object]]:
-    def conda_artifact_urls(path: Path, label: str) -> set[str]:
+    def conda_artifact_urls(
+        path: Path, label: str, expected_platform: str
+    ) -> set[str]:
         lines = path.read_text(encoding="utf-8").splitlines()
         if lines.count("@EXPLICIT") != 1:
             raise ValueError(f"{label} must contain exactly one @EXPLICIT marker")
@@ -4160,14 +4162,22 @@ def validate_resolved_ci_environments(
             raise ValueError(f"{label} contains duplicate Conda artifact URLs")
         for url in records:
             parsed = urlsplit(url)
+            path_parts = parsed.path.split("/")
             if (
                 parsed.scheme != "https"
                 or parsed.hostname != "conda.anaconda.org"
+                or parsed.netloc != "conda.anaconda.org"
                 or parsed.username is not None
                 or parsed.password is not None
                 or parsed.query
                 or not re.fullmatch(r"[0-9a-f]{64}", parsed.fragment)
-                or not parsed.path.startswith(("/conda-forge/", "/bioconda/"))
+                or len(path_parts) != 4
+                or path_parts[0] != ""
+                or path_parts[1] not in {"conda-forge", "bioconda"}
+                or path_parts[2] not in {expected_platform, "noarch"}
+                or not re.fullmatch(
+                    r"[A-Za-z0-9_.+-]+\.(?:conda|tar\.bz2)", path_parts[3]
+                )
             ):
                 raise ValueError(f"{label} contains an unapproved Conda artifact URL")
         return set(records)
@@ -4307,10 +4317,12 @@ def validate_resolved_ci_environments(
         observed_urls = conda_artifact_urls(
             platform_root / f"conda-{platform_id}.explicit.txt",
             f"Resolved CI runtime manifest for {platform_id}",
+            platform_id,
         )
         source_urls = conda_artifact_urls(
             platform_root / artifact_name,
             f"Resolved CI source artifact lock for {platform_id}",
+            platform_id,
         )
         if observed_urls != source_urls:
             raise ValueError(
@@ -7918,7 +7930,7 @@ for platform_id in resolved_platforms:
         != evidence_files[tools_name]["sha256"]
     ):
         raise SystemExit(f"resolved CI manifest or lock mismatch: {platform_id}")
-    def conda_urls(path):
+    def conda_urls(path, expected_platform):
         lines = path.read_text(encoding="utf-8").splitlines()
         if lines.count("@EXPLICIT") != 1:
             raise SystemExit(f"invalid Conda @EXPLICIT marker: {path.name}")
@@ -7935,19 +7947,29 @@ for platform_id in resolved_platforms:
             raise SystemExit(f"duplicate Conda artifact URL: {path.name}")
         for url in records:
             parsed = urlsplit(url)
+            path_parts = parsed.path.split("/")
             if (
                 parsed.scheme != "https"
                 or parsed.hostname != "conda.anaconda.org"
+                or parsed.netloc != "conda.anaconda.org"
                 or parsed.username is not None
                 or parsed.password is not None
                 or parsed.query
                 or not re.fullmatch(r"[0-9a-f]{64}", parsed.fragment)
-                or not parsed.path.startswith(("/conda-forge/", "/bioconda/"))
+                or len(path_parts) != 4
+                or path_parts[0] != ""
+                or path_parts[1] not in {"conda-forge", "bioconda"}
+                or path_parts[2] not in {expected_platform, "noarch"}
+                or not re.fullmatch(
+                    r"[A-Za-z0-9_.+-]+\.(?:conda|tar\.bz2)", path_parts[3]
+                )
             ):
                 raise SystemExit(f"unapproved Conda artifact URL: {path.name}")
         return set(records)
-    if conda_urls(platform_root / f"conda-{platform_id}.explicit.txt") != conda_urls(
-        platform_root / artifact_name
+    if conda_urls(
+        platform_root / f"conda-{platform_id}.explicit.txt", platform_id
+    ) != conda_urls(
+        platform_root / artifact_name, platform_id
     ):
         raise SystemExit(f"resolved CI runtime/source artifact mismatch: {platform_id}")
     resolved_ci_identity.append({
@@ -7972,7 +7994,7 @@ if release_platform not in resolved_platforms:
     raise SystemExit("release environment verification platform mismatch")
 release_lock_name = f"artifact-lock-{release_platform}.explicit.txt"
 release_lock = resolved_ci_root / release_platform / release_lock_name
-release_urls = conda_urls(release_lock)
+release_urls = conda_urls(release_lock, release_platform)
 release_url_set_sha256 = hashlib.sha256(
     ("\n".join(sorted(release_urls)) + "\n").encode("utf-8")
 ).hexdigest()

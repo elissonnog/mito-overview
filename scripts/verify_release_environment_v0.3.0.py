@@ -70,24 +70,25 @@ def artifact_urls(text: str, *, label: str, expected_platform: str) -> set[str]:
         raise ValueError(f"{label} contains duplicate Conda artifact URLs")
     for url in records:
         parsed = urlsplit(url)
+        path_parts = parsed.path.split("/")
         if (
             parsed.scheme != "https"
             or parsed.hostname != "conda.anaconda.org"
+            or parsed.netloc != "conda.anaconda.org"
             or parsed.username is not None
             or parsed.password is not None
             or parsed.query
             or not SHA256_RE.fullmatch(parsed.fragment)
-            or not parsed.path.startswith(("/conda-forge/", "/bioconda/"))
+            or len(path_parts) != 4
+            or path_parts[0] != ""
+            or path_parts[1] not in {"conda-forge", "bioconda"}
+            or path_parts[2] not in {expected_platform, "noarch"}
+            or not re.fullmatch(
+                r"[A-Za-z0-9_.+-]+\.(?:conda|tar\.bz2)", path_parts[3]
+            )
         ):
             raise ValueError(
                 f"{label} contains an unapproved or unhashed Conda artifact URL"
-            )
-        path_parts = parsed.path.split("/")
-        if not any(
-            part in {expected_platform, "noarch"} for part in path_parts
-        ):
-            raise ValueError(
-                f"{label} contains an artifact for another platform: {url}"
             )
     return set(records)
 

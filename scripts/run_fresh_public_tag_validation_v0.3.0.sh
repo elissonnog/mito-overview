@@ -504,17 +504,26 @@ PY
 EOF
 run_case trusted_release_assets "canonical release assets were sealed to the annotated tag and FINAL_SHA"
 
-"${PYTHON_BIN}" - "${EVIDENCE_ROOT}/tag_identity.json" "${FINAL_SHA}" "${TAG}" "${TAG_OBJECT_SHA}" <<'PY'
+"${PYTHON_BIN}" - \
+  "${EVIDENCE_ROOT}/tag_identity.json" "${FINAL_SHA}" "${TAG}" \
+  "${TAG_OBJECT_SHA}" "${EVIDENCE_ROOT}/release_environment_verification.json" <<'PY'
 import json
 import sys
 from pathlib import Path
 
+environment = json.loads(Path(sys.argv[5]).read_text(encoding="utf-8"))
+if (
+    environment.get("repository_commit") != sys.argv[2]
+    or environment.get("repository_clean") is not True
+):
+    raise SystemExit("release environment identity does not match the public tag")
 Path(sys.argv[1]).write_text(
     json.dumps(
         {
             "annotated_tag": True,
             "checked_out_commit": sys.argv[2],
             "git_commit": sys.argv[2],
+            "git_tree": environment["repository_tree"],
             "release_tag": sys.argv[3],
             "tag_object_sha": sys.argv[4],
         },
@@ -549,6 +558,7 @@ REPOSITORY_SLUG="${REPOSITORY_URL#https://github.com/}"
   "${EVIDENCE_ROOT}/fresh_public_tag_validation.json" \
   "${EVIDENCE_ROOT}/evidence.sha256" \
   "${EVIDENCE_ROOT}/trusted_release_assets.json" \
+  "${EVIDENCE_ROOT}/release_environment_verification.json" \
   "${REPOSITORY_URL}" "${REPOSITORY_SLUG}" "${FINAL_SHA}" "${TAG}" \
   "${TAG_OBJECT_SHA}" <<'PY'
 import csv
@@ -560,6 +570,7 @@ from pathlib import Path
 receipt = Path(sys.argv[1])
 manifest = Path(sys.argv[2])
 trusted_manifest = Path(sys.argv[3])
+environment_path = Path(sys.argv[4])
 with (receipt.parent / "cases.tsv").open(encoding="utf-8", newline="") as handle:
     rows = list(csv.DictReader(handle, delimiter="\t"))
 if not rows or any(row["verdict"] != "PASS" for row in rows):
@@ -585,29 +596,36 @@ expected_trusted_identity = {
     "schema_version": "1.0",
     "manifest_type": "trusted_release_asset_manifest",
     "validation_profile": "fresh_public_tag_validation_v2",
-    "repository": sys.argv[4],
-    "repository_slug": sys.argv[5],
-    "release_tag": sys.argv[7],
-    "git_commit": sys.argv[6],
-    "checked_out_commit": sys.argv[6],
-    "tag_object_sha": sys.argv[8],
+    "repository": sys.argv[5],
+    "repository_slug": sys.argv[6],
+    "release_tag": sys.argv[8],
+    "git_commit": sys.argv[7],
+    "checked_out_commit": sys.argv[7],
+    "tag_object_sha": sys.argv[9],
 }
 for field, expected in expected_trusted_identity.items():
     if trusted.get(field) != expected:
         raise SystemExit(f"trusted release-asset identity mismatch for {field}")
 if trusted.get("asset_count") != 12 or len(trusted.get("assets", [])) != 12:
     raise SystemExit("trusted release-asset count differs")
+environment = json.loads(environment_path.read_text(encoding="utf-8"))
+if (
+    environment.get("repository_commit") != sys.argv[7]
+    or environment.get("repository_clean") is not True
+):
+    raise SystemExit("release environment identity differs from the public tag")
 
 payload = {
     "schema_version": "2.0",
     "validation_profile": "fresh_public_tag_validation_v2",
     "evidence_type": "fresh_public_tag_validation",
-    "repository": sys.argv[4],
-    "repository_slug": sys.argv[5],
-    "release_tag": sys.argv[7],
-    "git_commit": sys.argv[6],
-    "checked_out_commit": sys.argv[6],
-    "tag_object_sha": sys.argv[8],
+    "repository": sys.argv[5],
+    "repository_slug": sys.argv[6],
+    "release_tag": sys.argv[8],
+    "git_commit": sys.argv[7],
+    "checked_out_commit": sys.argv[7],
+    "git_tree": environment["repository_tree"],
+    "tag_object_sha": sys.argv[9],
     "public_https_clone": True,
     "detached_head": True,
     "clean_worktree": True,
@@ -616,6 +634,10 @@ payload = {
     "case_count": len(rows),
     "cases_path": "cases.tsv",
     "environment_path": "environment.txt",
+    "release_environment_verification_path": environment_path.name,
+    "release_environment_verification_sha256": hashlib.sha256(
+        environment_path.read_bytes()
+    ).hexdigest(),
     "tag_identity_path": "tag_identity.json",
     "evidence_manifest_path": "evidence.sha256",
     "evidence_manifest_sha256": hashlib.sha256(manifest.read_bytes()).hexdigest(),

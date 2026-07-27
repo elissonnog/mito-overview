@@ -21,6 +21,7 @@ sys.modules[SPEC.name] = publication
 SPEC.loader.exec_module(publication)
 
 FINAL_SHA = "1" * 40
+FINAL_TREE = "3" * 40
 OTHER_SHA = "2" * 40
 TAG_OBJECT_SHA = "a" * 40
 OTHER_TAG_OBJECT_SHA = "b" * 40
@@ -113,8 +114,30 @@ def _write_tag_validation_evidence(root: Path, asset_root: Path) -> Path:
                 "annotated_tag": True,
                 "checked_out_commit": FINAL_SHA,
                 "git_commit": FINAL_SHA,
+                "git_tree": FINAL_TREE,
                 "release_tag": publication.EXPECTED_TAG,
                 "tag_object_sha": TAG_OBJECT_SHA,
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (root / "release_environment_verification.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "platform_id": "osx-arm64",
+                "python": "3.12.13",
+                "artifact_count": 111,
+                "tracked_artifact_lock": "environment-osx-arm64.explicit.txt",
+                "tracked_artifact_lock_sha256": "4" * 64,
+                "runtime_artifact_set_sha256": "5" * 64,
+                "repository_commit": FINAL_SHA,
+                "repository_tree": FINAL_TREE,
+                "repository_clean": True,
+                "verified": True,
             },
             indent=2,
             sort_keys=True,
@@ -209,6 +232,7 @@ def _write_tag_validation_evidence(root: Path, asset_root: Path) -> Path:
                 "release_tag": publication.EXPECTED_TAG,
                 "git_commit": FINAL_SHA,
                 "checked_out_commit": FINAL_SHA,
+                "git_tree": FINAL_TREE,
                 "tag_object_sha": TAG_OBJECT_SHA,
                 "public_https_clone": True,
                 "detached_head": True,
@@ -218,6 +242,12 @@ def _write_tag_validation_evidence(root: Path, asset_root: Path) -> Path:
                 "case_count": len(FRESH_TAG_RUNNER_CASE_CONTRACT),
                 "cases_path": "cases.tsv",
                 "environment_path": "environment.txt",
+                "release_environment_verification_path": (
+                    "release_environment_verification.json"
+                ),
+                "release_environment_verification_sha256": _sha256(
+                    (root / "release_environment_verification.json").read_bytes()
+                ),
                 "tag_identity_path": "tag_identity.json",
                 "evidence_manifest_path": "evidence.sha256",
                 "evidence_manifest_sha256": _sha256(manifest.read_bytes()),
@@ -262,6 +292,9 @@ def _reseal_tag_validation_evidence(receipt: Path) -> None:
     )
     payload["distribution_payload_equivalence_sha256"] = _sha256(
         (root / "distribution_payload_equivalence.json").read_bytes()
+    )
+    payload["release_environment_verification_sha256"] = _sha256(
+        (root / "release_environment_verification.json").read_bytes()
     )
     receipt.write_text(
         json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
@@ -687,6 +720,49 @@ def test_missing_or_tampered_fresh_tag_evidence_blocks_before_github_mutation(
     with pytest.raises(publication.PublicationError, match="hash mismatch"):
         publication.publish_github_release(config, runner)
     assert runner.calls == []
+
+
+def test_missing_clone_bound_environment_receipt_blocks_publication(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path / "publication", "create-draft")
+    environment = (
+        config.tag_validation_receipt.parent
+        / "release_environment_verification.json"
+    )
+    environment.unlink()
+    runner = FakeGhRunner()
+
+    with pytest.raises(publication.PublicationError):
+        publication.publish_github_release(config, runner)
+    assert runner.calls == []
+    assert runner.mutations == []
+
+
+def test_resealed_environment_tree_substitution_blocks_publication(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path / "publication", "create-draft")
+    environment_path = (
+        config.tag_validation_receipt.parent
+        / "release_environment_verification.json"
+    )
+    environment = json.loads(environment_path.read_text(encoding="utf-8"))
+    environment["repository_tree"] = "6" * 40
+    environment_path.write_text(
+        json.dumps(environment, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    _reseal_tag_validation_evidence(config.tag_validation_receipt)
+    runner = FakeGhRunner()
+
+    with pytest.raises(
+        publication.PublicationError,
+        match="Release environment verification identity differs",
+    ):
+        publication.publish_github_release(config, runner)
+    assert runner.calls == []
+    assert runner.mutations == []
 
     config.tag_validation_receipt.unlink()
     with pytest.raises(publication.PublicationError, match="receipt is required"):

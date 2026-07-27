@@ -899,6 +899,9 @@ def _validate_tag_validation_receipt(
         "verified": True,
         "cases_path": "cases.tsv",
         "environment_path": "environment.txt",
+        "release_environment_verification_path": (
+            "release_environment_verification.json"
+        ),
         "tag_identity_path": "tag_identity.json",
         "evidence_manifest_path": "evidence.sha256",
         "distribution_payload_equivalence_path": (
@@ -916,6 +919,9 @@ def _validate_tag_validation_receipt(
     tag_object_sha = str(payload.get("tag_object_sha", ""))
     if SHA_PATTERN.fullmatch(tag_object_sha) is None:
         raise PublicationError("Fresh public-tag validation has no annotated tag object SHA")
+    git_tree = str(payload.get("git_tree", ""))
+    if SHA_PATTERN.fullmatch(git_tree) is None:
+        raise PublicationError("Fresh public-tag validation has no Git tree identity")
 
     root = receipt_path.parent
     manifest_path = root / "evidence.sha256"
@@ -954,6 +960,56 @@ def _validate_tag_validation_receipt(
     manifest_sha = _sha256_file(manifest_path)
     if payload.get("evidence_manifest_sha256") != manifest_sha:
         raise PublicationError("Fresh public-tag evidence manifest digest differs")
+
+    release_environment_path = root / "release_environment_verification.json"
+    release_environment_digest = _sha256_file(release_environment_path)
+    if (
+        payload.get("release_environment_verification_sha256")
+        != release_environment_digest
+    ):
+        raise PublicationError("Release environment verification digest differs")
+    release_environment = _load_json(
+        release_environment_path, "release environment verification"
+    )
+    expected_environment_fields = {
+        "schema_version",
+        "platform_id",
+        "python",
+        "artifact_count",
+        "tracked_artifact_lock",
+        "tracked_artifact_lock_sha256",
+        "runtime_artifact_set_sha256",
+        "repository_commit",
+        "repository_tree",
+        "repository_clean",
+        "verified",
+    }
+    platform_id = release_environment.get("platform_id")
+    artifact_count = release_environment.get("artifact_count")
+    if (
+        set(release_environment) != expected_environment_fields
+        or release_environment.get("schema_version") != "1.0"
+        or platform_id not in {"linux-64", "osx-64", "osx-arm64"}
+        or release_environment.get("python") != "3.12.13"
+        or isinstance(artifact_count, bool)
+        or not isinstance(artifact_count, int)
+        or artifact_count <= 0
+        or release_environment.get("tracked_artifact_lock")
+        != f"environment-{platform_id}.explicit.txt"
+        or DIGEST_PATTERN.fullmatch(
+            str(release_environment.get("tracked_artifact_lock_sha256", ""))
+        )
+        is None
+        or DIGEST_PATTERN.fullmatch(
+            str(release_environment.get("runtime_artifact_set_sha256", ""))
+        )
+        is None
+        or release_environment.get("repository_commit") != config.final_sha
+        or release_environment.get("repository_tree") != git_tree
+        or release_environment.get("repository_clean") is not True
+        or release_environment.get("verified") is not True
+    ):
+        raise PublicationError("Release environment verification identity differs")
 
     distribution_path = root / "distribution_payload_equivalence.json"
     distribution_digest = _sha256_file(distribution_path)
@@ -1070,6 +1126,7 @@ def _validate_tag_validation_receipt(
         "annotated_tag": True,
         "checked_out_commit": config.final_sha,
         "git_commit": config.final_sha,
+        "git_tree": git_tree,
         "release_tag": config.tag,
         "tag_object_sha": tag_object_sha,
     }:
@@ -1107,6 +1164,8 @@ def _validate_tag_validation_receipt(
         "evidence_manifest_sha256": manifest_sha,
         "trusted_asset_manifest_sha256": trusted_digest,
         "distribution_payload_equivalence_sha256": distribution_digest,
+        "release_environment_verification_sha256": release_environment_digest,
+        "git_tree": git_tree,
         "trusted_asset_manifest": {
             "manifest_name": TRUSTED_ASSET_MANIFEST_NAME,
             "sha256sums_sha256": trusted["sha256sums_sha256"],

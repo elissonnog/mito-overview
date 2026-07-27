@@ -52,12 +52,30 @@ def test_artifact_urls_reject_non_https_records() -> None:
         )
 
 
+@pytest.mark.parametrize(
+    "url",
+    (
+        f"https://conda.anaconda.org:443/conda-forge/linux-64/pkg-1.0-0.conda#{HASH_A}",
+        f"https://conda.anaconda.org/conda-forge/linux-64/../osx-arm64/pkg-1.0-0.conda#{HASH_A}",
+        f"https://conda.anaconda.org/conda-forge/linux-64/%2e%2e/pkg-1.0-0.conda#{HASH_A}",
+        f"https://conda.anaconda.org/conda-forge/linux-64/subdir/pkg-1.0-0.conda#{HASH_A}",
+    ),
+)
+def test_artifact_urls_reject_noncanonical_paths(url: str) -> None:
+    with pytest.raises(ValueError, match="unapproved or unhashed"):
+        verifier.artifact_urls(
+            f"@EXPLICIT\n{url}\n",
+            label="fixture",
+            expected_platform="linux-64",
+        )
+
+
 def test_artifact_urls_reject_wrong_platform_and_duplicate_records() -> None:
     wrong_platform = (
         "@EXPLICIT\n"
         f"https://conda.anaconda.org/conda-forge/osx-arm64/pkg-1.0-0.conda#{HASH_A}\n"
     )
-    with pytest.raises(ValueError, match="another platform"):
+    with pytest.raises(ValueError, match="unapproved or unhashed"):
         verifier.artifact_urls(
             wrong_platform, label="fixture", expected_platform="linux-64"
         )
