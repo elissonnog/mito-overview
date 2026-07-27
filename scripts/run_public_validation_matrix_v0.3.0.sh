@@ -369,7 +369,7 @@ PY
 env -i "${common_environment[@]}" "${PYTHON_BIN}" -m pip freeze --all \
   > "${OUTPUT_ROOT}/environment/pip-freeze.txt"
 if command -v conda >/dev/null 2>&1; then
-  env -i "${common_environment[@]}" conda list --explicit \
+  env -i "${common_environment[@]}" conda list --explicit --sha256 \
     > "${OUTPUT_ROOT}/environment/conda-explicit.txt"
 else
   printf 'conda unavailable; exact runtime versions are recorded in runtime_versions.json\n' \

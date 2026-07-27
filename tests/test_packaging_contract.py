@@ -8,6 +8,7 @@ import sys
 import tomllib
 import zipfile
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import pytest
 
@@ -246,6 +247,11 @@ def test_platform_artifact_locks_are_explicit_and_complete() -> None:
         urls = [line for line in lines if line.startswith("https://")]
         assert urls
         assert len(urls) == len(set(urls))
+        assert all(
+            len(urlsplit(url).fragment) == 64
+            and set(urlsplit(url).fragment) <= set("0123456789abcdef")
+            for url in urls
+        )
         assert all(
             url.startswith(
                 (

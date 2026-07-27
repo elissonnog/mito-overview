@@ -14,6 +14,8 @@ ASSET_SOURCE_ROOT="$5"
 TAG="v0.3.0"
 PYTHON_BIN="${MITO_OVERVIEW_PYTHON:-python3}"
 THREADS=4
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 if [[ ! "${REPOSITORY_URL}" =~ ^https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
   echo "Repository must be a public GitHub HTTPS URL without credentials or .git" >&2
@@ -32,6 +34,9 @@ if [[ -L "${ASSET_SOURCE_ROOT}" || ! -d "${ASSET_SOURCE_ROOT}" ]]; then
   exit 2
 fi
 ASSET_SOURCE_ROOT="$(cd "${ASSET_SOURCE_ROOT}" && pwd -P)"
+
+"${PYTHON_BIN}" "${REPO_ROOT}/scripts/verify_release_environment_v0.3.0.py" \
+  --repo-root "${REPO_ROOT}" >/dev/null
 
 "${PYTHON_BIN}" - "${ASSET_SOURCE_ROOT}" "${WORK_ROOT}" "${EVIDENCE_ROOT}" <<'PY'
 import sys
@@ -91,6 +96,9 @@ mkdir -p "${WORK_ROOT}" "${EVIDENCE_ROOT}" "${COMMAND_ROOT}" "${LOG_ROOT}" \
   "${SDIST_PROBE_ROOT}" \
   "${HOME_ROOT}" "${TMP_ROOT}" "${CACHE_ROOT}"
 printf 'case_id\tverdict\tdetail\n' > "${CASES_PATH}"
+"${PYTHON_BIN}" "${REPO_ROOT}/scripts/verify_release_environment_v0.3.0.py" \
+  --repo-root "${REPO_ROOT}" \
+  --output "${EVIDENCE_ROOT}/release_environment_verification.json"
 
 clean_env() {
   env -i \

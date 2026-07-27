@@ -74,7 +74,7 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/environment"
           python --version | tee "$RUNNER_TEMP/environment/python-${EXPECTED_PLATFORM}.txt"
-          conda list --explicit | tee "$RUNNER_TEMP/environment/conda-${EXPECTED_PLATFORM}.explicit.txt"
+          conda list --explicit --sha256 | tee "$RUNNER_TEMP/environment/conda-${EXPECTED_PLATFORM}.explicit.txt"
           python -m pip freeze --all | tee "$RUNNER_TEMP/environment/pip-${EXPECTED_PLATFORM}.txt"
           cp "$LOCK_FILE" "$RUNNER_TEMP/environment/"
           cp "$ARTIFACT_LOCK_FILE" \

@@ -749,6 +749,7 @@ EXPECTED_PUBLIC_VALIDATION_WORKFLOW = "public-validation"
 EXPECTED_PUBLIC_VALIDATION_WORKFLOW_PATH = ".github/workflows/public-validation.yml"
 REQUIRED_ACCEPTANCE_FILES = {
     "fresh_clone.json",
+    "release_environment_verification.json",
     "github_actions_run.json",
     "github_actions_jobs.json",
     "pull_request.json",
@@ -3388,6 +3389,46 @@ def validate_acceptance_inventory(validation_root: Path) -> None:
         require_nonempty_evidence(validation_root, f"acceptance/{relative}")
 
 
+def validate_release_environment_verification(
+    validation_root: Path, repo_root: Path
+) -> dict[str, object]:
+    record = load_json_object(
+        validation_root / "acceptance/release_environment_verification.json",
+        "Release environment verification",
+    )
+    expected_fields = {
+        "schema_version",
+        "platform_id",
+        "python",
+        "artifact_count",
+        "tracked_artifact_lock",
+        "tracked_artifact_lock_sha256",
+        "runtime_artifact_set_sha256",
+        "verified",
+    }
+    if set(record) != expected_fields:
+        raise ValueError("Release environment verification schema mismatch")
+    platform_id = record.get("platform_id")
+    if platform_id not in RESOLVED_CI_PLATFORMS:
+        raise ValueError("Release environment verification platform is unsupported")
+    lock_name = f"environment-{platform_id}.explicit.txt"
+    lock_path = repo_root / "locks" / lock_name
+    if (
+        record.get("schema_version") != "1.0"
+        or record.get("python") != EXPECTED_PYTHON_VERSION
+        or record.get("verified") is not True
+        or record.get("tracked_artifact_lock") != lock_name
+        or record.get("tracked_artifact_lock_sha256") != sha256(lock_path)
+        or not isinstance(record.get("artifact_count"), int)
+        or record["artifact_count"] <= 0
+        or not re.fullmatch(
+            r"[0-9a-f]{64}", str(record.get("runtime_artifact_set_sha256", ""))
+        )
+    ):
+        raise ValueError("Release environment verification identity mismatch")
+    return record
+
+
 def validate_repository_object(
     value: object,
     repository_slug: str,
@@ -4110,7 +4151,7 @@ def validate_resolved_ci_environments(
                 or parsed.username is not None
                 or parsed.password is not None
                 or parsed.query
-                or parsed.fragment
+                or not re.fullmatch(r"[0-9a-f]{64}", parsed.fragment)
                 or not parsed.path.startswith(("/conda-forge/", "/bioconda/"))
             ):
                 raise ValueError(f"{label} contains an unapproved Conda artifact URL")
@@ -4294,6 +4335,7 @@ def validate_acceptance_evidence(
     repository: str,
 ) -> list[dict[str, str]]:
     validate_acceptance_inventory(validation_root)
+    validate_release_environment_verification(validation_root, repo_root)
     rows = [validate_fresh_clone_evidence(validation_root, expected_commit, repository)]
     rows.extend(validate_github_actions_evidence(validation_root, expected_commit, repository))
     pull_request = validate_pull_request_evidence(
@@ -7876,7 +7918,7 @@ for platform_id in resolved_platforms:
                 or parsed.username is not None
                 or parsed.password is not None
                 or parsed.query
-                or parsed.fragment
+                or not re.fullmatch(r"[0-9a-f]{64}", parsed.fragment)
                 or not parsed.path.startswith(("/conda-forge/", "/bioconda/"))
             ):
                 raise SystemExit(f"unapproved Conda artifact URL: {path.name}")
@@ -7889,6 +7931,40 @@ for platform_id in resolved_platforms:
         "path": f"acceptance/resolved_ci_environments/{platform_id}",
         **record,
     })
+release_environment = json.loads(
+    (root / "acceptance/release_environment_verification.json").read_text(
+        encoding="utf-8"
+    )
+)
+release_environment_fields = {
+    "schema_version", "platform_id", "python", "artifact_count",
+    "tracked_artifact_lock", "tracked_artifact_lock_sha256",
+    "runtime_artifact_set_sha256", "verified",
+}
+if set(release_environment) != release_environment_fields:
+    raise SystemExit("release environment verification schema mismatch")
+release_platform = release_environment.get("platform_id")
+if release_platform not in resolved_platforms:
+    raise SystemExit("release environment verification platform mismatch")
+release_lock_name = f"artifact-lock-{release_platform}.explicit.txt"
+release_lock = resolved_ci_root / release_platform / release_lock_name
+release_urls = conda_urls(release_lock)
+release_url_set_sha256 = hashlib.sha256(
+    ("\n".join(sorted(release_urls)) + "\n").encode("utf-8")
+).hexdigest()
+if (
+    release_environment.get("schema_version") != "1.0"
+    or release_environment.get("python") != "3.12.13"
+    or release_environment.get("verified") is not True
+    or release_environment.get("tracked_artifact_lock")
+    != f"environment-{release_platform}.explicit.txt"
+    or release_environment.get("tracked_artifact_lock_sha256")
+    != digest(release_lock)
+    or release_environment.get("artifact_count") != len(release_urls)
+    or release_environment.get("runtime_artifact_set_sha256")
+    != release_url_set_sha256
+):
+    raise SystemExit("release environment verification identity mismatch")
 if identity.get("resolved_ci_environments") != resolved_ci_identity:
     raise SystemExit("release identity resolved CI environment evidence mismatch")
 if len({

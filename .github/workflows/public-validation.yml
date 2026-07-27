@@ -65,7 +65,7 @@ jobs:
             --only-binary=:all: \
             --require-hashes \
             -r locks/requirements-release-tools.txt
-          conda list --explicit > "$RUNNER_TEMP/conda-linux-64-observed.txt"
+          conda list --explicit --sha256 > "$RUNNER_TEMP/conda-linux-64-observed.txt"
           grep '^https://' locks/environment-linux-64.explicit.txt | LC_ALL=C sort \
             > "$RUNNER_TEMP/conda-linux-64-expected.urls"
           grep '^https://' "$RUNNER_TEMP/conda-linux-64-observed.txt" | LC_ALL=C sort \
@@ -99,7 +99,7 @@ jobs:
             printf 'runner_image_version=%s\n' "${ImageVersion:-unknown}"
             printf 'github_run_id=%s\n' "$GITHUB_RUN_ID"
           } > "$RUNNER_TEMP/public-validation-environment/identity.txt"
-          conda list --explicit \
+          conda list --explicit --sha256 \
             > "$RUNNER_TEMP/public-validation-environment/conda-linux-64.explicit.txt"
           python -m pip freeze --all \
             > "$RUNNER_TEMP/public-validation-environment/pip-linux-64.txt"

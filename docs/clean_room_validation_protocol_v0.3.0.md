@@ -144,8 +144,10 @@ filename alone.
   three lightweight synthetic workflows use one; orchestration/test cases are
   labeled `mixed` or `not_applicable` rather than assigned a false count.
   Missing, duplicated, relabeled, or hash-mismatched rows fail validation.
-- The resolved CI environment root contains exactly five files for each of
-  `linux-64`, `osx-64`, and `osx-arm64`. The platform record binds the exact
+- The resolved CI environment root contains exactly seven files for each of
+  `linux-64`, `osx-64`, and `osx-arm64`: runtime Conda inventory, pip
+  inventory, solver specification, artifact lock, release-tools lock, Python
+  version, and platform identity. The platform record binds the exact
   commit and GitHub Actions run, Python 3.12.13, architecture, every evidence
   file's size and SHA-256, the evidence-manifest SHA-256, and the tracked
   platform-lock SHA-256.

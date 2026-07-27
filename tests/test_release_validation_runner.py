@@ -15,6 +15,7 @@ import pytest
 
 RUNNER = Path(__file__).parents[1] / "scripts" / "run_release_validation_v0.3.0.sh"
 PACKET_BUILDER = RUNNER.with_name("build_validation_packet_v0.3.0.py")
+ENVIRONMENT_VERIFIER = RUNNER.with_name("verify_release_environment_v0.3.0.py")
 REPOSITORY = "elissonnog/mito-overview"
 DEFAULT_IDS = {
     "MITO_OVERVIEW_GITHUB_RUN_ID": "4001",
@@ -75,6 +76,7 @@ def create_fake_gh_harness(tmp_path: Path) -> tuple[Path, Path, dict[str, str]]:
     scripts.mkdir(parents=True)
     shutil.copy2(RUNNER, scripts / RUNNER.name)
     shutil.copy2(PACKET_BUILDER, scripts / PACKET_BUILDER.name)
+    shutil.copy2(ENVIRONMENT_VERIFIER, scripts / ENVIRONMENT_VERIFIER.name)
     (scripts / "check_release_hygiene.py").write_text(
         "raise SystemExit(0)\n", encoding="utf-8"
     )
@@ -86,7 +88,8 @@ def create_fake_gh_harness(tmp_path: Path) -> tuple[Path, Path, dict[str, str]]:
         )
         (locks / f"environment-{platform}.explicit.txt").write_text(
             "@EXPLICIT\n"
-            f"https://conda.anaconda.org/conda-forge/{platform}/pinned-1.0-0.conda\n",
+            f"https://conda.anaconda.org/conda-forge/{platform}/"
+            f"pinned-1.0-0.conda#{'a' * 64}\n",
             encoding="utf-8",
         )
     (locks / "requirements-release-tools.txt").write_text(
@@ -125,6 +128,44 @@ def create_fake_gh_harness(tmp_path: Path) -> tuple[Path, Path, dict[str, str]]:
     real_git = shutil.which("git")
     real_dirname = shutil.which("dirname")
     assert real_git is not None and real_dirname is not None
+    write_executable(
+        fake_bin / "release-python",
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        "if [[ ${1:-} == */verify_release_environment_v0.3.0.py ]]; then\n"
+        "  output=''; repo=''\n"
+        "  while [[ $# -gt 0 ]]; do\n"
+        "    if [[ $1 == --output ]]; then output=$2; shift 2;\n"
+        "    elif [[ $1 == --repo-root ]]; then repo=$2; shift 2;\n"
+        "    else shift; fi\n"
+        "  done\n"
+        "  case \"$(uname -s)/$(uname -m)\" in\n"
+        "    Darwin/arm64) platform=osx-arm64;;\n"
+        "    Darwin/x86_64) platform=osx-64;;\n"
+        "    Linux/x86_64) platform=linux-64;;\n"
+        "    *) exit 90;;\n"
+        "  esac\n"
+        "  lock=\"${repo}/locks/environment-${platform}.explicit.txt\"\n"
+        "  lock_sha=$(shasum -a 256 \"$lock\" | awk '{print $1}')\n"
+        "  set_sha=$(grep '^https://' \"$lock\" | LC_ALL=C sort | shasum -a 256 | awk '{print $1}')\n"
+        "  count=$(grep -c '^https://' \"$lock\")\n"
+        "  payload=$(printf "
+        "'{\"schema_version\":\"1.0\",\"platform_id\":\"%s\","
+        "\"python\":\"3.12.13\",\"artifact_count\":%s,"
+        "\"tracked_artifact_lock\":\"environment-%s.explicit.txt\","
+        "\"tracked_artifact_lock_sha256\":\"%s\","
+        "\"runtime_artifact_set_sha256\":\"%s\",\"verified\":true}' "
+        "\"$platform\" \"$count\" \"$platform\" \"$lock_sha\" \"$set_sha\")\n"
+        "  if [[ -n $output ]]; then\n"
+        "    mkdir -p \"$(dirname \"$output\")\"\n"
+        "    printf '%s\\n' \"$payload\" > \"$output\"\n"
+        "  else\n"
+        "    printf '%s\\n' \"$payload\"\n"
+        "  fi\n"
+        "  exit 0\n"
+        "fi\n"
+        f"exec {shlex.quote(sys.executable)} \"$@\"\n",
+    )
     write_executable(
         fake_bin / "dirname",
         "#!/usr/bin/env bash\n"
@@ -453,7 +494,7 @@ raise SystemExit(f"unexpected fake-gh command: {{args}}")
         "FAKE_PR_NUMBER": DEFAULT_IDS["MITO_OVERVIEW_PR_NUMBER"],
         "FAKE_PR_RUN_ID": DEFAULT_IDS["MITO_OVERVIEW_PR_RUN_ID"],
         "FAKE_PUBLIC_RUN_ID": DEFAULT_IDS["MITO_OVERVIEW_PUBLIC_RUN_ID"],
-        "MITO_OVERVIEW_PYTHON": sys.executable,
+        "MITO_OVERVIEW_PYTHON": str(fake_bin / "release-python"),
         "FAKE_CANDIDATE_COMMIT": candidate,
         "FAKE_CANDIDATE_TREE": candidate_tree,
         "FAKE_PR_BASE_COMMIT": pr_base,

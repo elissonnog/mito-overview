@@ -705,6 +705,38 @@ def write_acceptance_evidence(
         for artifact in distributions:
             artifact["direct_url_archive_sha256"] = artifact["sha256"]
 
+    platform_id = "osx-arm64"
+    artifact_lock = repo / "locks" / f"environment-{platform_id}.explicit.txt"
+    artifact_urls = sorted(
+        line
+        for line in artifact_lock.read_text(encoding="utf-8").splitlines()
+        if line.startswith("https://")
+    )
+    (
+        root / "acceptance" / "release_environment_verification.json"
+    ).write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "platform_id": platform_id,
+                "python": "3.12.13",
+                "artifact_count": len(artifact_urls),
+                "tracked_artifact_lock": artifact_lock.name,
+                "tracked_artifact_lock_sha256": hashlib.sha256(
+                    artifact_lock.read_bytes()
+                ).hexdigest(),
+                "runtime_artifact_set_sha256": hashlib.sha256(
+                    ("\n".join(artifact_urls) + "\n").encode("utf-8")
+                ).hexdigest(),
+                "verified": True,
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
     fresh_case = packet_builder.FRESH_CLONE_CASE_ID
     (root / "commands" / f"{fresh_case}.sh").write_text(
         f"git clone {REPOSITORY}.git\ngit checkout --detach {commit}\n",
@@ -2969,7 +3001,8 @@ def test_packet_rejects_self_consistent_resolved_ci_lock_drift(tmp_path: Path) -
     lock_name = f"artifact-lock-{platform_id}.explicit.txt"
     altered_manifest = (
         "@EXPLICIT\n"
-        "https://conda.anaconda.org/conda-forge/linux-64/altered-1.0-0.conda\n"
+        "https://conda.anaconda.org/conda-forge/linux-64/"
+        f"altered-1.0-0.conda#{'a' * 64}\n"
     )
     for name in (lock_name, f"conda-{platform_id}.explicit.txt"):
         (platform_root / name).write_text(altered_manifest, encoding="utf-8")
@@ -3030,7 +3063,10 @@ def test_extracted_verifier_rejects_resealed_unapproved_conda_host(
         / packet_builder.RESOLVED_CI_ENVIRONMENTS_RELATIVE
         / platform_id
     )
-    payload = b"@EXPLICIT\nhttps://attacker.invalid/linux-64/substituted.conda\n"
+    payload = (
+        "@EXPLICIT\n"
+        f"https://attacker.invalid/linux-64/substituted.conda#{'a' * 64}\n"
+    ).encode("ascii")
     for name in (
         f"conda-{platform_id}.explicit.txt",
         f"artifact-lock-{platform_id}.explicit.txt",

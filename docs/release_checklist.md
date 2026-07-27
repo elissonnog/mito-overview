@@ -144,8 +144,10 @@ release date.
   prebuilt asset source atomically, including the exact packet-bound wheel and
   source distribution. It executes the packet verifier, confirms the
   Markdown/DOCX/PDF/figure/page provenance, release-note/environment
-  identities, verifies the exact five-file inventory for all three platform
-  lock records, and embeds both report provenance and a size/SHA-256
+  identities, verifies the exact seven-file inventory for all three platform
+  environment records (runtime Conda inventory, pip inventory, solver
+  specification, artifact lock, release-tools lock, Python version, and
+  platform identity), and embeds both report provenance and a size/SHA-256
   report-asset manifest in `mito-overview-v0.3.0-verification.json`.
 - [ ] The assembler rejects a stale commit, incomplete platform locks,
   unexpected lock files, stale or replaced report artifacts, incomplete or

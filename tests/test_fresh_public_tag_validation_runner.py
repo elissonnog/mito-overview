@@ -235,6 +235,15 @@ def _build_command_shims(root: Path, fixture_repository: Path) -> Path:
 
         REAL_PYTHON = {sys.executable!r}
         args = sys.argv[1:]
+        if args and args[0].endswith("verify_release_environment_v0.3.0.py"):
+            if "--output" in args:
+                output = Path(args[args.index("--output") + 1])
+                output.parent.mkdir(parents=True, exist_ok=True)
+                output.write_text(
+                    '{{"schema_version":"1.0","verified":true}}\\n',
+                    encoding="utf-8",
+                )
+            raise SystemExit(0)
         if args == ["-"]:
             sys.stdin.read()
             raise SystemExit(0)
