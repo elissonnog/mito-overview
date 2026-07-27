@@ -35,7 +35,7 @@ if [[ -L "${ASSET_SOURCE_ROOT}" || ! -d "${ASSET_SOURCE_ROOT}" ]]; then
 fi
 ASSET_SOURCE_ROOT="$(cd "${ASSET_SOURCE_ROOT}" && pwd -P)"
 
-"${PYTHON_BIN}" "${REPO_ROOT}/scripts/verify_release_environment_v0.3.0.py" \
+"${PYTHON_BIN}" -I -S "${REPO_ROOT}/scripts/verify_release_environment_v0.3.0.py" \
   --repo-root "${REPO_ROOT}" \
   --expected-commit "${FINAL_SHA}" >/dev/null
 
@@ -156,7 +156,7 @@ printf '%s\n' "\${TAG_OBJECT_SHA}" > $(printf '%q' "${WORK_ROOT}/tag_object_sha.
 EOF
 run_case annotated_tag_identity "annotated tag peeled to FINAL_SHA"
 
-"${PYTHON_BIN}" "${CLONE_ROOT}/scripts/verify_release_environment_v0.3.0.py" \
+"${PYTHON_BIN}" -I -S "${CLONE_ROOT}/scripts/verify_release_environment_v0.3.0.py" \
   --repo-root "${CLONE_ROOT}" \
   --expected-commit "${FINAL_SHA}" \
   --output "${EVIDENCE_ROOT}/release_environment_verification.json"

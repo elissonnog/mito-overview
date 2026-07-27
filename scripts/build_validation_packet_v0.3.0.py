@@ -5601,6 +5601,8 @@ def validate_packet_hygiene(packet_root: Path) -> None:
         r"/Users/[^/\s]+",
         r"/home/[^/\s]+",
         r"/private/tmp(?:/[^\s'\";]*)?",
+        r"/mnt(?:/[^\s'\";]*)?",
+        r"/Volumes(?:/[^\s'\";]*)?",
         r"/(?:group|scratch)/(?:g/)?xgai(?:/[^\s'\";]*)?",
         r"(?i)\bqfs\d*\.rcc\.mcw\.edu\b",
         r"(?i)[A-Z]:\\Users\\[^\\\s]+",
@@ -6813,7 +6815,9 @@ forbidden_json_keys = {
 }
 local_path_patterns = (
     r"/Users/[^/\s]+", r"/home/[^/\s]+",
-    r"/private/tmp(?:/[^\s'\";]*)?", r"(?i)[A-Z]:\\Users\\[^\\\s]+",
+    r"/private/tmp(?:/[^\s'\";]*)?",
+    r"/mnt(?:/[^\s'\";]*)?", r"/Volumes(?:/[^\s'\";]*)?",
+    r"(?i)[A-Z]:\\Users\\[^\\\s]+",
     r"/(?:group|scratch)/(?:g/)?xgai(?:/[^\s'\";]*)?",
     r"(?i)\bqfs\d*\.rcc\.mcw\.edu\b",
 )

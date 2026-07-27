@@ -187,13 +187,13 @@ if ! command -v gh >/dev/null 2>&1; then
   exit 1
 fi
 
-"${PYTHON_BIN}" "${REPO_ROOT}/scripts/verify_release_environment_v0.3.0.py" \
+"${PYTHON_BIN}" -I -S "${REPO_ROOT}/scripts/verify_release_environment_v0.3.0.py" \
   --repo-root "${REPO_ROOT}" \
   --expected-commit "${CANDIDATE_COMMIT}" >/dev/null
 
 mkdir -p   "${VALIDATION_ROOT}/acceptance"   "${VALIDATION_ROOT}/commands"   "${VALIDATION_ROOT}/logs"   "${VALIDATION_ROOT}/resources"   "${VALIDATION_ROOT}/expected"   "${VALIDATION_ROOT}/dist"   "${TRANSIENT_ROOT}"
 mkdir -p "$(dirname "${AUDIT_ZIP}")"
-"${PYTHON_BIN}" "${REPO_ROOT}/scripts/verify_release_environment_v0.3.0.py" \
+"${PYTHON_BIN}" -I -S "${REPO_ROOT}/scripts/verify_release_environment_v0.3.0.py" \
   --repo-root "${REPO_ROOT}" \
   --expected-commit "${CANDIDATE_COMMIT}" \
   --output "${VALIDATION_ROOT}/acceptance/release_environment_verification.json"

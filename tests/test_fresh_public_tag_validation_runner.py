@@ -237,7 +237,16 @@ def _build_command_shims(root: Path, fixture_repository: Path) -> Path:
 
         REAL_PYTHON = {sys.executable!r}
         args = sys.argv[1:]
-        if args and args[0].endswith("verify_release_environment_v0.3.0.py"):
+        verifier = next(
+            (
+                item
+                for item in args
+                if item.endswith("verify_release_environment_v0.3.0.py")
+            ),
+            None,
+        )
+        if verifier is not None:
+            assert args[:2] == ["-I", "-S"]
             repo = Path(args[args.index("--repo-root") + 1])
             expected_commit = args[args.index("--expected-commit") + 1]
             try:
@@ -788,7 +797,7 @@ def test_runner_is_valid_shell_and_encodes_all_required_release_gates() -> None:
         "release_asset_semantic_identity.json",
         "safe_extract_validation_zip.py",
         "verify_release_asset_identity_v0.3.0.py",
-        '"${CLONE_ROOT}/scripts/verify_release_environment_v0.3.0.py"',
+        '-I -S "${CLONE_ROOT}/scripts/verify_release_environment_v0.3.0.py"',
         '--repo-root "${CLONE_ROOT}"',
         '--expected-commit "${FINAL_SHA}"',
         "verify_distribution_equivalence_v0.3.0.py",

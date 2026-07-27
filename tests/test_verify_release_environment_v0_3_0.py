@@ -21,6 +21,23 @@ COMMIT = "c" * 40
 TREE = "d" * 40
 
 
+def test_all_release_verifier_entrypoints_isolate_python_startup() -> None:
+    entrypoints = (
+        ROOT / ".github/workflows/smoke-tests.yml",
+        ROOT / ".github/workflows/public-validation.yml",
+        ROOT / "scripts/run_release_validation_v0.3.0.sh",
+        ROOT / "scripts/run_fresh_public_tag_validation_v0.3.0.sh",
+    )
+    invocation_count = 0
+    for path in entrypoints:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if "verify_release_environment_v0.3.0.py" not in line:
+                continue
+            invocation_count += 1
+            assert "-I -S" in line, f"unisolated verifier invocation in {path}: {line}"
+    assert invocation_count == 6
+
+
 def manifest(package: str, digest: str = HASH_A) -> str:
     return (
         "# platform: linux-64\n"

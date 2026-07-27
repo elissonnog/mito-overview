@@ -74,7 +74,7 @@ jobs:
           ARTIFACT_LOCK_FILE: ${{ matrix.artifact_lock }}
         run: |
           mkdir -p "$RUNNER_TEMP/environment"
-          python scripts/verify_release_environment_v0.3.0.py \
+          python -I -S scripts/verify_release_environment_v0.3.0.py \
             --repo-root . --expected-commit "$EXPECTED_COMMIT"
           python --version | tee "$RUNNER_TEMP/environment/python-${EXPECTED_PLATFORM}.txt"
           conda list --explicit --sha256 | tee "$RUNNER_TEMP/environment/conda-${EXPECTED_PLATFORM}.explicit.txt"

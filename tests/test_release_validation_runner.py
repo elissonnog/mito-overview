@@ -132,7 +132,9 @@ def create_fake_gh_harness(tmp_path: Path) -> tuple[Path, Path, dict[str, str]]:
         fake_bin / "release-python",
         "#!/usr/bin/env bash\n"
         "set -euo pipefail\n"
-        "if [[ ${1:-} == */verify_release_environment_v0.3.0.py ]]; then\n"
+        "if [[ ${1:-} == -I && ${2:-} == -S "
+        "&& ${3:-} == */verify_release_environment_v0.3.0.py ]]; then\n"
+        "  shift 2\n"
         "  output=''; repo=''; expected=''\n"
         "  while [[ $# -gt 0 ]]; do\n"
         "    if [[ $1 == --output ]]; then output=$2; shift 2;\n"

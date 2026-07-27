@@ -3770,14 +3770,21 @@ def test_packet_rejects_secret_like_material(tmp_path: Path) -> None:
         packet_builder.build_packet(packet_args(validation, repo, tmp_path / "output"))
 
 
-def test_packet_rejects_private_institutional_paths(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "private_path",
+    (
+        "/" + "group/xgai/private/sample/run.log",
+        "/mnt/institution/private/sample/run.log",
+        "/Volumes/dbasel-UDD-Data/private/sample/run.log",
+    ),
+)
+def test_packet_rejects_private_institutional_paths(
+    tmp_path: Path, private_path: str
+) -> None:
     repo, commit = create_release_repo(tmp_path)
     validation = create_validation_root(tmp_path, repo, commit)
     source = validation / "logs" / "unit_known_answer.log"
-    source.write_text(
-        "source=/" + "group/xgai/private/sample/run.log\n",
-        encoding="utf-8",
-    )
+    source.write_text(f"source={private_path}\n", encoding="utf-8")
     digest = hashlib.sha256(source.read_bytes()).hexdigest()
     for field in ("log_sha256", "packaged_log_sha256"):
         mutate_tsv_value(
@@ -3789,6 +3796,30 @@ def test_packet_rejects_private_institutional_paths(tmp_path: Path) -> None:
         )
     with pytest.raises(ValueError, match="absolute user path"):
         packet_builder.build_packet(packet_args(validation, repo, tmp_path / "output"))
+
+
+@pytest.mark.parametrize(
+    "private_path",
+    (
+        "/mnt/institution/private/sample/run.log",
+        "/Volumes/dbasel-UDD-Data/private/sample/run.log",
+    ),
+)
+def test_extracted_verifier_rejects_resealed_private_mount_paths(
+    tmp_path: Path, private_path: str
+) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    output = tmp_path / "output"
+    packet_builder.build_packet(packet_args(validation, repo, output))
+    packet = output / "packet"
+    source = packet / "logs" / "unit_known_answer.log"
+    source.write_text(f"source={private_path}\n", encoding="utf-8")
+    rewrite_manifest(packet)
+
+    checked = verify_packet(packet)
+    assert checked.returncode != 0
+    assert "absolute user path found in packet" in checked.stderr
 
 
 def test_packet_normalizes_local_absolute_paths(tmp_path: Path) -> None:

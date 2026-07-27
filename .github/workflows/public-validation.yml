@@ -65,7 +65,7 @@ jobs:
             --only-binary=:all: \
             --require-hashes \
             -r locks/requirements-release-tools.txt
-          python scripts/verify_release_environment_v0.3.0.py \
+          python -I -S scripts/verify_release_environment_v0.3.0.py \
             --repo-root . --expected-commit "$TARGET_SHA"
           conda list --explicit --sha256 > "$RUNNER_TEMP/conda-linux-64-observed.txt"
 

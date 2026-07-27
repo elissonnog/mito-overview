@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import importlib.util
 import json
@@ -27,6 +28,23 @@ TAG_OBJECT_SHA = "a" * 40
 OTHER_TAG_OBJECT_SHA = "b" * 40
 REPOSITORY = "elissonnog/mito-overview"
 RUN_ID = 28819232067
+REMOTE_LOCK_URLS = tuple(
+    "https://conda.anaconda.org/conda-forge/osx-arm64/"
+    f"fixture-{index:03d}-1.0-0.conda#{index:064x}"
+    for index in range(1, 112)
+)
+REMOTE_LOCK_BYTES = (
+    "# platform: osx-arm64\n@EXPLICIT\n"
+    + "\n".join(REMOTE_LOCK_URLS)
+    + "\n"
+).encode("utf-8")
+REMOTE_LOCK_SHA256 = hashlib.sha256(REMOTE_LOCK_BYTES).hexdigest()
+REMOTE_RUNTIME_SET_SHA256 = hashlib.sha256(
+    ("\n".join(sorted(REMOTE_LOCK_URLS)) + "\n").encode("utf-8")
+).hexdigest()
+REMOTE_LOCK_BLOB_SHA = hashlib.sha1(
+    f"blob {len(REMOTE_LOCK_BYTES)}\0".encode("ascii") + REMOTE_LOCK_BYTES
+).hexdigest()
 FRESH_TAG_RUNNER_CASE_CONTRACT = (
     "public_https_tag_clone",
     "annotated_tag_identity",
@@ -132,8 +150,8 @@ def _write_tag_validation_evidence(root: Path, asset_root: Path) -> Path:
                 "python": "3.12.13",
                 "artifact_count": 111,
                 "tracked_artifact_lock": "environment-osx-arm64.explicit.txt",
-                "tracked_artifact_lock_sha256": "4" * 64,
-                "runtime_artifact_set_sha256": "5" * 64,
+                "tracked_artifact_lock_sha256": REMOTE_LOCK_SHA256,
+                "runtime_artifact_set_sha256": REMOTE_RUNTIME_SET_SHA256,
                 "repository_commit": FINAL_SHA,
                 "repository_tree": FINAL_TREE,
                 "repository_clean": True,
@@ -307,12 +325,16 @@ class FakeGhRunner:
         *,
         final_sha: str = FINAL_SHA,
         main_sha: str = FINAL_SHA,
+        final_tree: str = FINAL_TREE,
+        main_tree: str = FINAL_TREE,
         immutable_payload: dict[str, Any] | None = None,
         immutable_get_disabled_404: bool = False,
         immutable_put_unavailable: bool = False,
     ) -> None:
         self.final_sha = final_sha
         self.main_sha = main_sha
+        self.final_tree = final_tree
+        self.main_tree = main_tree
         self.immutable_payload = immutable_payload or {"enabled": False}
         self.immutable_get_disabled_404 = immutable_get_disabled_404
         self.immutable_put_unavailable = immutable_put_unavailable
@@ -397,9 +419,41 @@ class FakeGhRunner:
         route = endpoint.removeprefix(prefix)
 
         if route == f"commits/{FINAL_SHA}" and method == "GET":
-            return self._result(args, {"sha": self.final_sha})
+            return self._result(
+                args,
+                {
+                    "sha": self.final_sha,
+                    "commit": {"tree": {"sha": self.final_tree}},
+                },
+            )
         if route == "commits/main" and method == "GET":
-            return self._result(args, {"sha": self.main_sha})
+            return self._result(
+                args,
+                {
+                    "sha": self.main_sha,
+                    "commit": {"tree": {"sha": self.main_tree}},
+                },
+            )
+        if (
+            route
+            == (
+                "contents/locks/environment-osx-arm64.explicit.txt"
+                f"?ref={FINAL_SHA}"
+            )
+            and method == "GET"
+        ):
+            return self._result(
+                args,
+                {
+                    "type": "file",
+                    "path": "locks/environment-osx-arm64.explicit.txt",
+                    "name": "environment-osx-arm64.explicit.txt",
+                    "encoding": "base64",
+                    "content": base64.b64encode(REMOTE_LOCK_BYTES).decode("ascii"),
+                    "size": len(REMOTE_LOCK_BYTES),
+                    "sha": REMOTE_LOCK_BLOB_SHA,
+                },
+            )
         if route == f"git/ref/tags/{publication.EXPECTED_TAG}" and method == "GET":
             if self.tag_ref is None:
                 return self._result(args, returncode=1, stderr="Not Found (HTTP 404)")
@@ -768,6 +822,71 @@ def test_resealed_environment_tree_substitution_blocks_publication(
     with pytest.raises(publication.PublicationError, match="receipt is required"):
         publication.publish_github_release(config, runner)
     assert runner.calls == []
+
+
+def test_coordinated_resealed_tree_substitution_is_rejected_by_remote_tree(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path / "publication", "create-draft")
+    evidence_root = config.tag_validation_receipt.parent
+    false_tree = "6" * 40
+    for name in (
+        "release_environment_verification.json",
+        "tag_identity.json",
+    ):
+        path = evidence_root / name
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload["repository_tree" if name.startswith("release_") else "git_tree"] = (
+            false_tree
+        )
+        path.write_text(
+            json.dumps(payload, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+    receipt_payload = json.loads(
+        config.tag_validation_receipt.read_text(encoding="utf-8")
+    )
+    receipt_payload["git_tree"] = false_tree
+    config.tag_validation_receipt.write_text(
+        json.dumps(receipt_payload, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    _reseal_tag_validation_evidence(config.tag_validation_receipt)
+    runner = FakeGhRunner()
+
+    with pytest.raises(
+        publication.PublicationError,
+        match="Git tree differs from the public release commit tree",
+    ):
+        publication.publish_github_release(config, runner)
+    assert runner.mutations == []
+
+
+def test_coordinated_resealed_environment_hashes_are_rejected_by_remote_lock(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path / "publication", "create-draft")
+    environment_path = (
+        config.tag_validation_receipt.parent
+        / "release_environment_verification.json"
+    )
+    environment = json.loads(environment_path.read_text(encoding="utf-8"))
+    environment["artifact_count"] = 112
+    environment["tracked_artifact_lock_sha256"] = "6" * 64
+    environment["runtime_artifact_set_sha256"] = "7" * 64
+    environment_path.write_text(
+        json.dumps(environment, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    _reseal_tag_validation_evidence(config.tag_validation_receipt)
+    runner = FakeGhRunner()
+
+    with pytest.raises(
+        publication.PublicationError,
+        match="artifact-lock digest differs from the public commit",
+    ):
+        publication.publish_github_release(config, runner)
+    assert runner.mutations == []
 
 
 def test_publisher_case_contract_matches_fresh_tag_runner_inventory() -> None:
