@@ -728,6 +728,9 @@ def write_acceptance_evidence(
                 "runtime_artifact_set_sha256": hashlib.sha256(
                     ("\n".join(artifact_urls) + "\n").encode("utf-8")
                 ).hexdigest(),
+                "repository_commit": commit,
+                "repository_tree": final_tree,
+                "repository_clean": True,
                 "verified": True,
             },
             indent=2,

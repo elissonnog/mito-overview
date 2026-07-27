@@ -68,11 +68,14 @@ jobs:
 
       - name: Validate and record release environment
         env:
+          EXPECTED_COMMIT: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           EXPECTED_PLATFORM: ${{ matrix.platform }}
           LOCK_FILE: ${{ matrix.lock_file }}
           ARTIFACT_LOCK_FILE: ${{ matrix.artifact_lock }}
         run: |
           mkdir -p "$RUNNER_TEMP/environment"
+          python scripts/verify_release_environment_v0.3.0.py \
+            --repo-root . --expected-commit "$EXPECTED_COMMIT"
           python --version | tee "$RUNNER_TEMP/environment/python-${EXPECTED_PLATFORM}.txt"
           conda list --explicit --sha256 | tee "$RUNNER_TEMP/environment/conda-${EXPECTED_PLATFORM}.explicit.txt"
           python -m pip freeze --all | tee "$RUNNER_TEMP/environment/pip-${EXPECTED_PLATFORM}.txt"
@@ -80,12 +83,6 @@ jobs:
           cp "$ARTIFACT_LOCK_FILE" \
             "$RUNNER_TEMP/environment/artifact-lock-${EXPECTED_PLATFORM}.explicit.txt"
           cp locks/requirements-release-tools.txt "$RUNNER_TEMP/environment/"
-          grep '^https://' "$ARTIFACT_LOCK_FILE" | LC_ALL=C sort \
-            > "$RUNNER_TEMP/expected-conda-artifacts.txt"
-          grep '^https://' "$RUNNER_TEMP/environment/conda-${EXPECTED_PLATFORM}.explicit.txt" \
-            | LC_ALL=C sort > "$RUNNER_TEMP/observed-conda-artifacts.txt"
-          diff -u "$RUNNER_TEMP/expected-conda-artifacts.txt" \
-            "$RUNNER_TEMP/observed-conda-artifacts.txt"
           python - <<'PY'
           from importlib.metadata import version
           import hashlib

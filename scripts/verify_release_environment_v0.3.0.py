@@ -57,12 +57,18 @@ def artifact_urls(text: str, *, label: str, expected_platform: str) -> set[str]:
             f"{label} platform marker does not match {expected_platform}: "
             f"{sorted(platform_markers)}"
         )
-    urls = [line.strip() for line in lines if line.startswith("https://")]
-    if not urls:
+    records = [
+        line.strip()
+        for line in lines
+        if line.strip()
+        and not line.startswith("#")
+        and line.strip() != "@EXPLICIT"
+    ]
+    if not records:
         raise ValueError(f"{label} contains no Conda artifact URLs")
-    if len(urls) != len(set(urls)):
+    if len(records) != len(set(records)):
         raise ValueError(f"{label} contains duplicate Conda artifact URLs")
-    for url in urls:
+    for url in records:
         parsed = urlsplit(url)
         if (
             parsed.scheme != "https"
@@ -83,16 +89,51 @@ def artifact_urls(text: str, *, label: str, expected_platform: str) -> set[str]:
             raise ValueError(
                 f"{label} contains an artifact for another platform: {url}"
             )
-    return set(urls)
+    return set(records)
 
 
-def verify(repo_root: Path, python_executable: Path) -> dict[str, object]:
+def verify(
+    repo_root: Path, python_executable: Path, expected_commit: str
+) -> dict[str, object]:
     repo_root = repo_root.resolve(strict=True)
     python_executable = python_executable.resolve(strict=True)
     observed_platform = platform_id()
     lock_path = repo_root / "locks" / f"environment-{observed_platform}.explicit.txt"
     if not lock_path.is_file() or lock_path.is_symlink():
         raise ValueError(f"Missing regular platform artifact lock: {lock_path}")
+    if not re.fullmatch(r"[0-9a-f]{40}", expected_commit):
+        raise ValueError("Expected release commit must be 40 lowercase hexadecimal characters")
+    observed_commit = subprocess.run(
+        ["git", "-C", str(repo_root), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    observed_tree = subprocess.run(
+        ["git", "-C", str(repo_root), "rev-parse", "HEAD^{tree}"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    worktree_status = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repo_root),
+            "status",
+            "--porcelain",
+            "--untracked-files=all",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    if observed_commit != expected_commit:
+        raise ValueError(
+            f"Release repository commit mismatch: {observed_commit} != {expected_commit}"
+        )
+    if worktree_status:
+        raise ValueError("Release repository worktree is not clean")
 
     prefix = Path(sys.prefix).resolve(strict=True)
     if python_executable != Path(sys.executable).resolve(strict=True):
@@ -159,6 +200,9 @@ def verify(repo_root: Path, python_executable: Path) -> dict[str, object]:
         "runtime_artifact_set_sha256": hashlib.sha256(
             ("\n".join(sorted(observed_urls)) + "\n").encode("utf-8")
         ).hexdigest(),
+        "repository_commit": observed_commit,
+        "repository_tree": observed_tree,
+        "repository_clean": True,
         "verified": True,
     }
 
@@ -166,6 +210,7 @@ def verify(repo_root: Path, python_executable: Path) -> dict[str, object]:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--repo-root", required=True, type=Path)
+    parser.add_argument("--expected-commit", required=True)
     parser.add_argument("--output", type=Path)
     return parser.parse_args()
 
@@ -173,8 +218,10 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     try:
-        record = verify(args.repo_root, Path(sys.executable))
-    except (OSError, ValueError) as exc:
+        record = verify(
+            args.repo_root, Path(sys.executable), args.expected_commit
+        )
+    except (OSError, subprocess.SubprocessError, ValueError) as exc:
         raise SystemExit(f"Release environment verification failed: {exc}") from exc
     payload = json.dumps(record, indent=2, sort_keys=True) + "\n"
     if args.output:

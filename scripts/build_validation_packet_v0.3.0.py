@@ -3404,6 +3404,9 @@ def validate_release_environment_verification(
         "tracked_artifact_lock",
         "tracked_artifact_lock_sha256",
         "runtime_artifact_set_sha256",
+        "repository_commit",
+        "repository_tree",
+        "repository_clean",
         "verified",
     }
     if set(record) != expected_fields:
@@ -3419,6 +3422,10 @@ def validate_release_environment_verification(
         or record.get("verified") is not True
         or record.get("tracked_artifact_lock") != lock_name
         or record.get("tracked_artifact_lock_sha256") != sha256(lock_path)
+        or record.get("repository_commit") != git_output(repo_root, "rev-parse", "HEAD")
+        or record.get("repository_tree")
+        != git_output(repo_root, "rev-parse", "HEAD^{tree}")
+        or record.get("repository_clean") is not True
         or not isinstance(record.get("artifact_count"), int)
         or record["artifact_count"] <= 0
         or not re.fullmatch(
@@ -4140,10 +4147,18 @@ def validate_resolved_ci_environments(
         lines = path.read_text(encoding="utf-8").splitlines()
         if lines.count("@EXPLICIT") != 1:
             raise ValueError(f"{label} must contain exactly one @EXPLICIT marker")
-        urls = {line.strip() for line in lines if line.startswith("https://")}
-        if not urls:
+        records = [
+            line.strip()
+            for line in lines
+            if line.strip()
+            and not line.startswith("#")
+            and line.strip() != "@EXPLICIT"
+        ]
+        if not records:
             raise ValueError(f"{label} contains no Conda artifact URLs")
-        for url in urls:
+        if len(records) != len(set(records)):
+            raise ValueError(f"{label} contains duplicate Conda artifact URLs")
+        for url in records:
             parsed = urlsplit(url)
             if (
                 parsed.scheme != "https"
@@ -4155,7 +4170,7 @@ def validate_resolved_ci_environments(
                 or not parsed.path.startswith(("/conda-forge/", "/bioconda/"))
             ):
                 raise ValueError(f"{label} contains an unapproved Conda artifact URL")
-        return urls
+        return set(records)
 
     evidence_root = validation_root / RESOLVED_CI_ENVIRONMENTS_RELATIVE
     validate_regular_tree(evidence_root, label="Resolved CI environment evidence")
@@ -7907,10 +7922,18 @@ for platform_id in resolved_platforms:
         lines = path.read_text(encoding="utf-8").splitlines()
         if lines.count("@EXPLICIT") != 1:
             raise SystemExit(f"invalid Conda @EXPLICIT marker: {path.name}")
-        urls = {line.strip() for line in lines if line.startswith("https://")}
-        if not urls:
+        records = [
+            line.strip()
+            for line in lines
+            if line.strip()
+            and not line.startswith("#")
+            and line.strip() != "@EXPLICIT"
+        ]
+        if not records:
             raise SystemExit(f"Conda artifact manifest is empty: {path.name}")
-        for url in urls:
+        if len(records) != len(set(records)):
+            raise SystemExit(f"duplicate Conda artifact URL: {path.name}")
+        for url in records:
             parsed = urlsplit(url)
             if (
                 parsed.scheme != "https"
@@ -7922,7 +7945,7 @@ for platform_id in resolved_platforms:
                 or not parsed.path.startswith(("/conda-forge/", "/bioconda/"))
             ):
                 raise SystemExit(f"unapproved Conda artifact URL: {path.name}")
-        return urls
+        return set(records)
     if conda_urls(platform_root / f"conda-{platform_id}.explicit.txt") != conda_urls(
         platform_root / artifact_name
     ):
@@ -7939,7 +7962,8 @@ release_environment = json.loads(
 release_environment_fields = {
     "schema_version", "platform_id", "python", "artifact_count",
     "tracked_artifact_lock", "tracked_artifact_lock_sha256",
-    "runtime_artifact_set_sha256", "verified",
+    "runtime_artifact_set_sha256", "repository_commit", "repository_tree",
+    "repository_clean", "verified",
 }
 if set(release_environment) != release_environment_fields:
     raise SystemExit("release environment verification schema mismatch")
@@ -7963,6 +7987,11 @@ if (
     or release_environment.get("artifact_count") != len(release_urls)
     or release_environment.get("runtime_artifact_set_sha256")
     != release_url_set_sha256
+    or release_environment.get("repository_commit") != commit
+    or not re.fullmatch(
+        r"[0-9a-f]{40}", str(release_environment.get("repository_tree", ""))
+    )
+    or release_environment.get("repository_clean") is not True
 ):
     raise SystemExit("release environment verification identity mismatch")
 if identity.get("resolved_ci_environments") != resolved_ci_identity:
@@ -8690,6 +8719,8 @@ if set(audits) != set(audit_roles):
 expected_audits = [audits[role] for role in audit_roles]
 if identity.get("read_only_audits") != expected_audits:
     raise SystemExit("release identity read-only audit evidence mismatch")
+if release_environment.get("repository_tree") != final_tree:
+    raise SystemExit("release environment verification tree mismatch")
 expected_acceptance_cases = [
     "fresh_clone_candidate_commit", "github_actions_linux_candidate_commit",
     "github_actions_macos_candidate_commit",

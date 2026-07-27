@@ -65,13 +65,9 @@ jobs:
             --only-binary=:all: \
             --require-hashes \
             -r locks/requirements-release-tools.txt
+          python scripts/verify_release_environment_v0.3.0.py \
+            --repo-root . --expected-commit "$TARGET_SHA"
           conda list --explicit --sha256 > "$RUNNER_TEMP/conda-linux-64-observed.txt"
-          grep '^https://' locks/environment-linux-64.explicit.txt | LC_ALL=C sort \
-            > "$RUNNER_TEMP/conda-linux-64-expected.urls"
-          grep '^https://' "$RUNNER_TEMP/conda-linux-64-observed.txt" | LC_ALL=C sort \
-            > "$RUNNER_TEMP/conda-linux-64-observed.urls"
-          diff -u "$RUNNER_TEMP/conda-linux-64-expected.urls" \
-            "$RUNNER_TEMP/conda-linux-64-observed.urls"
 
       - name: Build and install wheel outside checkout
         run: |

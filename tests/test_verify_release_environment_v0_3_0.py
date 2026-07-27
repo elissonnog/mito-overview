@@ -17,6 +17,8 @@ SPEC.loader.exec_module(verifier)
 
 HASH_A = "a" * 64
 HASH_B = "b" * 64
+COMMIT = "c" * 40
+TREE = "d" * 40
 
 
 def manifest(package: str, digest: str = HASH_A) -> str:
@@ -31,6 +33,18 @@ def test_artifact_urls_require_sha256_fragments() -> None:
     text = (
         "@EXPLICIT\n"
         "https://conda.anaconda.org/conda-forge/linux-64/python-3.12.13-0.conda\n"
+    )
+    with pytest.raises(ValueError, match="unapproved or unhashed"):
+        verifier.artifact_urls(
+            text, label="fixture", expected_platform="linux-64"
+        )
+
+
+def test_artifact_urls_reject_non_https_records() -> None:
+    text = (
+        "@EXPLICIT\n"
+        f"https://conda.anaconda.org/conda-forge/linux-64/pkg-1.0-0.conda#{HASH_A}\n"
+        f"file:///private/tmp/substituted-1.0-0.conda#{HASH_A}\n"
     )
     with pytest.raises(ValueError, match="unapproved or unhashed"):
         verifier.artifact_urls(
@@ -80,19 +94,23 @@ def test_verify_rejects_same_version_from_different_build(
         verifier.platform, "python_version", lambda: "3.12.13"
     )
     monkeypatch.setattr(verifier.shutil, "which", lambda _: "/fixture/conda")
-    monkeypatch.setattr(
-        verifier.subprocess,
-        "run",
-        lambda *args, **kwargs: subprocess.CompletedProcess(
-            args[0],
+    def fake_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        if command[0] == "git":
+            stdout = TREE + "\n" if command[-1] == "HEAD^{tree}" else COMMIT + "\n"
+            if command[-1] == "--untracked-files=all":
+                stdout = ""
+            return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
+        return subprocess.CompletedProcess(
+            command,
             0,
             stdout=manifest("python-3.12.13-other_0.conda", HASH_B),
             stderr="",
-        ),
-    )
+        )
+
+    monkeypatch.setattr(verifier.subprocess, "run", fake_run)
 
     with pytest.raises(ValueError, match="do not match"):
-        verifier.verify(repo, Path(sys.executable))
+        verifier.verify(repo, Path(sys.executable), COMMIT)
 
 
 def test_verify_accepts_exact_url_and_hash_set(
@@ -116,15 +134,20 @@ def test_verify_accepts_exact_url_and_hash_set(
         verifier.platform, "python_version", lambda: "3.12.13"
     )
     monkeypatch.setattr(verifier.shutil, "which", lambda _: "/fixture/conda")
-    monkeypatch.setattr(
-        verifier.subprocess,
-        "run",
-        lambda *args, **kwargs: subprocess.CompletedProcess(
-            args[0], 0, stdout=locked, stderr=""
-        ),
-    )
+    def fake_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        if command[0] == "git":
+            stdout = TREE + "\n" if command[-1] == "HEAD^{tree}" else COMMIT + "\n"
+            if command[-1] == "--untracked-files=all":
+                stdout = ""
+            return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
+        return subprocess.CompletedProcess(command, 0, stdout=locked, stderr="")
 
-    record = verifier.verify(repo, Path(sys.executable))
+    monkeypatch.setattr(verifier.subprocess, "run", fake_run)
+
+    record = verifier.verify(repo, Path(sys.executable), COMMIT)
     assert record["verified"] is True
     assert record["platform_id"] == "linux-64"
     assert record["artifact_count"] == 1
+    assert record["repository_commit"] == COMMIT
+    assert record["repository_tree"] == TREE
+    assert record["repository_clean"] is True

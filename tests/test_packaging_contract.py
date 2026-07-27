@@ -244,7 +244,11 @@ def test_platform_artifact_locks_are_explicit_and_complete() -> None:
         lines = path.read_text(encoding="utf-8").splitlines()
         assert f"# platform: {platform}" in lines
         assert "@EXPLICIT" in lines
-        urls = [line for line in lines if line.startswith("https://")]
+        urls = [
+            line
+            for line in lines
+            if line and not line.startswith("#") and line != "@EXPLICIT"
+        ]
         assert urls
         assert len(urls) == len(set(urls))
         assert all(

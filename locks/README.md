@@ -19,7 +19,11 @@ CI creates each environment from its matching explicit artifact lock, captures
 `conda list --explicit --sha256`, and requires exact URL-plus-hash equality
 with the tracked lock. The official release runner and fresh-tag validator
 apply the same check to the active parent Conda prefix before creating inherited
-wheel or source-distribution test environments.
+wheel or source-distribution test environments. The verifier rejects every
+non-comment manifest record that is not an approved SHA-256-bearing HTTPS
+artifact and binds its receipt to a clean exact repository commit and tree.
+Fresh-tag evidence is generated against the publicly cloned tag checkout, not
+an unrelated local lock.
 
 `requirements-release-tools.txt` separately pins the pip-installed release
 tools by version and wheel SHA-256. It must be installed with

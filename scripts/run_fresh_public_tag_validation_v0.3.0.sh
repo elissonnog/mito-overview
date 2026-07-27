@@ -36,7 +36,8 @@ fi
 ASSET_SOURCE_ROOT="$(cd "${ASSET_SOURCE_ROOT}" && pwd -P)"
 
 "${PYTHON_BIN}" "${REPO_ROOT}/scripts/verify_release_environment_v0.3.0.py" \
-  --repo-root "${REPO_ROOT}" >/dev/null
+  --repo-root "${REPO_ROOT}" \
+  --expected-commit "${FINAL_SHA}" >/dev/null
 
 "${PYTHON_BIN}" - "${ASSET_SOURCE_ROOT}" "${WORK_ROOT}" "${EVIDENCE_ROOT}" <<'PY'
 import sys
@@ -96,9 +97,6 @@ mkdir -p "${WORK_ROOT}" "${EVIDENCE_ROOT}" "${COMMAND_ROOT}" "${LOG_ROOT}" \
   "${SDIST_PROBE_ROOT}" \
   "${HOME_ROOT}" "${TMP_ROOT}" "${CACHE_ROOT}"
 printf 'case_id\tverdict\tdetail\n' > "${CASES_PATH}"
-"${PYTHON_BIN}" "${REPO_ROOT}/scripts/verify_release_environment_v0.3.0.py" \
-  --repo-root "${REPO_ROOT}" \
-  --output "${EVIDENCE_ROOT}/release_environment_verification.json"
 
 clean_env() {
   env -i \
@@ -157,6 +155,11 @@ test "\$(git -C $(printf '%q' "${CLONE_ROOT}") rev-parse HEAD)" = $(printf '%q' 
 printf '%s\n' "\${TAG_OBJECT_SHA}" > $(printf '%q' "${WORK_ROOT}/tag_object_sha.txt")
 EOF
 run_case annotated_tag_identity "annotated tag peeled to FINAL_SHA"
+
+"${PYTHON_BIN}" "${CLONE_ROOT}/scripts/verify_release_environment_v0.3.0.py" \
+  --repo-root "${CLONE_ROOT}" \
+  --expected-commit "${FINAL_SHA}" \
+  --output "${EVIDENCE_ROOT}/release_environment_verification.json"
 
 write_command locked_environment <<EOF
 #!/usr/bin/env bash
