@@ -20,12 +20,15 @@ jobs:
           - os: ubuntu-24.04
             platform: linux-64
             lock_file: locks/environment-linux-64.yml
+            artifact_lock: locks/environment-linux-64.explicit.txt
           - os: macos-15-intel
             platform: osx-64
             lock_file: locks/environment-osx-64.yml
+            artifact_lock: locks/environment-osx-64.explicit.txt
           - os: macos-15
             platform: osx-arm64
             lock_file: locks/environment-osx-arm64.yml
+            artifact_lock: locks/environment-osx-arm64.explicit.txt
     env:
       MITO_OVERVIEW_REQUIRE_INSTALLED: "1"
       PYTHONNOUSERSITE: "1"
@@ -51,21 +54,38 @@ jobs:
       - name: Set up conda environment
         uses: conda-incubator/setup-miniconda@8ee1f361103df19b6f8c8655fd3967a8ecb162d5 # v4.0.1
         with:
-          environment-file: ${{ matrix.lock_file }}
+          environment-file: ${{ matrix.artifact_lock }}
           activate-environment: mito-overview
           auto-activate: false
           conda-remove-defaults: true
+
+      - name: Install hash-locked Python release tools
+        run: |
+          python -m pip install \
+            --only-binary=:all: \
+            --require-hashes \
+            -r locks/requirements-release-tools.txt
 
       - name: Validate and record release environment
         env:
           EXPECTED_PLATFORM: ${{ matrix.platform }}
           LOCK_FILE: ${{ matrix.lock_file }}
+          ARTIFACT_LOCK_FILE: ${{ matrix.artifact_lock }}
         run: |
           mkdir -p "$RUNNER_TEMP/environment"
           python --version | tee "$RUNNER_TEMP/environment/python-${EXPECTED_PLATFORM}.txt"
           conda list --explicit | tee "$RUNNER_TEMP/environment/conda-${EXPECTED_PLATFORM}.explicit.txt"
           python -m pip freeze --all | tee "$RUNNER_TEMP/environment/pip-${EXPECTED_PLATFORM}.txt"
           cp "$LOCK_FILE" "$RUNNER_TEMP/environment/"
+          cp "$ARTIFACT_LOCK_FILE" \
+            "$RUNNER_TEMP/environment/artifact-lock-${EXPECTED_PLATFORM}.explicit.txt"
+          cp locks/requirements-release-tools.txt "$RUNNER_TEMP/environment/"
+          grep '^https://' "$ARTIFACT_LOCK_FILE" | LC_ALL=C sort \
+            > "$RUNNER_TEMP/expected-conda-artifacts.txt"
+          grep '^https://' "$RUNNER_TEMP/environment/conda-${EXPECTED_PLATFORM}.explicit.txt" \
+            | LC_ALL=C sort > "$RUNNER_TEMP/observed-conda-artifacts.txt"
+          diff -u "$RUNNER_TEMP/expected-conda-artifacts.txt" \
+            "$RUNNER_TEMP/observed-conda-artifacts.txt"
           python - <<'PY'
           from importlib.metadata import version
           import hashlib
@@ -125,6 +145,8 @@ jobs:
               f"conda-{os.environ['EXPECTED_PLATFORM']}.explicit.txt",
               f"pip-{os.environ['EXPECTED_PLATFORM']}.txt",
               f"environment-{os.environ['EXPECTED_PLATFORM']}.yml",
+              f"artifact-lock-{os.environ['EXPECTED_PLATFORM']}.explicit.txt",
+              "requirements-release-tools.txt",
               f"python-{os.environ['EXPECTED_PLATFORM']}.txt",
           )
           evidence_files = {}
@@ -156,8 +178,14 @@ jobs:
               "resolved_environment": True,
               "evidence_files": evidence_files,
               "evidence_manifest_sha256": hashlib.sha256(manifest_payload).hexdigest(),
-              "source_lock_sha256": evidence_files[
+              "source_solver_spec_sha256": evidence_files[
                   f"environment-{os.environ['EXPECTED_PLATFORM']}.yml"
+              ]["sha256"],
+              "source_artifact_lock_sha256": evidence_files[
+                  f"artifact-lock-{os.environ['EXPECTED_PLATFORM']}.explicit.txt"
+              ]["sha256"],
+              "source_release_tools_lock_sha256": evidence_files[
+                  "requirements-release-tools.txt"
               ]["sha256"],
           }
           destination = (
@@ -186,6 +214,8 @@ jobs:
           tar -tf dist/mito_overview-*.tar.gz > "$RUNNER_TEMP/sdist-contents.txt"
           grep -q 'resources/schemas/mito_overview_config.schema.yaml' "$RUNNER_TEMP/sdist-contents.txt"
           grep -q 'locks/environment-${{ matrix.platform }}.yml' "$RUNNER_TEMP/sdist-contents.txt"
+          grep -q 'locks/environment-${{ matrix.platform }}.explicit.txt' "$RUNNER_TEMP/sdist-contents.txt"
+          grep -q 'locks/requirements-release-tools.txt' "$RUNNER_TEMP/sdist-contents.txt"
 
           wheel_paths=("$GITHUB_WORKSPACE"/dist/mito_overview-*.whl)
           if [[ ${#wheel_paths[@]} -ne 1 || ! -f "${wheel_paths[0]}" ]]; then

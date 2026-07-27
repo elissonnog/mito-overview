@@ -428,11 +428,15 @@ PY
       test -s "${destination}/conda-${platform}.explicit.txt"
       test -s "${destination}/pip-${platform}.txt"
       test -s "${destination}/environment-${platform}.yml"
+      test -s "${destination}/artifact-lock-${platform}.explicit.txt"
+      test -s "${destination}/requirements-release-tools.txt"
       test -s "${destination}/platform-${platform}.json"
       test -s "${destination}/python-${platform}.txt"
       "${PYTHON_BIN}" - "${destination}/platform-${platform}.json" \
         "${destination}" "${platform}" "${CANDIDATE_COMMIT}" "${GITHUB_RUN_ID}" \
-        "${REPO_ROOT}/locks/environment-${platform}.yml" <<'PY'
+        "${REPO_ROOT}/locks/environment-${platform}.yml" \
+        "${REPO_ROOT}/locks/environment-${platform}.explicit.txt" \
+        "${REPO_ROOT}/locks/requirements-release-tools.txt" <<'PY'
 import hashlib
 import json
 import sys
@@ -445,6 +449,8 @@ expected_files = {
     f"conda-{platform_id}.explicit.txt",
     f"pip-{platform_id}.txt",
     f"environment-{platform_id}.yml",
+    f"artifact-lock-{platform_id}.explicit.txt",
+    "requirements-release-tools.txt",
     f"platform-{platform_id}.json",
     f"python-{platform_id}.txt",
 }
@@ -485,12 +491,23 @@ for name in sorted(evidence_names):
 manifest_sha256 = hashlib.sha256("".join(manifest_lines).encode("utf-8")).hexdigest()
 if record.get("evidence_manifest_sha256") != manifest_sha256:
     raise SystemExit("Resolved CI evidence manifest digest mismatch")
-lock_name = f"environment-{platform_id}.yml"
-if record.get("source_lock_sha256") != evidence_files[lock_name]["sha256"]:
-    raise SystemExit("Resolved CI source-lock digest mismatch")
-tracked_lock = Path(sys.argv[6]).read_bytes()
-if hashlib.sha256(tracked_lock).hexdigest() != evidence_files[lock_name]["sha256"]:
-    raise SystemExit("Resolved CI solver lock differs from the exact candidate")
+bindings = (
+    ("source_solver_spec_sha256", f"environment-{platform_id}.yml", Path(sys.argv[6])),
+    (
+        "source_artifact_lock_sha256",
+        f"artifact-lock-{platform_id}.explicit.txt",
+        Path(sys.argv[7]),
+    ),
+    ("source_release_tools_lock_sha256", "requirements-release-tools.txt", Path(sys.argv[8])),
+)
+for field, evidence_name, tracked_path in bindings:
+    if record.get(field) != evidence_files[evidence_name]["sha256"]:
+        raise SystemExit(f"Resolved CI source binding mismatch: {field}")
+    tracked_payload = tracked_path.read_bytes()
+    if hashlib.sha256(tracked_payload).hexdigest() != evidence_files[evidence_name]["sha256"]:
+        raise SystemExit(
+            f"Resolved CI environment source differs from the exact candidate: {evidence_name}"
+        )
 PY
     done
     echo "github_actions_metadata_ingestion=PASS"
@@ -995,17 +1012,14 @@ test "\$(run_clean git -C $(printf '%q' "${clone_root}") rev-parse HEAD)" = $(pr
 test "\$(run_clean git -C $(printf '%q' "${clone_root}") remote get-url origin)" = $(printf '%q' "${PUBLIC_REMOTE}")
 run_clean git -C $(printf '%q' "${clone_root}") fsck --full
 test -z "\$(run_clean git -C $(printf '%q' "${clone_root}") status --porcelain --untracked-files=all)"
-run_clean $(printf '%q' "${PYTHON_BIN}") -m venv $(printf '%q' "${venv_root}")
+run_clean $(printf '%q' "${PYTHON_BIN}") -m venv --system-site-packages $(printf '%q' "${venv_root}")
 FRESH_PYTHON=$(printf '%q' "${venv_root}/bin/python")
-run_clean "\${FRESH_PYTHON}" -m pip install --force-reinstall \
-  pip==26.1.2 build==1.5.0 setuptools==82.0.1 wheel==0.47.0 \
-  biopython==1.87 pytest==9.1.1 python-docx==1.2.0
 measure_command package_build $(printf '%q' "${package_log_file}") not_applicable \
   bash $(printf '%q' "${package_command_file}")
 WHEEL="\$(find $(printf '%q' "${VALIDATION_ROOT}/dist") -maxdepth 1 -type f -name '*.whl' -print -quit)"
 SDIST="\$(find $(printf '%q' "${VALIDATION_ROOT}/dist") -maxdepth 1 -type f -name '*.tar.gz' -print -quit)"
 test -n "\${WHEEL}" && test -n "\${SDIST}"
-run_clean "\${FRESH_PYTHON}" -m pip install --force-reinstall "\${WHEEL}"
+run_clean "\${FRESH_PYTHON}" -m pip install --force-reinstall --no-deps "\${WHEEL}"
 run_clean "\${FRESH_PYTHON}" -I -c \
   'import platform,sys; assert tuple(sys.version_info[:3]) == (3,12,13), platform.python_version()'
 run_clean "\${FRESH_PYTHON}" -I -c \
@@ -1020,12 +1034,10 @@ cd $(printf '%q' "${probe_root}")
 run_clean "\${FRESH_PYTHON}" -I -c \
   'from pathlib import Path; import mito_overview; p=Path(mito_overview.__file__).resolve(); assert "site-packages" in p.parts; print(p)'
 run_clean "\${FRESH_PYTHON}" -I -m mito_overview.cli --list-steps
-run_clean $(printf '%q' "${PYTHON_BIN}") -m venv $(printf '%q' "${sdist_venv_root}")
+run_clean $(printf '%q' "${PYTHON_BIN}") -m venv --system-site-packages $(printf '%q' "${sdist_venv_root}")
 SDIST_PYTHON=$(printf '%q' "${sdist_venv_root}/bin/python")
-run_clean "\${SDIST_PYTHON}" -m pip install --force-reinstall \
-  pip==26.1.2 build==1.5.0 setuptools==82.0.1 wheel==0.47.0 \
-  biopython==1.87 pytest==9.1.1 python-docx==1.2.0
-run_clean "\${SDIST_PYTHON}" -m pip install --force-reinstall --no-build-isolation "\${SDIST}"
+run_clean "\${SDIST_PYTHON}" -m pip install --force-reinstall --no-build-isolation \
+  --no-deps "\${SDIST}"
 WHEEL_SHA256_BEFORE_TESTS="\$(run_clean $(printf '%q' "${PYTHON_BIN}") -c \
   'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())' \
   "\${WHEEL}")"
@@ -1437,7 +1449,9 @@ PY
   echo "public_validation_github_actions_run_id=${PUBLIC_RUN_ID}"
   echo "validation_profile=${VALIDATION_PROFILE}"
   echo "generated_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  uname -a
+  echo "operating_system=$(uname -s)"
+  echo "kernel_release=$(uname -r)"
+  echo "architecture=$(uname -m)"
   if command -v sw_vers >/dev/null 2>&1; then sw_vers; fi
   "${PYTHON_BIN}" --version
   "${PYTHON_BIN}" -m pip freeze

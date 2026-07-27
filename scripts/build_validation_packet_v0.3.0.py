@@ -4095,6 +4095,27 @@ def validate_resolved_ci_environments(
     expected_commit: str,
     expected_run_id: int,
 ) -> list[dict[str, object]]:
+    def conda_artifact_urls(path: Path, label: str) -> set[str]:
+        lines = path.read_text(encoding="utf-8").splitlines()
+        if lines.count("@EXPLICIT") != 1:
+            raise ValueError(f"{label} must contain exactly one @EXPLICIT marker")
+        urls = {line.strip() for line in lines if line.startswith("https://")}
+        if not urls:
+            raise ValueError(f"{label} contains no Conda artifact URLs")
+        for url in urls:
+            parsed = urlsplit(url)
+            if (
+                parsed.scheme != "https"
+                or parsed.hostname != "conda.anaconda.org"
+                or parsed.username is not None
+                or parsed.password is not None
+                or parsed.query
+                or parsed.fragment
+                or not parsed.path.startswith(("/conda-forge/", "/bioconda/"))
+            ):
+                raise ValueError(f"{label} contains an unapproved Conda artifact URL")
+        return urls
+
     evidence_root = validation_root / RESOLVED_CI_ENVIRONMENTS_RELATIVE
     validate_regular_tree(evidence_root, label="Resolved CI environment evidence")
     observed_entries = {path.name: path for path in evidence_root.iterdir()}
@@ -4120,7 +4141,9 @@ def validate_resolved_ci_environments(
         "resolved_environment",
         "evidence_files",
         "evidence_manifest_sha256",
-        "source_lock_sha256",
+        "source_solver_spec_sha256",
+        "source_artifact_lock_sha256",
+        "source_release_tools_lock_sha256",
     }
     for platform_id in RESOLVED_CI_PLATFORMS:
         platform_root = evidence_root / platform_id
@@ -4128,6 +4151,8 @@ def validate_resolved_ci_environments(
             f"conda-{platform_id}.explicit.txt",
             f"pip-{platform_id}.txt",
             f"environment-{platform_id}.yml",
+            f"artifact-lock-{platform_id}.explicit.txt",
+            "requirements-release-tools.txt",
             f"python-{platform_id}.txt",
         }
         record_name = f"platform-{platform_id}.json"
@@ -4205,22 +4230,54 @@ def validate_resolved_ci_environments(
             raise ValueError(
                 f"Resolved CI evidence-manifest digest mismatch for {platform_id}"
             )
-        lock_name = f"environment-{platform_id}.yml"
-        lock_sha256 = str(evidence_files[lock_name]["sha256"])
-        if record.get("source_lock_sha256") != lock_sha256:
+        solver_name = f"environment-{platform_id}.yml"
+        artifact_name = f"artifact-lock-{platform_id}.explicit.txt"
+        tools_name = "requirements-release-tools.txt"
+        solver_sha256 = str(evidence_files[solver_name]["sha256"])
+        artifact_sha256 = str(evidence_files[artifact_name]["sha256"])
+        tools_sha256 = str(evidence_files[tools_name]["sha256"])
+        if record.get("source_solver_spec_sha256") != solver_sha256:
             raise ValueError(
-                f"Resolved CI source-lock digest mismatch for {platform_id}"
+                f"Resolved CI solver-spec digest mismatch for {platform_id}"
             )
-        tracked_lock = repo_root / "locks" / lock_name
-        validate_regular_file(
-            tracked_lock,
-            source_root=repo_root,
-            label=f"Tracked environment lock for {platform_id}",
+        if record.get("source_artifact_lock_sha256") != artifact_sha256:
+            raise ValueError(
+                f"Resolved CI artifact-lock digest mismatch for {platform_id}"
+            )
+        if record.get("source_release_tools_lock_sha256") != tools_sha256:
+            raise ValueError(
+                f"Resolved CI release-tools-lock digest mismatch for {platform_id}"
+            )
+        observed_urls = conda_artifact_urls(
+            platform_root / f"conda-{platform_id}.explicit.txt",
+            f"Resolved CI runtime manifest for {platform_id}",
         )
-        if sha256(tracked_lock) != lock_sha256:
+        source_urls = conda_artifact_urls(
+            platform_root / artifact_name,
+            f"Resolved CI source artifact lock for {platform_id}",
+        )
+        if observed_urls != source_urls:
             raise ValueError(
-                f"Resolved CI solver lock differs from the release commit for {platform_id}"
+                f"Resolved CI runtime artifact set differs from the source artifact lock "
+                f"for {platform_id}"
             )
+        tracked_sources = {
+            solver_name: solver_sha256,
+            f"environment-{platform_id}.explicit.txt": artifact_sha256,
+            tools_name: tools_sha256,
+        }
+        for tracked_name, expected_sha256 in tracked_sources.items():
+            tracked_lock = repo_root / "locks" / tracked_name
+            validate_regular_file(
+                tracked_lock,
+                source_root=repo_root,
+                label=f"Tracked environment source for {platform_id}: {tracked_name}",
+            )
+            if sha256(tracked_lock) != expected_sha256:
+                raise ValueError(
+                    f"Resolved CI environment source differs from the release commit "
+                    f"for {platform_id}: {tracked_name}"
+                )
         identities.append(
             {
                 "path": f"{RESOLVED_CI_ENVIRONMENTS_RELATIVE}/{platform_id}",
@@ -5475,6 +5532,8 @@ def validate_packet_hygiene(packet_root: Path) -> None:
         r"/Users/[^/\s]+",
         r"/home/[^/\s]+",
         r"/private/tmp(?:/[^\s'\";]*)?",
+        r"/(?:group|scratch)/(?:g/)?xgai(?:/[^\s'\";]*)?",
+        r"(?i)\bqfs\d*\.rcc\.mcw\.edu\b",
         r"(?i)[A-Z]:\\Users\\[^\\\s]+",
     )
     secret_patterns = (
@@ -5514,7 +5573,7 @@ set -euo pipefail
 # Trust boundary: this script checks packet-internal consistency only. Verify
 # the enclosing ZIP against a separately trusted SHA-256 before extraction.
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-python3 - "${ROOT}" <<'PY'
+python3 -I -S - "${ROOT}" <<'PY'
 import csv
 import hashlib
 import json
@@ -5531,6 +5590,7 @@ from collections import Counter
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path, PurePosixPath
+from urllib.parse import urlsplit
 
 root = Path(sys.argv[1])
 
@@ -6685,6 +6745,8 @@ forbidden_json_keys = {
 local_path_patterns = (
     r"/Users/[^/\s]+", r"/home/[^/\s]+",
     r"/private/tmp(?:/[^\s'\";]*)?", r"(?i)[A-Z]:\\Users\\[^\\\s]+",
+    r"/(?:group|scratch)/(?:g/)?xgai(?:/[^\s'\";]*)?",
+    r"(?i)\bqfs\d*\.rcc\.mcw\.edu\b",
 )
 secret_patterns = (
     r"(?i)https?://[^\s/:@]+:[^\s/@]+@",
@@ -7721,6 +7783,8 @@ for platform_id in resolved_platforms:
         f"conda-{platform_id}.explicit.txt",
         f"pip-{platform_id}.txt",
         f"environment-{platform_id}.yml",
+        f"artifact-lock-{platform_id}.explicit.txt",
+        "requirements-release-tools.txt",
         f"python-{platform_id}.txt",
     }
     record_name = f"platform-{platform_id}.json"
@@ -7736,7 +7800,9 @@ for platform_id in resolved_platforms:
     expected_record_fields = {
         "schema_version", "git_commit", "github_run_id", "job", "platform_id",
         "runner_os", "runner_arch", "machine", "python", "resolved_environment",
-        "evidence_files", "evidence_manifest_sha256", "source_lock_sha256",
+        "evidence_files", "evidence_manifest_sha256",
+        "source_solver_spec_sha256", "source_artifact_lock_sha256",
+        "source_release_tools_lock_sha256",
     }
     runner_os, runner_arch, machine = resolved_runner[platform_id]
     if (
@@ -7782,13 +7848,43 @@ for platform_id in resolved_platforms:
     evidence_manifest_sha256 = hashlib.sha256(
         "".join(manifest_lines).encode("utf-8")
     ).hexdigest()
-    lock_name = f"environment-{platform_id}.yml"
+    solver_name = f"environment-{platform_id}.yml"
+    artifact_name = f"artifact-lock-{platform_id}.explicit.txt"
+    tools_name = "requirements-release-tools.txt"
     if (
         record.get("evidence_manifest_sha256") != evidence_manifest_sha256
-        or record.get("source_lock_sha256")
-        != evidence_files[lock_name]["sha256"]
+        or record.get("source_solver_spec_sha256")
+        != evidence_files[solver_name]["sha256"]
+        or record.get("source_artifact_lock_sha256")
+        != evidence_files[artifact_name]["sha256"]
+        or record.get("source_release_tools_lock_sha256")
+        != evidence_files[tools_name]["sha256"]
     ):
         raise SystemExit(f"resolved CI manifest or lock mismatch: {platform_id}")
+    def conda_urls(path):
+        lines = path.read_text(encoding="utf-8").splitlines()
+        if lines.count("@EXPLICIT") != 1:
+            raise SystemExit(f"invalid Conda @EXPLICIT marker: {path.name}")
+        urls = {line.strip() for line in lines if line.startswith("https://")}
+        if not urls:
+            raise SystemExit(f"Conda artifact manifest is empty: {path.name}")
+        for url in urls:
+            parsed = urlsplit(url)
+            if (
+                parsed.scheme != "https"
+                or parsed.hostname != "conda.anaconda.org"
+                or parsed.username is not None
+                or parsed.password is not None
+                or parsed.query
+                or parsed.fragment
+                or not parsed.path.startswith(("/conda-forge/", "/bioconda/"))
+            ):
+                raise SystemExit(f"unapproved Conda artifact URL: {path.name}")
+        return urls
+    if conda_urls(platform_root / f"conda-{platform_id}.explicit.txt") != conda_urls(
+        platform_root / artifact_name
+    ):
+        raise SystemExit(f"resolved CI runtime/source artifact mismatch: {platform_id}")
     resolved_ci_identity.append({
         "path": f"acceptance/resolved_ci_environments/{platform_id}",
         **record,

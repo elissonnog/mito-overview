@@ -54,10 +54,24 @@ jobs:
       - name: Set up locked Linux environment
         uses: conda-incubator/setup-miniconda@8ee1f361103df19b6f8c8655fd3967a8ecb162d5 # v4.0.1
         with:
-          environment-file: locks/environment-linux-64.yml
+          environment-file: locks/environment-linux-64.explicit.txt
           activate-environment: mito-overview
           auto-activate: false
           conda-remove-defaults: true
+
+      - name: Install hash-locked Python release tools
+        run: |
+          python -m pip install \
+            --only-binary=:all: \
+            --require-hashes \
+            -r locks/requirements-release-tools.txt
+          conda list --explicit > "$RUNNER_TEMP/conda-linux-64-observed.txt"
+          grep '^https://' locks/environment-linux-64.explicit.txt | LC_ALL=C sort \
+            > "$RUNNER_TEMP/conda-linux-64-expected.urls"
+          grep '^https://' "$RUNNER_TEMP/conda-linux-64-observed.txt" | LC_ALL=C sort \
+            > "$RUNNER_TEMP/conda-linux-64-observed.urls"
+          diff -u "$RUNNER_TEMP/conda-linux-64-expected.urls" \
+            "$RUNNER_TEMP/conda-linux-64-observed.urls"
 
       - name: Build and install wheel outside checkout
         run: |
@@ -90,6 +104,9 @@ jobs:
           python -m pip freeze --all \
             > "$RUNNER_TEMP/public-validation-environment/pip-linux-64.txt"
           cp locks/environment-linux-64.yml \
+            "$RUNNER_TEMP/public-validation-environment/"
+          cp locks/environment-linux-64.explicit.txt \
+            locks/requirements-release-tools.txt \
             "$RUNNER_TEMP/public-validation-environment/"
 
       - name: Prepare checksum-verified public input cache

@@ -20,6 +20,10 @@ LOCKS = {
     "osx-64": REPO_ROOT / "locks" / "environment-osx-64.yml",
     "osx-arm64": REPO_ROOT / "locks" / "environment-osx-arm64.yml",
 }
+ARTIFACT_LOCKS = {
+    platform: REPO_ROOT / "locks" / f"environment-{platform}.explicit.txt"
+    for platform in LOCKS
+}
 EXPECTED_CONDA_SPECS = {
     "biopython=1.87",
     "python=3.12.13",
@@ -95,6 +99,10 @@ def test_release_python_and_python_dependencies_are_exactly_bounded() -> None:
         "locks/environment-linux-64.yml",
         "locks/environment-osx-64.yml",
         "locks/environment-osx-arm64.yml",
+        "locks/environment-linux-64.explicit.txt",
+        "locks/environment-osx-64.explicit.txt",
+        "locks/environment-osx-arm64.explicit.txt",
+        "locks/requirements-release-tools.txt",
     }
     assert set(
         project["tool"]["setuptools"]["data-files"][
@@ -212,6 +220,58 @@ def test_generic_environment_and_platform_solver_specs_are_synchronized() -> Non
         text = lock_path.read_text(encoding="utf-8")
         assert f"# platform: {platform}" in text
         assert _environment_specs(lock_path) == canonical_specs
+
+
+def test_platform_artifact_locks_are_explicit_and_complete() -> None:
+    required_fragments = {
+        "python-3.12.13-",
+        "htslib-1.23.1-",
+        "samtools-1.23.1-",
+        "minimap2-2.31-",
+        "bwa-0.7.19-",
+        "biopython-1.87-",
+        "matplotlib-3.11.0-",
+        "numpy-2.5.1-",
+        "pandas-3.0.3-",
+        "pysam-0.24.0-",
+        "requests-2.34.2-",
+        "setuptools-82.0.1-",
+        "wheel-0.47.0-",
+        "pip-26.1.2-",
+    }
+    for platform, path in ARTIFACT_LOCKS.items():
+        lines = path.read_text(encoding="utf-8").splitlines()
+        assert f"# platform: {platform}" in lines
+        assert "@EXPLICIT" in lines
+        urls = [line for line in lines if line.startswith("https://")]
+        assert urls
+        assert len(urls) == len(set(urls))
+        assert all(
+            url.startswith(
+                (
+                    "https://conda.anaconda.org/conda-forge/",
+                    "https://conda.anaconda.org/bioconda/",
+                )
+            )
+            for url in urls
+        )
+        for fragment in required_fragments:
+            assert any(fragment in url for url in urls), (platform, fragment)
+
+
+def test_release_tool_requirements_are_hash_locked() -> None:
+    path = REPO_ROOT / "locks" / "requirements-release-tools.txt"
+    text = path.read_text(encoding="utf-8")
+    for requirement in (
+        "build==1.5.0",
+        "pytest==9.1.1",
+        "python-docx==1.2.0",
+        "lxml==6.1.1",
+    ):
+        assert requirement in text
+    assert "--hash=sha256:" in text
+    assert "--index-url" not in text
+    assert "git+" not in text
 
 
 def _fake_python(tmp_path: Path) -> tuple[Path, Path]:

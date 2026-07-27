@@ -65,5 +65,9 @@ namespaces = false
 "share/mito-overview/locks" = [
   "locks/environment-linux-64.yml",
   "locks/environment-osx-64.yml",
-  "locks/environment-osx-arm64.yml"
+  "locks/environment-osx-arm64.yml",
+  "locks/environment-linux-64.explicit.txt",
+  "locks/environment-osx-64.explicit.txt",
+  "locks/environment-osx-arm64.explicit.txt",
+  "locks/requirements-release-tools.txt"
 ]

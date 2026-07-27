@@ -106,6 +106,62 @@ def _write_packet(
         name: (json.dumps(payload, sort_keys=True) + "\n").encode("utf-8")
         for name, payload in objects.items()
     }
+    for platform in ("linux-64", "osx-64", "osx-arm64"):
+        prefix = f"acceptance/resolved_ci_environments/{platform}"
+        environment_payloads = {
+            f"conda-{platform}.explicit.txt": b"@EXPLICIT\n",
+            f"pip-{platform}.txt": b"pysam==0.24.0\n",
+            f"environment-{platform}.yml": b"name: fixture\n",
+            f"artifact-lock-{platform}.explicit.txt": (
+                b"@EXPLICIT\nhttps://example.invalid/pinned.conda\n"
+            ),
+            "requirements-release-tools.txt": (
+                b"pytest==9.1.1 --hash=sha256:"
+                + b"a" * 64
+                + b"\n"
+            ),
+            f"python-{platform}.txt": b"Python 3.12.13\n",
+        }
+        evidence_files = {
+            name: {
+                "sha256": hashlib.sha256(payload).hexdigest(),
+                "size_bytes": len(payload),
+            }
+            for name, payload in environment_payloads.items()
+        }
+        manifest_payload = "".join(
+            f"{name}\t{evidence_files[name]['sha256']}\t"
+            f"{evidence_files[name]['size_bytes']}\n"
+            for name in sorted(evidence_files)
+        ).encode("utf-8")
+        environment_payloads[f"platform-{platform}.json"] = (
+            json.dumps(
+                {
+                    "schema_version": "2.0",
+                    "git_commit": FINAL_SHA,
+                    "platform_id": platform,
+                    "resolved_environment": True,
+                    "evidence_files": evidence_files,
+                    "evidence_manifest_sha256": hashlib.sha256(
+                        manifest_payload
+                    ).hexdigest(),
+                    "source_solver_spec_sha256": evidence_files[
+                        f"environment-{platform}.yml"
+                    ]["sha256"],
+                    "source_artifact_lock_sha256": evidence_files[
+                        f"artifact-lock-{platform}.explicit.txt"
+                    ]["sha256"],
+                    "source_release_tools_lock_sha256": evidence_files[
+                        "requirements-release-tools.txt"
+                    ]["sha256"],
+                },
+                sort_keys=True,
+            )
+            + "\n"
+        ).encode("utf-8")
+        payloads.update(
+            {f"{prefix}/{name}": payload for name, payload in environment_payloads.items()}
+        )
     payloads["figures/source.png"] = source_figure
     payloads.update({f"dist/{name}": payload for name, payload in distributions.items()})
     payloads["artifacts.sha256"] = "".join(
@@ -270,48 +326,15 @@ def _write_inputs(root: Path) -> dict[str, Path]:
         encoding="utf-8",
     )
     locks = root / "locks"
-    for platform in ("linux-64", "osx-64", "osx-arm64"):
-        target = locks / platform
-        target.mkdir(parents=True)
-        (target / f"conda-{platform}.explicit.txt").write_text("@EXPLICIT\n")
-        (target / f"pip-{platform}.txt").write_text("pysam==0.24.0\n")
-        (target / f"environment-{platform}.yml").write_text("name: fixture\n")
-        (target / f"python-{platform}.txt").write_text("Python 3.12.13\n")
-        evidence_names = (
-            f"conda-{platform}.explicit.txt",
-            f"pip-{platform}.txt",
-            f"environment-{platform}.yml",
-            f"python-{platform}.txt",
-        )
-        evidence_files = {
-            name: {
-                "sha256": _sha256(target / name),
-                "size_bytes": (target / name).stat().st_size,
-            }
-            for name in evidence_names
-        }
-        manifest_payload = "".join(
-            f"{name}\t{evidence_files[name]['sha256']}\t{evidence_files[name]['size_bytes']}\n"
-            for name in sorted(evidence_files)
-        ).encode("utf-8")
-        (target / f"platform-{platform}.json").write_text(
-            json.dumps(
-                {
-                    "schema_version": "2.0",
-                    "git_commit": FINAL_SHA,
-                    "platform_id": platform,
-                    "resolved_environment": True,
-                    "evidence_files": evidence_files,
-                    "evidence_manifest_sha256": hashlib.sha256(
-                        manifest_payload
-                    ).hexdigest(),
-                    "source_lock_sha256": evidence_files[
-                        f"environment-{platform}.yml"
-                    ]["sha256"],
-                }
-            )
-            + "\n"
-        )
+    with zipfile.ZipFile(archive) as handle:
+        prefix = "acceptance/resolved_ci_environments/"
+        for name in handle.namelist():
+            if not name.startswith(prefix) or name.endswith("/"):
+                continue
+            relative = Path(name.removeprefix(prefix))
+            destination = locks / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(handle.read(name))
     dist = root / "dist"
     dist.mkdir()
     for name, payload in distributions.items():
@@ -481,6 +504,44 @@ def test_assembler_rejects_unexpected_environment_lock_file(tmp_path: Path) -> N
     completed, _ = _run(tmp_path, inputs)
     assert completed.returncode != 0
     assert "environment lock inventory mismatch" in completed.stderr
+
+
+def test_assembler_rejects_fully_resealed_environment_lock_substitution(
+    tmp_path: Path,
+) -> None:
+    inputs = _write_inputs(tmp_path)
+    platform = "linux-64"
+    root = inputs["locks"] / platform
+    artifact_name = f"artifact-lock-{platform}.explicit.txt"
+    (root / artifact_name).write_text(
+        "@EXPLICIT\n"
+        "https://conda.anaconda.org/conda-forge/linux-64/substituted-1.0-0.conda\n",
+        encoding="utf-8",
+    )
+    record_path = root / f"platform-{platform}.json"
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+    for name in sorted(record["evidence_files"]):
+        payload = (root / name).read_bytes()
+        record["evidence_files"][name] = {
+            "sha256": hashlib.sha256(payload).hexdigest(),
+            "size_bytes": len(payload),
+        }
+    manifest_payload = "".join(
+        f"{name}\t{record['evidence_files'][name]['sha256']}\t"
+        f"{record['evidence_files'][name]['size_bytes']}\n"
+        for name in sorted(record["evidence_files"])
+    ).encode("utf-8")
+    record["evidence_manifest_sha256"] = hashlib.sha256(manifest_payload).hexdigest()
+    record["source_artifact_lock_sha256"] = record["evidence_files"][
+        artifact_name
+    ]["sha256"]
+    record_path.write_text(json.dumps(record) + "\n", encoding="utf-8")
+
+    completed, output = _run(tmp_path, inputs)
+
+    assert completed.returncode != 0
+    assert "differs from packet evidence" in completed.stderr
+    assert not output.exists()
 
 
 def test_assembler_rejects_report_pdf_changed_after_visual_qa(tmp_path: Path) -> None:

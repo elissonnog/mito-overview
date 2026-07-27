@@ -205,11 +205,12 @@ complete rerun from a new final commit.
 
 ## Required release sequence
 
-1. Complete PR 3 and run three role-separated read-only software audits. Each
-   audit uses a unique execution ID and is bound to the PR-head tree;
-   owner-posted GitHub records do not imply distinct external reviewers.
+1. Complete the release-candidate PR recorded by the validator and run three
+   role-separated read-only software audits. Each audit uses a unique execution
+   ID and is bound to the PR-head tree; owner-posted GitHub records do not imply
+   distinct external reviewers.
 2. Require Ubuntu and macOS PR CI at the exact final PR head.
-3. Merge PR 3 and define the resulting `main` commit as `FINAL_SHA`.
+3. Merge that PR and define the resulting `main` commit as `FINAL_SHA`.
 4. Require push-event Ubuntu and macOS CI at `FINAL_SHA`.
 5. Run independent macOS and Ubuntu clean-room public reproductions from the
    public HTTPS repository at `FINAL_SHA`.

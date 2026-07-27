@@ -95,8 +95,13 @@ release date.
 
 ## GitHub identity gate
 
-- [ ] PR 3 contains current `main`, is no longer draft, and has green Ubuntu
-  and macOS checks at its exact final head.
+- [ ] CI environments are created from the tracked platform-specific
+  `@EXPLICIT` Conda artifact manifests. Python-only release tools are installed
+  from `requirements-release-tools.txt` with `--require-hashes`, and the
+  observed Conda URL set exactly matches the tracked platform lock.
+- [ ] The validator-recorded release-candidate PR contains current `main`, is
+  no longer draft, and has green Ubuntu and macOS checks at its exact final
+  head. The PR number and run ID are execution inputs, not hardcoded metadata.
 - [ ] Three role-separated read-only agent executions (release engineering,
   bioinformatics, and reproducibility) have no unresolved blockers. Each
   record has a unique audit-instance ID and is bound to the reviewed PR-head

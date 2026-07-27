@@ -84,6 +84,14 @@ def create_fake_gh_harness(tmp_path: Path) -> tuple[Path, Path, dict[str, str]]:
         (locks / f"environment-{platform}.yml").write_text(
             "fixture\n", encoding="utf-8"
         )
+        (locks / f"environment-{platform}.explicit.txt").write_text(
+            "@EXPLICIT\n"
+            f"https://conda.anaconda.org/conda-forge/{platform}/pinned-1.0-0.conda\n",
+            encoding="utf-8",
+        )
+    (locks / "requirements-release-tools.txt").write_text(
+        "pytest==9.1.1 --hash=sha256:" + "a" * 64 + "\n", encoding="utf-8"
+    )
     run_git(repo, "init", "-q")
     run_git(repo, "config", "user.name", "Runner Test")
     run_git(repo, "config", "user.email", "runner-test@example.org")
@@ -382,14 +390,27 @@ if args[:2] == ["run", "download"]:
         platform = name.removeprefix("resolved-environment-").removesuffix(
             f"-{{push_run_id}}"
         )
-        (destination / f"conda-{{platform}}.explicit.txt").write_text("fixture\\n")
+        source_locks = Path.cwd() / "locks"
+        (destination / f"conda-{{platform}}.explicit.txt").write_bytes(
+            (source_locks / f"environment-{{platform}}.explicit.txt").read_bytes()
+        )
         (destination / f"pip-{{platform}}.txt").write_text("fixture\\n")
-        (destination / f"environment-{{platform}}.yml").write_text("fixture\\n")
+        (destination / f"environment-{{platform}}.yml").write_bytes(
+            (source_locks / f"environment-{{platform}}.yml").read_bytes()
+        )
+        (destination / f"artifact-lock-{{platform}}.explicit.txt").write_bytes(
+            (source_locks / f"environment-{{platform}}.explicit.txt").read_bytes()
+        )
+        (destination / "requirements-release-tools.txt").write_bytes(
+            (source_locks / "requirements-release-tools.txt").read_bytes()
+        )
         (destination / f"python-{{platform}}.txt").write_text("Python 3.12.13\\n")
         evidence_names = (
             f"conda-{{platform}}.explicit.txt",
             f"pip-{{platform}}.txt",
             f"environment-{{platform}}.yml",
+            f"artifact-lock-{{platform}}.explicit.txt",
+            "requirements-release-tools.txt",
             f"python-{{platform}}.txt",
         )
         evidence_files = {{}}
@@ -413,7 +434,9 @@ if args[:2] == ["run", "download"]:
                 "resolved_environment": True,
                 "evidence_files": evidence_files,
                 "evidence_manifest_sha256": hashlib.sha256(manifest_payload).hexdigest(),
-                "source_lock_sha256": evidence_files[f"environment-{{platform}}.yml"]["sha256"],
+                "source_solver_spec_sha256": evidence_files[f"environment-{{platform}}.yml"]["sha256"],
+                "source_artifact_lock_sha256": evidence_files[f"artifact-lock-{{platform}}.explicit.txt"]["sha256"],
+                "source_release_tools_lock_sha256": evidence_files["requirements-release-tools.txt"]["sha256"],
             }}) + "\\n",
             encoding="utf-8",
         )
@@ -677,6 +700,10 @@ def test_runner_declares_public_clone_and_isolated_installed_probe() -> None:
     assert "refs/remotes/origin/main" in text
     assert "public_main_commit" in text
     assert "env -i" in text
+    assert "uname -a" not in text
+    assert 'echo "operating_system=$(uname -s)"' in text
+    assert 'echo "kernel_release=$(uname -r)"' in text
+    assert 'echo "architecture=$(uname -m)"' in text
     assert "python -m venv" not in text  # executable is shell-expanded, not ambient.
     assert "-m venv" in text
     assert "-m build --no-isolation" in text
@@ -889,9 +916,11 @@ def test_runner_binds_ci_evidence_and_receipt_to_all_explicit_ids() -> None:
     assert "Resolved CI environment inventory mismatch" in text
     assert "Resolved CI evidence-file digest mismatch" in text
     assert "Resolved CI evidence manifest digest mismatch" in text
-    assert "Resolved CI solver lock differs from the exact candidate" in text
+    assert "Resolved CI environment source differs from the exact candidate" in text
     assert "evidence_manifest_sha256" in text
-    assert "source_lock_sha256" in text
+    assert "source_solver_spec_sha256" in text
+    assert "source_artifact_lock_sha256" in text
+    assert "source_release_tools_lock_sha256" in text
     assert "Python 3.12.13" in text
     assert 'gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${PUBLIC_RUN_ID}"' in text
     assert "actions/workflows/public-validation.yml/runs" not in text
