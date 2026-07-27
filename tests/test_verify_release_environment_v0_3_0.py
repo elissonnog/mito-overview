@@ -66,6 +66,17 @@ def write_conda_metadata(prefix: Path, record: str) -> None:
     )
 
 
+def configure_runtime_python(
+    prefix: Path, monkeypatch: pytest.MonkeyPatch
+) -> Path:
+    python = prefix / "bin" / "python"
+    python.parent.mkdir(parents=True, exist_ok=True)
+    python.write_text("#!/bin/sh\n", encoding="utf-8")
+    python.chmod(0o755)
+    monkeypatch.setattr(verifier.sys, "executable", str(python))
+    return python
+
+
 def test_artifact_urls_require_sha256_fragments() -> None:
     text = (
         "@EXPLICIT\n"
@@ -143,9 +154,9 @@ def test_verify_rejects_same_version_from_different_build(
         prefix,
         next(line for line in wrong.splitlines() if line.startswith("https://")),
     )
+    runtime_python = configure_runtime_python(prefix, monkeypatch)
 
     monkeypatch.setattr(verifier, "platform_id", lambda: "linux-64")
-    monkeypatch.setattr(verifier.sys, "prefix", str(prefix))
     monkeypatch.setattr(
         verifier.sys, "version_info", (3, 12, 13, "final", 0)
     )
@@ -162,7 +173,7 @@ def test_verify_rejects_same_version_from_different_build(
     monkeypatch.setattr(verifier.subprocess, "run", fake_run)
 
     with pytest.raises(ValueError, match="do not match"):
-        verifier.verify(repo, Path(sys.executable), COMMIT)
+        verifier.verify(repo, runtime_python, COMMIT)
 
 
 def test_verify_accepts_exact_url_and_hash_set(
@@ -179,9 +190,9 @@ def test_verify_accepts_exact_url_and_hash_set(
         prefix,
         next(line for line in locked.splitlines() if line.startswith("https://")),
     )
+    runtime_python = configure_runtime_python(prefix, monkeypatch)
 
     monkeypatch.setattr(verifier, "platform_id", lambda: "linux-64")
-    monkeypatch.setattr(verifier.sys, "prefix", str(prefix))
     monkeypatch.setattr(
         verifier.sys, "version_info", (3, 12, 13, "final", 0)
     )
@@ -197,7 +208,7 @@ def test_verify_accepts_exact_url_and_hash_set(
 
     monkeypatch.setattr(verifier.subprocess, "run", fake_run)
 
-    record = verifier.verify(repo, Path(sys.executable), COMMIT)
+    record = verifier.verify(repo, runtime_python, COMMIT)
     assert record["verified"] is True
     assert record["platform_id"] == "linux-64"
     assert record["artifact_count"] == 1
@@ -221,6 +232,7 @@ def test_verify_ignores_hostile_python_hooks_and_conda_executable(
         prefix,
         next(line for line in locked.splitlines() if line.startswith("https://")),
     )
+    runtime_python = configure_runtime_python(prefix, monkeypatch)
 
     hostile = tmp_path / "hostile"
     hostile.mkdir()
@@ -243,7 +255,6 @@ def test_verify_ignores_hostile_python_hooks_and_conda_executable(
     monkeypatch.setenv("PYTHONHOME", str(hostile))
     monkeypatch.setenv("CONDA_EXE", str(fake_conda))
     monkeypatch.setattr(verifier, "platform_id", lambda: "linux-64")
-    monkeypatch.setattr(verifier.sys, "prefix", str(prefix))
     monkeypatch.setattr(
         verifier.sys, "version_info", (3, 12, 13, "final", 0)
     )
@@ -259,8 +270,40 @@ def test_verify_ignores_hostile_python_hooks_and_conda_executable(
         return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
 
     monkeypatch.setattr(verifier.subprocess, "run", fake_run)
-    record = verifier.verify(repo, Path(sys.executable), COMMIT)
+    record = verifier.verify(repo, runtime_python, COMMIT)
 
     assert record["verified"] is True
     assert not startup_marker.exists()
     assert not conda_marker.exists()
+
+
+def test_verify_rejects_package_empty_venv_over_conda_base(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = tmp_path / "repo"
+    locks = repo / "locks"
+    locks.mkdir(parents=True)
+    locked = manifest("python-3.12.13-approved_0.conda")
+    (locks / "environment-linux-64.explicit.txt").write_text(
+        locked, encoding="utf-8"
+    )
+    conda_base = tmp_path / "conda-base"
+    write_conda_metadata(
+        conda_base,
+        next(line for line in locked.splitlines() if line.startswith("https://")),
+    )
+    empty_venv = tmp_path / "empty-venv"
+    runtime_python = configure_runtime_python(empty_venv, monkeypatch)
+    monkeypatch.setattr(verifier.sys, "prefix", str(conda_base))
+    monkeypatch.setattr(verifier, "platform_id", lambda: "linux-64")
+
+    def fake_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        assert command[0] == "git"
+        stdout = TREE + "\n" if command[-1] == "HEAD^{tree}" else COMMIT + "\n"
+        if command[-1] == "--untracked-files=all":
+            stdout = ""
+        return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
+
+    monkeypatch.setattr(verifier.subprocess, "run", fake_run)
+    with pytest.raises(ValueError, match="not inside a Conda prefix"):
+        verifier.verify(repo, runtime_python, COMMIT)

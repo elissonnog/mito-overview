@@ -178,11 +178,16 @@ def verify(
     if worktree_status:
         raise ValueError("Release repository worktree is not clean")
 
-    prefix = Path(sys.prefix).resolve(strict=True)
     if python_executable != Path(sys.executable).resolve(strict=True):
         raise ValueError(
             "The verifier must run with the Python executable supplied to it"
         )
+    if python_executable.parent.name != "bin":
+        raise ValueError(
+            f"Release Python must be located under an environment bin directory: "
+            f"{python_executable}"
+        )
+    prefix = python_executable.parent.parent.resolve(strict=True)
     if not (prefix / "conda-meta").is_dir():
         raise ValueError(
             f"Release Python is not inside a Conda prefix: {python_executable}"
