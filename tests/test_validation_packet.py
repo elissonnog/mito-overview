@@ -160,8 +160,14 @@ def create_release_repo(tmp_path: Path, version: str = "0.3.0") -> tuple[Path, s
     locks = repo / "locks"
     locks.mkdir()
     for platform_id in packet_builder.RESOLVED_CI_PLATFORMS:
-        name = f"environment-{platform_id}.yml"
-        (locks / name).write_bytes((ROOT / "locks" / name).read_bytes())
+        for name in (
+            f"environment-{platform_id}.yml",
+            f"environment-{platform_id}.explicit.txt",
+        ):
+            (locks / name).write_bytes((ROOT / "locks" / name).read_bytes())
+    (locks / "requirements-release-tools.txt").write_bytes(
+        (ROOT / "locks" / "requirements-release-tools.txt").read_bytes()
+    )
     run(["git", "init", "-q"], repo)
     run(["git", "config", "user.name", "Validation Test"], repo)
     run(["git", "config", "user.email", "validation@example.org"], repo)
@@ -615,14 +621,18 @@ def write_resolved_ci_environments(root: Path, repo: Path, commit: str) -> None:
     for platform_id in packet_builder.RESOLVED_CI_PLATFORMS:
         platform_root = evidence_root / platform_id
         platform_root.mkdir(parents=True, exist_ok=True)
+        artifact_lock = (
+            repo / "locks" / f"environment-{platform_id}.explicit.txt"
+        ).read_bytes()
         files = {
-            f"conda-{platform_id}.explicit.txt": (
-                f"# platform: {platform_id}\n@EXPLICIT\n"
-                "https://example.invalid/pinned-package.conda\n"
-            ).encode("utf-8"),
+            f"conda-{platform_id}.explicit.txt": artifact_lock,
             f"pip-{platform_id}.txt": b"mito-overview==0.3.0\n",
             f"environment-{platform_id}.yml": (
                 repo / "locks" / f"environment-{platform_id}.yml"
+            ).read_bytes(),
+            f"artifact-lock-{platform_id}.explicit.txt": artifact_lock,
+            "requirements-release-tools.txt": (
+                repo / "locks" / "requirements-release-tools.txt"
             ).read_bytes(),
             f"python-{platform_id}.txt": b"Python 3.12.13\n",
         }
@@ -652,8 +662,14 @@ def write_resolved_ci_environments(root: Path, repo: Path, commit: str) -> None:
             "resolved_environment": True,
             "evidence_files": evidence_files,
             "evidence_manifest_sha256": hashlib.sha256(manifest_payload).hexdigest(),
-            "source_lock_sha256": evidence_files[
+            "source_solver_spec_sha256": evidence_files[
                 f"environment-{platform_id}.yml"
+            ]["sha256"],
+            "source_artifact_lock_sha256": evidence_files[
+                f"artifact-lock-{platform_id}.explicit.txt"
+            ]["sha256"],
+            "source_release_tools_lock_sha256": evidence_files[
+                "requirements-release-tools.txt"
             ]["sha256"],
         }
         (platform_root / f"platform-{platform_id}.json").write_text(
@@ -688,6 +704,41 @@ def write_acceptance_evidence(
         )
         for artifact in distributions:
             artifact["direct_url_archive_sha256"] = artifact["sha256"]
+
+    platform_id = "osx-arm64"
+    artifact_lock = repo / "locks" / f"environment-{platform_id}.explicit.txt"
+    artifact_urls = sorted(
+        line
+        for line in artifact_lock.read_text(encoding="utf-8").splitlines()
+        if line.startswith("https://")
+    )
+    (
+        root / "acceptance" / "release_environment_verification.json"
+    ).write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "platform_id": platform_id,
+                "python": "3.12.13",
+                "artifact_count": len(artifact_urls),
+                "tracked_artifact_lock": artifact_lock.name,
+                "tracked_artifact_lock_sha256": hashlib.sha256(
+                    artifact_lock.read_bytes()
+                ).hexdigest(),
+                "runtime_artifact_set_sha256": hashlib.sha256(
+                    ("\n".join(artifact_urls) + "\n").encode("utf-8")
+                ).hexdigest(),
+                "repository_commit": commit,
+                "repository_tree": final_tree,
+                "repository_clean": True,
+                "verified": True,
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
 
     fresh_case = packet_builder.FRESH_CLONE_CASE_ID
     (root / "commands" / f"{fresh_case}.sh").write_text(
@@ -2950,8 +3001,14 @@ def test_packet_rejects_self_consistent_resolved_ci_lock_drift(tmp_path: Path) -
         / packet_builder.RESOLVED_CI_ENVIRONMENTS_RELATIVE
         / platform_id
     )
-    lock_name = f"environment-{platform_id}.yml"
-    (platform_root / lock_name).write_text("name: altered\n", encoding="utf-8")
+    lock_name = f"artifact-lock-{platform_id}.explicit.txt"
+    altered_manifest = (
+        "@EXPLICIT\n"
+        "https://conda.anaconda.org/conda-forge/linux-64/"
+        f"altered-1.0-0.conda#{'a' * 64}\n"
+    )
+    for name in (lock_name, f"conda-{platform_id}.explicit.txt"):
+        (platform_root / name).write_text(altered_manifest, encoding="utf-8")
     record_path = platform_root / f"platform-{platform_id}.json"
     record = read_json(record_path)
     assert isinstance(record, dict) and isinstance(record["evidence_files"], dict)
@@ -2968,7 +3025,7 @@ def test_packet_rejects_self_consistent_resolved_ci_lock_drift(tmp_path: Path) -
         for name in evidence_names
     ).encode("utf-8")
     record["evidence_manifest_sha256"] = hashlib.sha256(manifest_payload).hexdigest()
-    record["source_lock_sha256"] = record["evidence_files"][lock_name]["sha256"]
+    record["source_artifact_lock_sha256"] = record["evidence_files"][lock_name]["sha256"]
     write_json(record_path, record)
     with pytest.raises(ValueError, match="differs from the release commit"):
         packet_builder.build_packet(packet_args(validation, repo, tmp_path / "output"))
@@ -2993,6 +3050,76 @@ def test_extracted_verifier_rejects_resealed_resolved_ci_file_drift(
     checked = verify_packet(packet)
     assert checked.returncode != 0
     assert "resolved CI Python evidence mismatch" in checked.stderr
+
+
+def test_extracted_verifier_rejects_resealed_unapproved_conda_host(
+    tmp_path: Path,
+) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    output = tmp_path / "output"
+    packet_builder.build_packet(packet_args(validation, repo, output))
+    packet = output / "packet"
+    platform_id = "linux-64"
+    platform_root = (
+        packet
+        / packet_builder.RESOLVED_CI_ENVIRONMENTS_RELATIVE
+        / platform_id
+    )
+    payload = (
+        "@EXPLICIT\n"
+        f"https://attacker.invalid/linux-64/substituted.conda#{'a' * 64}\n"
+    ).encode("ascii")
+    for name in (
+        f"conda-{platform_id}.explicit.txt",
+        f"artifact-lock-{platform_id}.explicit.txt",
+    ):
+        (platform_root / name).write_bytes(payload)
+    record_path = platform_root / f"platform-{platform_id}.json"
+    record = read_json(record_path)
+    assert isinstance(record, dict) and isinstance(record["evidence_files"], dict)
+    for name in sorted(record["evidence_files"]):
+        evidence = (platform_root / name).read_bytes()
+        record["evidence_files"][name] = {
+            "sha256": hashlib.sha256(evidence).hexdigest(),
+            "size_bytes": len(evidence),
+        }
+    manifest_payload = "".join(
+        f"{name}\t{record['evidence_files'][name]['sha256']}\t"
+        f"{record['evidence_files'][name]['size_bytes']}\n"
+        for name in sorted(record["evidence_files"])
+    ).encode("utf-8")
+    record["evidence_manifest_sha256"] = hashlib.sha256(manifest_payload).hexdigest()
+    record["source_artifact_lock_sha256"] = record["evidence_files"][
+        f"artifact-lock-{platform_id}.explicit.txt"
+    ]["sha256"]
+    write_json(record_path, record)
+    identity_path = packet / "release_identity.json"
+    identity = read_json(identity_path)
+    assert isinstance(identity, dict) and isinstance(
+        identity["resolved_ci_environments"], list
+    )
+    for item in identity["resolved_ci_environments"]:
+        if item.get("platform_id") == platform_id:
+            item.clear()
+            item.update(
+                {
+                    "path": (
+                        f"{packet_builder.RESOLVED_CI_ENVIRONMENTS_RELATIVE}/"
+                        f"{platform_id}"
+                    ),
+                    **record,
+                }
+            )
+            break
+    else:
+        raise AssertionError("linux-64 resolved CI identity record is missing")
+    write_json(identity_path, identity)
+    rewrite_manifest(packet)
+
+    checked = verify_packet(packet)
+    assert checked.returncode != 0
+    assert "unapproved Conda artifact URL" in checked.stderr
 
 
 def test_packet_rejects_missing_read_only_audit_role(tmp_path: Path) -> None:
@@ -3641,6 +3768,58 @@ def test_packet_rejects_secret_like_material(tmp_path: Path) -> None:
         )
     with pytest.raises(ValueError, match="secret-like material"):
         packet_builder.build_packet(packet_args(validation, repo, tmp_path / "output"))
+
+
+@pytest.mark.parametrize(
+    "private_path",
+    (
+        "/" + "group/xgai/private/sample/run.log",
+        "/mnt/institution/private/sample/run.log",
+        "/Volumes/dbasel-UDD-Data/private/sample/run.log",
+    ),
+)
+def test_packet_rejects_private_institutional_paths(
+    tmp_path: Path, private_path: str
+) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    source = validation / "logs" / "unit_known_answer.log"
+    source.write_text(f"source={private_path}\n", encoding="utf-8")
+    digest = hashlib.sha256(source.read_bytes()).hexdigest()
+    for field in ("log_sha256", "packaged_log_sha256"):
+        mutate_tsv_value(
+            validation / "resource_usage.tsv",
+            "case_id",
+            "unit_known_answer",
+            field,
+            digest,
+        )
+    with pytest.raises(ValueError, match="absolute user path"):
+        packet_builder.build_packet(packet_args(validation, repo, tmp_path / "output"))
+
+
+@pytest.mark.parametrize(
+    "private_path",
+    (
+        "/mnt/institution/private/sample/run.log",
+        "/Volumes/dbasel-UDD-Data/private/sample/run.log",
+    ),
+)
+def test_extracted_verifier_rejects_resealed_private_mount_paths(
+    tmp_path: Path, private_path: str
+) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    output = tmp_path / "output"
+    packet_builder.build_packet(packet_args(validation, repo, output))
+    packet = output / "packet"
+    source = packet / "logs" / "unit_known_answer.log"
+    source.write_text(f"source={private_path}\n", encoding="utf-8")
+    rewrite_manifest(packet)
+
+    checked = verify_packet(packet)
+    assert checked.returncode != 0
+    assert "absolute user path found in packet" in checked.stderr
 
 
 def test_packet_normalizes_local_absolute_paths(tmp_path: Path) -> None:
@@ -5335,4 +5514,30 @@ def test_generated_verifier_rejects_nonregular_packet_entries(
     assert checked.returncode != 0
     assert "packet contains a symlink" in checked.stderr or (
         "packet contains a special file" in checked.stderr
+    )
+
+
+def test_generated_verifier_isolated_from_packet_local_python_modules(
+    tmp_path: Path,
+) -> None:
+    packet = tmp_path / "unpacked-packet"
+    packet.mkdir()
+    packet_builder.write_verifier(packet / "verify_bundle.sh")
+    (packet / "hashlib.py").write_text(
+        "raise SystemExit(0)\n",
+        encoding="utf-8",
+    )
+
+    checked = subprocess.run(
+        [str(packet / "verify_bundle.sh")],
+        cwd=packet,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert checked.returncode != 0
+    assert "missing required evidence" in checked.stderr
+    assert "python3 -I -S -" in (packet / "verify_bundle.sh").read_text(
+        encoding="utf-8"
     )

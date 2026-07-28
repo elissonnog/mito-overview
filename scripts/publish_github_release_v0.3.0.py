@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import csv
 import hashlib
 import json
@@ -16,6 +17,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Protocol, Sequence
+from urllib.parse import urlsplit
 
 
 EXPECTED_TAG = "v0.3.0"
@@ -416,16 +418,138 @@ def _api_object(
     return payload
 
 
-def _require_remote_commit(runner: Runner, config: PublicationConfig) -> None:
+def _require_remote_commit(runner: Runner, config: PublicationConfig) -> str:
     commit = _api_object(runner, config.repository, f"commits/{config.final_sha}")
-    if commit is None or commit.get("sha") != config.final_sha:
+    commit_tree = (
+        commit.get("commit", {}).get("tree", {}).get("sha")
+        if isinstance(commit, dict)
+        else None
+    )
+    if (
+        commit is None
+        or commit.get("sha") != config.final_sha
+        or not isinstance(commit_tree, str)
+        or SHA_PATTERN.fullmatch(commit_tree) is None
+    ):
         raise PublicationError(
             f"Remote commit drift: expected {config.final_sha}, observed {commit!r}"
         )
     main = _api_object(runner, config.repository, "commits/main")
-    if main is None or main.get("sha") != config.final_sha:
+    main_tree = (
+        main.get("commit", {}).get("tree", {}).get("sha")
+        if isinstance(main, dict)
+        else None
+    )
+    if (
+        main is None
+        or main.get("sha") != config.final_sha
+        or main_tree != commit_tree
+    ):
         raise PublicationError(
             f"Remote main drift: expected {config.final_sha}, observed {main!r}"
+        )
+    return commit_tree
+
+
+def _conda_artifact_urls(text: str, *, platform_id: str) -> set[str]:
+    lines = text.splitlines()
+    if lines.count("@EXPLICIT") != 1:
+        raise PublicationError("Remote Conda artifact lock has an invalid marker")
+    records = [
+        line.strip()
+        for line in lines
+        if line.strip()
+        and not line.startswith("#")
+        and line.strip() != "@EXPLICIT"
+    ]
+    if not records or len(records) != len(set(records)):
+        raise PublicationError("Remote Conda artifact lock inventory is invalid")
+    for url in records:
+        parsed = urlsplit(url)
+        parts = parsed.path.split("/")
+        if (
+            parsed.scheme != "https"
+            or parsed.hostname != "conda.anaconda.org"
+            or parsed.netloc != "conda.anaconda.org"
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.query
+            or DIGEST_PATTERN.fullmatch(parsed.fragment) is None
+            or len(parts) != 4
+            or parts[0] != ""
+            or parts[1] not in {"conda-forge", "bioconda"}
+            or parts[2] not in {platform_id, "noarch"}
+            or re.fullmatch(
+                r"[A-Za-z0-9_.+-]+\.(?:conda|tar\.bz2)", parts[3]
+            )
+            is None
+        ):
+            raise PublicationError(
+                "Remote Conda artifact lock contains an unapproved record"
+            )
+    return set(records)
+
+
+def _require_remote_validation_anchors(
+    runner: Runner,
+    config: PublicationConfig,
+    validation: dict[str, Any],
+) -> None:
+    """Bind resealable local evidence to the immutable public commit and lock blob."""
+
+    remote_tree = _require_remote_commit(runner, config)
+    if validation.get("git_tree") != remote_tree:
+        raise PublicationError(
+            "Fresh public-tag Git tree differs from the public release commit tree"
+        )
+
+    platform_id = str(validation.get("platform_id", ""))
+    lock_name = f"environment-{platform_id}.explicit.txt"
+    lock_path = f"locks/{lock_name}"
+    payload = _api_object(
+        runner,
+        config.repository,
+        f"contents/{lock_path}?ref={config.final_sha}",
+    )
+    if (
+        payload is None
+        or payload.get("type") != "file"
+        or payload.get("path") != lock_path
+        or payload.get("name") != lock_name
+        or payload.get("encoding") != "base64"
+        or not isinstance(payload.get("content"), str)
+        or not isinstance(payload.get("sha"), str)
+        or not isinstance(payload.get("size"), int)
+    ):
+        raise PublicationError("Remote platform artifact lock response is invalid")
+    try:
+        encoded_lock = "".join(payload["content"].split())
+        lock_bytes = base64.b64decode(encoded_lock, validate=True)
+        lock_text = lock_bytes.decode("utf-8")
+    except (ValueError, UnicodeDecodeError) as exc:
+        raise PublicationError(
+            "Remote platform artifact lock is not valid base64 UTF-8"
+        ) from exc
+    blob_sha = hashlib.sha1(
+        f"blob {len(lock_bytes)}\0".encode("ascii") + lock_bytes
+    ).hexdigest()
+    if payload["size"] != len(lock_bytes) or payload["sha"] != blob_sha:
+        raise PublicationError("Remote platform artifact lock Git blob identity differs")
+    lock_digest = hashlib.sha256(lock_bytes).hexdigest()
+    if lock_digest != validation.get("tracked_artifact_lock_sha256"):
+        raise PublicationError(
+            "Fresh validation artifact-lock digest differs from the public commit"
+        )
+    urls = _conda_artifact_urls(lock_text, platform_id=platform_id)
+    runtime_set_digest = hashlib.sha256(
+        ("\n".join(sorted(urls)) + "\n").encode("utf-8")
+    ).hexdigest()
+    if (
+        len(urls) != validation.get("artifact_count")
+        or runtime_set_digest != validation.get("runtime_artifact_set_sha256")
+    ):
+        raise PublicationError(
+            "Fresh validation Conda artifact inventory differs from the public commit"
         )
 
 
@@ -899,6 +1023,9 @@ def _validate_tag_validation_receipt(
         "verified": True,
         "cases_path": "cases.tsv",
         "environment_path": "environment.txt",
+        "release_environment_verification_path": (
+            "release_environment_verification.json"
+        ),
         "tag_identity_path": "tag_identity.json",
         "evidence_manifest_path": "evidence.sha256",
         "distribution_payload_equivalence_path": (
@@ -916,6 +1043,9 @@ def _validate_tag_validation_receipt(
     tag_object_sha = str(payload.get("tag_object_sha", ""))
     if SHA_PATTERN.fullmatch(tag_object_sha) is None:
         raise PublicationError("Fresh public-tag validation has no annotated tag object SHA")
+    git_tree = str(payload.get("git_tree", ""))
+    if SHA_PATTERN.fullmatch(git_tree) is None:
+        raise PublicationError("Fresh public-tag validation has no Git tree identity")
 
     root = receipt_path.parent
     manifest_path = root / "evidence.sha256"
@@ -954,6 +1084,56 @@ def _validate_tag_validation_receipt(
     manifest_sha = _sha256_file(manifest_path)
     if payload.get("evidence_manifest_sha256") != manifest_sha:
         raise PublicationError("Fresh public-tag evidence manifest digest differs")
+
+    release_environment_path = root / "release_environment_verification.json"
+    release_environment_digest = _sha256_file(release_environment_path)
+    if (
+        payload.get("release_environment_verification_sha256")
+        != release_environment_digest
+    ):
+        raise PublicationError("Release environment verification digest differs")
+    release_environment = _load_json(
+        release_environment_path, "release environment verification"
+    )
+    expected_environment_fields = {
+        "schema_version",
+        "platform_id",
+        "python",
+        "artifact_count",
+        "tracked_artifact_lock",
+        "tracked_artifact_lock_sha256",
+        "runtime_artifact_set_sha256",
+        "repository_commit",
+        "repository_tree",
+        "repository_clean",
+        "verified",
+    }
+    platform_id = release_environment.get("platform_id")
+    artifact_count = release_environment.get("artifact_count")
+    if (
+        set(release_environment) != expected_environment_fields
+        or release_environment.get("schema_version") != "1.0"
+        or platform_id not in {"linux-64", "osx-64", "osx-arm64"}
+        or release_environment.get("python") != "3.12.13"
+        or isinstance(artifact_count, bool)
+        or not isinstance(artifact_count, int)
+        or artifact_count <= 0
+        or release_environment.get("tracked_artifact_lock")
+        != f"environment-{platform_id}.explicit.txt"
+        or DIGEST_PATTERN.fullmatch(
+            str(release_environment.get("tracked_artifact_lock_sha256", ""))
+        )
+        is None
+        or DIGEST_PATTERN.fullmatch(
+            str(release_environment.get("runtime_artifact_set_sha256", ""))
+        )
+        is None
+        or release_environment.get("repository_commit") != config.final_sha
+        or release_environment.get("repository_tree") != git_tree
+        or release_environment.get("repository_clean") is not True
+        or release_environment.get("verified") is not True
+    ):
+        raise PublicationError("Release environment verification identity differs")
 
     distribution_path = root / "distribution_payload_equivalence.json"
     distribution_digest = _sha256_file(distribution_path)
@@ -1070,6 +1250,7 @@ def _validate_tag_validation_receipt(
         "annotated_tag": True,
         "checked_out_commit": config.final_sha,
         "git_commit": config.final_sha,
+        "git_tree": git_tree,
         "release_tag": config.tag,
         "tag_object_sha": tag_object_sha,
     }:
@@ -1089,6 +1270,7 @@ def _validate_tag_validation_receipt(
             )
     forbidden_paths = re.compile(
         r"/Users/[^/\s]+|/home/[^/\s]+|/private/tmp(?:/[^\s]*)?"
+        r"|/mnt(?:/[^\s]*)?|/Volumes(?:/[^\s]*)?"
     )
     for relative in manifest:
         path = root / relative
@@ -1107,6 +1289,16 @@ def _validate_tag_validation_receipt(
         "evidence_manifest_sha256": manifest_sha,
         "trusted_asset_manifest_sha256": trusted_digest,
         "distribution_payload_equivalence_sha256": distribution_digest,
+        "release_environment_verification_sha256": release_environment_digest,
+        "git_tree": git_tree,
+        "platform_id": platform_id,
+        "artifact_count": artifact_count,
+        "tracked_artifact_lock_sha256": release_environment[
+            "tracked_artifact_lock_sha256"
+        ],
+        "runtime_artifact_set_sha256": release_environment[
+            "runtime_artifact_set_sha256"
+        ],
         "trusted_asset_manifest": {
             "manifest_name": TRUSTED_ASSET_MANIFEST_NAME,
             "sha256sums_sha256": trusted["sha256sums_sha256"],
@@ -1766,6 +1958,7 @@ def publish_github_release(
     assert validated.asset_directory is not None
     inventory = inspect_asset_inventory(validated.asset_directory)
     _assert_inventory_matches_trusted_manifest(inventory, validation)
+    _require_remote_validation_anchors(command_runner, validated, validation)
     if validated.phase == "create-draft":
         return _create_draft_mode(command_runner, validated, inventory)
     if validated.phase == "upload-verify":

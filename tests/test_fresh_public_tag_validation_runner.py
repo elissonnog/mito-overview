@@ -227,7 +227,9 @@ def _build_command_shims(root: Path, fixture_repository: Path) -> Path:
         #!{sys.executable}
         import gzip
         import io
+        import json
         import os
+        import subprocess
         import sys
         import tarfile
         import zipfile
@@ -235,6 +237,43 @@ def _build_command_shims(root: Path, fixture_repository: Path) -> Path:
 
         REAL_PYTHON = {sys.executable!r}
         args = sys.argv[1:]
+        verifier = next(
+            (
+                item
+                for item in args
+                if item.endswith("verify_release_environment_v0.3.0.py")
+            ),
+            None,
+        )
+        if verifier is not None:
+            assert args[:2] == ["-I", "-S"]
+            repo = Path(args[args.index("--repo-root") + 1])
+            expected_commit = args[args.index("--expected-commit") + 1]
+            try:
+                tree = subprocess.run(
+                    ["git", "-C", str(repo), "rev-parse", "HEAD^{{tree}}"],
+                    check=True, capture_output=True, text=True,
+                ).stdout.strip()
+            except subprocess.SubprocessError:
+                tree = "3" * 40
+            payload = {{
+                "schema_version": "1.0",
+                "platform_id": "osx-arm64",
+                "python": "3.12.13",
+                "artifact_count": 111,
+                "tracked_artifact_lock": "environment-osx-arm64.explicit.txt",
+                "tracked_artifact_lock_sha256": "4" * 64,
+                "runtime_artifact_set_sha256": "5" * 64,
+                "repository_commit": expected_commit,
+                "repository_tree": tree,
+                "repository_clean": True,
+                "verified": True,
+            }}
+            if "--output" in args:
+                output = Path(args[args.index("--output") + 1])
+                output.parent.mkdir(parents=True, exist_ok=True)
+                output.write_text(json.dumps(payload) + "\\n", encoding="utf-8")
+            raise SystemExit(0)
         if args == ["-"]:
             sys.stdin.read()
             raise SystemExit(0)
@@ -758,6 +797,9 @@ def test_runner_is_valid_shell_and_encodes_all_required_release_gates() -> None:
         "release_asset_semantic_identity.json",
         "safe_extract_validation_zip.py",
         "verify_release_asset_identity_v0.3.0.py",
+        '-I -S "${CLONE_ROOT}/scripts/verify_release_environment_v0.3.0.py"',
+        '--repo-root "${CLONE_ROOT}"',
+        '--expected-commit "${FINAL_SHA}"',
         "verify_distribution_equivalence_v0.3.0.py",
         "distribution_payload_equivalence.json",
         "RELEASE_ASSET_SOURCE",

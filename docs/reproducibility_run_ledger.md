@@ -117,7 +117,7 @@ MITO_OVERVIEW_PUBLIC_RUN_ID=<successful-ubuntu-public-run-id> \
   <mito-overview-v0.3.0-validation.zip>
 ```
 
-The runner must reject legacy DOI/Zenodo arguments, require an absent raw-cache path, clone public GitHub HTTPS at an exact 40-character commit, build/install distributions outside the checkout, collect exact PR-head, final-push, and Ubuntu-public-run evidence, build schema `2.0` profile `github_release_validation_v1`, and verify both the packet root and a fresh ZIP extraction. The environment prefix must have been solved from the matching platform specification and must satisfy the runner's exact runtime-version checks; ambient Mac tools are not accepted.
+The runner must reject legacy DOI/Zenodo arguments, require an absent raw-cache path, clone public GitHub HTTPS at an exact 40-character commit, build/install distributions outside the checkout, collect exact PR-head, final-push, and Ubuntu-public-run evidence, build schema `2.0` profile `github_release_validation_v1`, and verify both the packet root and a fresh ZIP extraction. Before any cache or release output is created, the active parent Conda prefix must match the tracked platform artifact lock by complete URL-plus-SHA-256 identity and satisfy the exact runtime-version checks; ambient Mac tools or same-version packages from different builds/channels are not accepted. Wheel and source-distribution probes may inherit only from that verified parent prefix.
 
 GitHub Actions may return an empty `pull_requests` association array after a
 pull request has been merged. In that post-merge state, the release validator

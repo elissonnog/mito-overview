@@ -144,8 +144,10 @@ filename alone.
   three lightweight synthetic workflows use one; orchestration/test cases are
   labeled `mixed` or `not_applicable` rather than assigned a false count.
   Missing, duplicated, relabeled, or hash-mismatched rows fail validation.
-- The resolved CI environment root contains exactly five files for each of
-  `linux-64`, `osx-64`, and `osx-arm64`. The platform record binds the exact
+- The resolved CI environment root contains exactly seven files for each of
+  `linux-64`, `osx-64`, and `osx-arm64`: runtime Conda inventory, pip
+  inventory, solver specification, artifact lock, release-tools lock, Python
+  version, and platform identity. The platform record binds the exact
   commit and GitHub Actions run, Python 3.12.13, architecture, every evidence
   file's size and SHA-256, the evidence-manifest SHA-256, and the tracked
   platform-lock SHA-256.
@@ -205,11 +207,12 @@ complete rerun from a new final commit.
 
 ## Required release sequence
 
-1. Complete PR 3 and run three role-separated read-only software audits. Each
-   audit uses a unique execution ID and is bound to the PR-head tree;
-   owner-posted GitHub records do not imply distinct external reviewers.
+1. Complete the release-candidate PR recorded by the validator and run three
+   role-separated read-only software audits. Each audit uses a unique execution
+   ID and is bound to the PR-head tree; owner-posted GitHub records do not imply
+   distinct external reviewers.
 2. Require Ubuntu and macOS PR CI at the exact final PR head.
-3. Merge PR 3 and define the resulting `main` commit as `FINAL_SHA`.
+3. Merge that PR and define the resulting `main` commit as `FINAL_SHA`.
 4. Require push-event Ubuntu and macOS CI at `FINAL_SHA`.
 5. Run independent macOS and Ubuntu clean-room public reproductions from the
    public HTTPS repository at `FINAL_SHA`.

@@ -47,9 +47,13 @@ EXPECTED_LOCK_FILES = {
         ("conda", "explicit.txt"),
         ("pip", "txt"),
         ("environment", "yml"),
+        ("artifact-lock", "explicit.txt"),
         ("platform", "json"),
         ("python", "txt"),
     )
+} | {
+    f"{platform}/requirements-release-tools.txt"
+    for platform in ("linux-64", "osx-64", "osx-arm64")
 }
 
 
@@ -384,6 +388,8 @@ def validate_environment_locks(root: Path, final_sha: str) -> None:
             f"conda-{platform}.explicit.txt",
             f"pip-{platform}.txt",
             f"environment-{platform}.yml",
+            f"artifact-lock-{platform}.explicit.txt",
+            "requirements-release-tools.txt",
             f"python-{platform}.txt",
         }
         evidence_files = record.get("evidence_files")
@@ -403,9 +409,66 @@ def validate_environment_locks(root: Path, final_sha: str) -> None:
         observed_manifest = hashlib.sha256("".join(manifest_lines).encode("utf-8")).hexdigest()
         if record.get("evidence_manifest_sha256") != observed_manifest:
             raise AssemblyError(f"{platform} evidence manifest digest mismatch")
-        lock_name = f"environment-{platform}.yml"
-        if record.get("source_lock_sha256") != evidence_files[lock_name]["sha256"]:
-            raise AssemblyError(f"{platform} source-lock digest mismatch")
+        bindings = {
+            "source_solver_spec_sha256": f"environment-{platform}.yml",
+            "source_artifact_lock_sha256": f"artifact-lock-{platform}.explicit.txt",
+            "source_release_tools_lock_sha256": "requirements-release-tools.txt",
+        }
+        for field, name in bindings.items():
+            if record.get(field) != evidence_files[name]["sha256"]:
+                raise AssemblyError(f"{platform} {field} digest mismatch")
+
+
+def validate_environment_locks_against_packet(
+    validation_zip: Path,
+    environment_locks: Path,
+    final_sha: str,
+) -> None:
+    """Bind the published lock archive to the independently verified packet."""
+
+    with tempfile.TemporaryDirectory(prefix=".mito-overview-lock-binding.") as temporary:
+        packet_root = Path(temporary) / "packet"
+        extractor = Path(__file__).with_name("safe_extract_validation_zip.py")
+        extracted = subprocess.run(
+            [sys.executable, str(extractor), str(validation_zip), str(packet_root)],
+            capture_output=True,
+            text=True,
+        )
+        if extracted.returncode != 0:
+            detail = extracted.stderr.strip() or extracted.stdout.strip()
+            raise AssemblyError(f"validation ZIP extraction failed: {detail}")
+        verified = subprocess.run(
+            ["bash", str(packet_root / "verify_bundle.sh")],
+            cwd=packet_root,
+            capture_output=True,
+            text=True,
+        )
+        if verified.returncode != 0:
+            detail = verified.stderr.strip() or verified.stdout.strip()
+            raise AssemblyError(f"validation packet verifier failed: {detail}")
+
+        packet_locks = require_plain_directory(
+            packet_root / "acceptance" / "resolved_ci_environments",
+            "packet-resolved environment lock root",
+        )
+        validate_environment_locks(packet_locks, final_sha)
+        supplied_files = {
+            path.relative_to(environment_locks).as_posix(): path
+            for path in environment_locks.rglob("*")
+            if path.is_file()
+        }
+        packet_files = {
+            path.relative_to(packet_locks).as_posix(): path
+            for path in packet_locks.rglob("*")
+            if path.is_file()
+        }
+        if set(supplied_files) != set(packet_files):
+            raise AssemblyError("environment locks differ from packet inventory")
+        for relative in sorted(packet_files):
+            if supplied_files[relative].read_bytes() != packet_files[relative].read_bytes():
+                raise AssemblyError(
+                    f"environment lock differs from packet evidence: {relative}"
+                )
 
 
 def populate_and_verify_stage(
@@ -613,6 +676,11 @@ def assemble(
     require_text_identity(release_notes, final_sha, "release notes")
     require_text_identity(environment_text, final_sha, "environment record")
     validate_environment_locks(environment_locks, final_sha)
+    validate_environment_locks_against_packet(
+        validation_zip,
+        environment_locks,
+        final_sha,
+    )
     report_provenance = validate_report_provenance(
         report_root,
         report_assets,

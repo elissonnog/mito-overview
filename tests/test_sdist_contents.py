@@ -34,6 +34,7 @@ REQUIRED_SDIST_PATHS = {
     "scripts/publish_github_release_v0.3.0.py",
     "scripts/refresh_tracked_public_validation_assets_v0.3.0.py",
     "scripts/run_fresh_public_tag_validation_v0.3.0.sh",
+    "scripts/verify_release_environment_v0.3.0.py",
     "scripts/run_mito_pipeline.sh",
     "scripts/safe_extract_validation_zip.py",
     "scripts/sanitize_validation_evidence.py",
