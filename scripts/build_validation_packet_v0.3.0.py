@@ -474,6 +474,27 @@ PUBLIC_ORACLE_MODULE_STATUS_SPECS = (
     ("phymer_haplogroup_module_status", "mito_phymer_haplogroup_summary.tsv"),
     ("mvtool_annotation_module_status", "mito_mvtool_annotation_summary.tsv"),
 )
+FEATURE_ANNOTATION_SUCCESS_COLUMNS = (
+    "feature_class",
+    "feature_label",
+    "candidate_sites",
+    "mean_alt_allele_fraction",
+    "mean_heteroplasmy",
+    "control_region_annotation_status",
+    "control_region_annotation_reason_code",
+    "control_region_annotation_method",
+    "control_region_annotation_mode",
+    "control_region_reference_accession",
+    "control_region_configured_sequence_sha256",
+    "control_region_canonical_sequence_sha256",
+    "control_region_exact_sequence_match",
+    "control_region_configured_sequence_length",
+    "control_region_canonical_sequence_length",
+    "control_region_intervals_applied",
+)
+FEATURE_ANNOTATION_GATED_STATES = frozenset(
+    {"not_configured", "not_applicable", "not_evaluable", "unavailable", "failed"}
+)
 PUBLIC_ORACLE_INTERPRETATION_SPECS = (
     (
         "numt_interpretation_status",
@@ -2537,6 +2558,31 @@ def metric_values(path: Path) -> dict[str, str]:
     return values
 
 
+def feature_annotation_status(path: Path) -> str:
+    """Resolve either the successful feature table or an explicit gated status."""
+
+    with path.open(encoding="utf-8", newline="") as handle:
+        reader = csv.DictReader(handle, delimiter="\t")
+        fieldnames = tuple(reader.fieldnames or ())
+    if len(fieldnames) != len(set(fieldnames)):
+        raise ValueError(f"Duplicate feature-annotation column in {path}")
+    if fieldnames == ("metric", "value"):
+        status = metric_values(path).get("status", "")
+        if not status:
+            raise ValueError(f"Missing status metric in {path}")
+        if status not in FEATURE_ANNOTATION_GATED_STATES:
+            raise ValueError(
+                f"Invalid explicit feature-annotation status {status!r} in {path}"
+            )
+        return status
+    if fieldnames == FEATURE_ANNOTATION_SUCCESS_COLUMNS:
+        return "ok"
+    raise ValueError(
+        "Feature-annotation output has neither an explicit status table nor "
+        f"the successful schema: {path}"
+    )
+
+
 def validate_normalized_repeatability(
     normalized_root: Path,
     oracle_rows: list[dict[str, str]],
@@ -2673,6 +2719,12 @@ def validate_normalized_repeatability(
         for oracle_field, filename, metric in status_specs:
             expected_value = default_oracle[oracle_field]
             if not expected_value:
+                continue
+            if oracle_field == "feature_annotation_module_status":
+                if feature_annotation_status(run1 / filename) != expected_value:
+                    raise ValueError(
+                        f"Normalized module-state mismatch for {dataset_name} {oracle_field}"
+                    )
                 continue
             loaded.setdefault(filename, metric_values(run1 / filename))
             if loaded[filename].get(metric) != expected_value:
@@ -7114,6 +7166,39 @@ def metric_map(path):
         raise SystemExit(f"duplicate metric: {path}")
     return values
 
+def feature_annotation_status(path):
+    fields, _ = read_rows(path)
+    if len(fields) != len(set(fields)):
+        raise SystemExit(f"duplicate feature-annotation column: {path}")
+    if fields == ("metric", "value"):
+        status = metric_map(path).get("status", "")
+        if not status:
+            raise SystemExit(f"feature-annotation status is missing: {path}")
+        gated_states = {
+            "not_configured", "not_applicable", "not_evaluable", "unavailable", "failed",
+        }
+        if status not in gated_states:
+            raise SystemExit(f"invalid explicit feature-annotation status {status!r}: {path}")
+        return status
+    successful_fields = (
+        "feature_class", "feature_label", "candidate_sites",
+        "mean_alt_allele_fraction", "mean_heteroplasmy",
+        "control_region_annotation_status", "control_region_annotation_reason_code",
+        "control_region_annotation_method", "control_region_annotation_mode",
+        "control_region_reference_accession",
+        "control_region_configured_sequence_sha256",
+        "control_region_canonical_sequence_sha256",
+        "control_region_exact_sequence_match",
+        "control_region_configured_sequence_length",
+        "control_region_canonical_sequence_length",
+        "control_region_intervals_applied",
+    )
+    if fields == successful_fields:
+        return "ok"
+    raise SystemExit(
+        f"feature-annotation output has neither a status table nor the successful schema: {path}"
+    )
+
 for dataset_key, dataset_name in (("gm11906", "GM11906"), ("gm12878", "GM12878")):
     run1 = root / "observed_normalized" / f"{dataset_key}_default_run1"
     run2 = root / "observed_normalized" / f"{dataset_key}_default_run2"
@@ -7224,6 +7309,12 @@ for dataset_key, dataset_name in (("gm11906", "GM11906"), ("gm12878", "GM12878")
     for oracle_field, filename, metric in status_specs:
         expected = default_oracle[oracle_field]
         if expected:
+            if oracle_field == "feature_annotation_module_status":
+                if feature_annotation_status(run1 / filename) != expected:
+                    raise SystemExit(
+                        f"normalized module status mismatch: {dataset_name} {oracle_field}"
+                    )
+                continue
             loaded.setdefault(filename, metric_map(run1 / filename))
             if loaded[filename].get(metric) != expected:
                 raise SystemExit(f"normalized module status mismatch: {dataset_name} {oracle_field}")
