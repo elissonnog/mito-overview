@@ -160,8 +160,22 @@ def write_feature_annotation_state(path: Path, status: str) -> None:
     if status == "ok":
         path.write_text(
             "feature_class\tfeature_label\tcandidate_sites\t"
-            "mean_alt_allele_fraction\tmean_heteroplasmy\n"
-            "Mt_tRNA\tMT-TK\t1\t0.720545\t0.720545\n",
+            "mean_alt_allele_fraction\tmean_heteroplasmy\t"
+            "control_region_annotation_status\t"
+            "control_region_annotation_reason_code\t"
+            "control_region_annotation_method\t"
+            "control_region_annotation_mode\t"
+            "control_region_reference_accession\t"
+            "control_region_configured_sequence_sha256\t"
+            "control_region_canonical_sequence_sha256\t"
+            "control_region_exact_sequence_match\t"
+            "control_region_configured_sequence_length\t"
+            "control_region_canonical_sequence_length\t"
+            "control_region_intervals_applied\n"
+            "Mt_tRNA\tMT-TK\t1\t0.720545\t0.720545\tok\t"
+            "reference_sequence_exact_match\texact_full_sequence_identity\t"
+            f"auto\tNC_012920.1\t{'a' * 64}\t{'a' * 64}\t1\t16569\t16569\t"
+            "1-576;16024-16569\n",
             encoding="utf-8",
         )
     else:
@@ -810,6 +824,45 @@ def test_oracle_rejects_every_report_module_state_regression(
         row["assertion_id"] == assertion_id and row["verdict"] == "FAIL"
         for row in read_tsv(report)
     ), dataset
+
+
+@pytest.mark.parametrize("encoding", ("metric_ok", "hybrid"))
+def test_oracle_rejects_invalid_feature_annotation_success_encoding(
+    tmp_path: Path,
+    encoding: str,
+) -> None:
+    matrix_root = tmp_path / "matrix"
+    build_matrix_fixture(matrix_root)
+    path = (
+        matrix_root
+        / "outputs/gm11906_default_run1/summary"
+        / "mito_feature_annotation_summary.tsv"
+    )
+    if encoding == "metric_ok":
+        write_metric_table(path, {"status": "ok", "reason_code": ""})
+        expected_detail = "Invalid explicit feature-annotation status"
+    else:
+        path.write_text(
+            "metric\tvalue\tfeature_class\tfeature_label\tcandidate_sites\t"
+            "mean_alt_allele_fraction\n"
+            "status\tok\tMt_tRNA\tMT-TK\t1\t0.720545\n",
+            encoding="utf-8",
+        )
+        expected_detail = (
+            "neither a status table nor the successful schema"
+        )
+
+    report = tmp_path / "oracle_assertions.tsv"
+    result = run_oracle(matrix_root, report)
+    assert result.returncode != 0
+    required_evidence = [
+        row
+        for row in read_tsv(report)
+        if row["assertion_id"]
+        == "gm11906_default_run1.required_evidence"
+    ]
+    assert len(required_evidence) == 1
+    assert expected_detail in required_evidence[0]["detail"]
 
 
 @pytest.mark.parametrize(

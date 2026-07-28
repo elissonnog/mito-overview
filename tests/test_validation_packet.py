@@ -1399,6 +1399,162 @@ def metric_table(path: Path, rows: list[tuple[str, str]]) -> None:
     write_tsv(path, ("metric", "value"), [[key, value] for key, value in rows])
 
 
+def feature_annotation_table(path: Path, status: str) -> None:
+    if status == "ok":
+        write_tsv(
+            path,
+            (
+                "feature_class",
+                "feature_label",
+                "candidate_sites",
+                "mean_alt_allele_fraction",
+                "mean_heteroplasmy",
+                "control_region_annotation_status",
+                "control_region_annotation_reason_code",
+                "control_region_annotation_method",
+                "control_region_annotation_mode",
+                "control_region_reference_accession",
+                "control_region_configured_sequence_sha256",
+                "control_region_canonical_sequence_sha256",
+                "control_region_exact_sequence_match",
+                "control_region_configured_sequence_length",
+                "control_region_canonical_sequence_length",
+                "control_region_intervals_applied",
+            ),
+            [
+                [
+                    "Mt_tRNA",
+                    "MT-TK",
+                    "1",
+                    "0.720545",
+                    "0.720545",
+                    "ok",
+                    "reference_sequence_exact_match",
+                    "exact_full_sequence_identity",
+                    "auto",
+                    "NC_012920.1",
+                    "a" * 64,
+                    "a" * 64,
+                    "1",
+                    "16569",
+                    "16569",
+                    "1-576;16024-16569",
+                ]
+            ],
+        )
+    else:
+        metric_table(path, [("status", status), ("reason_code", "fixture_state")])
+
+
+def test_feature_annotation_status_accepts_success_and_explicit_status(
+    tmp_path: Path,
+) -> None:
+    success = tmp_path / "success.tsv"
+    feature_annotation_table(success, "ok")
+    assert packet_builder.feature_annotation_status(success) == "ok"
+
+    gated = tmp_path / "gated.tsv"
+    feature_annotation_table(gated, "not_configured")
+    assert packet_builder.feature_annotation_status(gated) == "not_configured"
+
+
+def test_feature_annotation_status_rejects_ambiguous_schema(tmp_path: Path) -> None:
+    malformed = tmp_path / "malformed.tsv"
+    write_tsv(
+        malformed,
+        ("feature_class", "feature_label", "candidate_sites"),
+        [["Mt_tRNA", "MT-TK", "1"]],
+    )
+    with pytest.raises(
+        ValueError,
+        match="neither an explicit status table nor the successful schema",
+    ):
+        packet_builder.feature_annotation_status(malformed)
+
+
+def test_feature_annotation_status_accepts_header_only_zero_overlap_table(
+    tmp_path: Path,
+) -> None:
+    empty = tmp_path / "empty.tsv"
+    write_tsv(
+        empty,
+        (
+            "feature_class",
+            "feature_label",
+            "candidate_sites",
+            "mean_alt_allele_fraction",
+            "mean_heteroplasmy",
+            "control_region_annotation_status",
+            "control_region_annotation_reason_code",
+            "control_region_annotation_method",
+            "control_region_annotation_mode",
+            "control_region_reference_accession",
+            "control_region_configured_sequence_sha256",
+            "control_region_canonical_sequence_sha256",
+            "control_region_exact_sequence_match",
+            "control_region_configured_sequence_length",
+            "control_region_canonical_sequence_length",
+            "control_region_intervals_applied",
+        ),
+        [],
+    )
+    assert packet_builder.feature_annotation_status(empty) == "ok"
+
+
+def test_feature_annotation_status_rejects_duplicate_columns(tmp_path: Path) -> None:
+    duplicate = tmp_path / "duplicate.tsv"
+    write_tsv(
+        duplicate,
+        (
+            "feature_class",
+            "feature_label",
+            "candidate_sites",
+            "mean_alt_allele_fraction",
+            "feature_label",
+        ),
+        [["Mt_tRNA", "MT-TK", "1", "0.720545", "MT-TK"]],
+    )
+    with pytest.raises(ValueError, match="Duplicate feature-annotation column"):
+        packet_builder.feature_annotation_status(duplicate)
+
+
+def test_feature_annotation_status_rejects_blank_explicit_status(
+    tmp_path: Path,
+) -> None:
+    blank = tmp_path / "blank-status.tsv"
+    metric_table(blank, [("status", ""), ("reason_code", "fixture_state")])
+    with pytest.raises(ValueError, match="Missing status metric"):
+        packet_builder.feature_annotation_status(blank)
+
+
+def test_feature_annotation_status_rejects_explicit_ok_status(tmp_path: Path) -> None:
+    invalid = tmp_path / "explicit-ok.tsv"
+    metric_table(invalid, [("status", "ok"), ("reason_code", "")])
+    with pytest.raises(ValueError, match="Invalid explicit feature-annotation status"):
+        packet_builder.feature_annotation_status(invalid)
+
+
+def test_feature_annotation_status_rejects_hybrid_schema(tmp_path: Path) -> None:
+    hybrid = tmp_path / "hybrid.tsv"
+    write_tsv(
+        hybrid,
+        (
+            "metric",
+            "value",
+            "feature_class",
+            "feature_label",
+            "candidate_sites",
+            "mean_alt_allele_fraction",
+        ),
+        [["status", "ok", "Mt_tRNA", "MT-TK", "1", "0.720545"]],
+    )
+    with pytest.raises(
+        ValueError,
+        match="neither an explicit status table nor the successful schema",
+    ):
+        packet_builder.feature_annotation_status(hybrid)
+
+
 def candidate_rows(dataset: str, count: int) -> list[list[str]]:
     rows: list[list[str]] = []
     if dataset == "GM11906":
@@ -1474,7 +1630,6 @@ def write_normalized_case(
 
     status_values = {
         "mito_copy_number_summary.tsv": oracle["copy_number_module_status"],
-        "mito_feature_annotation_summary.tsv": oracle["feature_annotation_module_status"],
         "mito_gene_summary_run_summary.tsv": oracle["gene_summary_module_status"],
         "mito_identity_qc_summary.tsv": oracle["identity_qc_module_status"],
         "mito_variant_consequence_summary.tsv": oracle["variant_consequence_module_status"],
@@ -1487,6 +1642,12 @@ def write_normalized_case(
     }
     for filename, status in status_values.items():
         add_metric(filename, [("status", status), ("reason_code", "")])
+    feature_annotation = root / "mito_feature_annotation_summary.tsv"
+    feature_annotation_table(
+        feature_annotation,
+        oracle["feature_annotation_module_status"],
+    )
+    scientific.append(feature_annotation)
     numt_rows = [("status", oracle["numt_qc_module_status"])]
     if oracle["numt_interpretation_status"]:
         numt_rows.extend(
@@ -2005,6 +2166,22 @@ def rewrite_public_artifact_manifest(artifact_root: Path) -> None:
     )
 
 
+def rewrite_normalized_manifest(case_root: Path) -> None:
+    ignored = {"normalized_manifest.tsv", "visual_artifact_inventory.tsv"}
+    write_tsv(
+        case_root / "normalized_manifest.tsv",
+        ("path", "sha256"),
+        [
+            [
+                path.relative_to(case_root).as_posix(),
+                hashlib.sha256(path.read_bytes()).hexdigest(),
+            ]
+            for path in sorted(case_root.rglob("*.tsv"))
+            if path.name not in ignored
+        ],
+    )
+
+
 def rebind_packet_public_provenance(packet: Path, *paths: Path) -> None:
     identity_path = packet / "release_identity.json"
     identity = json.loads(identity_path.read_text(encoding="utf-8"))
@@ -2287,6 +2464,146 @@ def test_github_only_packet_builds_and_verifies_from_fresh_extraction(
         check=False,
     )
     assert extracted_check.returncode == 0, extracted_check.stderr
+
+
+def test_extracted_verifier_rejects_resealed_explicit_ok_feature_status(
+    tmp_path: Path,
+) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    output = tmp_path / "output"
+    packet_builder.build_packet(packet_args(validation, repo, output))
+    packet = output / "packet"
+
+    local_root = packet / "observed_normalized"
+    ubuntu_artifact = packet / "acceptance/ubuntu_public_validation/artifact"
+    ubuntu_root = ubuntu_artifact / "results/observed_normalized"
+    case_ids = (
+        "gm11906_default_run1",
+        "gm11906_default_run2",
+        "gm12878_default_run1",
+        "gm12878_default_run2",
+    )
+    changed_local: list[Path] = []
+    for case_id in case_ids:
+        for root in (local_root, ubuntu_root):
+            case_root = root / case_id
+            metric_table(
+                case_root / "mito_feature_annotation_summary.tsv",
+                [("status", "ok"), ("reason_code", "")],
+            )
+            rewrite_normalized_manifest(case_root)
+        changed_local.extend(
+            [
+                local_root / case_id / "mito_feature_annotation_summary.tsv",
+                local_root / case_id / "normalized_manifest.tsv",
+            ]
+        )
+
+    provenance_path = packet / "table_provenance.tsv"
+    with provenance_path.open(encoding="utf-8", newline="") as handle:
+        reader = csv.DictReader(handle, delimiter="\t")
+        provenance_fields = tuple(reader.fieldnames or ())
+        provenance_rows = list(reader)
+    provenance_by_path = {row["packet_path"]: row for row in provenance_rows}
+    for path in changed_local:
+        relative = path.relative_to(packet).as_posix()
+        row = provenance_by_path[relative]
+        with path.open(encoding="utf-8", newline="") as handle:
+            parsed = list(csv.reader(handle, delimiter="\t"))
+        row["sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
+        row["rows"] = str(max(0, len(parsed) - 1))
+        row["columns"] = str(len(parsed[0]) if parsed else 0)
+    with provenance_path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=provenance_fields,
+            delimiter="\t",
+            lineterminator="\n",
+        )
+        writer.writeheader()
+        writer.writerows(provenance_rows)
+
+    module_path = packet / "module_status_matrix.tsv"
+    with module_path.open(encoding="utf-8", newline="") as handle:
+        reader = csv.DictReader(handle, delimiter="\t")
+        module_fields = tuple(reader.fieldnames or ())
+        module_rows = list(reader)
+    for dataset, case_id in (
+        ("GM11906", "gm11906_default_run1"),
+        ("GM12878", "gm12878_default_run1"),
+    ):
+        module_rows.append(
+            {
+                "dataset": dataset,
+                "case_id": case_id,
+                "module": "mito_feature_annotation_summary",
+                "status": "ok",
+                "reason_code": "",
+                "source_table": (
+                    f"observed_normalized/{case_id}/"
+                    "mito_feature_annotation_summary.tsv"
+                ),
+            }
+        )
+    with module_path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=module_fields,
+            delimiter="\t",
+            lineterminator="\n",
+        )
+        writer.writeheader()
+        writer.writerows(module_rows)
+
+    acceptance_comparison = packet / "acceptance/cross_platform_comparison.tsv"
+    with acceptance_comparison.open(encoding="utf-8", newline="") as handle:
+        reader = csv.DictReader(handle, delimiter="\t")
+        comparison_fields = tuple(reader.fieldnames or ())
+        comparison_rows = list(reader)
+    comparison_by_path = {
+        row["relative_path"]: row
+        for row in comparison_rows
+        if row["evidence_type"] == "normalized_scientific_table"
+    }
+    for path in changed_local:
+        relative = path.relative_to(packet).as_posix()
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        comparison_by_path[relative]["macos_sha256"] = digest
+        comparison_by_path[relative]["ubuntu_sha256"] = digest
+    for comparison_path in (
+        acceptance_comparison,
+        packet / "cross_platform_comparison.tsv",
+    ):
+        with comparison_path.open("w", encoding="utf-8", newline="") as handle:
+            writer = csv.DictWriter(
+                handle,
+                fieldnames=comparison_fields,
+                delimiter="\t",
+                lineterminator="\n",
+            )
+            writer.writeheader()
+            writer.writerows(comparison_rows)
+
+    rewrite_public_artifact_manifest(ubuntu_artifact)
+    identity_path = packet / "release_identity.json"
+    identity = read_json(identity_path)
+    assert isinstance(identity, dict)
+    identity["public_validation_github_actions"]["cross_platform_reproduction"][
+        "comparison_sha256"
+    ] = hashlib.sha256(acceptance_comparison.read_bytes()).hexdigest()
+    for row in identity["public_provenance"]:
+        path = packet / row["path"]
+        row["sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
+    write_json(identity_path, identity)
+    rewrite_manifest(packet)
+
+    checked = verify_packet(packet)
+    assert checked.returncode != 0
+    assert "invalid explicit feature-annotation status 'ok'" in checked.stderr
+    assert "artifact hash mismatch" not in checked.stderr
+    assert "normalized manifest" not in checked.stderr
+    assert "cross-platform" not in checked.stderr
 
 
 def test_nested_artifacts_manifest_is_itself_manifested_and_verified(

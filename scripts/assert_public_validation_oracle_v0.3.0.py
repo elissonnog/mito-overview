@@ -73,14 +73,25 @@ MODULE_STATUS_FIELDS = tuple(field for field, _ in MODULE_STATUS_SPECS)
 INTERPRETATION_STATUS_FIELDS = ("numt_interpretation_status",)
 REQUIRED_STATUS_FIELDS = MODULE_STATUS_FIELDS + INTERPRETATION_STATUS_FIELDS
 NUMT_INTERPRETATION_REASON_FIELD = "numt_interpretation_reason_code"
-FEATURE_ANNOTATION_SUCCESS_COLUMNS = frozenset(
-    {
-        "feature_class",
-        "feature_label",
-        "candidate_sites",
-        "mean_alt_allele_fraction",
-    }
+FEATURE_ANNOTATION_SUCCESS_COLUMNS = (
+    "feature_class",
+    "feature_label",
+    "candidate_sites",
+    "mean_alt_allele_fraction",
+    "mean_heteroplasmy",
+    "control_region_annotation_status",
+    "control_region_annotation_reason_code",
+    "control_region_annotation_method",
+    "control_region_annotation_mode",
+    "control_region_reference_accession",
+    "control_region_configured_sequence_sha256",
+    "control_region_canonical_sequence_sha256",
+    "control_region_exact_sequence_match",
+    "control_region_configured_sequence_length",
+    "control_region_canonical_sequence_length",
+    "control_region_intervals_applied",
 )
+FEATURE_ANNOTATION_GATED_STATES = MODULE_STATES - {"ok"}
 
 
 @dataclass
@@ -354,14 +365,20 @@ def feature_annotation_status(path: Path) -> str:
 
     with path.open(encoding="utf-8", newline="") as handle:
         reader = csv.DictReader(handle, delimiter="\t")
-        fieldnames = reader.fieldnames or []
-    if set(fieldnames) == {"metric", "value"}:
+        fieldnames = tuple(reader.fieldnames or ())
+    if len(fieldnames) != len(set(fieldnames)):
+        raise ValueError(f"Duplicate feature-annotation column in {path}")
+    if fieldnames == ("metric", "value"):
         metrics = metric_map(path)
         status = metrics.get("status", "")
         if not status:
             raise ValueError(f"Missing status metric in {path}")
+        if status not in FEATURE_ANNOTATION_GATED_STATES:
+            raise ValueError(
+                f"Invalid explicit feature-annotation status {status!r} in {path}"
+            )
         return status
-    if FEATURE_ANNOTATION_SUCCESS_COLUMNS.issubset(fieldnames):
+    if fieldnames == FEATURE_ANNOTATION_SUCCESS_COLUMNS:
         return "ok"
     raise ValueError(
         f"Feature-annotation output has neither a status table nor the successful schema: {path}"
