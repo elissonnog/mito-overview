@@ -2583,6 +2583,32 @@ def feature_annotation_status(path: Path) -> str:
     )
 
 
+def numt_interpretation_values(path: Path) -> dict[str, str]:
+    """Resolve the short-read module gate or require explicit active interpretation."""
+
+    values = metric_values(path)
+    module_status = values.get("status", "")
+    if not module_status:
+        raise ValueError(f"Missing NUMT module status in {path}")
+    if module_status == "not_applicable":
+        return {
+            "numt_interpretation_status": values.get(
+                "numt_interpretation_status", "not_applicable"
+            ),
+            "numt_interpretation_reason_code": values.get(
+                "reason_code", "module_not_applicable"
+            ),
+        }
+    if "numt_interpretation_status" not in values:
+        raise ValueError(f"Missing numt_interpretation_status metric in {path}")
+    if "reason_code" not in values:
+        raise ValueError(f"Missing NUMT interpretation reason_code metric in {path}")
+    return {
+        "numt_interpretation_status": values["numt_interpretation_status"],
+        "numt_interpretation_reason_code": values["reason_code"],
+    }
+
+
 def validate_normalized_repeatability(
     normalized_root: Path,
     oracle_rows: list[dict[str, str]],
@@ -2716,12 +2742,26 @@ def validate_normalized_repeatability(
             for field, filename in PUBLIC_ORACLE_MODULE_STATUS_SPECS
         ) + PUBLIC_ORACLE_INTERPRETATION_SPECS
         loaded: dict[str, dict[str, str]] = {}
+        numt_interpretation: dict[str, str] | None = None
         for oracle_field, filename, metric in status_specs:
             expected_value = default_oracle[oracle_field]
             if not expected_value:
                 continue
             if oracle_field == "feature_annotation_module_status":
                 if feature_annotation_status(run1 / filename) != expected_value:
+                    raise ValueError(
+                        f"Normalized module-state mismatch for {dataset_name} {oracle_field}"
+                    )
+                continue
+            if oracle_field in {
+                "numt_interpretation_status",
+                "numt_interpretation_reason_code",
+            }:
+                if numt_interpretation is None:
+                    numt_interpretation = numt_interpretation_values(
+                        run1 / filename
+                    )
+                if numt_interpretation[oracle_field] != expected_value:
                     raise ValueError(
                         f"Normalized module-state mismatch for {dataset_name} {oracle_field}"
                     )
@@ -7199,6 +7239,29 @@ def feature_annotation_status(path):
         f"feature-annotation output has neither a status table nor the successful schema: {path}"
     )
 
+def numt_interpretation_values(path):
+    values = metric_map(path)
+    module_status = values.get("status", "")
+    if not module_status:
+        raise SystemExit(f"NUMT module status is missing: {path}")
+    if module_status == "not_applicable":
+        return {
+            "numt_interpretation_status": values.get(
+                "numt_interpretation_status", "not_applicable"
+            ),
+            "numt_interpretation_reason_code": values.get(
+                "reason_code", "module_not_applicable"
+            ),
+        }
+    if "numt_interpretation_status" not in values:
+        raise SystemExit(f"NUMT interpretation status is missing: {path}")
+    if "reason_code" not in values:
+        raise SystemExit(f"NUMT interpretation reason is missing: {path}")
+    return {
+        "numt_interpretation_status": values["numt_interpretation_status"],
+        "numt_interpretation_reason_code": values["reason_code"],
+    }
+
 for dataset_key, dataset_name in (("gm11906", "GM11906"), ("gm12878", "GM12878")):
     run1 = root / "observed_normalized" / f"{dataset_key}_default_run1"
     run2 = root / "observed_normalized" / f"{dataset_key}_default_run2"
@@ -7306,11 +7369,25 @@ for dataset_key, dataset_name in (("gm11906", "GM11906"), ("gm12878", "GM12878")
         ("numt_interpretation_reason_code", "mito_numt_qc_summary.tsv", "reason_code"),
     )
     loaded = {}
+    numt_interpretation = None
     for oracle_field, filename, metric in status_specs:
         expected = default_oracle[oracle_field]
         if expected:
             if oracle_field == "feature_annotation_module_status":
                 if feature_annotation_status(run1 / filename) != expected:
+                    raise SystemExit(
+                        f"normalized module status mismatch: {dataset_name} {oracle_field}"
+                    )
+                continue
+            if oracle_field in {
+                "numt_interpretation_status",
+                "numt_interpretation_reason_code",
+            }:
+                if numt_interpretation is None:
+                    numt_interpretation = numt_interpretation_values(
+                        run1 / filename
+                    )
+                if numt_interpretation[oracle_field] != expected:
                     raise SystemExit(
                         f"normalized module status mismatch: {dataset_name} {oracle_field}"
                     )
