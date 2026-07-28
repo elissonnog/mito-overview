@@ -1555,6 +1555,48 @@ def test_feature_annotation_status_rejects_hybrid_schema(tmp_path: Path) -> None
         packet_builder.feature_annotation_status(hybrid)
 
 
+def test_numt_interpretation_values_resolves_short_read_module_gate(
+    tmp_path: Path,
+) -> None:
+    summary = tmp_path / "mito_numt_qc_summary.tsv"
+    metric_table(
+        summary,
+        [
+            ("assay_type", "targeted_mt"),
+            ("read_mode", "short"),
+            ("status", "not_applicable"),
+        ],
+    )
+    assert packet_builder.numt_interpretation_values(summary) == {
+        "numt_interpretation_status": "not_applicable",
+        "numt_interpretation_reason_code": "module_not_applicable",
+    }
+
+
+@pytest.mark.parametrize(
+    ("missing_metric", "message"),
+    (
+        ("numt_interpretation_status", "Missing numt_interpretation_status"),
+        ("reason_code", "Missing NUMT interpretation reason_code"),
+    ),
+)
+def test_numt_interpretation_values_requires_active_nested_fields(
+    tmp_path: Path,
+    missing_metric: str,
+    message: str,
+) -> None:
+    summary = tmp_path / f"missing-{missing_metric}.tsv"
+    values = {
+        "status": "ok",
+        "numt_interpretation_status": "not_evaluable",
+        "reason_code": "reference_scope_mt_only",
+    }
+    values.pop(missing_metric)
+    metric_table(summary, list(values.items()))
+    with pytest.raises(ValueError, match=message):
+        packet_builder.numt_interpretation_values(summary)
+
+
 def candidate_rows(dataset: str, count: int) -> list[list[str]]:
     rows: list[list[str]] = []
     if dataset == "GM11906":
@@ -1649,15 +1691,13 @@ def write_normalized_case(
     )
     scientific.append(feature_annotation)
     numt_rows = [("status", oracle["numt_qc_module_status"])]
-    if oracle["numt_interpretation_status"]:
+    if oracle["numt_qc_module_status"] != "not_applicable":
         numt_rows.extend(
             [
                 ("numt_interpretation_status", oracle["numt_interpretation_status"]),
                 ("reason_code", oracle["numt_interpretation_reason_code"]),
             ]
         )
-    else:
-        numt_rows.append(("reason_code", ""))
     add_metric("mito_numt_qc_summary.tsv", numt_rows)
 
     qc_rows = [("status", oracle["mito_qc_module_status"])]
@@ -2448,6 +2488,11 @@ def test_github_only_packet_builds_and_verifies_from_fresh_extraction(
             artifact = case_root / row["relative_path"]
             assert hashlib.sha256(artifact.read_bytes()).hexdigest() == row["sha256"]
 
+    for case_id in ("gm11906_default_run1", "gm11906_default_run2"):
+        assert read_tsv(
+            packet / "observed_normalized" / case_id / "mito_numt_qc_summary.tsv"
+        ) == [{"metric": "status", "value": "not_applicable"}]
+
     root_check = subprocess.run(
         [str(packet / "verify_bundle.sh")], capture_output=True, text=True, check=False
     )
@@ -2457,6 +2502,10 @@ def test_github_only_packet_builds_and_verifies_from_fresh_extraction(
     safe_extract.safe_extract(
         output / "mito-overview-v0.3.0-validation.zip", extracted
     )
+    for case_id in ("gm11906_default_run1", "gm11906_default_run2"):
+        assert read_tsv(
+            extracted / "observed_normalized" / case_id / "mito_numt_qc_summary.tsv"
+        ) == [{"metric": "status", "value": "not_applicable"}]
     extracted_check = subprocess.run(
         ["bash", str(extracted / "verify_bundle.sh")],
         capture_output=True,
@@ -2601,6 +2650,114 @@ def test_extracted_verifier_rejects_resealed_explicit_ok_feature_status(
     checked = verify_packet(packet)
     assert checked.returncode != 0
     assert "invalid explicit feature-annotation status 'ok'" in checked.stderr
+    assert "artifact hash mismatch" not in checked.stderr
+    assert "normalized manifest" not in checked.stderr
+    assert "cross-platform" not in checked.stderr
+
+
+def test_extracted_verifier_rejects_resealed_forged_numt_interpretation(
+    tmp_path: Path,
+) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    output = tmp_path / "output"
+    packet_builder.build_packet(packet_args(validation, repo, output))
+    packet = output / "packet"
+
+    local_root = packet / "observed_normalized"
+    ubuntu_artifact = packet / "acceptance/ubuntu_public_validation/artifact"
+    ubuntu_root = ubuntu_artifact / "results/observed_normalized"
+    changed_local: list[Path] = []
+    for case_id in ("gm11906_default_run1", "gm11906_default_run2"):
+        for root in (local_root, ubuntu_root):
+            case_root = root / case_id
+            metric_table(
+                case_root / "mito_numt_qc_summary.tsv",
+                [
+                    ("status", "not_applicable"),
+                    ("numt_interpretation_status", "ok"),
+                ],
+            )
+            rewrite_normalized_manifest(case_root)
+        changed_local.extend(
+            [
+                local_root / case_id / "mito_numt_qc_summary.tsv",
+                local_root / case_id / "normalized_manifest.tsv",
+            ]
+        )
+
+    provenance_path = packet / "table_provenance.tsv"
+    with provenance_path.open(encoding="utf-8", newline="") as handle:
+        reader = csv.DictReader(handle, delimiter="\t")
+        provenance_fields = tuple(reader.fieldnames or ())
+        provenance_rows = list(reader)
+    provenance_by_path = {row["packet_path"]: row for row in provenance_rows}
+    for path in changed_local:
+        relative = path.relative_to(packet).as_posix()
+        row = provenance_by_path[relative]
+        with path.open(encoding="utf-8", newline="") as handle:
+            parsed = list(csv.reader(handle, delimiter="\t"))
+        row["sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
+        row["rows"] = str(max(0, len(parsed) - 1))
+        row["columns"] = str(len(parsed[0]) if parsed else 0)
+    with provenance_path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=provenance_fields,
+            delimiter="\t",
+            lineterminator="\n",
+        )
+        writer.writeheader()
+        writer.writerows(provenance_rows)
+
+    acceptance_comparison = packet / "acceptance/cross_platform_comparison.tsv"
+    with acceptance_comparison.open(encoding="utf-8", newline="") as handle:
+        reader = csv.DictReader(handle, delimiter="\t")
+        comparison_fields = tuple(reader.fieldnames or ())
+        comparison_rows = list(reader)
+    comparison_by_path = {
+        row["relative_path"]: row
+        for row in comparison_rows
+        if row["evidence_type"] == "normalized_scientific_table"
+    }
+    for path in changed_local:
+        relative = path.relative_to(packet).as_posix()
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        comparison_by_path[relative]["macos_sha256"] = digest
+        comparison_by_path[relative]["ubuntu_sha256"] = digest
+    for comparison_path in (
+        acceptance_comparison,
+        packet / "cross_platform_comparison.tsv",
+    ):
+        with comparison_path.open("w", encoding="utf-8", newline="") as handle:
+            writer = csv.DictWriter(
+                handle,
+                fieldnames=comparison_fields,
+                delimiter="\t",
+                lineterminator="\n",
+            )
+            writer.writeheader()
+            writer.writerows(comparison_rows)
+
+    rewrite_public_artifact_manifest(ubuntu_artifact)
+    identity_path = packet / "release_identity.json"
+    identity = read_json(identity_path)
+    assert isinstance(identity, dict)
+    identity["public_validation_github_actions"]["cross_platform_reproduction"][
+        "comparison_sha256"
+    ] = hashlib.sha256(acceptance_comparison.read_bytes()).hexdigest()
+    for row in identity["public_provenance"]:
+        path = packet / row["path"]
+        row["sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
+    write_json(identity_path, identity)
+    rewrite_manifest(packet)
+
+    checked = verify_packet(packet)
+    assert checked.returncode != 0
+    assert (
+        "normalized module status mismatch: "
+        "GM11906 numt_interpretation_status"
+    ) in checked.stderr
     assert "artifact hash mismatch" not in checked.stderr
     assert "normalized manifest" not in checked.stderr
     assert "cross-platform" not in checked.stderr
