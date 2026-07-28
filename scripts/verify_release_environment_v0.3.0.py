@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import platform
 import re
 import subprocess
@@ -139,7 +140,16 @@ def verify(
     repo_root: Path, python_executable: Path, expected_commit: str
 ) -> dict[str, object]:
     repo_root = repo_root.resolve(strict=True)
-    python_executable = python_executable.resolve(strict=True)
+    python_executable = Path(os.path.abspath(python_executable))
+    observed_executable = Path(os.path.abspath(sys.executable))
+    if (
+        not python_executable.exists()
+        or not python_executable.is_file()
+        or python_executable != observed_executable
+    ):
+        raise ValueError(
+            "The verifier must run with the exact Python path supplied to it"
+        )
     observed_platform = platform_id()
     lock_path = repo_root / "locks" / f"environment-{observed_platform}.explicit.txt"
     if not lock_path.is_file() or lock_path.is_symlink():
@@ -178,16 +188,19 @@ def verify(
     if worktree_status:
         raise ValueError("Release repository worktree is not clean")
 
-    if python_executable != Path(sys.executable).resolve(strict=True):
-        raise ValueError(
-            "The verifier must run with the Python executable supplied to it"
-        )
     if python_executable.parent.name != "bin":
         raise ValueError(
             f"Release Python must be located under an environment bin directory: "
             f"{python_executable}"
         )
-    prefix = python_executable.parent.parent.resolve(strict=True)
+    lexical_prefix = python_executable.parent.parent
+    prefix = lexical_prefix.resolve(strict=True)
+    resolved_executable = python_executable.resolve(strict=True)
+    if not resolved_executable.is_relative_to(prefix):
+        raise ValueError(
+            "Release Python resolves outside its declared environment prefix: "
+            f"{python_executable} -> {resolved_executable}"
+        )
     if not (prefix / "conda-meta").is_dir():
         raise ValueError(
             f"Release Python is not inside a Conda prefix: {python_executable}"

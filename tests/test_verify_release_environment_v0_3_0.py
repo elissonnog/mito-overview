@@ -307,3 +307,41 @@ def test_verify_rejects_package_empty_venv_over_conda_base(
     monkeypatch.setattr(verifier.subprocess, "run", fake_run)
     with pytest.raises(ValueError, match="not inside a Conda prefix"):
         verifier.verify(repo, runtime_python, COMMIT)
+
+
+def test_verify_rejects_symlinked_venv_python_targeting_conda_base(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = tmp_path / "repo"
+    locks = repo / "locks"
+    locks.mkdir(parents=True)
+    locked = manifest("python-3.12.13-approved_0.conda")
+    (locks / "environment-linux-64.explicit.txt").write_text(
+        locked, encoding="utf-8"
+    )
+    conda_base = tmp_path / "conda-base"
+    write_conda_metadata(
+        conda_base,
+        next(line for line in locked.splitlines() if line.startswith("https://")),
+    )
+    base_python = conda_base / "bin" / "python3.12"
+    base_python.parent.mkdir(parents=True, exist_ok=True)
+    base_python.write_text("#!/bin/sh\n", encoding="utf-8")
+    base_python.chmod(0o755)
+
+    overlay_python = tmp_path / "overlay-venv" / "bin" / "python"
+    overlay_python.parent.mkdir(parents=True)
+    overlay_python.symlink_to(base_python)
+    monkeypatch.setattr(verifier.sys, "executable", str(overlay_python))
+    monkeypatch.setattr(verifier, "platform_id", lambda: "linux-64")
+
+    def fake_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        assert command[0] == "git"
+        stdout = TREE + "\n" if command[-1] == "HEAD^{tree}" else COMMIT + "\n"
+        if command[-1] == "--untracked-files=all":
+            stdout = ""
+        return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
+
+    monkeypatch.setattr(verifier.subprocess, "run", fake_run)
+    with pytest.raises(ValueError, match="resolves outside"):
+        verifier.verify(repo, overlay_python, COMMIT)
