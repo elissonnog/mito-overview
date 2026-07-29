@@ -482,6 +482,58 @@ if [[ -e "${MANIFEST_PATH}" ]]; then
 fi
 assert_allowed_unsealed_contents
 
+download_with_resume() {
+  local partial="$1"
+  local url="$2"
+  local retries="${MITO_OVERVIEW_PUBLIC_CURL_RETRIES:-5}"
+  local retry_delay="${MITO_OVERVIEW_PUBLIC_CURL_RETRY_DELAY:-3}"
+  local attempt total_attempts existing_bytes status
+
+  [[ "${retries}" =~ ^(0|[1-9][0-9]*)$ ]] || {
+    echo "MITO_OVERVIEW_PUBLIC_CURL_RETRIES must be a non-negative integer" >&2
+    return 2
+  }
+  [[ "${retry_delay}" =~ ^(0|[1-9][0-9]*)$ ]] || {
+    echo "MITO_OVERVIEW_PUBLIC_CURL_RETRY_DELAY must be a non-negative integer" >&2
+    return 2
+  }
+  total_attempts=$((retries + 1))
+
+  # A new curl process is required for every retry so --continue-at re-reads
+  # the current .partial size after an interrupted transfer.
+  for ((attempt = 1; attempt <= total_attempts; attempt++)); do
+    existing_bytes=0
+    if [[ -f "${partial}" ]]; then
+      existing_bytes="$(wc -c < "${partial}" | tr -d ' ')"
+    fi
+    echo \
+      "[public-cache] transfer attempt=${attempt}/${total_attempts} resume_bytes=${existing_bytes}"
+    if curl \
+      --disable \
+      --fail \
+      --location \
+      --connect-timeout "${MITO_OVERVIEW_PUBLIC_CURL_CONNECT_TIMEOUT:-30}" \
+      --max-time "${MITO_OVERVIEW_PUBLIC_CURL_MAX_TIME:-0}" \
+      --continue-at - \
+      --output "${partial}" \
+      "${url}"; then
+      return 0
+    else
+      status=$?
+    fi
+    if ((attempt < total_attempts)); then
+      echo \
+        "[public-cache] transfer interrupted status=${status}; retrying from current partial"
+      if ((retry_delay > 0)); then
+        sleep "${retry_delay}"
+      fi
+    fi
+  done
+  echo \
+    "[public-cache] transfer failed after ${total_attempts} attempts: ${url}" >&2
+  return "${status}"
+}
+
 while IFS=$'\t' read -r dataset run sample alias title source_sample strategy unit source_record filename bytes md5 sha url; do
   [[ "${dataset}" == dataset_id ]] && continue
   destination="${CACHE_ROOT}/${filename}"
@@ -491,17 +543,7 @@ while IFS=$'\t' read -r dataset run sample alias title source_sample strategy un
       echo "[public-cache] promoting complete verified partial ${filename}"
     else
       echo "[public-cache] downloading ${run} ${filename}"
-      curl \
-        --fail \
-        --location \
-        --retry "${MITO_OVERVIEW_PUBLIC_CURL_RETRIES:-5}" \
-        --retry-all-errors \
-        --retry-delay "${MITO_OVERVIEW_PUBLIC_CURL_RETRY_DELAY:-3}" \
-        --connect-timeout "${MITO_OVERVIEW_PUBLIC_CURL_CONNECT_TIMEOUT:-30}" \
-        --max-time "${MITO_OVERVIEW_PUBLIC_CURL_MAX_TIME:-0}" \
-        --continue-at - \
-        --output "${partial}" \
-        "${url}"
+      download_with_resume "${partial}" "${url}"
       records="$(verify_one_fastq "${partial}" "${bytes}" "${md5}" "${sha}")"
     fi
     mv "${partial}" "${destination}"
