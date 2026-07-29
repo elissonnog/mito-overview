@@ -124,6 +124,57 @@ def write_fake_curl(bin_dir: Path, marker: Path, exit_code: int = 55) -> None:
     executable.chmod(0o755)
 
 
+def write_incremental_failing_curl(bin_dir: Path, marker: Path) -> None:
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    executable = bin_dir / "curl"
+    executable.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        "output=''\n"
+        "args=(\"$@\")\n"
+        "for ((index = 0; index < ${#args[@]}; index++)); do\n"
+        "  if [[ \"${args[$index]}\" == '--output' ]]; then\n"
+        "    output=\"${args[$((index + 1))]}\"\n"
+        "  fi\n"
+        "done\n"
+        "[[ -n \"$output\" ]]\n"
+        f"printf '%s\\t%s\\n' \"$(wc -c < \"$output\" 2>/dev/null || printf 0)\" "
+        f"\"$*\" >> {str(marker)!r}\n"
+        "printf x >> \"$output\"\n"
+        "exit 18\n",
+        encoding="utf-8",
+    )
+    executable.chmod(0o755)
+
+
+def write_incremental_fail_then_succeed_curl(
+    bin_dir: Path,
+    marker: Path,
+) -> None:
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    executable = bin_dir / "curl"
+    executable.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        "output=''\n"
+        "args=(\"$@\")\n"
+        "for ((index = 0; index < ${#args[@]}; index++)); do\n"
+        "  if [[ \"${args[$index]}\" == '--output' ]]; then\n"
+        "    output=\"${args[$((index + 1))]}\"\n"
+        "  fi\n"
+        "done\n"
+        "[[ -n \"$output\" ]]\n"
+        f"printf '%s\\t%s\\n' \"$(wc -c < \"$output\" 2>/dev/null || printf 0)\" "
+        f"\"$*\" >> {str(marker)!r}\n"
+        "printf x >> \"$output\"\n"
+        f"calls=$(wc -l < {str(marker)!r})\n"
+        "[[ \"$calls\" -ge 2 ]] && exit 0\n"
+        "exit 18\n",
+        encoding="utf-8",
+    )
+    executable.chmod(0o755)
+
+
 def matrix_command(tmp_path: Path, cache: Path) -> list[str]:
     return [
         str(MATRIX),
@@ -1152,12 +1203,186 @@ def test_prepare_corrupt_partial_cannot_be_promoted_or_sealed(tmp_path: Path) ->
         check=False,
         capture_output=True,
         text=True,
-        env={**os.environ, "PATH": f"{fake_bin}:{os.environ['PATH']}"},
+        env={
+            **os.environ,
+            "PATH": f"{fake_bin}:{os.environ['PATH']}",
+            "MITO_OVERVIEW_PUBLIC_CURL_RETRY_DELAY": "0",
+        },
     )
     assert result.returncode != 0
     assert marker.is_file()
     assert "--continue-at -" in marker.read_text(encoding="utf-8")
     assert not (cache / "SRR10804585_1.fastq.gz").exists()
+    assert not (cache / "raw_inputs.tsv").exists()
+    assert not (cache / "CACHE_SEAL.sha256").exists()
+
+
+def test_prepare_retries_in_new_processes_and_advances_partial_offset(
+    tmp_path: Path,
+) -> None:
+    cache = tmp_path / "cache"
+    marker = tmp_path / "curl-called.tsv"
+    fake_bin = tmp_path / "bin"
+    write_incremental_failing_curl(fake_bin, marker)
+
+    result = subprocess.run(
+        [str(PREPARE), "--cache", str(cache)],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "PATH": f"{fake_bin}:{os.environ['PATH']}",
+            "MITO_OVERVIEW_PUBLIC_CURL_RETRIES": "2",
+            "MITO_OVERVIEW_PUBLIC_CURL_RETRY_DELAY": "0",
+        },
+    )
+
+    assert result.returncode != 0
+    calls = [line.split("\t", 1) for line in marker.read_text().splitlines()]
+    assert [int(offset) for offset, _ in calls] == [0, 1, 2]
+    assert all("--continue-at -" in arguments for _, arguments in calls)
+    partial = cache / "SRR10804585_1.fastq.gz.partial"
+    assert partial.read_bytes() == b"xxx"
+    assert not (cache / "raw_inputs.tsv").exists()
+    assert not (cache / "CACHE_SEAL.sha256").exists()
+
+
+def test_prepare_resumes_after_failure_and_stops_after_success(
+    tmp_path: Path,
+) -> None:
+    cache = tmp_path / "cache"
+    marker = tmp_path / "curl-called.tsv"
+    fake_bin = tmp_path / "bin"
+    write_incremental_fail_then_succeed_curl(fake_bin, marker)
+
+    result = subprocess.run(
+        [str(PREPARE), "--cache", str(cache)],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "PATH": f"{fake_bin}:{os.environ['PATH']}",
+            "MITO_OVERVIEW_PUBLIC_CURL_RETRIES": "5",
+            "MITO_OVERVIEW_PUBLIC_CURL_RETRY_DELAY": "0",
+        },
+    )
+
+    assert result.returncode != 0
+    calls = [line.split("\t", 1) for line in marker.read_text().splitlines()]
+    assert [int(offset) for offset, _ in calls] == [0, 1]
+    partial = cache / "SRR10804585_1.fastq.gz.partial"
+    assert partial.read_bytes() == b"xx"
+    assert "byte-size mismatch" in result.stderr
+    assert "transfer failed after" not in result.stderr
+    assert not (cache / "raw_inputs.tsv").exists()
+    assert not (cache / "CACHE_SEAL.sha256").exists()
+
+
+@pytest.mark.parametrize(
+    ("variable", "value", "message"),
+    [
+        (
+            "MITO_OVERVIEW_PUBLIC_CURL_RETRIES",
+            "-1",
+            "MITO_OVERVIEW_PUBLIC_CURL_RETRIES must be a non-negative integer",
+        ),
+        (
+            "MITO_OVERVIEW_PUBLIC_CURL_RETRIES",
+            "08",
+            "MITO_OVERVIEW_PUBLIC_CURL_RETRIES must be a non-negative integer",
+        ),
+        (
+            "MITO_OVERVIEW_PUBLIC_CURL_RETRY_DELAY",
+            "not-an-integer",
+            "MITO_OVERVIEW_PUBLIC_CURL_RETRY_DELAY must be a non-negative integer",
+        ),
+    ],
+)
+def test_prepare_rejects_invalid_retry_configuration_before_network(
+    tmp_path: Path,
+    variable: str,
+    value: str,
+    message: str,
+) -> None:
+    cache = tmp_path / "cache"
+    marker = tmp_path / "curl-called.txt"
+    fake_bin = tmp_path / "bin"
+    write_fake_curl(fake_bin, marker)
+
+    result = subprocess.run(
+        [str(PREPARE), "--cache", str(cache)],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "PATH": f"{fake_bin}:{os.environ['PATH']}",
+            variable: value,
+        },
+    )
+
+    assert result.returncode != 0
+    assert message in result.stderr
+    assert not marker.exists()
+    assert not (cache / "raw_inputs.tsv").exists()
+    assert not (cache / "CACHE_SEAL.sha256").exists()
+
+
+def test_prepare_disables_hostile_curl_startup_configuration(
+    tmp_path: Path,
+) -> None:
+    curl_home = tmp_path / "curl-home"
+    curl_home.mkdir()
+    poison = tmp_path / "poison"
+    poison.write_bytes(b"poison-prefix")
+    expected = tmp_path / "expected"
+    expected.write_bytes(b"expected-local-response")
+    canary = tmp_path / "curlrc-loaded.trace"
+    (curl_home / ".curlrc").write_text(
+        f'url = "{poison.as_uri()}"\n'
+        f'trace-ascii = "{canary}"\n',
+        encoding="utf-8",
+    )
+    real_curl = shutil.which("curl")
+    assert real_curl is not None
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    wrapper = fake_bin / "curl"
+    wrapper.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        "args=(\"$@\")\n"
+        "last=$((${#args[@]} - 1))\n"
+        f"args[$last]={expected.as_uri()!r}\n"
+        f"exec {real_curl!r} \"${{args[@]}}\"\n",
+        encoding="utf-8",
+    )
+    wrapper.chmod(0o755)
+
+    result = subprocess.run(
+        [str(PREPARE), "--cache", str(tmp_path / "cache")],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "CURL_HOME": str(curl_home),
+            "PATH": f"{fake_bin}:{os.environ['PATH']}",
+            "MITO_OVERVIEW_PUBLIC_CURL_RETRIES": "0",
+        },
+    )
+
+    assert result.returncode != 0
+    assert not canary.exists()
+    cache = tmp_path / "cache"
+    assert (
+        cache / "SRR10804585_1.fastq.gz.partial"
+    ).read_bytes() == expected.read_bytes()
+    assert poison.read_bytes() not in (
+        cache / "SRR10804585_1.fastq.gz.partial"
+    ).read_bytes()
     assert not (cache / "raw_inputs.tsv").exists()
     assert not (cache / "CACHE_SEAL.sha256").exists()
 
