@@ -5378,6 +5378,64 @@ def rebind_packaged_resource_evidence(packet_root: Path, expected_commit: str) -
     validate_resource_bindings(packet_root, expected_commit, packaged=True)
 
 
+def rebind_packaged_resolved_ci_environment_evidence(packet_root: Path) -> None:
+    """Bind sanitized CI environment files to their packet-local identity records."""
+
+    evidence_root = packet_root / RESOLVED_CI_ENVIRONMENTS_RELATIVE
+    for platform_id in RESOLVED_CI_PLATFORMS:
+        platform_root = evidence_root / platform_id
+        record_path = platform_root / f"platform-{platform_id}.json"
+        record = load_json_object(
+            record_path,
+            f"Packaged resolved CI environment identity for {platform_id}",
+        )
+        evidence_files = record.get("evidence_files")
+        if not isinstance(evidence_files, dict):
+            raise ValueError(
+                f"Packaged resolved CI evidence inventory is malformed for {platform_id}"
+            )
+        expected_names = {
+            f"conda-{platform_id}.explicit.txt",
+            f"pip-{platform_id}.txt",
+            f"environment-{platform_id}.yml",
+            f"artifact-lock-{platform_id}.explicit.txt",
+            "requirements-release-tools.txt",
+            f"python-{platform_id}.txt",
+        }
+        if set(evidence_files) != expected_names:
+            raise ValueError(
+                f"Packaged resolved CI evidence inventory mismatch for {platform_id}"
+            )
+
+        protected_sources = {
+            f"environment-{platform_id}.yml": "source_solver_spec_sha256",
+            f"artifact-lock-{platform_id}.explicit.txt": "source_artifact_lock_sha256",
+            "requirements-release-tools.txt": "source_release_tools_lock_sha256",
+        }
+        for name, field in protected_sources.items():
+            if record.get(field) != sha256(platform_root / name):
+                raise ValueError(
+                    f"Protected resolved CI source changed during packaging: "
+                    f"{platform_id}/{name}"
+                )
+
+        manifest_lines: list[str] = []
+        for name in sorted(expected_names):
+            source = platform_root / name
+            item = {
+                "sha256": sha256(source),
+                "size_bytes": source.stat().st_size,
+            }
+            evidence_files[name] = item
+            manifest_lines.append(
+                f"{name}\t{item['sha256']}\t{item['size_bytes']}\n"
+            )
+        record["evidence_manifest_sha256"] = hashlib.sha256(
+            "".join(manifest_lines).encode("utf-8")
+        ).hexdigest()
+        record_path.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
+
+
 def decoded_png_rgba(path: Path) -> tuple[int, int, bytes]:
     """Decode a non-interlaced 8-bit PNG to canonical RGBA bytes."""
 
@@ -5631,6 +5689,16 @@ def _text_payload(path: Path) -> str | None:
         return None
 
 
+def _mask_base64_data_uri_payloads(text: str) -> str:
+    """Hide encoded binary payloads while retaining the surrounding HTML text."""
+
+    return re.sub(
+        r"(?i)(data:[^,\s]*?;base64,)[A-Za-z0-9+/=\r\n]+",
+        r"\1<BASE64_PAYLOAD>",
+        text,
+    )
+
+
 def sanitize_packet_paths(
     packet_root: Path,
     replacements: dict[Path, str],
@@ -5713,14 +5781,15 @@ def validate_packet_hygiene(packet_root: Path) -> None:
         text = _text_payload(path)
         if text is None:
             continue
+        scannable_text = _mask_base64_data_uri_payloads(text)
         relative = path.relative_to(packet_root).as_posix()
         for pattern in local_path_patterns:
-            if re.search(pattern, text):
+            if re.search(pattern, scannable_text):
                 raise ValueError(f"Packet contains an absolute user path: {relative}")
         for pattern in secret_patterns:
-            if re.search(pattern, text):
+            if re.search(pattern, scannable_text):
                 raise ValueError(f"Packet contains secret-like material: {relative}")
-        if re.search(generic_doi, text):
+        if re.search(generic_doi, scannable_text):
             raise ValueError(f"Core GitHub validation packet contains a DOI claim: {relative}")
         if path.suffix == ".json":
             try:
@@ -6921,6 +6990,13 @@ secret_patterns = (
 )
 generic_doi = r"(?i)\b10\.\d{4,9}/[-._;()/:A-Z0-9]+"
 
+def mask_base64_data_uri_payloads(text):
+    return re.sub(
+        r"(?i)(data:[^,\s]*?;base64,)[A-Za-z0-9+/=\r\n]+",
+        r"\1<BASE64_PAYLOAD>",
+        text,
+    )
+
 def reject_json_keys(value, location):
     if isinstance(value, dict):
         for key, child in value.items():
@@ -6945,11 +7021,12 @@ for candidate in sorted(root.rglob("*")):
     except UnicodeDecodeError:
         continue
     relative = candidate.relative_to(root).as_posix()
-    if any(re.search(pattern, text) for pattern in local_path_patterns):
+    scannable_text = mask_base64_data_uri_payloads(text)
+    if any(re.search(pattern, scannable_text) for pattern in local_path_patterns):
         raise SystemExit(f"absolute user path found in packet: {relative}")
-    if any(re.search(pattern, text) for pattern in secret_patterns):
+    if any(re.search(pattern, scannable_text) for pattern in secret_patterns):
         raise SystemExit(f"secret-like material found in packet: {relative}")
-    if re.search(generic_doi, text):
+    if re.search(generic_doi, scannable_text):
         raise SystemExit(f"DOI claim found in GitHub-only packet: {relative}")
     if candidate.suffix == ".json":
         reject_json_keys(json.loads(text), relative)
@@ -9442,6 +9519,7 @@ def build_packet(args: argparse.Namespace) -> Path:
         args.packet_root,
         str(release_identity["git_commit"]),
     )
+    rebind_packaged_resolved_ci_environment_evidence(args.packet_root)
     validate_downloaded_public_artifact_identity(
         packaged_public_artifact,
         str(release_identity["git_commit"]),
@@ -9478,6 +9556,12 @@ def build_packet(args: argparse.Namespace) -> Path:
     ]
     identity_path = args.packet_root / "release_identity.json"
     packaged_identity = json.loads(identity_path.read_text(encoding="utf-8"))
+    packaged_identity["resolved_ci_environments"] = validate_resolved_ci_environments(
+        args.packet_root,
+        args.repo_root,
+        str(release_identity["git_commit"]),
+        int(ci_identity["run_id"]),
+    )
     if packaged_identity.get("dist_artifacts") != packaged_dist_inventory:
         raise ValueError(
             "Release identity distribution inventory does not match installed packet bytes"

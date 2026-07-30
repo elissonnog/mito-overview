@@ -3466,6 +3466,68 @@ def test_packet_requires_all_resolved_ci_platforms(tmp_path: Path) -> None:
         packet_builder.build_packet(packet_args(validation, repo, tmp_path / "output"))
 
 
+def test_packet_rebinds_sanitized_resolved_ci_environment_records(
+    tmp_path: Path,
+) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    cases = {
+        "linux-64": (
+            "package @ file:///" + "home/conda/feedstock_root/build_artifacts/package/work\n",
+            "/" + "home/conda",
+        ),
+        "osx-arm64": (
+            "package @ file:///" + "Users/runner/miniforge3/conda-bld/package/work\n",
+            "/" + "Users/runner",
+        ),
+    }
+    for platform_id, (payload, _) in cases.items():
+        platform_root = (
+            validation
+            / packet_builder.RESOLVED_CI_ENVIRONMENTS_RELATIVE
+            / platform_id
+        )
+        pip_name = f"pip-{platform_id}.txt"
+        (platform_root / pip_name).write_text(payload, encoding="utf-8")
+        record_path = platform_root / f"platform-{platform_id}.json"
+        record = read_json(record_path)
+        assert isinstance(record, dict) and isinstance(record["evidence_files"], dict)
+        evidence_names = sorted(record["evidence_files"])
+        pip_payload = (platform_root / pip_name).read_bytes()
+        record["evidence_files"][pip_name] = {
+            "sha256": hashlib.sha256(pip_payload).hexdigest(),
+            "size_bytes": len(pip_payload),
+        }
+        manifest_payload = "".join(
+            f"{name}\t{record['evidence_files'][name]['sha256']}\t"
+            f"{record['evidence_files'][name]['size_bytes']}\n"
+            for name in evidence_names
+        ).encode("utf-8")
+        record["evidence_manifest_sha256"] = hashlib.sha256(
+            manifest_payload
+        ).hexdigest()
+        write_json(record_path, record)
+
+    output = tmp_path / "output"
+    packet_builder.build_packet(packet_args(validation, repo, output))
+    packet = output / "packet"
+    for platform_id, (_, forbidden_prefix) in cases.items():
+        platform_root = (
+            packet / packet_builder.RESOLVED_CI_ENVIRONMENTS_RELATIVE / platform_id
+        )
+        pip_path = platform_root / f"pip-{platform_id}.txt"
+        pip_text = pip_path.read_text(encoding="utf-8")
+        assert forbidden_prefix not in pip_text
+        assert "${HOME}" in pip_text
+        record = read_json(platform_root / f"platform-{platform_id}.json")
+        assert isinstance(record, dict) and isinstance(record["evidence_files"], dict)
+        assert record["evidence_files"][pip_path.name] == {
+            "sha256": hashlib.sha256(pip_path.read_bytes()).hexdigest(),
+            "size_bytes": pip_path.stat().st_size,
+        }
+    assert verify_packet(packet).returncode == 0
+
+
 def test_packet_rejects_self_consistent_resolved_ci_lock_drift(tmp_path: Path) -> None:
     repo, commit = create_release_repo(tmp_path)
     validation = create_validation_root(tmp_path, repo, commit)
@@ -4270,6 +4332,53 @@ def test_packet_rejects_private_institutional_paths(
         )
     with pytest.raises(ValueError, match="absolute user path"):
         packet_builder.build_packet(packet_args(validation, repo, tmp_path / "output"))
+
+
+def test_packet_hygiene_ignores_path_like_text_inside_base64_data_uri(
+    tmp_path: Path,
+) -> None:
+    packet = tmp_path / "packet"
+    packet.mkdir()
+    (packet / "report.html").write_text(
+        '<html><body><img src="data:image/png;base64,AAAA/mntAAAA"></body></html>\n',
+        encoding="utf-8",
+    )
+
+    packet_builder.validate_packet_hygiene(packet)
+
+
+def test_packet_hygiene_still_rejects_path_outside_base64_data_uri(
+    tmp_path: Path,
+) -> None:
+    packet = tmp_path / "packet"
+    packet.mkdir()
+    (packet / "report.html").write_text(
+        '<html><body><img src="data:image/png;base64,AAAA/mntAAAA">'
+        '<p>source=/mnt/institution/private/input.bam</p></body></html>\n',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="absolute user path"):
+        packet_builder.validate_packet_hygiene(packet)
+
+
+def test_extracted_verifier_ignores_path_like_text_inside_base64_data_uri(
+    tmp_path: Path,
+) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    output = tmp_path / "output"
+    packet_builder.build_packet(packet_args(validation, repo, output))
+    packet = output / "packet"
+    fixture = packet / "logs/base64_uri_fixture.html"
+    fixture.write_text(
+        '<html><body><img src="data:image/png;base64,AAAA/mntAAAA"></body></html>\n',
+        encoding="utf-8",
+    )
+    rewrite_manifest(packet)
+
+    checked = verify_packet(packet)
+    assert checked.returncode == 0, checked.stderr
 
 
 @pytest.mark.parametrize(
