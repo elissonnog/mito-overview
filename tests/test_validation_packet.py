@@ -3914,6 +3914,74 @@ def test_packet_rejects_wrong_pull_request_identity(
         packet_builder.build_packet(packet_args(validation, repo, tmp_path / "output"))
 
 
+def test_packet_projects_validated_pull_request_to_canonical_identity(
+    tmp_path: Path,
+) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    pull_path = validation / "acceptance/pull_request.json"
+    pull = read_json(pull_path)
+    assert isinstance(pull, dict)
+    pull["title"] = "Packet hygiene follow-up"
+    pull["body"] = (
+        "This arbitrary PR discussion mentions /mnt and must not become "
+        "release evidence."
+    )
+    write_json(pull_path, pull)
+
+    output = tmp_path / "output"
+    packet_builder.build_packet(packet_args(validation, repo, output))
+    packet = output / "packet"
+    packaged_pull = read_json(packet / "acceptance/pull_request.json")
+    assert isinstance(packaged_pull, dict)
+    assert set(packaged_pull) == {
+        "base",
+        "comments_url",
+        "head",
+        "html_url",
+        "issue_url",
+        "merge_commit_sha",
+        "merged",
+        "merged_at",
+        "number",
+        "state",
+        "url",
+    }
+    assert "title" not in packaged_pull
+    assert "body" not in packaged_pull
+    assert "/mnt" not in json.dumps(packaged_pull)
+    checked = verify_packet(packet)
+    assert checked.returncode == 0, checked.stderr
+
+
+def test_canonical_pull_request_writer_refuses_existing_destination(
+    tmp_path: Path,
+) -> None:
+    destination = tmp_path / "pull_request.json"
+    destination.write_text("do not replace\n", encoding="utf-8")
+    identity = {
+        "repository": GITHUB_REPOSITORY,
+        "api_url": f"https://api.github.com/repos/{GITHUB_REPOSITORY}/pulls/1",
+        "url": f"{REPOSITORY}/pull/1",
+        "issue_api_url": f"https://api.github.com/repos/{GITHUB_REPOSITORY}/issues/1",
+        "number": 1,
+        "state": "closed",
+        "merged": True,
+        "merged_at": "2026-07-21T12:00:00Z",
+        "merge_commit_sha": "a" * 40,
+        "comments_api_url": (
+            f"https://api.github.com/repos/{GITHUB_REPOSITORY}/issues/1/comments"
+        ),
+        "base_ref": "main",
+        "base_sha": "b" * 40,
+        "head_ref": "release",
+        "head_sha": "c" * 40,
+    }
+    with pytest.raises(FileExistsError, match="destination exists"):
+        packet_builder.write_canonical_pull_request_evidence(destination, identity)
+    assert destination.read_text(encoding="utf-8") == "do not replace\n"
+
+
 def test_packet_rejects_pull_request_number_inconsistent_with_ci_evidence(
     tmp_path: Path,
 ) -> None:
@@ -4596,6 +4664,26 @@ def test_verifier_rejects_semantic_identity_tampering(tmp_path: Path) -> None:
     )
     assert checked.returncode != 0
     assert "release commit" in checked.stderr
+
+
+def test_extracted_verifier_rejects_extra_pull_request_fields(
+    tmp_path: Path,
+) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    output = tmp_path / "output"
+    packet_builder.build_packet(packet_args(validation, repo, output))
+    packet = output / "packet"
+    pull_path = packet / "acceptance/pull_request.json"
+    pull = read_json(pull_path)
+    assert isinstance(pull, dict)
+    pull["title"] = "Unvalidated free-form metadata"
+    write_json(pull_path, pull)
+    rewrite_manifest(packet)
+
+    checked = verify_packet(packet)
+    assert checked.returncode != 0
+    assert "canonical minimal record" in checked.stderr
 
 
 def test_extracted_verifier_rejects_rehashed_read_only_audit_blockers(

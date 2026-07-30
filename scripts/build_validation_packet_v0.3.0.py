@@ -1354,17 +1354,25 @@ def copy_regular_file(source: Path, destination: Path, *, source_root: Path) -> 
     )
 
 
-def copy_tree(source: Path, destination: Path) -> None:
+def copy_tree(
+    source: Path,
+    destination: Path,
+    *,
+    exclude_relative: frozenset[str] = frozenset(),
+) -> None:
     files = validate_regular_tree(source)
     if destination.exists() or destination.is_symlink():
         raise FileExistsError(f"Packet destination already exists: {destination}")
     destination.mkdir(parents=True)
     for entry in sorted(source.rglob("*")):
         relative = entry.relative_to(source)
+        relative_text = relative.as_posix()
         mode = entry.lstat().st_mode
         if stat.S_ISDIR(mode):
             (destination / relative).mkdir()
         elif stat.S_ISREG(mode):
+            if relative_text in exclude_relative:
+                continue
             copy_regular_file(entry, destination / relative, source_root=source)
         else:
             raise ValueError(f"Packet source changed during copy: {entry}")
@@ -3637,6 +3645,59 @@ def validate_pull_request_evidence(
         "final_tree_sha": final_tree,
         "reviewed_head_tree_sha": reviewed_head_tree,
     }
+
+
+def write_canonical_pull_request_evidence(
+    path: Path,
+    pull_request: dict[str, object],
+) -> None:
+    """Persist only the validated PR identity required by the packet verifier."""
+
+    repository = str(pull_request["repository"])
+    repository_record = {
+        "full_name": repository,
+        "html_url": f"https://github.com/{repository}",
+        "url": f"https://api.github.com/repos/{repository}",
+    }
+    canonical = {
+        "url": pull_request["api_url"],
+        "html_url": pull_request["url"],
+        "issue_url": pull_request["issue_api_url"],
+        "number": pull_request["number"],
+        "state": pull_request["state"],
+        "merged": pull_request["merged"],
+        "merged_at": pull_request["merged_at"],
+        "merge_commit_sha": pull_request["merge_commit_sha"],
+        "comments_url": pull_request["comments_api_url"],
+        "base": {
+            "ref": pull_request["base_ref"],
+            "sha": pull_request["base_sha"],
+            "repo": repository_record,
+        },
+        "head": {
+            "ref": pull_request["head_ref"],
+            "sha": pull_request["head_sha"],
+            "repo": repository_record,
+        },
+    }
+    payload = (json.dumps(canonical, indent=2, sort_keys=True) + "\n").encode("utf-8")
+    if path.exists() or path.is_symlink():
+        raise FileExistsError(f"Canonical PR evidence destination exists: {path}")
+    if not hasattr(os, "O_NOFOLLOW"):
+        raise RuntimeError("Canonical PR evidence requires os.O_NOFOLLOW")
+    descriptor = os.open(
+        path,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+        0o644,
+    )
+    try:
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode):
+            raise ValueError("Canonical PR evidence destination is not a regular file")
+        with os.fdopen(descriptor, "wb", closefd=False) as handle:
+            handle.write(payload)
+    finally:
+        os.close(descriptor)
 
 
 def validate_pull_request_github_actions_evidence(
@@ -8727,6 +8788,12 @@ if (
 pull_request = json.loads(
     (root / "acceptance/pull_request.json").read_text(encoding="utf-8")
 )
+expected_pull_request_keys = {
+    "base", "comments_url", "head", "html_url", "issue_url",
+    "merge_commit_sha", "merged", "merged_at", "number", "state", "url",
+}
+if not isinstance(pull_request, dict) or set(pull_request) != expected_pull_request_keys:
+    raise SystemExit("pull-request metadata is not the canonical minimal record")
 pull_number = positive_integer(pull_request.get("number"), "pull request number")
 pull_api = f"{repository_api}/pulls/{pull_number}"
 pull_html = f"https://github.com/{repository_slug}/pull/{pull_number}"
@@ -8748,6 +8815,15 @@ pull_base = pull_request.get("base")
 pull_head = pull_request.get("head")
 if not isinstance(pull_base, dict) or not isinstance(pull_head, dict):
     raise SystemExit("pull-request base/head metadata is malformed")
+for label, value in (("base", pull_base), ("head", pull_head)):
+    if set(value) != {"ref", "repo", "sha"}:
+        raise SystemExit(f"pull-request {label} metadata is not canonical")
+    repository_value = value.get("repo")
+    if (
+        not isinstance(repository_value, dict)
+        or set(repository_value) != {"full_name", "html_url", "url"}
+    ):
+        raise SystemExit(f"pull-request {label} repository metadata is not canonical")
 canonical_repository(pull_base.get("repo"), "pull-request base")
 canonical_repository(pull_head.get("repo"), "pull-request head")
 base_sha = pull_base.get("sha")
@@ -9376,7 +9452,15 @@ def build_packet(args: argparse.Namespace) -> Path:
             args.packet_root / name,
             source_root=args.validation_root,
         )
-    copy_tree(args.validation_root / "acceptance", args.packet_root / "acceptance")
+    copy_tree(
+        args.validation_root / "acceptance",
+        args.packet_root / "acceptance",
+        exclude_relative=frozenset({"pull_request.json"}),
+    )
+    write_canonical_pull_request_evidence(
+        args.packet_root / "acceptance/pull_request.json",
+        pull_request_identity,
+    )
     copy_regular_file(
         args.validation_root / "acceptance/cross_platform_comparison.tsv",
         args.packet_root / "cross_platform_comparison.tsv",
