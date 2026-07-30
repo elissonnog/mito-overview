@@ -5,11 +5,19 @@ GITHUB_RUN_ID="${MITO_OVERVIEW_GITHUB_RUN_ID:-}"
 PR_NUMBER="${MITO_OVERVIEW_PR_NUMBER:-}"
 PR_RUN_ID="${MITO_OVERVIEW_PR_RUN_ID:-}"
 PUBLIC_RUN_ID="${MITO_OVERVIEW_PUBLIC_RUN_ID:-}"
+PUBLIC_CURL_RETRIES="${MITO_OVERVIEW_PUBLIC_CURL_RETRIES:-}"
+PUBLIC_CURL_RETRY_DELAY="${MITO_OVERVIEW_PUBLIC_CURL_RETRY_DELAY:-}"
+PUBLIC_CURL_CONNECT_TIMEOUT="${MITO_OVERVIEW_PUBLIC_CURL_CONNECT_TIMEOUT:-}"
+PUBLIC_CURL_MAX_TIME="${MITO_OVERVIEW_PUBLIC_CURL_MAX_TIME:-}"
 unset \
   MITO_OVERVIEW_GITHUB_RUN_ID \
   MITO_OVERVIEW_PR_NUMBER \
   MITO_OVERVIEW_PR_RUN_ID \
-  MITO_OVERVIEW_PUBLIC_RUN_ID
+  MITO_OVERVIEW_PUBLIC_RUN_ID \
+  MITO_OVERVIEW_PUBLIC_CURL_RETRIES \
+  MITO_OVERVIEW_PUBLIC_CURL_RETRY_DELAY \
+  MITO_OVERVIEW_PUBLIC_CURL_CONNECT_TIMEOUT \
+  MITO_OVERVIEW_PUBLIC_CURL_MAX_TIME
 
 usage() {
   printf >&2 '%s\n' \
@@ -1456,6 +1464,10 @@ PY
   echo "pull_request_github_actions_run_id=${PR_RUN_ID}"
   echo "public_validation_github_actions_run_id=${PUBLIC_RUN_ID}"
   echo "validation_profile=${VALIDATION_PROFILE}"
+  echo "public_curl_retries=${PUBLIC_CURL_RETRIES:-5}"
+  echo "public_curl_retry_delay_seconds=${PUBLIC_CURL_RETRY_DELAY:-3}"
+  echo "public_curl_connect_timeout_seconds=${PUBLIC_CURL_CONNECT_TIMEOUT:-30}"
+  echo "public_curl_max_time_seconds=${PUBLIC_CURL_MAX_TIME:-0}"
   echo "generated_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   echo "operating_system=$(uname -s)"
   echo "kernel_release=$(uname -r)"
@@ -1548,8 +1560,18 @@ if [[ ! -d "${CACHE_ROOT}" || -L "${CACHE_ROOT}" ]] || \
   echo "Raw cache root must still be an empty regular directory immediately before download: ${CACHE_ROOT}" >&2
   exit 1
 fi
+PUBLIC_CACHE_ENV=(env)
+for setting in \
+  "MITO_OVERVIEW_PUBLIC_CURL_RETRIES=${PUBLIC_CURL_RETRIES}" \
+  "MITO_OVERVIEW_PUBLIC_CURL_RETRY_DELAY=${PUBLIC_CURL_RETRY_DELAY}" \
+  "MITO_OVERVIEW_PUBLIC_CURL_CONNECT_TIMEOUT=${PUBLIC_CURL_CONNECT_TIMEOUT}" \
+  "MITO_OVERVIEW_PUBLIC_CURL_MAX_TIME=${PUBLIC_CURL_MAX_TIME}"; do
+  if [[ "${setting#*=}" != "" ]]; then
+    PUBLIC_CACHE_ENV+=("${setting}")
+  fi
+done
 run_logged public_cache_prepare public_input not_applicable \
-  "${PREPARE_SCRIPT}" --cache "${CACHE_ROOT}"
+  "${PUBLIC_CACHE_ENV[@]}" "${PREPARE_SCRIPT}" --cache "${CACHE_ROOT}"
 
 case "$(uname -s)/$(uname -m)" in
   Darwin/x86_64) LOCAL_PUBLIC_PLATFORM="osx-64" ;;
