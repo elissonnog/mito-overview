@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import argparse
+import base64
+import binascii
 import csv
 import hashlib
 import json
@@ -5690,13 +5692,24 @@ def _text_payload(path: Path) -> str | None:
 
 
 def _mask_base64_data_uri_payloads(text: str) -> str:
-    """Hide encoded binary payloads while retaining the surrounding HTML text."""
+    """Hide only well-formed, quoted PNG data URIs from textual hygiene scans."""
 
-    return re.sub(
-        r"(?i)(data:[^,\s]*?;base64,)[A-Za-z0-9+/=\r\n]+",
-        r"\1<BASE64_PAYLOAD>",
-        text,
+    pattern = re.compile(
+        r"(?i)(?P<quote>['\"])(?P<prefix>data:image/png;base64,)"
+        r"(?P<payload>[A-Za-z0-9+/]+={0,2})(?P=quote)"
     )
+
+    def replace(match: re.Match[str]) -> str:
+        try:
+            decoded = base64.b64decode(match.group("payload"), validate=True)
+        except (ValueError, binascii.Error):
+            return match.group(0)
+        if not decoded.startswith(b"\x89PNG\r\n\x1a\n"):
+            return match.group(0)
+        quote = match.group("quote")
+        return f"{quote}{match.group('prefix')}<BASE64_PNG_PAYLOAD>{quote}"
+
+    return pattern.sub(replace, text)
 
 
 def sanitize_packet_paths(
@@ -5807,6 +5820,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 python3 -I -S - "${ROOT}" <<'PY'
 import csv
+import base64
+import binascii
 import hashlib
 import json
 import math
@@ -6991,11 +7006,20 @@ secret_patterns = (
 generic_doi = r"(?i)\b10\.\d{4,9}/[-._;()/:A-Z0-9]+"
 
 def mask_base64_data_uri_payloads(text):
-    return re.sub(
-        r"(?i)(data:[^,\s]*?;base64,)[A-Za-z0-9+/=\r\n]+",
-        r"\1<BASE64_PAYLOAD>",
-        text,
+    pattern = re.compile(
+        r"(?i)(?P<quote>['\"])(?P<prefix>data:image/png;base64,)"
+        r"(?P<payload>[A-Za-z0-9+/]+={0,2})(?P=quote)"
     )
+    def replace(match):
+        try:
+            decoded = base64.b64decode(match.group("payload"), validate=True)
+        except (ValueError, binascii.Error):
+            return match.group(0)
+        if not decoded.startswith(b"\x89PNG\r\n\x1a\n"):
+            return match.group(0)
+        quote = match.group("quote")
+        return f"{quote}{match.group('prefix')}<BASE64_PNG_PAYLOAD>{quote}"
+    return pattern.sub(replace, text)
 
 def reject_json_keys(value, location):
     if isinstance(value, dict):

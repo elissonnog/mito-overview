@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import csv
 import hashlib
 import importlib.util
@@ -4339,8 +4340,16 @@ def test_packet_hygiene_ignores_path_like_text_inside_base64_data_uri(
 ) -> None:
     packet = tmp_path / "packet"
     packet.mkdir()
+    png = base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk"
+        "+A8AAQUBAScY42YAAAAASUVORK5CYII="
+    )
+    png += b"\0" * ((-len(png)) % 3)
+    png += base64.b64decode("/mnt")
+    payload = base64.b64encode(png).decode("ascii")
+    assert "/mnt" in payload
     (packet / "report.html").write_text(
-        '<html><body><img src="data:image/png;base64,AAAA/mntAAAA"></body></html>\n',
+        f'<html><body><img src="data:image/png;base64,{payload}"></body></html>\n',
         encoding="utf-8",
     )
 
@@ -4352,8 +4361,15 @@ def test_packet_hygiene_still_rejects_path_outside_base64_data_uri(
 ) -> None:
     packet = tmp_path / "packet"
     packet.mkdir()
+    png = base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk"
+        "+A8AAQUBAScY42YAAAAASUVORK5CYII="
+    )
+    png += b"\0" * ((-len(png)) % 3)
+    png += base64.b64decode("/mnt")
+    payload = base64.b64encode(png).decode("ascii")
     (packet / "report.html").write_text(
-        '<html><body><img src="data:image/png;base64,AAAA/mntAAAA">'
+        f'<html><body><img src="data:image/png;base64,{payload}">'
         '<p>source=/mnt/institution/private/input.bam</p></body></html>\n',
         encoding="utf-8",
     )
@@ -4371,14 +4387,109 @@ def test_extracted_verifier_ignores_path_like_text_inside_base64_data_uri(
     packet_builder.build_packet(packet_args(validation, repo, output))
     packet = output / "packet"
     fixture = packet / "logs/base64_uri_fixture.html"
+    png = base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk"
+        "+A8AAQUBAScY42YAAAAASUVORK5CYII="
+    )
+    png += b"\0" * ((-len(png)) % 3)
+    png += base64.b64decode("/mnt")
+    payload = base64.b64encode(png).decode("ascii")
     fixture.write_text(
-        '<html><body><img src="data:image/png;base64,AAAA/mntAAAA"></body></html>\n',
+        f'<html><body><img src="data:image/png;base64,{payload}"></body></html>\n',
         encoding="utf-8",
     )
     rewrite_manifest(packet)
 
     checked = verify_packet(packet)
     assert checked.returncode == 0, checked.stderr
+
+
+@pytest.mark.parametrize(
+    ("content", "expected_error"),
+    (
+        (
+            '<img src="data:image/png;base64,AAAA/mnt/private/input.bam',
+            "absolute user path",
+        ),
+        (
+            '<img src="data:image/png;base64,AAAA\r\n/mnt/private/input.bam">',
+            "absolute user path",
+        ),
+        (
+            '<img src="data:text/plain;base64,AAAA/mnt/private/input.bam">',
+            "absolute user path",
+        ),
+        (
+            '<img src="data:image/png;base64,AAAA/mnt/private/input.bam">',
+            "absolute user path",
+        ),
+        (
+            '<img src="data:image/png;base64,AAAApass' + 'word=top' + 'secret">',
+            "secret-like material",
+        ),
+        (
+            '<img src="data:image/png;base64,10.1234/private-record">',
+            "DOI claim",
+        ),
+        (
+            '<img src="data:image/png;base64,AAAAhttps://user:pass@example.org/private">',
+            "secret-like material",
+        ),
+    ),
+)
+def test_packet_hygiene_rejects_malformed_or_non_png_data_uri_bypasses(
+    tmp_path: Path,
+    content: str,
+    expected_error: str,
+) -> None:
+    packet = tmp_path / "packet"
+    packet.mkdir()
+    (packet / "report.html").write_text(content + "\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match=expected_error):
+        packet_builder.validate_packet_hygiene(packet)
+
+
+@pytest.mark.parametrize(
+    ("content", "expected_error"),
+    (
+        (
+            '<img src="data:image/png;base64,AAAA/mnt/private/input.bam',
+            "absolute user path found in packet",
+        ),
+        (
+            '<img src="data:image/png;base64,AAAApass' + 'word=top' + 'secret">',
+            "secret-like material found in packet",
+        ),
+        (
+            '<img src="data:image/png;base64,10.1234/private-record">',
+            "DOI claim found in GitHub-only packet",
+        ),
+        (
+            '<img src="data:image/png;base64,AAAAhttps://user:pass@example.org/private">',
+            "secret-like material found in packet",
+        ),
+    ),
+)
+def test_extracted_verifier_rejects_malformed_data_uri_bypasses(
+    tmp_path: Path,
+    content: str,
+    expected_error: str,
+) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    output = tmp_path / "output"
+    packet_builder.build_packet(packet_args(validation, repo, output))
+    packet = output / "packet"
+    (packet / "logs/malformed_data_uri.html").write_text(
+        content + "\n",
+        encoding="utf-8",
+    )
+    rewrite_manifest(packet)
+
+    checked = verify_packet(packet)
+    assert checked.returncode != 0
+    assert expected_error in checked.stderr
 
 
 @pytest.mark.parametrize(
