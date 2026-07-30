@@ -801,6 +801,82 @@ def test_runner_records_factual_threads_and_uses_fresh_installed_smokes() -> Non
     assert 'MITO_OVERVIEW_PYTHON="${PYTHON_BIN}"' not in smoke_block
 
 
+def test_runner_scopes_public_download_settings_to_cache_preparation(
+    tmp_path: Path,
+) -> None:
+    text = RUNNER.read_text(encoding="utf-8")
+    settings = (
+        (
+            "MITO_OVERVIEW_PUBLIC_CURL_RETRIES",
+            "PUBLIC_CURL_RETRIES",
+            "public_curl_retries",
+        ),
+        (
+            "MITO_OVERVIEW_PUBLIC_CURL_RETRY_DELAY",
+            "PUBLIC_CURL_RETRY_DELAY",
+            "public_curl_retry_delay_seconds",
+        ),
+        (
+            "MITO_OVERVIEW_PUBLIC_CURL_CONNECT_TIMEOUT",
+            "PUBLIC_CURL_CONNECT_TIMEOUT",
+            "public_curl_connect_timeout_seconds",
+        ),
+        (
+            "MITO_OVERVIEW_PUBLIC_CURL_MAX_TIME",
+            "PUBLIC_CURL_MAX_TIME",
+            "public_curl_max_time_seconds",
+        ),
+    )
+    unit_call = text.index("\nrun_logged unit_known_answer unit mixed")
+    prepare_call = text.index("\nrun_logged public_cache_prepare public_input")
+    matrix_call = text.index("\nrun_logged public_validation_matrix public")
+
+    for name, local_name, provenance_name in settings:
+        assert f'{local_name}="${{{name}:-}}"' in text
+        assert f'echo "{provenance_name}=' in text
+        assert f'  {name}' in text[:unit_call]
+        assert f'"{name}=${{{local_name}}}"' in text[unit_call:prepare_call]
+
+    capture_prefix = text[: text.index("\nusage()")]
+    probe = tmp_path / "scope-probe.sh"
+    probe.write_text(
+        capture_prefix
+        + "\n"
+        + "\n".join(
+            f'printf "%s=%s ambient=%s\\n" "{local_name}" '
+            f'"${{{local_name}}}" "${{{name}:-absent}}"'
+            for name, local_name, _ in settings
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    result = subprocess.run(
+        ["bash", str(probe)],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            **{
+                name: str(index)
+                for index, (name, _, _) in enumerate(settings, start=7)
+            },
+        },
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines() == [
+        f"{local_name}={index} ambient=absent"
+        for index, (_, local_name, _) in enumerate(settings, start=7)
+    ]
+
+    assert "PUBLIC_CACHE_ENV=(env)" in text[unit_call:prepare_call]
+    assert (
+        '"${PUBLIC_CACHE_ENV[@]}" "${PREPARE_SCRIPT}" --cache "${CACHE_ROOT}"'
+        in text[prepare_call:matrix_call]
+    )
+    assert "PUBLIC_CACHE_ENV" not in text[matrix_call:]
+
+
 def test_resource_measurement_counts_exact_declared_and_changed_inventories(
     tmp_path: Path,
 ) -> None:
