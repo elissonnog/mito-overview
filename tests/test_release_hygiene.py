@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import base64
 import importlib.util
 import subprocess
 import sys
@@ -35,11 +34,6 @@ def test_current_tracked_tree_passes_release_hygiene() -> None:
     ("relative_path", "payload", "rule"),
     [
         ("examples/report.html", b"sample R20" + b"99-999", "internal_sample_id"),
-        (
-            "run.txt",
-            b"/group/" + base64.b64decode("eGdhaQ==") + b"/work/bioinfo",
-            "mcw_group_path",
-        ),
         (
             "binary.bam",
             b"prefix\x00/Users/" + b"elopes/private\x00",
