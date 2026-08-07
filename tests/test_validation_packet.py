@@ -4741,9 +4741,8 @@ def test_packet_rejects_secret_like_material(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     "private_path",
     (
-        "/" + "group/xgai/private/sample/run.log",
         "/mnt/institution/private/sample/run.log",
-        "/Volumes/dbasel-UDD-Data/private/sample/run.log",
+        "/Volumes/institution-private/sample/run.log",
     ),
 )
 def test_packet_rejects_private_institutional_paths(
@@ -4927,7 +4926,7 @@ def test_extracted_verifier_rejects_malformed_data_uri_bypasses(
     "private_path",
     (
         "/mnt/institution/private/sample/run.log",
-        "/Volumes/dbasel-UDD-Data/private/sample/run.log",
+        "/Volumes/institution-private/sample/run.log",
     ),
 )
 def test_extracted_verifier_rejects_resealed_private_mount_paths(

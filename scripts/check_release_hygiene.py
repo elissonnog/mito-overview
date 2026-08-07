@@ -43,6 +43,12 @@ _PLACEHOLDER_USERS = {
     b"username",
 }
 
+_PLACEHOLDER_VOLUMES = {
+    b"example",
+    b"institution-private",
+    b"test",
+}
+
 _PLACEHOLDER_VALUES = {
     b"change-me",
     b"changeme",
@@ -126,6 +132,10 @@ def _home_path_is_private(match: re.Match[bytes]) -> bool:
     return username.lower() not in _PLACEHOLDER_USERS
 
 
+def _volume_path_is_private(match: re.Match[bytes]) -> bool:
+    return match.group("volume").lower() not in _PLACEHOLDER_VOLUMES
+
+
 def _credential_url_is_private(match: re.Match[bytes]) -> bool:
     return not _is_placeholder(match.group("url_password"))
 
@@ -162,6 +172,12 @@ _HOME_PATH_PATTERN = re.compile(
     + rb"root(?=$|[/\\\x00]))"
     + rb"|[A-Za-z]:[\\/]+Users[\\/]+(?P<windows_user>[A-Za-z0-9._-]+)"
     + rb"(?=$|[/\\\x00]))",
+    re.I,
+)
+
+_VOLUME_PATH_PATTERN = re.compile(
+    rb"(?<![A-Za-z0-9_.-])/Volumes/(?P<volume>[A-Za-z0-9._-]+)"
+    rb"(?=$|[/\\\x00])",
     re.I,
 )
 
@@ -211,6 +227,11 @@ RULES = (
         "absolute_user_home_path",
         _HOME_PATH_PATTERN,
         predicate=_home_path_is_private,
+    ),
+    Rule(
+        "absolute_local_volume_path",
+        _VOLUME_PATH_PATTERN,
+        predicate=_volume_path_is_private,
     ),
     Rule("private_key_header", _PRIVATE_KEY_PATTERN),
     Rule("github_token", _GITHUB_TOKEN_PATTERN),
