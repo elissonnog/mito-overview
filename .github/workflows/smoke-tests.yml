@@ -74,7 +74,7 @@ jobs:
           ARTIFACT_LOCK_FILE: ${{ matrix.artifact_lock }}
         run: |
           mkdir -p "$RUNNER_TEMP/environment"
-          python -I -S scripts/verify_release_environment_v0.3.0.py \
+          python -I -S scripts/verify_release_environment_v0.3.1.py \
             --repo-root . --expected-commit "$EXPECTED_COMMIT"
           python --version | tee "$RUNNER_TEMP/environment/python-${EXPECTED_PLATFORM}.txt"
           conda list --explicit --sha256 | tee "$RUNNER_TEMP/environment/conda-${EXPECTED_PLATFORM}.explicit.txt"
@@ -228,7 +228,7 @@ jobs:
           from importlib.metadata import version
           from pathlib import Path
 
-          expected_version = "0.3.0"
+          expected_version = "0.3.1"
           installed_version = version("mito-overview")
           if installed_version != expected_version:
               raise SystemExit(

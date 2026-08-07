@@ -24,7 +24,7 @@ from scripts.validation_fingerprints_v0_3_0 import (
 
 
 REPO_ROOT = Path(__file__).parents[1]
-PACKET_BUILDER_PATH = REPO_ROOT / "scripts/build_validation_packet_v0.3.0.py"
+PACKET_BUILDER_PATH = REPO_ROOT / "scripts/build_validation_packet_v0.3.1.py"
 PACKET_BUILDER_SPEC = importlib.util.spec_from_file_location(
     "public_protocol_packet_builder_v030",
     PACKET_BUILDER_PATH,
@@ -1578,7 +1578,8 @@ def test_matrix_requires_installed_distribution_and_exact_runtime_contract() -> 
     assert "expected_threads != 4" in contract
     assert '"threads": expected_threads' in contract
     for expected in (
-        '"mito-overview": "0.3.0"',
+        'EXPECTED_PACKAGE_VERSION="0.3.1"',
+        'SCIENTIFIC_PROTOCOL_VERSION="v0.3.0"',
         '"biopython": "1.87"',
         '"pysam": "0.24.0"',
         '"samtools 1.23.1"',

@@ -1,7 +1,8 @@
 # Reproducibility environment locks
 
-MitoOverview v0.3.0 uses two synchronized Conda records for each supported
-release platform:
+MitoOverview v0.3.1 reuses the byte-identical pinned environments established
+for the frozen v0.3.0 scientific protocol. Two synchronized Conda records are
+maintained for each supported release platform:
 
 - `environment-<platform>.yml` is the human-readable exact-version solver
   specification.

@@ -10,7 +10,7 @@ import pytest
 
 
 ROOT = Path(__file__).parents[1]
-SCRIPT = ROOT / "scripts" / "verify_release_environment_v0.3.0.py"
+SCRIPT = ROOT / "scripts" / "verify_release_environment_v0.3.1.py"
 SPEC = importlib.util.spec_from_file_location("verify_release_environment", SCRIPT)
 assert SPEC is not None and SPEC.loader is not None
 verifier = importlib.util.module_from_spec(SPEC)
@@ -26,13 +26,13 @@ def test_all_release_verifier_entrypoints_isolate_python_startup() -> None:
     entrypoints = (
         ROOT / ".github/workflows/smoke-tests.yml",
         ROOT / ".github/workflows/public-validation.yml",
-        ROOT / "scripts/run_release_validation_v0.3.0.sh",
-        ROOT / "scripts/run_fresh_public_tag_validation_v0.3.0.sh",
+        ROOT / "scripts/run_release_validation_v0.3.1.sh",
+        ROOT / "scripts/run_fresh_public_tag_validation_v0.3.1.sh",
     )
     invocation_count = 0
     for path in entrypoints:
         for line in path.read_text(encoding="utf-8").splitlines():
-            if "verify_release_environment_v0.3.0.py" not in line:
+            if "verify_release_environment_v0.3.1.py" not in line:
                 continue
             invocation_count += 1
             assert "-I -S" in line, f"unisolated verifier invocation in {path}: {line}"

@@ -11,7 +11,10 @@ FINAL_SHA="$2"
 WORK_ROOT="$3"
 EVIDENCE_ROOT="$4"
 ASSET_SOURCE_ROOT="$5"
-TAG="v0.3.0"
+RELEASE_VERSION="v0.3.1"
+PACKAGE_VERSION="0.3.1"
+SCIENTIFIC_PROTOCOL_VERSION="v0.3.0"
+TAG="${RELEASE_VERSION}"
 PYTHON_BIN="${MITO_OVERVIEW_PYTHON:-python3}"
 THREADS=4
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -35,7 +38,7 @@ if [[ -L "${ASSET_SOURCE_ROOT}" || ! -d "${ASSET_SOURCE_ROOT}" ]]; then
 fi
 ASSET_SOURCE_ROOT="$(cd "${ASSET_SOURCE_ROOT}" && pwd -P)"
 
-"${PYTHON_BIN}" -I -S "${REPO_ROOT}/scripts/verify_release_environment_v0.3.0.py" \
+"${PYTHON_BIN}" -I -S "${REPO_ROOT}/scripts/verify_release_environment_v0.3.1.py" \
   --repo-root "${REPO_ROOT}" \
   --expected-commit "${FINAL_SHA}" >/dev/null
 
@@ -51,17 +54,17 @@ for other, label in ((work, "WORK_ROOT"), (evidence, "EVIDENCE_ROOT")):
         raise SystemExit(f"RELEASE_ASSET_SOURCE must be disjoint from {label}")
 
 expected = {
-    "mito_overview-0.3.0-py3-none-any.whl",
-    "mito_overview-0.3.0.tar.gz",
-    "mito-overview-v0.3.0-validation.zip",
-    "MitoOverview_v0.3.0_release_validation_report.md",
-    "MitoOverview_v0.3.0_release_validation_report.docx",
-    "MitoOverview_v0.3.0_release_validation_report.pdf",
-    "MitoOverview_v0.3.0_release_validation_report_assets.tar.gz",
-    "mito-overview-v0.3.0-verification.json",
-    "RELEASE_NOTES_v0.3.0.md",
-    "mito-overview-v0.3.0-environment.txt",
-    "mito-overview-v0.3.0-environment-locks.tar.gz",
+    "mito_overview-0.3.1-py3-none-any.whl",
+    "mito_overview-0.3.1.tar.gz",
+    "mito-overview-v0.3.1-validation.zip",
+    "MitoOverview_v0.3.1_release_validation_report.md",
+    "MitoOverview_v0.3.1_release_validation_report.docx",
+    "MitoOverview_v0.3.1_release_validation_report.pdf",
+    "MitoOverview_v0.3.1_release_validation_report_assets.tar.gz",
+    "mito-overview-v0.3.1-verification.json",
+    "RELEASE_NOTES_v0.3.1.md",
+    "mito-overview-v0.3.1-environment.txt",
+    "mito-overview-v0.3.1-environment-locks.tar.gz",
 }
 entries = {path.name: path for path in source.iterdir()}
 if set(entries) != expected:
@@ -156,7 +159,7 @@ printf '%s\n' "\${TAG_OBJECT_SHA}" > $(printf '%q' "${WORK_ROOT}/tag_object_sha.
 EOF
 run_case annotated_tag_identity "annotated tag peeled to FINAL_SHA"
 
-"${PYTHON_BIN}" -I -S "${CLONE_ROOT}/scripts/verify_release_environment_v0.3.0.py" \
+"${PYTHON_BIN}" -I -S "${CLONE_ROOT}/scripts/verify_release_environment_v0.3.1.py" \
   --repo-root "${CLONE_ROOT}" \
   --expected-commit "${FINAL_SHA}" \
   --output "${EVIDENCE_ROOT}/release_environment_verification.json"
@@ -202,8 +205,8 @@ write_command wheel_sdist_build <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
 $(printf '%q' "${PYTHON_BIN}") -m build --no-isolation --outdir $(printf '%q' "${DIST_ROOT}") $(printf '%q' "${CLONE_ROOT}")
-test "\$(find $(printf '%q' "${DIST_ROOT}") -maxdepth 1 -type f -name 'mito_overview-0.3.0-py3-none-any.whl' | wc -l | tr -d ' ')" = 1
-test "\$(find $(printf '%q' "${DIST_ROOT}") -maxdepth 1 -type f -name 'mito_overview-0.3.0.tar.gz' | wc -l | tr -d ' ')" = 1
+test "\$(find $(printf '%q' "${DIST_ROOT}") -maxdepth 1 -type f -name 'mito_overview-0.3.1-py3-none-any.whl' | wc -l | tr -d ' ')" = 1
+test "\$(find $(printf '%q' "${DIST_ROOT}") -maxdepth 1 -type f -name 'mito_overview-0.3.1.tar.gz' | wc -l | tr -d ' ')" = 1
 EOF
 run_case wheel_sdist_build "wheel and source distribution built from public tag"
 
@@ -211,7 +214,7 @@ write_command distribution_payload_equivalence <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
 $(printf '%q' "${PYTHON_BIN}") \
-  $(printf '%q' "${CLONE_ROOT}/scripts/verify_distribution_equivalence_v0.3.0.py") \
+  $(printf '%q' "${CLONE_ROOT}/scripts/verify_distribution_equivalence_v0.3.1.py") \
   $(printf '%q' "${ASSET_SOURCE_ROOT}") \
   $(printf '%q' "${DIST_ROOT}") \
   $(printf '%q' "${EVIDENCE_ROOT}/distribution_payload_equivalence.json")
@@ -222,9 +225,9 @@ write_command installed_cli <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
 $(printf '%q' "${PYTHON_BIN}") -m venv --system-site-packages $(printf '%q' "${VENV_ROOT}")
-$(printf '%q' "${VENV_ROOT}/bin/python") -m pip install --no-deps --force-reinstall $(printf '%q' "${ASSET_SOURCE_ROOT}/mito_overview-0.3.0-py3-none-any.whl")
+$(printf '%q' "${VENV_ROOT}/bin/python") -m pip install --no-deps --force-reinstall $(printf '%q' "${ASSET_SOURCE_ROOT}/mito_overview-0.3.1-py3-none-any.whl")
 cd $(printf '%q' "${PROBE_ROOT}")
-$(printf '%q' "${VENV_ROOT}/bin/python") -I -c 'from importlib.metadata import version; import mito_overview; assert version("mito-overview") == "0.3.0"; assert "site-packages" in mito_overview.__file__'
+$(printf '%q' "${VENV_ROOT}/bin/python") -I -c 'from importlib.metadata import version; import mito_overview; assert version("mito-overview") == "0.3.1"; assert "site-packages" in mito_overview.__file__'
 $(printf '%q' "${VENV_ROOT}/bin/python") -I -c 'import hashlib, sys; from pathlib import Path; from mito_overview.paths import annotation_resource_path; expected={"NC_012920.1.fa":"fc392cde8e63b4d2e3a870bb97cc0626dea33d46dfb8abdebffada040f42ec92","human_mt_reference.gtf":"6c8db180f5dd7999ae70bf9e3c7e5020c6c99b4cefd935d621eedcb1fc5408d9"}; root=Path(sys.prefix)/"share"/"mito-overview"/"annotations"; observed={name:annotation_resource_path(name) for name in expected}; assert observed=={name:root/name for name in expected}; assert {name:hashlib.sha256(path.read_bytes()).hexdigest() for name,path in observed.items()}==expected'
 $(printf '%q' "${VENV_ROOT}/bin/python") -I -m mito_overview.cli --list-steps > installed_steps.tsv
 MITO_OVERVIEW_PYTHON=$(printf '%q' "${VENV_ROOT}/bin/python") MITO_OVERVIEW_REQUIRE_INSTALLED=1 $(printf '%q' "${CLONE_ROOT}/scripts/run_mito_pipeline.sh") --list-steps > launcher_steps.tsv
@@ -236,9 +239,9 @@ write_command installed_sdist_cli <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
 $(printf '%q' "${PYTHON_BIN}") -m venv --system-site-packages $(printf '%q' "${SDIST_VENV_ROOT}")
-$(printf '%q' "${SDIST_VENV_ROOT}/bin/python") -m pip install --no-deps --no-build-isolation --force-reinstall $(printf '%q' "${ASSET_SOURCE_ROOT}/mito_overview-0.3.0.tar.gz")
+$(printf '%q' "${SDIST_VENV_ROOT}/bin/python") -m pip install --no-deps --no-build-isolation --force-reinstall $(printf '%q' "${ASSET_SOURCE_ROOT}/mito_overview-0.3.1.tar.gz")
 cd $(printf '%q' "${SDIST_PROBE_ROOT}")
-$(printf '%q' "${SDIST_VENV_ROOT}/bin/python") -I -c 'from importlib.metadata import version; from pathlib import Path; import mito_overview; p=Path(mito_overview.__file__).resolve(); assert version("mito-overview") == "0.3.0"; assert "site-packages" in p.parts; print(p)'
+$(printf '%q' "${SDIST_VENV_ROOT}/bin/python") -I -c 'from importlib.metadata import version; from pathlib import Path; import mito_overview; p=Path(mito_overview.__file__).resolve(); assert version("mito-overview") == "0.3.1"; assert "site-packages" in p.parts; print(p)'
 $(printf '%q' "${SDIST_VENV_ROOT}/bin/python") -I -m mito_overview.cli --list-steps > installed_sdist_steps.tsv
 diff -u $(printf '%q' "${PROBE_ROOT}/installed_steps.tsv") installed_sdist_steps.tsv
 EOF
@@ -248,7 +251,7 @@ write_command unit_tests <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
 $(printf '%q' "${PYTHON_BIN}") - \
-  $(printf '%q' "${ASSET_SOURCE_ROOT}/mito_overview-0.3.0.tar.gz") \
+  $(printf '%q' "${ASSET_SOURCE_ROOT}/mito_overview-0.3.1.tar.gz") \
   $(printf '%q' "${SDIST_ROOT}") <<'PY'
 import tarfile
 import sys
@@ -258,7 +261,7 @@ destination = Path(sys.argv[2])
 with tarfile.open(archive, "r:gz") as handle:
     handle.extractall(destination, filter="data")
 PY
-cd $(printf '%q' "${SDIST_ROOT}/mito_overview-0.3.0")
+cd $(printf '%q' "${SDIST_ROOT}/mito_overview-0.3.1")
 $(printf '%q' "${PYTHON_BIN}") -m pytest -q tests
 EOF
 run_case unit_tests "complete source-distribution test suite passed"
@@ -378,23 +381,23 @@ write_command release_asset_semantic_identity <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
 $(printf '%q' "${PYTHON_BIN}") \
-  $(printf '%q' "${CLONE_ROOT}/scripts/verify_release_asset_identity_v0.3.0.py") \
+  $(printf '%q' "${CLONE_ROOT}/scripts/verify_release_asset_identity_v0.3.1.py") \
   archive-digest \
-  $(printf '%q' "${ASSET_SOURCE_ROOT}/mito-overview-v0.3.0-validation.zip") \
+  $(printf '%q' "${ASSET_SOURCE_ROOT}/mito-overview-v0.3.1-validation.zip") \
   --release-identity \
-  $(printf '%q' "${ASSET_SOURCE_ROOT}/mito-overview-v0.3.0-verification.json") \
+  $(printf '%q' "${ASSET_SOURCE_ROOT}/mito-overview-v0.3.1-verification.json") \
   --repository-url $(printf '%q' "${REPOSITORY_URL}") \
   --final-sha $(printf '%q' "${FINAL_SHA}") \
   --output-json $(printf '%q' "${EVIDENCE_ROOT}/external_archive_digest.json")
 $(printf '%q' "${PYTHON_BIN}") \
   $(printf '%q' "${CLONE_ROOT}/scripts/safe_extract_validation_zip.py") \
-  $(printf '%q' "${ASSET_SOURCE_ROOT}/mito-overview-v0.3.0-validation.zip") \
+  $(printf '%q' "${ASSET_SOURCE_ROOT}/mito-overview-v0.3.1-validation.zip") \
   $(printf '%q' "${PACKET_SEMANTIC_ROOT}")
 test -f $(printf '%q' "${PACKET_SEMANTIC_ROOT}/verify_bundle.sh")
 test ! -L $(printf '%q' "${PACKET_SEMANTIC_ROOT}/verify_bundle.sh")
 bash $(printf '%q' "${PACKET_SEMANTIC_ROOT}/verify_bundle.sh")
 $(printf '%q' "${PYTHON_BIN}") \
-  $(printf '%q' "${CLONE_ROOT}/scripts/verify_release_asset_identity_v0.3.0.py") \
+  $(printf '%q' "${CLONE_ROOT}/scripts/verify_release_asset_identity_v0.3.1.py") \
   $(printf '%q' "${ASSET_SOURCE_ROOT}") \
   $(printf '%q' "${PACKET_SEMANTIC_ROOT}") \
   $(printf '%q' "${REPOSITORY_URL}") \
@@ -408,17 +411,17 @@ write_command trusted_release_assets <<EOF
 set -euo pipefail
 test -z "\$(find $(printf '%q' "${RELEASE_ASSET_ROOT}") -mindepth 1 -maxdepth 1 -print -quit)"
 for name in \
-  mito_overview-0.3.0-py3-none-any.whl \
-  mito_overview-0.3.0.tar.gz \
-  mito-overview-v0.3.0-validation.zip \
-  MitoOverview_v0.3.0_release_validation_report.md \
-  MitoOverview_v0.3.0_release_validation_report.docx \
-  MitoOverview_v0.3.0_release_validation_report.pdf \
-  MitoOverview_v0.3.0_release_validation_report_assets.tar.gz \
-  mito-overview-v0.3.0-verification.json \
-  RELEASE_NOTES_v0.3.0.md \
-  mito-overview-v0.3.0-environment.txt \
-  mito-overview-v0.3.0-environment-locks.tar.gz; do
+  mito_overview-0.3.1-py3-none-any.whl \
+  mito_overview-0.3.1.tar.gz \
+  mito-overview-v0.3.1-validation.zip \
+  MitoOverview_v0.3.1_release_validation_report.md \
+  MitoOverview_v0.3.1_release_validation_report.docx \
+  MitoOverview_v0.3.1_release_validation_report.pdf \
+  MitoOverview_v0.3.1_release_validation_report_assets.tar.gz \
+  mito-overview-v0.3.1-verification.json \
+  RELEASE_NOTES_v0.3.1.md \
+  mito-overview-v0.3.1-environment.txt \
+  mito-overview-v0.3.1-environment-locks.tar.gz; do
   test -f $(printf '%q' "${ASSET_SOURCE_ROOT}")/"\${name}"
   test ! -L $(printf '%q' "${ASSET_SOURCE_ROOT}")/"\${name}"
   cp $(printf '%q' "${ASSET_SOURCE_ROOT}")/"\${name}" $(printf '%q' "${RELEASE_ASSET_ROOT}")/"\${name}"
@@ -446,17 +449,17 @@ from pathlib import Path
 asset_root = Path(sys.argv[1])
 output = Path(sys.argv[2])
 expected = {
-    "mito_overview-0.3.0-py3-none-any.whl",
-    "mito_overview-0.3.0.tar.gz",
-    "mito-overview-v0.3.0-validation.zip",
-    "MitoOverview_v0.3.0_release_validation_report.md",
-    "MitoOverview_v0.3.0_release_validation_report.docx",
-    "MitoOverview_v0.3.0_release_validation_report.pdf",
-    "MitoOverview_v0.3.0_release_validation_report_assets.tar.gz",
-    "mito-overview-v0.3.0-verification.json",
-    "RELEASE_NOTES_v0.3.0.md",
-    "mito-overview-v0.3.0-environment.txt",
-    "mito-overview-v0.3.0-environment-locks.tar.gz",
+    "mito_overview-0.3.1-py3-none-any.whl",
+    "mito_overview-0.3.1.tar.gz",
+    "mito-overview-v0.3.1-validation.zip",
+    "MitoOverview_v0.3.1_release_validation_report.md",
+    "MitoOverview_v0.3.1_release_validation_report.docx",
+    "MitoOverview_v0.3.1_release_validation_report.pdf",
+    "MitoOverview_v0.3.1_release_validation_report_assets.tar.gz",
+    "mito-overview-v0.3.1-verification.json",
+    "RELEASE_NOTES_v0.3.1.md",
+    "mito-overview-v0.3.1-environment.txt",
+    "mito-overview-v0.3.1-environment-locks.tar.gz",
     "SHA256SUMS",
 }
 paths = {path.name: path for path in asset_root.iterdir()}
@@ -582,7 +585,7 @@ distribution_evidence = json.loads(
 )
 if (
     distribution_evidence.get("evidence_type") != "distribution_payload_equivalence"
-    or distribution_evidence.get("release_version") != "v0.3.0"
+    or distribution_evidence.get("release_version") != "v0.3.1"
     or distribution_evidence.get("verdict") != "PASS"
     or distribution_evidence.get("verified") is not True
     or len(distribution_evidence.get("distributions", [])) != 2

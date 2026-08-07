@@ -23,26 +23,26 @@ REQUIRED_SDIST_PATHS = {
     "resources/annotations/NC_012920.1.fa",
     "resources/annotations/human_mt_reference.gtf",
     "resources/schemas/mito_overview_config.schema.yaml",
-    "scripts/build_validation_packet_v0.3.0.py",
+    "scripts/build_validation_packet_v0.3.1.py",
     "scripts/export_public_validation_contracts_v0_3_0.py",
-    "scripts/assemble_release_assets_v0.3.0.py",
-    "scripts/build_release_validation_report_v0.3.0.py",
+    "scripts/assemble_release_assets_v0.3.1.py",
+    "scripts/build_release_validation_report_v0.3.1.py",
     "scripts/check_release_hygiene.py",
     "scripts/hash_validation_inputs.py",
     "scripts/inventory_visual_artifacts.py",
-    "scripts/finalize_release_validation_report_v0.3.0.py",
-    "scripts/publish_github_release_v0.3.0.py",
+    "scripts/finalize_release_validation_report_v0.3.1.py",
+    "scripts/publish_github_release_v0.3.1.py",
     "scripts/refresh_tracked_public_validation_assets_v0.3.0.py",
-    "scripts/run_fresh_public_tag_validation_v0.3.0.sh",
-    "scripts/verify_release_environment_v0.3.0.py",
+    "scripts/run_fresh_public_tag_validation_v0.3.1.sh",
+    "scripts/verify_release_environment_v0.3.1.py",
     "scripts/run_mito_pipeline.sh",
     "scripts/safe_extract_validation_zip.py",
     "scripts/sanitize_validation_evidence.py",
     "scripts/stage_public_visual_artifacts_v0.3.0.py",
     "scripts/summarize_filter_profiles.py",
     "scripts/validation_fingerprints_v0_3_0.py",
-    "scripts/verify_release_asset_identity_v0.3.0.py",
-    "scripts/verify_distribution_equivalence_v0.3.0.py",
+    "scripts/verify_release_asset_identity_v0.3.1.py",
+    "scripts/verify_distribution_equivalence_v0.3.1.py",
     "tests/_helpers.py",
     "tests/conftest.py",
     "tests/fixtures/mock_mvtool_annotations.json",
@@ -75,7 +75,7 @@ def _payload_paths(sdist: Path) -> set[str]:
     with tarfile.open(sdist, "r:gz") as archive:
         members = [PurePosixPath(member.name) for member in archive.getmembers()]
     roots = {member.parts[0] for member in members if member.parts}
-    assert roots == {"mito_overview-0.3.0"}
+    assert roots == {"mito_overview-0.3.1"}
     return {
         PurePosixPath(*member.parts[1:]).as_posix()
         for member in members
@@ -123,11 +123,11 @@ def test_sdist_readme_does_not_reference_excluded_paper_paths_relatively(
 
     assert "](paper/" not in readme
     assert (
-        "https://raw.githubusercontent.com/elissonnog/mito-overview/v0.3.0/"
+        "https://raw.githubusercontent.com/elissonnog/mito-overview/v0.3.1/"
         "paper/figures/figure0_workflow_architecture.png"
     ) in readme
     assert (
-        "https://github.com/elissonnog/mito-overview/blob/v0.3.0/"
+        "https://github.com/elissonnog/mito-overview/blob/v0.3.1/"
         "paper/preprint_draft.md"
     ) in readme
 

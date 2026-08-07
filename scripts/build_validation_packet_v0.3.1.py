@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the internally self-checking mito-overview v0.3.0 validation packet."""
+"""Build the internally self-checking mito-overview v0.3.1 validation packet."""
 
 from __future__ import annotations
 
@@ -26,11 +26,13 @@ from pathlib import Path, PurePosixPath
 from urllib.parse import urlsplit
 
 
-EXPECTED_RELEASE_VERSION = "v0.3.0"
+EXPECTED_RELEASE_VERSION = "v0.3.1"
+EXPECTED_PACKAGE_VERSION = "0.3.1"
+SCIENTIFIC_PROTOCOL_VERSION = "v0.3.0"
 EXPECTED_PACKAGE_NAME = "mito-overview"
 EXPECTED_DISTRIBUTIONS = {
-    "mito_overview-0.3.0-py3-none-any.whl": "wheel",
-    "mito_overview-0.3.0.tar.gz": "sdist",
+    f"mito_overview-{EXPECTED_PACKAGE_VERSION}-py3-none-any.whl": "wheel",
+    f"mito_overview-{EXPECTED_PACKAGE_VERSION}.tar.gz": "sdist",
 }
 EXPECTED_LICENSE = "MIT"
 EXPECTED_CREATORS = ("Elisson Lopes", "Xiaowu Gai")
@@ -77,7 +79,7 @@ PUBLIC_ENVIRONMENT_FILES = (
     "runtime_versions.json",
 )
 EXPECTED_RUNTIME_PACKAGES = {
-    "mito-overview": "0.3.0",
+    "mito-overview": EXPECTED_PACKAGE_VERSION,
     "biopython": "1.87",
     "pysam": "0.24.0",
     "pandas": "3.0.3",
@@ -497,6 +499,7 @@ FEATURE_ANNOTATION_SUCCESS_COLUMNS = (
 FEATURE_ANNOTATION_GATED_STATES = frozenset(
     {"not_configured", "not_applicable", "not_evaluable", "unavailable", "failed"}
 )
+MODULE_STATUS_CONTEXT_METRICS = ("message", "step", "read_mode", "assay_type")
 PUBLIC_ORACLE_INTERPRETATION_SPECS = (
     (
         "numt_interpretation_status",
@@ -704,6 +707,17 @@ FROZEN_CLAIM_EVIDENCE_ROWS = (
         ),
         "limitation": "Not an analytical-performance or diagnostic benchmark",
     },
+    {
+        "claim_id": "C7",
+        "bounded_claim": (
+            "The GM11906 public workflow represents the known m.8344A>G marker"
+        ),
+        "evidence": "gm11906_default_run1; filter_profile_results.tsv",
+        "limitation": (
+            "Marker representation is not sensitivity, pathogenicity, or "
+            "diagnostic validation"
+        ),
+    },
 )
 HANDOFF_METRICS = (
     ("candidate_sites", "sites"),
@@ -881,7 +895,7 @@ REQUIRED_PASS_CASES = {
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Build a GitHub-bound v0.3.0 release-validation packet. "
+            "Build a GitHub-bound v0.3.1 release-validation packet. "
             "Archive DOI and manuscript inputs are intentionally not part of this contract."
         )
     )
@@ -2568,6 +2582,46 @@ def metric_values(path: Path) -> dict[str, str]:
     return values
 
 
+def validate_module_status_reason(
+    *,
+    status: str,
+    reason_code: str,
+    source_values: dict[str, str],
+    source_label: str,
+) -> None:
+    """Require fail-closed context for a non-success status without a reason."""
+
+    source_status = source_values.get("status", "")
+    source_reason = source_values.get("reason_code", "")
+    if source_status != status or source_reason != reason_code:
+        raise ValueError(f"Module status evidence disagrees with {source_label}")
+    if reason_code != reason_code.strip():
+        raise ValueError(
+            f"Module reason_code must not contain surrounding whitespace: {source_label}"
+        )
+
+    # Successful modules do not require a reason. Other non-success states do,
+    # except for explicit mode/assay gating documented by a complete source table.
+    if status == "ok" or reason_code.strip():
+        return
+    if status != "not_applicable":
+        raise ValueError(
+            "Blank module reason_code is permitted only for status=not_applicable: "
+            f"{source_label}"
+        )
+    missing = [
+        metric
+        for metric in MODULE_STATUS_CONTEXT_METRICS
+        if not source_values.get(metric, "").strip()
+    ]
+    if missing:
+        raise ValueError(
+            "Blank not_applicable reason_code requires nonempty source metrics "
+            f"{', '.join(MODULE_STATUS_CONTEXT_METRICS)}; missing={missing!r}: "
+            f"{source_label}"
+        )
+
+
 def feature_annotation_status(path: Path) -> str:
     """Resolve either the successful feature table or an explicit gated status."""
 
@@ -2824,6 +2878,7 @@ def validate_module_status_evidence(
         observed[key] = (row["status"], row["reason_code"], row["source_table"])
 
     expected: dict[tuple[str, str], tuple[str, str, str]] = {}
+    source_values: dict[tuple[str, str], dict[str, str]] = {}
     for case_id in ("gm11906_default_run1", "gm12878_default_run1"):
         case_root = normalized_root / case_id
         for table in sorted(case_root.glob("*.tsv")):
@@ -2833,13 +2888,23 @@ def validate_module_status_evidence(
                 continue
             if "status" not in values:
                 continue
-            expected[(case_id, table.stem)] = (
+            key = (case_id, table.stem)
+            expected[key] = (
                 values["status"],
                 values.get("reason_code", ""),
                 f"observed_normalized/{case_id}/{table.name}",
             )
+            source_values[key] = values
     if observed != expected:
         raise ValueError("module_status_matrix.tsv does not exactly inventory default module states")
+    for row in rows:
+        key = (row["case_id"], row["module"])
+        validate_module_status_reason(
+            status=row["status"],
+            reason_code=row["reason_code"],
+            source_values=source_values[key],
+            source_label=row["source_table"],
+        )
 
 
 def validate_public_contract_evidence(
@@ -6409,7 +6474,7 @@ public_environment_files = (
     "network_isolation.tsv", "pip-freeze.txt", "runtime_versions.json",
 )
 runtime_packages = {
-    "mito-overview": "0.3.0", "biopython": "1.87",
+    "mito-overview": "0.3.1", "biopython": "1.87",
     "pysam": "0.24.0", "pandas": "3.0.3",
     "numpy": "2.5.1", "matplotlib": "3.11.0", "requests": "2.34.2",
     "pytest": "9.1.1", "build": "1.5.0", "setuptools": "82.0.1",
@@ -7207,6 +7272,12 @@ expected_claim_rows = [
         "evidence": "gm11906_repeatability; gm12878_repeatability; filter_profile_results.tsv",
         "limitation": "Not an analytical-performance or diagnostic benchmark",
     },
+    {
+        "claim_id": "C7",
+        "bounded_claim": "The GM11906 public workflow represents the known m.8344A>G marker",
+        "evidence": "gm11906_default_run1; filter_profile_results.tsv",
+        "limitation": "Marker representation is not sensitivity, pathogenicity, or diagnostic validation",
+    },
 ]
 if evidence_rows["claim_evidence_matrix.tsv"] != expected_claim_rows:
     raise SystemExit("claim-evidence matrix does not match the frozen bounded contract")
@@ -7367,6 +7438,31 @@ def metric_map(path):
     if len(values) != len(rows):
         raise SystemExit(f"duplicate metric: {path}")
     return values
+
+def validate_module_status_reason(row, values):
+    source = row["source_table"]
+    status = row["status"]
+    reason_code = row["reason_code"]
+    if values.get("status", "") != status or values.get("reason_code", "") != reason_code:
+        raise SystemExit(f"module status matrix disagrees with {source}")
+    if reason_code != reason_code.strip():
+        raise SystemExit(
+            f"module reason_code must not contain surrounding whitespace: {source}"
+        )
+    if status == "ok" or reason_code.strip():
+        return
+    if status != "not_applicable":
+        raise SystemExit(
+            "blank module reason_code is permitted only for "
+            f"status=not_applicable: {source}"
+        )
+    required = ("message", "step", "read_mode", "assay_type")
+    missing = [metric for metric in required if not values.get(metric, "").strip()]
+    if missing:
+        raise SystemExit(
+            "blank not_applicable reason_code requires nonempty source metrics "
+            f"{', '.join(required)}; missing={missing!r}: {source}"
+        )
 
 def feature_annotation_status(path):
     fields, _ = read_rows(path)
@@ -8091,6 +8187,7 @@ for row in evidence_rows["module_status_matrix.tsv"]:
     values = metric_map(source)
     if values.get("status") != row["status"] or values.get("reason_code", "") != row["reason_code"]:
         raise SystemExit(f"module status matrix disagrees with {row['source_table']}")
+    validate_module_status_reason(row, values)
 observed_module_rows = {}
 for row in evidence_rows["module_status_matrix.tsv"]:
     key = (row["case_id"], row["module"])
@@ -8154,9 +8251,9 @@ if (
     or identity.get("public_source_metadata") != expected_public_source_metadata
 ):
     raise SystemExit("release identity public-source metadata binding mismatch")
-if run.get("release_version") != "v0.3.0" or identity.get("release_version") != "v0.3.0":
+if run.get("release_version") != "v0.3.1" or identity.get("release_version") != "v0.3.1":
     raise SystemExit("release identity mismatch")
-if identity.get("package_version") != "0.3.0" or identity.get("package_name") != "mito-overview":
+if identity.get("package_version") != "0.3.1" or identity.get("package_name") != "mito-overview":
     raise SystemExit("package identity mismatch")
 commit = identity.get("git_commit")
 repository = identity.get("repository")
@@ -8363,7 +8460,7 @@ if identity.get("source_worktree_clean") is not True:
     raise SystemExit("release identity was not built from a clean worktree")
 if identity.get("canonical_metadata") != {
     "name": "mito-overview",
-    "version": "0.3.0",
+    "version": "0.3.1",
     "repository": repository,
     "license": "MIT",
     "creators": ["Elisson Lopes", "Xiaowu Gai"],
@@ -8375,7 +8472,7 @@ required_metadata = {
 }
 if (
     set(identity.get("metadata_versions", {})) != required_metadata
-    or set(identity["metadata_versions"].values()) != {"0.3.0"}
+    or set(identity["metadata_versions"].values()) != {"0.3.1"}
     or set(identity.get("metadata_sha256", {})) != required_metadata
 ):
     raise SystemExit("package metadata identity is incomplete")
@@ -9218,8 +9315,8 @@ def inspect_dist(path):
 
 dist_root = root / "dist"
 expected_dist_paths = {
-    "dist/mito_overview-0.3.0-py3-none-any.whl",
-    "dist/mito_overview-0.3.0.tar.gz",
+    "dist/mito_overview-0.3.1-py3-none-any.whl",
+    "dist/mito_overview-0.3.1.tar.gz",
 }
 if dist_root.is_symlink() or not dist_root.is_dir():
     raise SystemExit("distribution directory is missing or is a symlink")
@@ -9254,7 +9351,7 @@ for entry in declared_dist:
         entry.get("kind") != kind
         or normalize_name(name) != "mito-overview"
         or entry.get("name") != name
-        or version != "0.3.0"
+        or version != "0.3.1"
         or entry.get("version") != version
         or entry.get("bytes") != dist_path.stat().st_size
         or entry.get("sha256") != digest(dist_path)

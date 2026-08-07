@@ -18,13 +18,13 @@ from typing import Any
 from PIL import Image
 
 
-VERSION = "v0.3.0"
+VERSION = "v0.3.1"
 PROFILE = "github_release_validation_v1"
 REPOSITORY = "https://github.com/elissonnog/mito-overview"
-REPORT_STEM = "MitoOverview_v0.3.0_release_validation_report"
+REPORT_STEM = "MitoOverview_v0.3.1_release_validation_report"
 BUILD_PROVENANCE_NAME = "report_build_provenance.json"
 FINAL_PROVENANCE_NAME = "report_provenance.json"
-ZIP_NAME = "mito-overview-v0.3.0-validation.zip"
+ZIP_NAME = "mito-overview-v0.3.1-validation.zip"
 PAGE_RE = re.compile(r"^page-(?P<number>[1-9][0-9]*)\.png$")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")

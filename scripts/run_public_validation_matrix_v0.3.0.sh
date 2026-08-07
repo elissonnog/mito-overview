@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCIENTIFIC_PROTOCOL_VERSION="v0.3.0"
+EXPECTED_PACKAGE_VERSION="0.3.1"
+
 usage() {
   cat <<'EOF'
 Usage: run_public_validation_matrix_v0.3.0.sh \
@@ -272,7 +275,8 @@ common_environment=(
 
 env -i "${common_environment[@]}" "${PYTHON_BIN}" -I - \
   "${REPO_ROOT}" "${OUTPUT_ROOT}/environment/runtime_versions.json" \
-  "${EXPECTED_PLATFORM}" "${VALIDATION_THREADS}" <<'PY'
+  "${EXPECTED_PLATFORM}" "${VALIDATION_THREADS}" \
+  "${EXPECTED_PACKAGE_VERSION}" "${SCIENTIFIC_PROTOCOL_VERSION}" <<'PY'
 import json
 import platform
 import subprocess
@@ -284,6 +288,13 @@ repo_root = Path(sys.argv[1]).resolve()
 output = Path(sys.argv[2])
 expected_platform = sys.argv[3]
 expected_threads = int(sys.argv[4])
+expected_package_version = sys.argv[5]
+scientific_protocol_version = sys.argv[6]
+
+if scientific_protocol_version != "v0.3.0":
+    raise SystemExit(
+        f"Scientific protocol version mismatch: {scientific_protocol_version} != v0.3.0"
+    )
 
 if expected_threads != 4:
     raise SystemExit(f"Validation thread count mismatch: {expected_threads} != 4")
@@ -292,7 +303,7 @@ if tuple(sys.version_info[:3]) != (3, 12, 13):
     raise SystemExit(f"Python version mismatch: {platform.python_version()} != 3.12.13")
 
 expected_packages = {
-    "mito-overview": "0.3.0",
+    "mito-overview": expected_package_version,
     "biopython": "1.87",
     "pysam": "0.24.0",
     "pandas": "3.0.3",

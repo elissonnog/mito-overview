@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify that prebuilt v0.3.0 release assets describe one exact release commit."""
+"""Verify that prebuilt v0.3.1 release assets describe one exact release commit."""
 
 from __future__ import annotations
 
@@ -13,25 +13,25 @@ from pathlib import Path
 from typing import Any
 
 
-VERSION = "v0.3.0"
-TAG = "v0.3.0"
+VERSION = "v0.3.1"
+TAG = "v0.3.1"
 PROFILE = "github_release_validation_v1"
-ZIP_NAME = "mito-overview-v0.3.0-validation.zip"
-VERIFICATION_NAME = "mito-overview-v0.3.0-verification.json"
+ZIP_NAME = "mito-overview-v0.3.1-validation.zip"
+VERIFICATION_NAME = "mito-overview-v0.3.1-verification.json"
 REPORT_ASSETS = {
-    "MitoOverview_v0.3.0_release_validation_report.md",
-    "MitoOverview_v0.3.0_release_validation_report.docx",
-    "MitoOverview_v0.3.0_release_validation_report.pdf",
-    "MitoOverview_v0.3.0_release_validation_report_assets.tar.gz",
-    "RELEASE_NOTES_v0.3.0.md",
-    "mito-overview-v0.3.0-environment.txt",
-    "mito-overview-v0.3.0-environment-locks.tar.gz",
+    "MitoOverview_v0.3.1_release_validation_report.md",
+    "MitoOverview_v0.3.1_release_validation_report.docx",
+    "MitoOverview_v0.3.1_release_validation_report.pdf",
+    "MitoOverview_v0.3.1_release_validation_report_assets.tar.gz",
+    "RELEASE_NOTES_v0.3.1.md",
+    "mito-overview-v0.3.1-environment.txt",
+    "mito-overview-v0.3.1-environment-locks.tar.gz",
 }
 DISTRIBUTION_ASSETS = {
-    "mito_overview-0.3.0-py3-none-any.whl": "wheel",
-    "mito_overview-0.3.0.tar.gz": "sdist",
+    "mito_overview-0.3.1-py3-none-any.whl": "wheel",
+    "mito_overview-0.3.1.tar.gz": "sdist",
 }
-REPORT_STEM = "MitoOverview_v0.3.0_release_validation_report"
+REPORT_STEM = "MitoOverview_v0.3.1_release_validation_report"
 REPORT_ASSET_ARCHIVE = f"{REPORT_STEM}_assets.tar.gz"
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 SHA256_LINE_RE = re.compile(r"^([0-9a-f]{64})  ([A-Za-z0-9][A-Za-z0-9._+-]*)$")
@@ -621,7 +621,7 @@ def verify(
     if identity.get("package_name") != "mito-overview":
         raise IdentityError("packet package_name is not mito-overview")
     if identity.get("package_version") != VERSION.removeprefix("v"):
-        raise IdentityError("packet package_version does not match v0.3.0")
+        raise IdentityError("packet package_version does not match v0.3.1")
 
     archive_digest = sha256(archive)
     require_fields(
@@ -731,7 +731,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     if arguments[:1] == ["archive-digest"]:
         parser = argparse.ArgumentParser(
             description=(
-                "Verify the v0.3.0 validation ZIP against one expected digest "
+                "Verify the v0.3.1 validation ZIP against one expected digest "
                 "supplied outside the archive."
             )
         )

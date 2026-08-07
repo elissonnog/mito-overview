@@ -26,9 +26,9 @@ usage() {
     "  MITO_OVERVIEW_PR_RUN_ID=PR_SMOKE_RUN_ID \\" \
     "  MITO_OVERVIEW_PUBLIC_RUN_ID=PUBLIC_VALIDATION_RUN_ID \\" \
     "  $0 VALIDATION_ROOT RAW_CACHE_ROOT PACKET_ROOT \\" \
-    "  mito-overview-v0.3.0-validation.zip" \
+    "  mito-overview-v0.3.1-validation.zip" \
     "" \
-    "This is the GitHub-only v0.3.0 release-validation interface. Manuscript," \
+    "This is the GitHub-only v0.3.1 release-validation interface. Manuscript," \
     "Zenodo, DOI, archive, and fixed release-date inputs are not accepted." \
     "RAW_CACHE_ROOT must not exist when this command is invoked."
 }
@@ -79,8 +79,12 @@ REPOSITORY="https://github.com/elissonnog/mito-overview"
 PUBLIC_REMOTE="${REPOSITORY}.git"
 GITHUB_REPOSITORY="elissonnog/mito-overview"
 FRESH_CLONE_CASE_ID="fresh_clone_candidate_commit"
-EXPECTED_AUDIT_ZIP="mito-overview-v0.3.0-validation.zip"
-SCHEMA_VERSION="2.0"
+RELEASE_VERSION="v0.3.1"
+PACKAGE_VERSION="0.3.1"
+SCIENTIFIC_PROTOCOL_VERSION="v0.3.0"
+EXPECTED_AUDIT_ZIP="mito-overview-v0.3.1-validation.zip"
+PACKET_SCHEMA_VERSION="2.0"
+SCHEMA_VERSION="${PACKET_SCHEMA_VERSION}"
 VALIDATION_PROFILE="github_release_validation_v1"
 
 resolve_path() {
@@ -195,13 +199,13 @@ if ! command -v gh >/dev/null 2>&1; then
   exit 1
 fi
 
-"${PYTHON_BIN}" -I -S "${REPO_ROOT}/scripts/verify_release_environment_v0.3.0.py" \
+"${PYTHON_BIN}" -I -S "${REPO_ROOT}/scripts/verify_release_environment_v0.3.1.py" \
   --repo-root "${REPO_ROOT}" \
   --expected-commit "${CANDIDATE_COMMIT}" >/dev/null
 
 mkdir -p   "${VALIDATION_ROOT}/acceptance"   "${VALIDATION_ROOT}/commands"   "${VALIDATION_ROOT}/logs"   "${VALIDATION_ROOT}/resources"   "${VALIDATION_ROOT}/expected"   "${VALIDATION_ROOT}/dist"   "${TRANSIENT_ROOT}"
 mkdir -p "$(dirname "${AUDIT_ZIP}")"
-"${PYTHON_BIN}" -I -S "${REPO_ROOT}/scripts/verify_release_environment_v0.3.0.py" \
+"${PYTHON_BIN}" -I -S "${REPO_ROOT}/scripts/verify_release_environment_v0.3.1.py" \
   --repo-root "${REPO_ROOT}" \
   --expected-commit "${CANDIDATE_COMMIT}" \
   --output "${VALIDATION_ROOT}/acceptance/release_environment_verification.json"
@@ -887,7 +891,7 @@ repository = sys.argv[4]
 expected_push_run_id = int(sys.argv[5])
 expected_pr_number = int(sys.argv[6])
 expected_pr_run_id = int(sys.argv[7])
-script = repo_root / "scripts/build_validation_packet_v0.3.0.py"
+script = repo_root / "scripts/build_validation_packet_v0.3.1.py"
 spec = importlib.util.spec_from_file_location("validation_packet_builder", script)
 if spec is None or spec.loader is None:
     raise SystemExit(f"Unable to import acceptance validator: {script}")
@@ -1039,7 +1043,7 @@ run_clean "\${FRESH_PYTHON}" -m pip install --force-reinstall --no-deps "\${WHEE
 run_clean "\${FRESH_PYTHON}" -I -c \
   'import platform,sys; assert tuple(sys.version_info[:3]) == (3,12,13), platform.python_version()'
 run_clean "\${FRESH_PYTHON}" -I -c \
-  'from importlib.metadata import version; expected={"mito-overview":"0.3.0","biopython":"1.87","pysam":"0.24.0","pandas":"3.0.3","numpy":"2.5.1","matplotlib":"3.11.0","requests":"2.34.2","pytest":"9.1.1","build":"1.5.0","setuptools":"82.0.1","wheel":"0.47.0","python-docx":"1.2.0"}; observed={k:version(k) for k in expected}; assert observed == expected, (observed, expected)'
+  'from importlib.metadata import version; expected={"mito-overview":"0.3.1","biopython":"1.87","pysam":"0.24.0","pandas":"3.0.3","numpy":"2.5.1","matplotlib":"3.11.0","requests":"2.34.2","pytest":"9.1.1","build":"1.5.0","setuptools":"82.0.1","wheel":"0.47.0","python-docx":"1.2.0"}; observed={k:version(k) for k in expected}; assert observed == expected, (observed, expected)'
 test "\$(run_clean samtools --version | sed -n '1p')" = 'samtools 1.23.1'
 test "\$(run_clean samtools --version | sed -n '2p')" = 'Using htslib 1.23.1'
 test "\$(run_clean minimap2 --version)" = '2.31-r1302'
@@ -1062,7 +1066,7 @@ SDIST_SHA256_BEFORE_TESTS="\$(run_clean $(printf '%q' "${PYTHON_BIN}") -c \
   "\${SDIST}")"
 cd $(printf '%q' "${sdist_probe_root}")
 run_clean "\${SDIST_PYTHON}" -I -c \
-  'from importlib.metadata import version; from pathlib import Path; import mito_overview; p=Path(mito_overview.__file__).resolve(); assert version("mito-overview") == "0.3.0"; assert "site-packages" in p.parts; print(p)'
+  'from importlib.metadata import version; from pathlib import Path; import mito_overview; p=Path(mito_overview.__file__).resolve(); assert version("mito-overview") == "0.3.1"; assert "site-packages" in p.parts; print(p)'
 run_clean "\${SDIST_PYTHON}" -I -m mito_overview.cli --list-steps
 cd $(printf '%q' "${clone_root}")
 run_clean "\${FRESH_PYTHON}" -m pytest -q tests
@@ -1148,7 +1152,7 @@ for kind in ("wheel", "sdist"):
             "path": artifact.relative_to(validation_root).as_posix(),
             "kind": kind,
             "name": "mito-overview",
-            "version": "0.3.0",
+            "version": "0.3.1",
             "bytes": len(payload),
             "sha256": digest,
             "direct_url_archive_sha256": direct_hash,
@@ -1431,7 +1435,7 @@ from pathlib import Path
 
 repo_root = Path(sys.argv[1])
 validation_root = Path(sys.argv[2])
-script = repo_root / "scripts/build_validation_packet_v0.3.0.py"
+script = repo_root / "scripts/build_validation_packet_v0.3.1.py"
 spec = importlib.util.spec_from_file_location("validation_packet_builder", script)
 if spec is None or spec.loader is None:
     raise SystemExit(f"Unable to import acceptance validator: {script}")
@@ -1454,7 +1458,7 @@ PY
 }
 
 {
-  echo "release_version=v0.3.0"
+  echo "release_version=v0.3.1"
   echo "git_commit=${CANDIDATE_COMMIT}"
   echo "git_branch=$(git -C "${REPO_ROOT}" branch --show-current)"
   echo "repository=${REPOSITORY}"
@@ -2049,7 +2053,7 @@ if [[ "$(git -C "${REPO_ROOT}" rev-parse HEAD)" != "${CANDIDATE_COMMIT}" ]] ||  
 fi
 validate_public_main_tip
 
-if ! "${PYTHON_BIN}" "${REPO_ROOT}/scripts/build_validation_packet_v0.3.0.py"   "${VALIDATION_ROOT}" "${PACKET_ROOT}" "${AUDIT_ZIP}"   --repo-root "${REPO_ROOT}"   --commit "${CANDIDATE_COMMIT}"   --cache-root "${CACHE_ROOT}"   --version "v0.3.0"   --repository "${REPOSITORY}" > "${PACKET_BUILD_LOG}" 2>&1; then
+if ! "${PYTHON_BIN}" "${REPO_ROOT}/scripts/build_validation_packet_v0.3.1.py"   "${VALIDATION_ROOT}" "${PACKET_ROOT}" "${AUDIT_ZIP}"   --repo-root "${REPO_ROOT}"   --commit "${CANDIDATE_COMMIT}"   --cache-root "${CACHE_ROOT}"   --version "v0.3.1"   --repository "${REPOSITORY}" > "${PACKET_BUILD_LOG}" 2>&1; then
   cat "${PACKET_BUILD_LOG}" >&2
   exit 1
 fi
@@ -2081,7 +2085,7 @@ printf '%s  %s\n' "${AUDIT_ZIP_SHA256}" "${EXPECTED_AUDIT_ZIP}" > "${PACKET_SHA2
 : > "${PACKET_VERIFY_LOG}"
 echo "[external-archive-digest] verify ZIP before packet extraction or internal verification" >> "${PACKET_VERIFY_LOG}"
 if ! "${PYTHON_BIN}" \
-  "${REPO_ROOT}/scripts/verify_release_asset_identity_v0.3.0.py" \
+  "${REPO_ROOT}/scripts/verify_release_asset_identity_v0.3.1.py" \
   archive-digest "${AUDIT_ZIP}" \
   --sha256-sidecar "${PACKET_SHA256}" >> "${PACKET_VERIFY_LOG}" 2>&1; then
   cat "${PACKET_VERIFY_LOG}" >&2
@@ -2150,7 +2154,7 @@ for key, expected_id in expected_ids.items():
     if environment.get(key) != str(expected_id):
         raise SystemExit(f"Audit ZIP environment identity mismatch for {key}")
 expected = (
-    f"verified mito-overview v0.3.0 github_release_validation_v1 "
+    f"verified mito-overview v0.3.1 github_release_validation_v1 "
     f"packet at commit {commit}"
 )
 if log.count(expected) != 2:
@@ -2178,7 +2182,7 @@ receipt = {
     "validation_profile": "github_release_validation_v1",
     "evidence_type": "release_validation_archive_verification",
     "verdict": "PASS",
-    "release_version": "v0.3.0",
+    "release_version": "v0.3.1",
     "git_commit": sys.argv[2],
     "github_actions_run_id": int(sys.argv[3]),
     "final_push_github_actions_run_id": int(sys.argv[3]),

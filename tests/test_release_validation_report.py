@@ -14,7 +14,7 @@ from PIL import Image, ImageDraw
 
 
 ROOT = Path(__file__).parents[1]
-SCRIPT = ROOT / "scripts" / "build_release_validation_report_v0.3.0.py"
+SCRIPT = ROOT / "scripts" / "build_release_validation_report_v0.3.1.py"
 SPEC = importlib.util.spec_from_file_location("build_release_report_v030", SCRIPT)
 assert SPEC is not None and SPEC.loader is not None
 report_builder = importlib.util.module_from_spec(SPEC)
@@ -24,6 +24,14 @@ SPEC.loader.exec_module(report_builder)
 COMMIT = "a" * 40
 REPOSITORY = "https://github.com/elissonnog/mito-overview"
 RUN_ID = 987654321
+REAL_PACKET = (
+    Path.home()
+    / "Desktop"
+    / "ont_results"
+    / "mito_overview_validation_packets"
+    / "v0.3.0"
+    / "build-b116430-r2"
+)
 
 
 def digest(path: Path) -> str:
@@ -83,15 +91,48 @@ def make_packet(tmp_path: Path) -> tuple[Path, Path, list[Path]]:
     }
     case_ids = sorted(report_builder.REQUIRED_CASE_IDS)
     cases = [
-        [case_id, "release_validation", "1", "1", "PASS", "evidence available"]
+        [
+            case_id,
+            (
+                "repeatability"
+                if case_id.endswith("_repeatability")
+                else "visual_integrity"
+                if case_id.endswith("_visual_integrity")
+                else "release_validation"
+            ),
+            "1",
+            "1",
+            "PASS",
+            "evidence available",
+        ]
         for case_id in case_ids
     ]
     write_tsv(packet / "cases.tsv", report_builder.EVIDENCE_COLUMNS["cases.tsv"], cases)
+    ubuntu_cases = [
+        row
+        for row in cases
+        if row[0]
+        in {
+            "gm11906_repeatability",
+            "gm12878_repeatability",
+            "gm11906_visual_integrity",
+            "gm12878_visual_integrity",
+        }
+    ]
+    write_tsv(
+        packet / report_builder.UBUNTU_CASES_PACKET_PATH,
+        report_builder.EVIDENCE_COLUMNS["cases.tsv"],
+        ubuntu_cases,
+    )
+    for relative in report_builder.ALLOWED_EMPTY_COMPARISONS:
+        path = packet / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"")
 
     run = {
         "schema_version": "2.0",
         "validation_profile": "github_release_validation_v1",
-        "release_version": "v0.3.0",
+        "release_version": "v0.3.1",
         "git_commit": COMMIT,
         "repository": REPOSITORY,
         "github_actions_run_id": RUN_ID,
@@ -112,9 +153,9 @@ def make_packet(tmp_path: Path) -> tuple[Path, Path, list[Path]]:
     release = {
         "schema_version": "2.0",
         "validation_profile": "github_release_validation_v1",
-        "release_version": "v0.3.0",
+        "release_version": "v0.3.1",
         "package_name": "mito-overview",
-        "package_version": "0.3.0",
+        "package_version": "0.3.1",
         "repository": REPOSITORY,
         "git_commit": COMMIT,
         "public_source_metadata": source_metadata_identity,
@@ -226,7 +267,7 @@ def make_packet(tmp_path: Path) -> tuple[Path, Path, list[Path]]:
                 "mito_qc",
                 "ok",
                 "",
-                "observed_normalized/gm11906_default_run1/summary.tsv",
+                "observed_normalized/gm11906_default_run1/mito_qc.tsv",
             ],
             [
                 "GM12878",
@@ -234,8 +275,44 @@ def make_packet(tmp_path: Path) -> tuple[Path, Path, list[Path]]:
                 "numt_interpretation",
                 "not_evaluable",
                 "reference_scope_mt_only",
-                "observed_normalized/gm12878_default_run1/summary.tsv",
+                "observed_normalized/gm12878_default_run1/numt_interpretation.tsv",
             ],
+            [
+                "GM11906",
+                "gm11906_default_run1",
+                "mito_copy_number_summary",
+                "not_applicable",
+                "",
+                (
+                    "observed_normalized/gm11906_default_run1/"
+                    "mito_copy_number_summary.tsv"
+                ),
+            ],
+        ],
+    )
+    write_tsv(
+        packet / "observed_normalized/gm11906_default_run1/mito_qc.tsv",
+        ("metric", "value"),
+        [["status", "ok"]],
+    )
+    write_tsv(
+        packet / "observed_normalized/gm12878_default_run1/numt_interpretation.tsv",
+        ("metric", "value"),
+        [["status", "not_evaluable"]],
+    )
+    write_tsv(
+        (
+            packet
+            / "observed_normalized/gm11906_default_run1/"
+            "mito_copy_number_summary.tsv"
+        ),
+        ("metric", "value"),
+        [
+            ["assay_type", "targeted_mt"],
+            ["message", "Copy-number proxy is not applicable to targeted mtDNA."],
+            ["read_mode", "short"],
+            ["status", "not_applicable"],
+            ["step", "copy_number"],
         ],
     )
     resource_rows = []
@@ -436,7 +513,7 @@ def make_packet(tmp_path: Path) -> tuple[Path, Path, list[Path]]:
         ],
     )
     acceptance = packet / "acceptance" / "cross_platform_public_reproduction.json"
-    acceptance.parent.mkdir(parents=True)
+    acceptance.parent.mkdir(parents=True, exist_ok=True)
     acceptance.write_text(
         json.dumps(
             {
@@ -458,7 +535,7 @@ def make_packet(tmp_path: Path) -> tuple[Path, Path, list[Path]]:
         encoding="utf-8",
     )
     (packet / "environment.txt").write_text(
-        "release_version=v0.3.0\n"
+        "release_version=v0.3.1\n"
         f"git_commit={COMMIT}\n"
         "python=3.12.13\n"
         "samtools=1.23.1\n"
@@ -526,11 +603,11 @@ def make_packet(tmp_path: Path) -> tuple[Path, Path, list[Path]]:
         json.dumps(
             {
                 "schema_version": "1.0",
-                "release_version": "v0.3.0",
+                "release_version": "v0.3.1",
                 "git_commit": COMMIT,
                 "repository": REPOSITORY,
-                "release_tag": "v0.3.0",
-                "github_release_url": f"{REPOSITORY}/releases/tag/v0.3.0",
+                "release_tag": "v0.3.1",
+                "github_release_url": f"{REPOSITORY}/releases/tag/v0.3.1",
                 "github_actions_run_id": RUN_ID,
                 "publication_state": "prepublication",
                 "verification_state": "verified_prepublication_identity",
@@ -540,12 +617,12 @@ def make_packet(tmp_path: Path) -> tuple[Path, Path, list[Path]]:
                 "asset_publication_verified": False,
                 "release_absent": True,
                 "tag_ref": {
-                    "ref": "refs/tags/v0.3.0",
+                    "ref": "refs/tags/v0.3.1",
                     "object_type": "tag",
                     "object_sha": "b" * 40,
                 },
                 "tag_object": {
-                    "tag": "v0.3.0",
+                    "tag": "v0.3.1",
                     "tag_object_sha": "b" * 40,
                     "target_type": "commit",
                     "peeled_target_sha": COMMIT,
@@ -559,8 +636,8 @@ def make_packet(tmp_path: Path) -> tuple[Path, Path, list[Path]]:
                 },
                 "release": {
                     "id": None,
-                    "url": f"{REPOSITORY}/releases/tag/v0.3.0",
-                    "tag_name": "v0.3.0",
+                    "url": f"{REPOSITORY}/releases/tag/v0.3.1",
+                    "tag_name": "v0.3.1",
                     "target_commitish": COMMIT,
                     "draft": None,
                     "immutable": None,
@@ -599,6 +676,7 @@ def test_builds_markdown_docx_and_embeds_verified_packet_figures(tmp_path: Path)
     assert "github_publication.json" in markdown
     assert COMMIT in markdown
     assert "No simplified replacement chart is generated" in markdown
+    assert "Copy-number proxy is not applicable to targeted mtDNA." in markdown
     assert markdown.count("![Figure") == 2
 
     manifest = generated["assets"] / "figure_manifest.tsv"
@@ -638,6 +716,378 @@ def test_builds_markdown_docx_and_embeds_verified_packet_figures(tmp_path: Path)
     assert 'w:footerReference w:type="even"' in document_xml
 
 
+def test_preflight_accepts_all_eight_hash_bound_zero_differences(
+    tmp_path: Path,
+) -> None:
+    packet, _, _ = make_packet(tmp_path)
+
+    report_builder.preflight_packet(packet)
+
+    for relative in report_builder.ALLOWED_EMPTY_COMPARISONS:
+        assert (packet / relative).read_bytes() == b""
+
+
+@pytest.mark.parametrize("relative", sorted(report_builder.ALLOWED_EMPTY_COMPARISONS))
+def test_each_exact_empty_comparison_path_is_required(
+    tmp_path: Path, relative: str
+) -> None:
+    packet, _, _ = make_packet(tmp_path)
+    (packet / relative).unlink()
+    rewrite_artifact_manifest(packet)
+
+    with pytest.raises(
+        report_builder.ReportValidationError,
+        match="Required zero-difference evidence is absent",
+    ):
+        report_builder.preflight_packet(packet)
+
+
+def test_preflight_rejects_unknown_empty_diff(tmp_path: Path) -> None:
+    packet, _, _ = make_packet(tmp_path)
+    unexpected = packet / "logs/public/renamed_repeatability.diff"
+    unexpected.write_bytes(b"")
+    rewrite_artifact_manifest(packet)
+
+    with pytest.raises(report_builder.ReportValidationError, match="Missing, empty"):
+        report_builder.preflight_packet(packet)
+
+
+def test_preflight_rejects_nonempty_allowlisted_diff_even_when_rehashed(
+    tmp_path: Path,
+) -> None:
+    packet, _, _ = make_packet(tmp_path)
+    relative = next(iter(report_builder.ALLOWED_EMPTY_COMPARISONS))
+    (packet / relative).write_text("difference\n", encoding="utf-8")
+    rewrite_artifact_manifest(packet)
+
+    with pytest.raises(
+        report_builder.ReportValidationError, match="must be exactly zero bytes"
+    ):
+        report_builder.preflight_packet(packet)
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("category", "release_validation", "category mismatch"),
+        ("verdict", "FAIL", "is not PASS"),
+        ("input_available", "0", "lacks available evidence"),
+        ("expected_available", "0", "lacks available evidence"),
+    ],
+)
+def test_preflight_binds_empty_diff_to_case_evidence(
+    tmp_path: Path, field: str, value: str, message: str
+) -> None:
+    packet, _, _ = make_packet(tmp_path)
+    relative = "logs/public/gm11906_repeatability.diff"
+    case_table, case_id, _ = report_builder.ALLOWED_EMPTY_COMPARISONS[relative]
+    path = packet / case_table
+    rows = list(csv.DictReader(path.open(encoding="utf-8"), delimiter="\t"))
+    next(row for row in rows if row["case_id"] == case_id)[field] = value
+    columns = report_builder.EVIDENCE_COLUMNS["cases.tsv"]
+    write_tsv(path, columns, [[row[column] for column in columns] for row in rows])
+    rewrite_artifact_manifest(packet)
+
+    with pytest.raises(report_builder.ReportValidationError, match=message):
+        report_builder.preflight_packet(packet)
+
+
+def test_preflight_rejects_duplicate_bound_case(tmp_path: Path) -> None:
+    packet, _, _ = make_packet(tmp_path)
+    path = packet / report_builder.UBUNTU_CASES_PACKET_PATH
+    rows = list(csv.DictReader(path.open(encoding="utf-8"), delimiter="\t"))
+    rows.append(dict(rows[0]))
+    columns = report_builder.EVIDENCE_COLUMNS["cases.tsv"]
+    write_tsv(path, columns, [[row[column] for column in columns] for row in rows])
+    rewrite_artifact_manifest(packet)
+
+    with pytest.raises(report_builder.ReportValidationError, match="exactly one case row"):
+        report_builder.preflight_packet(packet)
+
+
+def test_preflight_rejects_noncanonical_empty_digest(tmp_path: Path) -> None:
+    packet, _, _ = make_packet(tmp_path)
+    relative = "logs/public/gm11906_repeatability.diff"
+    manifest = packet / "artifacts.sha256"
+    manifest.write_text(
+        manifest.read_text(encoding="utf-8").replace(
+            f"{report_builder.EMPTY_SHA256}  {relative}", f"{'f' * 64}  {relative}"
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        report_builder.ReportValidationError, match="digest is not canonical"
+    ):
+        report_builder.preflight_packet(packet)
+
+
+def test_preflight_rejects_symlink_at_allowlisted_path(tmp_path: Path) -> None:
+    packet, _, _ = make_packet(tmp_path)
+    relative = "logs/public/gm11906_repeatability.diff"
+    path = packet / relative
+    path.unlink()
+    path.symlink_to(packet / "cases.tsv")
+
+    with pytest.raises(report_builder.ReportValidationError, match="must not be a symlink"):
+        report_builder.preflight_packet(packet)
+
+
+def test_preflight_rejects_empty_required_evidence(tmp_path: Path) -> None:
+    packet, _, _ = make_packet(tmp_path)
+    (packet / "run.json").write_bytes(b"")
+    rewrite_artifact_manifest(packet)
+
+    with pytest.raises(report_builder.ReportValidationError, match="Missing, empty"):
+        report_builder.preflight_packet(packet)
+
+
+def test_preflight_rejects_unmanifested_file_closed_inventory(tmp_path: Path) -> None:
+    packet, _, _ = make_packet(tmp_path)
+    (packet / "unexpected.txt").write_text("unexpected\n", encoding="utf-8")
+
+    with pytest.raises(report_builder.ReportValidationError, match="unmanifested files"):
+        report_builder.preflight_packet(packet)
+
+
+def test_preflight_failure_creates_no_report_output(tmp_path: Path) -> None:
+    packet, _, _ = make_packet(tmp_path)
+    (packet / "run.json").write_bytes(b"")
+    rewrite_artifact_manifest(packet)
+    output = tmp_path / "report"
+
+    with pytest.raises(report_builder.ReportValidationError):
+        report_builder.preflight_packet(packet)
+
+    assert not output.exists()
+
+
+def test_cli_preflight_requires_no_publication_or_output(tmp_path: Path) -> None:
+    packet, _, _ = make_packet(tmp_path)
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT),
+            "--packet-root",
+            str(packet),
+            "--preflight-packet",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "[PREFLIGHT] PASS" in result.stdout
+
+
+@pytest.mark.skipif(not REAL_PACKET.is_dir(), reason="real v0.3.0 packet unavailable")
+def test_real_v030_packet_passes_full_preflight() -> None:
+    report_builder.preflight_packet(REAL_PACKET)
+
+
+def read_module_rows(packet: Path) -> list[dict[str, str]]:
+    return list(
+        csv.DictReader(
+            (packet / "module_status_matrix.tsv").open(encoding="utf-8"),
+            delimiter="\t",
+        )
+    )
+
+
+def write_module_rows(packet: Path, rows: list[dict[str, str]]) -> None:
+    columns = report_builder.EVIDENCE_COLUMNS["module_status_matrix.tsv"]
+    write_tsv(
+        packet / "module_status_matrix.tsv",
+        columns,
+        [[row[column] for column in columns] for row in rows],
+    )
+
+
+def blank_reason_module_source(packet: Path) -> Path:
+    rows = read_module_rows(packet)
+    row = next(
+        item
+        for item in rows
+        if item["status"] == "not_applicable" and not item["reason_code"]
+    )
+    return packet / row["source_table"]
+
+
+def test_blank_reason_not_applicable_accepts_blank_source_reason_code(
+    tmp_path: Path,
+) -> None:
+    packet, _, _ = make_packet(tmp_path)
+    source = blank_reason_module_source(packet)
+    rows = list(csv.DictReader(source.open(encoding="utf-8"), delimiter="\t"))
+    rows.append({"metric": "reason_code", "value": ""})
+    write_tsv(
+        source,
+        ("metric", "value"),
+        [[row["metric"], row["value"]] for row in rows],
+    )
+    rewrite_artifact_manifest(packet)
+
+    report_builder.preflight_packet(packet)
+
+
+def test_module_status_matrix_rejects_duplicate_keys(tmp_path: Path) -> None:
+    packet, _, _ = make_packet(tmp_path)
+    rows = read_module_rows(packet)
+    rows.append(dict(rows[0]))
+    write_module_rows(packet, rows)
+    rewrite_artifact_manifest(packet)
+
+    with pytest.raises(report_builder.ReportValidationError, match="duplicate key"):
+        report_builder.preflight_packet(packet)
+
+
+def test_module_status_matrix_rejects_noncanonical_source_path(tmp_path: Path) -> None:
+    packet, _, _ = make_packet(tmp_path)
+    rows = read_module_rows(packet)
+    row = next(item for item in rows if item["status"] == "not_applicable")
+    row["source_table"] = "observed_normalized/gm11906_default_run1/summary.tsv"
+    write_module_rows(packet, rows)
+    rewrite_artifact_manifest(packet)
+
+    with pytest.raises(report_builder.ReportValidationError, match="source path mismatch"):
+        report_builder.preflight_packet(packet)
+
+
+def test_module_status_source_must_be_manifested(tmp_path: Path) -> None:
+    packet, _, _ = make_packet(tmp_path)
+    source = blank_reason_module_source(packet)
+    relative = source.relative_to(packet).as_posix()
+    manifest = packet / "artifacts.sha256"
+    lines = [
+        line
+        for line in manifest.read_text(encoding="utf-8").splitlines()
+        if not line.endswith(f"  {relative}")
+    ]
+    manifest.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    with pytest.raises(report_builder.ReportValidationError, match="unmanifested files"):
+        report_builder.preflight_packet(packet)
+
+
+def test_module_status_source_rejects_hash_drift(tmp_path: Path) -> None:
+    packet, _, _ = make_packet(tmp_path)
+    source = blank_reason_module_source(packet)
+    source.write_text(source.read_text(encoding="utf-8") + "extra\tvalue\n", encoding="utf-8")
+
+    with pytest.raises(report_builder.ReportValidationError, match="hash mismatch"):
+        report_builder.preflight_packet(packet)
+
+
+def test_module_status_source_rejects_symlink(tmp_path: Path) -> None:
+    packet, _, _ = make_packet(tmp_path)
+    source = blank_reason_module_source(packet)
+    source.unlink()
+    source.symlink_to(packet / "cases.tsv")
+
+    with pytest.raises(report_builder.ReportValidationError, match="must not be a symlink"):
+        report_builder.preflight_packet(packet)
+
+
+def test_blank_reason_source_requires_exact_metric_value_shape(tmp_path: Path) -> None:
+    packet, _, _ = make_packet(tmp_path)
+    source = blank_reason_module_source(packet)
+    write_tsv(source, ("name", "value"), [["status", "not_applicable"]])
+    rewrite_artifact_manifest(packet)
+
+    with pytest.raises(
+        report_builder.ReportValidationError,
+        match="exactly metric and value columns",
+    ):
+        report_builder.preflight_packet(packet)
+
+
+def test_blank_reason_source_rejects_duplicate_metrics(tmp_path: Path) -> None:
+    packet, _, _ = make_packet(tmp_path)
+    source = blank_reason_module_source(packet)
+    rows = list(csv.DictReader(source.open(encoding="utf-8"), delimiter="\t"))
+    rows.append(dict(rows[0]))
+    write_tsv(
+        source,
+        ("metric", "value"),
+        [[row["metric"], row["value"]] for row in rows],
+    )
+    rewrite_artifact_manifest(packet)
+
+    with pytest.raises(report_builder.ReportValidationError, match="duplicate metric"):
+        report_builder.preflight_packet(packet)
+
+
+@pytest.mark.parametrize("metric", ["message", "step", "read_mode", "assay_type"])
+def test_blank_reason_source_requires_nonempty_context_metrics(
+    tmp_path: Path, metric: str
+) -> None:
+    packet, _, _ = make_packet(tmp_path)
+    source = blank_reason_module_source(packet)
+    rows = list(csv.DictReader(source.open(encoding="utf-8"), delimiter="\t"))
+    next(row for row in rows if row["metric"] == metric)["value"] = ""
+    write_tsv(
+        source,
+        ("metric", "value"),
+        [[row["metric"], row["value"]] for row in rows],
+    )
+    rewrite_artifact_manifest(packet)
+
+    with pytest.raises(
+        report_builder.ReportValidationError, match="lacks required metrics"
+    ):
+        report_builder.preflight_packet(packet)
+
+
+def test_blank_reason_source_status_must_match_matrix(tmp_path: Path) -> None:
+    packet, _, _ = make_packet(tmp_path)
+    source = blank_reason_module_source(packet)
+    rows = list(csv.DictReader(source.open(encoding="utf-8"), delimiter="\t"))
+    next(row for row in rows if row["metric"] == "status")["value"] = "ok"
+    write_tsv(
+        source,
+        ("metric", "value"),
+        [[row["metric"], row["value"]] for row in rows],
+    )
+    rewrite_artifact_manifest(packet)
+
+    with pytest.raises(report_builder.ReportValidationError, match="does not match"):
+        report_builder.preflight_packet(packet)
+
+
+def test_blank_reason_source_rejects_nonblank_reason_code(tmp_path: Path) -> None:
+    packet, _, _ = make_packet(tmp_path)
+    source = blank_reason_module_source(packet)
+    rows = list(csv.DictReader(source.open(encoding="utf-8"), delimiter="\t"))
+    rows.append({"metric": "reason_code", "value": "unexpected_reason"})
+    write_tsv(
+        source,
+        ("metric", "value"),
+        [[row["metric"], row["value"]] for row in rows],
+    )
+    rewrite_artifact_manifest(packet)
+
+    with pytest.raises(report_builder.ReportValidationError, match="contains a reason_code"):
+        report_builder.preflight_packet(packet)
+
+
+@pytest.mark.parametrize("status", ["not_configured", "not_evaluable", "unavailable"])
+def test_other_blank_non_ok_module_states_remain_invalid(
+    tmp_path: Path, status: str
+) -> None:
+    packet, _, _ = make_packet(tmp_path)
+    rows = read_module_rows(packet)
+    row = next(item for item in rows if item["status"] == "not_applicable")
+    row["status"] = status
+    write_module_rows(packet, rows)
+    rewrite_artifact_manifest(packet)
+
+    with pytest.raises(
+        report_builder.ReportValidationError, match="lacks a reason code"
+    ):
+        report_builder.preflight_packet(packet)
+
+
 def test_report_rejects_legacy_immutable_release_fallback(tmp_path: Path) -> None:
     packet, publication, _ = make_packet(tmp_path)
     payload = json.loads(publication.read_text(encoding="utf-8"))
@@ -662,7 +1112,7 @@ def test_report_rejects_legacy_immutable_release_fallback(tmp_path: Path) -> Non
     [
         ("publication", "git_commit", "b" * 40, "identity mismatch"),
         ("run", "validation_profile", "wrong_profile", "validation profile"),
-        ("release", "release_version", "v0.3.1", "release must be v0.3.0"),
+        ("release", "release_version", "v0.3.0", "release must be v0.3.1"),
     ],
 )
 def test_fails_closed_on_release_identity_drift(

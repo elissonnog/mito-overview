@@ -15,28 +15,28 @@ from PIL import Image
 
 
 ROOT = Path(__file__).parents[1]
-ASSEMBLER = ROOT / "scripts" / "assemble_release_assets_v0.3.0.py"
+ASSEMBLER = ROOT / "scripts" / "assemble_release_assets_v0.3.1.py"
 REPOSITORY = "https://github.com/elissonnog/mito-overview"
 FINAL_SHA = "a" * 40
-REPORT_STEM = "MitoOverview_v0.3.0_release_validation_report"
+REPORT_STEM = "MitoOverview_v0.3.1_release_validation_report"
 EXPECTED_ASSETS = {
-    "mito-overview-v0.3.0-validation.zip",
+    "mito-overview-v0.3.1-validation.zip",
     f"{REPORT_STEM}.md",
     f"{REPORT_STEM}.docx",
     f"{REPORT_STEM}.pdf",
     f"{REPORT_STEM}_assets.tar.gz",
-    "mito-overview-v0.3.0-verification.json",
-    "RELEASE_NOTES_v0.3.0.md",
-    "mito-overview-v0.3.0-environment.txt",
-    "mito-overview-v0.3.0-environment-locks.tar.gz",
-    "mito_overview-0.3.0-py3-none-any.whl",
-    "mito_overview-0.3.0.tar.gz",
+    "mito-overview-v0.3.1-verification.json",
+    "RELEASE_NOTES_v0.3.1.md",
+    "mito-overview-v0.3.1-environment.txt",
+    "mito-overview-v0.3.1-environment-locks.tar.gz",
+    "mito_overview-0.3.1-py3-none-any.whl",
+    "mito_overview-0.3.1.tar.gz",
 }
 REPORT_ASSETS = EXPECTED_ASSETS - {
-    "mito-overview-v0.3.0-validation.zip",
-    "mito-overview-v0.3.0-verification.json",
-    "mito_overview-0.3.0-py3-none-any.whl",
-    "mito_overview-0.3.0.tar.gz",
+    "mito-overview-v0.3.1-validation.zip",
+    "mito-overview-v0.3.1-verification.json",
+    "mito_overview-0.3.1-py3-none-any.whl",
+    "mito_overview-0.3.1.tar.gz",
 }
 
 
@@ -62,35 +62,35 @@ def _write_packet(
     root: Path,
 ) -> tuple[Path, Path, dict[str, dict[str, object]], bytes, dict[str, bytes]]:
     distributions = {
-        "mito_overview-0.3.0-py3-none-any.whl": b"fixture wheel bytes\n",
-        "mito_overview-0.3.0.tar.gz": b"fixture source distribution bytes\n",
+        "mito_overview-0.3.1-py3-none-any.whl": b"fixture wheel bytes\n",
+        "mito_overview-0.3.1.tar.gz": b"fixture source distribution bytes\n",
     }
     distribution_kinds = {
-        "mito_overview-0.3.0-py3-none-any.whl": "wheel",
-        "mito_overview-0.3.0.tar.gz": "sdist",
+        "mito_overview-0.3.1-py3-none-any.whl": "wheel",
+        "mito_overview-0.3.1.tar.gz": "sdist",
     }
     objects = {
         "run.json": {
             "schema_version": "2.0",
             "validation_profile": "github_release_validation_v1",
-            "release_version": "v0.3.0",
+            "release_version": "v0.3.1",
             "git_commit": FINAL_SHA,
             "repository": REPOSITORY,
         },
         "release_identity.json": {
             "schema_version": "2.0",
             "validation_profile": "github_release_validation_v1",
-            "release_version": "v0.3.0",
+            "release_version": "v0.3.1",
             "git_commit": FINAL_SHA,
             "repository": REPOSITORY,
             "package_name": "mito-overview",
-            "package_version": "0.3.0",
+            "package_version": "0.3.1",
             "dist_artifacts": [
                 {
                     "path": f"dist/{name}",
                     "kind": distribution_kinds[name],
                     "name": "mito-overview",
-                    "version": "0.3.0",
+                    "version": "0.3.1",
                     "bytes": len(distributions[name]),
                     "sha256": hashlib.sha256(distributions[name]).hexdigest(),
                     "direct_url_archive_sha256": hashlib.sha256(
@@ -168,7 +168,7 @@ def _write_packet(
         f"{hashlib.sha256(payload).hexdigest()}  {name}\n"
         for name, payload in sorted(payloads.items())
     ).encode("ascii")
-    archive = root / "mito-overview-v0.3.0-validation.zip"
+    archive = root / "mito-overview-v0.3.1-validation.zip"
     with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as handle:
         for name, payload in payloads.items():
             handle.writestr(name, payload)
@@ -184,7 +184,7 @@ def _write_packet(
                 "validation_profile": "github_release_validation_v1",
                 "evidence_type": "release_validation_archive_verification",
                 "verdict": "PASS",
-                "release_version": "v0.3.0",
+                "release_version": "v0.3.1",
                 "git_commit": FINAL_SHA,
                 "audit_zip": archive.name,
                 "audit_zip_sha256": _sha256(archive),
@@ -212,7 +212,7 @@ def _write_inputs(root: Path) -> dict[str, Path]:
     report = root / "report"
     assets = report / f"{REPORT_STEM}_assets"
     assets.mkdir(parents=True)
-    identity = f"v0.3.0\n{REPOSITORY}\n{FINAL_SHA}\n"
+    identity = f"v0.3.1\n{REPOSITORY}\n{FINAL_SHA}\n"
     (report / f"{REPORT_STEM}.md").write_text(identity, encoding="utf-8")
     document = Document()
     document.add_paragraph(identity)
@@ -246,8 +246,8 @@ def _write_inputs(root: Path) -> dict[str, Path]:
         "schema_version": "1.0",
         "provenance_type": "mito_overview_release_report_build",
         "repository": REPOSITORY,
-        "release_version": "v0.3.0",
-        "release_tag": "v0.3.0",
+        "release_version": "v0.3.1",
+        "release_tag": "v0.3.1",
         "git_commit": FINAL_SHA,
         "validation_profile": "github_release_validation_v1",
         "packet_identity": packet_records,
@@ -281,8 +281,8 @@ def _write_inputs(root: Path) -> dict[str, Path]:
         "schema_version": "1.0",
         "provenance_type": "mito_overview_finalized_release_report",
         "repository": REPOSITORY,
-        "release_version": "v0.3.0",
-        "release_tag": "v0.3.0",
+        "release_version": "v0.3.1",
+        "release_tag": "v0.3.1",
         "git_commit": FINAL_SHA,
         "validation_profile": "github_release_validation_v1",
         "validation_archive": _record(archive, archive.name),
@@ -322,7 +322,7 @@ def _write_inputs(root: Path) -> dict[str, Path]:
     notes.write_text(identity, encoding="utf-8")
     environment = root / "environment.txt"
     environment.write_text(
-        f"release_version=v0.3.0\nrepository={REPOSITORY}\ngit_commit={FINAL_SHA}\n",
+        f"release_version=v0.3.1\nrepository={REPOSITORY}\ngit_commit={FINAL_SHA}\n",
         encoding="utf-8",
     )
     locks = root / "locks"
@@ -383,7 +383,7 @@ def test_assembler_builds_exact_semantically_bound_inventory(tmp_path: Path) -> 
     assert result["verified"] is True
     assert result["git_commit"] == FINAL_SHA
     receipt = json.loads(
-        (output / "mito-overview-v0.3.0-verification.json").read_text()
+        (output / "mito-overview-v0.3.1-verification.json").read_text()
     )
     manifest = receipt["report_asset_manifest"]
     assert manifest["git_commit"] == FINAL_SHA
@@ -395,8 +395,8 @@ def test_assembler_builds_exact_semantically_bound_inventory(tmp_path: Path) -> 
         assert row["sha256"] == _sha256(path)
     distribution_manifest = receipt["distribution_asset_manifest"]
     assert {row["name"] for row in distribution_manifest["assets"]} == {
-        "mito_overview-0.3.0-py3-none-any.whl",
-        "mito_overview-0.3.0.tar.gz",
+        "mito_overview-0.3.1-py3-none-any.whl",
+        "mito_overview-0.3.1.tar.gz",
     }
     assert result["distribution_bytes_match_packet"] is True
 
@@ -421,7 +421,7 @@ def test_assembler_archives_are_deterministic(tmp_path: Path) -> None:
     assert first.returncode == second.returncode == 0
     for name in (
         f"{REPORT_STEM}_assets.tar.gz",
-        "mito-overview-v0.3.0-environment-locks.tar.gz",
+        "mito-overview-v0.3.1-environment-locks.tar.gz",
     ):
         assert _sha256(first_output / name) == _sha256(second_output / name)
 
@@ -429,8 +429,8 @@ def test_assembler_archives_are_deterministic(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     "name",
     [
-        "mito_overview-0.3.0-py3-none-any.whl",
-        "mito_overview-0.3.0.tar.gz",
+        "mito_overview-0.3.1-py3-none-any.whl",
+        "mito_overview-0.3.1.tar.gz",
     ],
 )
 def test_assembler_rejects_distribution_bytes_not_bound_in_packet(

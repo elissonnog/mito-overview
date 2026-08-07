@@ -1,19 +1,19 @@
-# v0.3.0 GitHub Release Reproducibility Ledger
+# v0.3.1 GitHub Release Reproducibility Ledger
 
-This ledger tracks the active GitHub-only release gate for `mito-overview` v0.3.0. A pending row is not evidence of a pass. The controlling specification is [`clean_room_validation_protocol_v0.3.0.md`](clean_room_validation_protocol_v0.3.0.md). Zenodo, a DOI, manuscript changes, bioRxiv submission, Notion, and MCW/HPC deployment are outside this release gate.
+This ledger tracks the active GitHub-only release gate for `mito-overview` v0.3.1. A pending row is not evidence of a pass. Version v0.3.1 corrects release/report tooling only and reuses the frozen scientific protocol in [`clean_room_validation_protocol_v0.3.0.md`](clean_room_validation_protocol_v0.3.0.md). Zenodo, a DOI, manuscript changes, bioRxiv submission, Notion, and MCW/HPC deployment are outside this release gate.
 
-The historical `v0.2.1` release remains immutable at `2ba62b775a7204c0dc61f5408989603f536c78da`. Historical outputs must not be relabeled as v0.3.0 evidence.
+The annotated `v0.3.0` tag remains immutable at `b116430e037f4ff2f9cf6f6f3ba66150cce1303f`. Its seven public inputs, deterministic GM12878 seed, algorithms, thresholds, schemas, oracles, and normalized scientific results are the frozen v0.3.0 scientific baseline; they must not be relabeled as new v0.3.1 biological evidence without the prescribed exact-commit rerun.
 
 ## Release Identity
 
 | Field | Required value | Current status |
 | --- | --- | --- |
-| version | `0.3.0` | recorded in package metadata; final agreement check pending |
+| version | `0.3.1` | recorded in package metadata; final agreement check pending |
 | repository | `https://github.com/elissonnog/mito-overview` | recorded |
-| prior release | `v0.2.1` at `2ba62b775a7204c0dc61f5408989603f536c78da` | preserved |
+| scientific baseline | `v0.3.0` at `b116430e037f4ff2f9cf6f6f3ba66150cce1303f` | preserved and immutable |
 | final commit | one exact 40-character public `main` commit | pending |
 | GitHub Actions | successful Ubuntu and macOS jobs with `head_sha=FINAL_SHA` | pending |
-| tag | annotated `v0.3.0` peeled to `FINAL_SHA` | pending |
+| tag | annotated `v0.3.1` peeled to `FINAL_SHA` | pending |
 | release assets | wheel, sdist, validation ZIP, reports, environment records, release notes, and `SHA256SUMS` | pending |
 | archive/DOI | not required | outside scope |
 
@@ -27,29 +27,33 @@ The GM12878 exercise uses a deterministic 1,000-query-name reduced ONT input and
 
 | ID | Contract | Primary deterministic evidence | Final status |
 | --- | --- | --- | --- |
-| F1 | shared filtered A/C/G/T observation engine, uncapped depth, exact strand/count invariants, and shared co-occurrence observations | `tests/test_allele_counting.py`, `tests/test_cosegregation_semantics.py`, `tests/test_table_contracts.py` | pending final exact-commit run |
-| F2 | mvTool disabled by default; explicit fixture/network modes; bounded unavailable state | `tests/test_mvtool_modes.py` | pending final exact-commit run |
-| F3 | standalone BAM/CRAM contract, sidecar precedence, index/contig/reference preflight | `tests/test_config_and_inputs.py`, `tests/test_alignment_reference_contract.py`, `tests/smoke_standalone_minimal.sh` | pending final exact-commit run |
-| F4 | experimental mt:nuclear depth ratio only; no diploid multiplier; invalid denominator is NA/not evaluable | `tests/test_copy_number.py` | pending final exact-commit run |
-| F5 | reference-scope-gated alignment-ambiguity interpretation and exact zero-based BED | `tests/test_reference_scope_and_bed.py`, `tests/test_numt_qc_inputs.py` | pending final exact-commit run |
+| F1 | shared filtered A/C/G/T observation engine, uncapped depth, exact strand/count invariants, and shared co-occurrence observations | `tests/test_allele_counting.py`, `tests/test_cosegregation_semantics.py`, `tests/test_table_contracts.py` | validated in v0.3.0; unchanged rerun pending |
+| F2 | mvTool disabled by default; explicit fixture/network modes; bounded unavailable state | `tests/test_mvtool_modes.py` | validated in v0.3.0; unchanged rerun pending |
+| F3 | standalone BAM/CRAM contract, sidecar precedence, index/contig/reference preflight | `tests/test_config_and_inputs.py`, `tests/test_alignment_reference_contract.py`, `tests/smoke_standalone_minimal.sh` | validated in v0.3.0; unchanged rerun pending |
+| F4 | experimental mt:nuclear depth ratio only; no diploid multiplier; invalid denominator is NA/not evaluable | `tests/test_copy_number.py` | validated in v0.3.0; unchanged rerun pending |
+| F5 | reference-scope-gated alignment-ambiguity interpretation and exact zero-based BED | `tests/test_reference_scope_and_bed.py`, `tests/test_numt_qc_inputs.py` | validated in v0.3.0; unchanged rerun pending |
 
 ## Validation Matrix
 
 | Gate | Required evidence | Current status |
 | --- | --- | --- |
-| package and known answers | complete `pytest`, CLI step list, strict generic dry-run | provisional local pass; final exact-commit rerun pending |
-| synthetic workflows | standard long read, reduced short read, long read without methylation, standalone minimal | provisional local pass; final exact-commit rerun pending |
+| package and known answers | complete `pytest`, CLI step list, strict generic dry-run | v0.3.0 PASS; v0.3.1 exact-commit rerun pending |
+| synthetic workflows | standard long read, reduced short read, long read without methylation, standalone minimal | v0.3.0 PASS; v0.3.1 exact-commit rerun pending |
 | package isolation | build wheel and sdist; install each in a separate environment and execute outside checkout with empty `PYTHONPATH` | pending final runner |
 | I/O volume provenance | inventory declared input bytes before each measured command and changed/new validation-output bytes afterward | pending final runner |
-| sealed public cache | exactly seven raw FASTQs plus manifest/seal; hashes, gzip, FASTQ structure, pairing, and metadata identity pass | pending clean-room download |
-| GM11906 public matrix | three filter profiles plus exact default repeat, marker/inventory/status oracles | pending exact-final-commit rerun |
-| GM12878 public matrix | deterministic subset/alignment rebuild, three profiles, exact default repeat, inventory/status oracles | pending exact-final-commit rerun |
-| cross-platform reproduction | macOS clean room and Ubuntu public-data workflow agree on normalized scientific outputs and states | pending |
-| packet verification | packet root and fresh ZIP extraction both pass `verify_bundle.sh` | pending |
+| sealed public cache | exactly seven raw FASTQs plus manifest/seal; hashes, gzip, FASTQ structure, pairing, and metadata identity pass | v0.3.0 PASS; v0.3.1 empty-cache rerun pending |
+| GM11906 public matrix | three filter profiles plus exact default repeat, marker/inventory/status oracles | v0.3.0 PASS; v0.3.1 exact-commit rerun pending |
+| GM12878 public matrix | deterministic subset/alignment rebuild, three profiles, exact default repeat, inventory/status oracles | v0.3.0 PASS; v0.3.1 exact-commit rerun pending |
+| cross-platform reproduction | macOS clean room and Ubuntu public-data workflow agree on normalized scientific outputs and states | v0.3.0 PASS; v0.3.1 rerun pending |
+| packet verification | packet root and fresh ZIP extraction both pass `verify_bundle.sh` | v0.3.0 PASS; v0.3.1 packet pending |
 | visual QA | final report-native HTML/PNG inventory and report DOCX/PDF rendering inspected | pending |
 | GitHub publication | PR merged, push CI green, immutable annotated tag and verified assets published | pending |
 
-## Candidate Checkpoint
+## Frozen v0.3.0 Scientific Baseline
+
+The completed v0.3.0 characterization passed `1,184` tests, `36/36` release cases, `366/366` scientific oracle assertions, and `206/206` normalized cross-platform comparisons. The packet verified in place and after fresh extraction, and no unexpected network-canary event occurred. GM11906 represented `m.8344A>G` at callable depth `1,027`, alternate count `740`, forward/reverse counts `305/435`, and observed alternate allele fraction `0.720545`, with `MT-TK` and `tRNA_variant` annotation. GM12878 retained `16` default candidates, `7,143,152` accepted observations, `2,047,476` excluded observations, eight co-occurrence sites, 13 CIGAR-deletion bins, five qualifying deletion-read names, and 542 supplementary/SA query names. These results support bounded workflow/resource claims, not diagnostic performance or clinical validation.
+
+## Historical v0.3.0 Candidate Checkpoints
 
 Candidate `0bd64d2eed7400cd8772e77504b8ceab1f668cd8` completed the sealed-cache macOS public matrix after independent review of the deterministic overlap correction. All 17 required cases and all 366 reviewed oracle assertions passed. Both default-run normalized TSV comparisons, decoded-pixel comparisons, and HTML structural comparisons were identical; cache postflight and process-tree network-isolation checks passed. GM11906 retained 33 candidates and the `m.8344A>G` result (`740/1027`, alternate allele fraction `0.720545`) after ambiguous equal-quality mate ties were moved from accepted to excluded accounting. GM12878 had no overlap ambiguities and retained its prespecified public results. This checkpoint is candidate evidence only; it does not satisfy the exact public `FINAL_SHA`, empty-cache cross-platform, packet, tag, or publication gates above.
 
@@ -112,9 +116,9 @@ MITO_OVERVIEW_PR_NUMBER=<merged-release-pr-number> \
 MITO_OVERVIEW_PR_RUN_ID=<successful-pr-smoke-run-id> \
 MITO_OVERVIEW_GITHUB_RUN_ID=<successful-main-push-smoke-run-id> \
 MITO_OVERVIEW_PUBLIC_RUN_ID=<successful-ubuntu-public-run-id> \
-./scripts/run_release_validation_v0.3.0.sh \
+./scripts/run_release_validation_v0.3.1.sh \
   <validation-root> <raw-cache-root> <packet-root> \
-  <mito-overview-v0.3.0-validation.zip>
+  <mito-overview-v0.3.1-validation.zip>
 ```
 
 The runner must reject legacy DOI/Zenodo arguments, require an absent raw-cache path, clone public GitHub HTTPS at an exact 40-character commit, build/install distributions outside the checkout, collect exact PR-head, final-push, and Ubuntu-public-run evidence, build schema `2.0` profile `github_release_validation_v1`, and verify both the packet root and a fresh ZIP extraction. Before any cache or release output is created, the active parent Conda prefix must match the tracked platform artifact lock by complete URL-plus-SHA-256 identity and satisfy the exact runtime-version checks; ambient Mac tools or same-version packages from different builds/channels are not accepted. Wheel and source-distribution probes may inherit only from that verified parent prefix.
@@ -151,16 +155,16 @@ settings.
 5. Merge to `main`; record `FINAL_SHA`; require successful push-event CI at that exact SHA.
 6. Run a fresh macOS public clean-room reproduction from an empty cache and the Ubuntu public workflow at `FINAL_SHA`; compare normalized outputs and module states.
 7. Build and verify the audit ZIP, then tag exactly `FINAL_SHA` as annotated
-   `v0.3.0`. Before any GitHub release exists, run the publisher's read-only
+   `v0.3.1`. Before any GitHub release exists, run the publisher's read-only
    `--verify-prepublication` phase and build/visually inspect the human-readable
    MD/DOCX/PDF report from that exact main/tag identity. Preserve the builder's
    `report_build_provenance.json`, render every DOCX page, inspect every page,
-   and run `scripts/finalize_release_validation_report_v0.3.0.py` to bind the
+   and run `scripts/finalize_release_validation_report_v0.3.1.py` to bind the
    PDF and rendered-page PASS inventory to the exact validation ZIP.
 8. Assemble the complete eleven-file source, including the exact packet-bound
    wheel and source distribution, and run
-   `scripts/assemble_release_assets_v0.3.0.py`; its atomic output is the only
-   accepted input to `scripts/run_fresh_public_tag_validation_v0.3.0.sh`
+   `scripts/assemble_release_assets_v0.3.1.py`; its atomic output is the only
+   accepted input to `scripts/run_fresh_public_tag_validation_v0.3.1.sh`
    against the public HTTPS tag. The assembler requires exactly five resolved
    environment records per platform and revalidates the packet-to-figure-to-
    DOCX-to-PDF-to-rendered-page provenance. Fresh-tag validation installs those
@@ -178,7 +182,7 @@ This avoids self-reference because the report is itself a hashed release asset.
 Final upload hashes, tag identity, and the confirmed enabled native GitHub
 immutability state are verified separately in `github_publication.json`.
 
-Any commit after `FINAL_SHA` invalidates the release evidence. Any defect after publication is corrected forward as `v0.3.1`; the `v0.3.0` tag is never moved.
+Any commit after `FINAL_SHA` invalidates the release evidence. Any defect after publication is corrected forward as `v0.3.2`; neither the `v0.3.0` nor `v0.3.1` tag is ever moved.
 
 ## Rejected candidate `2b981a0` and successor remediation
 

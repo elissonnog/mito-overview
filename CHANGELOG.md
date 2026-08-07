@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.3.1
+- correct release-report construction so the eight exact, manifest-bound zero-difference files produced by successful macOS and Ubuntu repeatability and visual-structure comparisons are accepted only when their corresponding validation cases pass
+- update package, citation, CI, and reader-facing release metadata to `0.3.1` while preserving the frozen `v0.3.0` scientific protocol, public-input identities, deterministic selection seed, thresholds, oracles, schemas, and normalized biological results
+- replace provisional public-validation wording with exact evidence-bound GM11906 and GM12878 observations and deterministic `v0.3.1` GitHub release links
+- make no change to scientific algorithms, report-module calculations, or supported claim boundaries
+
 ## v0.3.0
 - corrected allele-fraction reporting so candidate sites, strand counts, and co-segregation use one auditable callable-observation policy, canonical thresholds, and uncapped default depth
 - made mvTool access explicitly mode-gated and offline by default, with deterministic fixtures and non-fabricated unavailable states for requested network failures

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the human-readable MitoOverview v0.3.0 release-validation report.
+"""Build the human-readable MitoOverview v0.3.1 release-validation report.
 
 The input is a completed schema-2.0 ``github_release_validation_v1`` packet
 plus exact read-only GitHub prepublication metadata. The builder is intentionally
@@ -36,12 +36,15 @@ from docx.shared import Inches, Pt, RGBColor
 
 EXPECTED_SCHEMA = "2.0"
 EXPECTED_PROFILE = "github_release_validation_v1"
-EXPECTED_VERSION = "v0.3.0"
-OUTPUT_STEM = "MitoOverview_v0.3.0_release_validation_report"
+EXPECTED_VERSION = "v0.3.1"
+EXPECTED_PACKAGE_VERSION = "0.3.1"
+SCIENTIFIC_PROTOCOL_VERSION = "v0.3.0"
+OUTPUT_STEM = "MitoOverview_v0.3.1_release_validation_report"
 BUILD_PROVENANCE_NAME = "report_build_provenance.json"
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 SAFE_ID_RE = re.compile(r"[^A-Za-z0-9_.-]+")
+EMPTY_SHA256 = hashlib.sha256(b"").hexdigest()
 PUBLIC_ENVIRONMENT_ROOT = "public_environment"
 NETWORK_ISOLATION_PACKET_PATH = f"{PUBLIC_ENVIRONMENT_ROOT}/network_isolation.tsv"
 RUNTIME_VERSIONS_PACKET_PATH = f"{PUBLIC_ENVIRONMENT_ROOT}/runtime_versions.json"
@@ -52,8 +55,50 @@ GM11906_SOURCE_METADATA_SHA256 = (
     "01be488b9dc6bfce0726304be95db4259b1a85a53ac8e620cba4c337842d3185"
 )
 
+UBUNTU_CASES_PACKET_PATH = (
+    "acceptance/ubuntu_public_validation/artifact/results/cases.tsv"
+)
+ALLOWED_EMPTY_COMPARISONS = {
+    "logs/public/gm11906_repeatability.diff": (
+        "cases.tsv",
+        "gm11906_repeatability",
+        "repeatability",
+    ),
+    "logs/public/gm12878_repeatability.diff": (
+        "cases.tsv",
+        "gm12878_repeatability",
+        "repeatability",
+    ),
+    "logs/public/gm11906_visual_structure.diff": (
+        "cases.tsv",
+        "gm11906_visual_integrity",
+        "visual_integrity",
+    ),
+    "logs/public/gm12878_visual_structure.diff": (
+        "cases.tsv",
+        "gm12878_visual_integrity",
+        "visual_integrity",
+    ),
+    (
+        "acceptance/ubuntu_public_validation/artifact/results/logs/"
+        "gm11906_repeatability.diff"
+    ): (UBUNTU_CASES_PACKET_PATH, "gm11906_repeatability", "repeatability"),
+    (
+        "acceptance/ubuntu_public_validation/artifact/results/logs/"
+        "gm12878_repeatability.diff"
+    ): (UBUNTU_CASES_PACKET_PATH, "gm12878_repeatability", "repeatability"),
+    (
+        "acceptance/ubuntu_public_validation/artifact/results/logs/"
+        "gm11906_visual_structure.diff"
+    ): (UBUNTU_CASES_PACKET_PATH, "gm11906_visual_integrity", "visual_integrity"),
+    (
+        "acceptance/ubuntu_public_validation/artifact/results/logs/"
+        "gm12878_visual_structure.diff"
+    ): (UBUNTU_CASES_PACKET_PATH, "gm12878_visual_integrity", "visual_integrity"),
+}
+
 EXPECTED_RUNTIME_PACKAGES = {
-    "mito-overview": "0.3.0",
+    "mito-overview": EXPECTED_PACKAGE_VERSION,
     "biopython": "1.87",
     "pysam": "0.24.0",
     "pandas": "3.0.3",
@@ -401,7 +446,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--publication-json",
         type=Path,
-        required=True,
         help=(
             "Read-only github_prepublication.json captured before the report "
             "becomes a release asset."
@@ -410,8 +454,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output-dir",
         type=Path,
-        required=True,
         help="Destination for the Markdown, DOCX, and report figure assets.",
+    )
+    parser.add_argument(
+        "--preflight-packet",
+        action="store_true",
+        help=(
+            "Validate the complete packet without publication metadata or report "
+            "output."
+        ),
     )
     parser.add_argument(
         "--overwrite",
@@ -426,7 +477,23 @@ def parse_args() -> argparse.Namespace:
             "This does not replace the separate rendered-page QA workflow."
         ),
     )
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.preflight_packet:
+        incompatible = (
+            args.publication_json is not None
+            or args.output_dir is not None
+            or args.overwrite
+            or args.emit_pdf
+        )
+        if incompatible:
+            parser.error(
+                "--preflight-packet cannot be combined with report-output options"
+            )
+    elif args.publication_json is None or args.output_dir is None:
+        parser.error(
+            "report generation requires --publication-json and --output-dir"
+        )
+    return args
 
 
 def sha256_file(path: Path) -> str:
@@ -545,7 +612,9 @@ def parse_sha256_manifest(path: Path) -> dict[str, str]:
     return records
 
 
-def validate_runtime_versions(path: Path) -> dict[str, object]:
+def validate_runtime_versions(
+    path: Path, expected_package_version: str = EXPECTED_PACKAGE_VERSION
+) -> dict[str, object]:
     runtime = read_json_object(path, "public runtime-version evidence")
     required = {
         "schema_version",
@@ -589,8 +658,12 @@ def validate_runtime_versions(path: Path) -> dict[str, object]:
         raise ReportValidationError(
             f"Public runtime Python mismatch: {runtime['python']!r} != '3.12.13'"
         )
-    if runtime["packages"] != EXPECTED_RUNTIME_PACKAGES:
-        raise ReportValidationError("Public runtime package versions do not match the v0.3.0 lock")
+    expected_runtime_packages = dict(EXPECTED_RUNTIME_PACKAGES)
+    expected_runtime_packages["mito-overview"] = expected_package_version
+    if runtime["packages"] != expected_runtime_packages:
+        raise ReportValidationError(
+            "Public runtime package versions do not match the locked environment"
+        )
     expected_tools = {
         "samtools": "samtools 1.23.1",
         "htslib": "Using htslib 1.23.1",
@@ -681,10 +754,85 @@ def validate_network_isolation(
     return evidence
 
 
+def load_manifested_case_rows(
+    root: Path, manifest: dict[str, str], relative: str
+) -> list[dict[str, str]]:
+    if relative not in manifest:
+        raise ReportValidationError(
+            f"Comparison case table is absent from artifacts.sha256: {relative}"
+        )
+    path = packet_path(root, relative)
+    require_plain_file(path, f"comparison case table {relative}")
+    observed = sha256_file(path)
+    if observed != manifest[relative]:
+        raise ReportValidationError(
+            f"Packet artifact hash mismatch for {relative}: "
+            f"{observed} != {manifest[relative]}"
+        )
+    return read_tsv(path, EVIDENCE_COLUMNS["cases.tsv"])
+
+
+def validate_empty_comparison(
+    root: Path,
+    manifest: dict[str, str],
+    relative: str,
+    case_rows: dict[str, list[dict[str, str]]],
+) -> None:
+    case_table, case_id, category = ALLOWED_EMPTY_COMPARISONS[relative]
+    artifact = packet_path(root, relative)
+    if artifact.is_symlink() or not artifact.is_file():
+        raise ReportValidationError(
+            f"Empty comparison evidence must be a regular non-symlink file: {relative}"
+        )
+    if artifact.stat().st_size != 0:
+        raise ReportValidationError(
+            f"PASS comparison evidence must be exactly zero bytes: {relative}"
+        )
+    if manifest.get(relative) != EMPTY_SHA256:
+        raise ReportValidationError(
+            f"Empty comparison manifest digest is not canonical: {relative}"
+        )
+    if sha256_file(artifact) != EMPTY_SHA256:
+        raise ReportValidationError(
+            f"Empty comparison content digest is not canonical: {relative}"
+        )
+    matches = [row for row in case_rows[case_table] if row["case_id"] == case_id]
+    if len(matches) != 1:
+        raise ReportValidationError(
+            f"Empty comparison requires exactly one case row: {relative} -> {case_id}"
+        )
+    row = matches[0]
+    if row["category"] != category:
+        raise ReportValidationError(
+            f"Empty comparison case category mismatch: {relative} -> {case_id}"
+        )
+    if row["verdict"] != "PASS":
+        raise ReportValidationError(
+            f"Empty comparison case is not PASS: {relative} -> {case_id}"
+        )
+    if row["input_available"] != "1" or row["expected_available"] != "1":
+        raise ReportValidationError(
+            f"Empty comparison PASS case lacks available evidence: {relative} -> {case_id}"
+        )
+
+
 def validate_artifact_manifest(root: Path) -> None:
     manifest = parse_sha256_manifest(root / "artifacts.sha256")
+    missing_comparisons = sorted(set(ALLOWED_EMPTY_COMPARISONS) - set(manifest))
+    if missing_comparisons:
+        raise ReportValidationError(
+            "Required zero-difference evidence is absent from artifacts.sha256: "
+            + ", ".join(missing_comparisons)
+        )
+    case_rows = {
+        relative: load_manifested_case_rows(root, manifest, relative)
+        for relative in {value[0] for value in ALLOWED_EMPTY_COMPARISONS.values()}
+    }
     for relative, expected in manifest.items():
         artifact = packet_path(root, relative)
+        if relative in ALLOWED_EMPTY_COMPARISONS:
+            validate_empty_comparison(root, manifest, relative, case_rows)
+            continue
         require_plain_file(artifact, f"manifested artifact {relative}")
         observed = sha256_file(artifact)
         if observed != expected:
@@ -698,9 +846,19 @@ def validate_artifact_manifest(root: Path) -> None:
             "Required report evidence is absent from artifacts.sha256: "
             + ", ".join(missing)
         )
+    packet_entries = list(root.rglob("*"))
+    symlinks = sorted(
+        path.relative_to(root).as_posix()
+        for path in packet_entries
+        if path.is_symlink()
+    )
+    if symlinks:
+        raise ReportValidationError(
+            "Packet contains symlinked entries: " + ", ".join(symlinks)
+        )
     actual = {
         path.relative_to(root).as_posix()
-        for path in root.rglob("*")
+        for path in packet_entries
         if path.is_file() and path.relative_to(root).as_posix() != "artifacts.sha256"
     }
     unmanifested = sorted(actual - set(manifest))
@@ -746,7 +904,7 @@ def validate_publication(
     if publication["schema_version"] != "1.0":
         raise ReportValidationError("GitHub publication metadata schema must be 1.0")
     if publication["release_tag"] != EXPECTED_VERSION:
-        raise ReportValidationError("GitHub release tag must be v0.3.0")
+        raise ReportValidationError(f"GitHub release tag must be {EXPECTED_VERSION}")
     if publication["publication_state"] != "prepublication":
         raise ReportValidationError(
             "release-asset reports require a prepublication identity receipt"
@@ -883,7 +1041,12 @@ def validate_publication_assets(
 
 
 def validate_identity(
-    run: dict[str, object], release: dict[str, object], publication: dict[str, object]
+    run: dict[str, object],
+    release: dict[str, object],
+    publication: dict[str, object] | None,
+    *,
+    expected_release_version: str = EXPECTED_VERSION,
+    expected_package_version: str = EXPECTED_PACKAGE_VERSION,
 ) -> None:
     required_run = {
         "schema_version",
@@ -924,14 +1087,22 @@ def validate_identity(
             raise ReportValidationError(
                 f"{label} validation profile must be {EXPECTED_PROFILE}"
             )
-        if value.get("release_version") != EXPECTED_VERSION:
-            raise ReportValidationError(f"{label} release must be {EXPECTED_VERSION}")
+        if value.get("release_version") != expected_release_version:
+            raise ReportValidationError(
+                f"{label} release must be {expected_release_version}"
+            )
 
     commit = run.get("git_commit")
     if not isinstance(commit, str) or not COMMIT_RE.fullmatch(commit):
         raise ReportValidationError("Release commit must be an exact 40-character SHA")
-    if release.get("package_name") != "mito-overview" or release.get("package_version") != "0.3.0":
-        raise ReportValidationError("Release package identity must be mito-overview 0.3.0")
+    if (
+        release.get("package_name") != "mito-overview"
+        or release.get("package_version") != expected_package_version
+    ):
+        raise ReportValidationError(
+            "Release package identity must be "
+            f"mito-overview {expected_package_version}"
+        )
     repository = run.get("repository")
     if not isinstance(repository, str) or not re.fullmatch(
         r"https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository
@@ -953,7 +1124,8 @@ def validate_identity(
         raise ReportValidationError(
             f"Unexpected release claim scope: {run.get('claim_scope')!r}"
         )
-    validate_publication(publication, run, release)
+    if publication is not None:
+        validate_publication(publication, run, release)
 
 
 def validate_cases(run: dict[str, object], rows: list[dict[str, str]]) -> None:
@@ -1027,8 +1199,38 @@ def validate_inputs(root: Path, rows: list[dict[str, str]]) -> None:
         )
 
 
-def validate_module_states(rows: list[dict[str, str]]) -> None:
+def read_module_metric_table(path: Path) -> dict[str, str]:
+    require_plain_file(path, "module status source table")
+    with path.open(encoding="utf-8", newline="") as handle:
+        reader = csv.DictReader(handle, delimiter="\t")
+        if tuple(reader.fieldnames or ()) != ("metric", "value"):
+            raise ReportValidationError(
+                f"Module status source must contain exactly metric and value columns: {path}"
+            )
+        rows = list(reader)
+    if not rows:
+        raise ReportValidationError(f"Module status source contains no metrics: {path}")
+    values: dict[str, str] = {}
     for row in rows:
+        metric = row.get("metric", "")
+        if not metric or metric in values:
+            raise ReportValidationError(
+                f"Module status source contains an empty or duplicate metric: {path}"
+            )
+        values[metric] = row.get("value", "")
+    return values
+
+
+def validate_module_states(root: Path, rows: list[dict[str, str]]) -> None:
+    manifest = parse_sha256_manifest(root / "artifacts.sha256")
+    seen: set[tuple[str, str, str]] = set()
+    for row in rows:
+        key = (row["dataset"], row["case_id"], row["module"])
+        if key in seen:
+            raise ReportValidationError(
+                "Module status matrix contains a duplicate key: " + "/".join(key)
+            )
+        seen.add(key)
         if row["status"] not in ALLOWED_MODULE_STATES:
             raise ReportValidationError(
                 f"Invalid module state for {row['case_id']}/{row['module']}: {row['status']}"
@@ -1038,10 +1240,54 @@ def validate_module_states(rows: list[dict[str, str]]) -> None:
                 f"Failed module cannot appear in a passing release: "
                 f"{row['case_id']}/{row['module']}"
             )
-        if row["status"] != "ok" and not row["reason_code"]:
+        expected_source = (
+            f"observed_normalized/{row['case_id']}/{row['module']}.tsv"
+        )
+        if row["source_table"] != expected_source:
             raise ReportValidationError(
-                f"Non-ok module state lacks a reason code: {row['case_id']}/{row['module']}"
+                f"Module status source path mismatch for {row['case_id']}/{row['module']}: "
+                f"{row['source_table']!r} != {expected_source!r}"
             )
+        if expected_source not in manifest:
+            raise ReportValidationError(
+                f"Module status source is absent from artifacts.sha256: {expected_source}"
+            )
+        source = packet_path(root, expected_source)
+        require_plain_file(source, f"module status source {expected_source}")
+        observed_hash = sha256_file(source)
+        if observed_hash != manifest[expected_source]:
+            raise ReportValidationError(
+                f"Module status source hash mismatch for {expected_source}: "
+                f"{observed_hash} != {manifest[expected_source]}"
+            )
+
+        reason = row["reason_code"].strip()
+        row["reason_display"] = reason
+        if row["status"] != "ok" and not reason:
+            if row["status"] != "not_applicable":
+                raise ReportValidationError(
+                    f"Non-ok module state lacks a reason code: "
+                    f"{row['case_id']}/{row['module']}"
+                )
+            metrics = read_module_metric_table(source)
+            required = ("status", "message", "step", "read_mode", "assay_type")
+            missing = [name for name in required if not metrics.get(name, "").strip()]
+            if missing:
+                raise ReportValidationError(
+                    f"Blank-reason not_applicable source lacks required metrics for "
+                    f"{row['case_id']}/{row['module']}: {', '.join(missing)}"
+                )
+            if metrics["status"].strip() != row["status"]:
+                raise ReportValidationError(
+                    f"Module status source does not match matrix status for "
+                    f"{row['case_id']}/{row['module']}"
+                )
+            if metrics.get("reason_code", "").strip():
+                raise ReportValidationError(
+                    f"Blank-reason not_applicable source contains a reason_code for "
+                    f"{row['case_id']}/{row['module']}"
+                )
+            row["reason_display"] = metrics["message"].strip()
 
 
 def validate_cross_platform(
@@ -1381,18 +1627,35 @@ def validate_figures(root: Path, rows: list[dict[str, str]]) -> list[dict[str, o
 
 
 def load_and_validate_packet(
-    packet_root: Path, publication_path: Path
+    packet_root: Path,
+    publication_path: Path | None,
+    *,
+    expected_release_version: str = EXPECTED_VERSION,
+    expected_package_version: str = EXPECTED_PACKAGE_VERSION,
 ) -> ReportEvidence:
     if packet_root.is_symlink() or not packet_root.is_dir():
         raise ReportValidationError(f"Packet root is missing or symlinked: {packet_root}")
     for relative in REQUIRED_PACKET_FILES:
-        require_plain_file(packet_path(packet_root, relative), relative)
+        if relative == "artifacts.sha256":
+            require_plain_file(packet_path(packet_root, relative), relative)
+        elif relative not in ALLOWED_EMPTY_COMPARISONS:
+            require_plain_file(packet_path(packet_root, relative), relative)
     validate_artifact_manifest(packet_root)
 
     run = read_json_object(packet_root / "run.json", "run identity")
     release = read_json_object(packet_root / "release_identity.json", "release identity")
-    publication = read_json_object(publication_path, "GitHub publication metadata")
-    validate_identity(run, release, publication)
+    publication = (
+        read_json_object(publication_path, "GitHub publication metadata")
+        if publication_path is not None
+        else None
+    )
+    validate_identity(
+        run,
+        release,
+        publication,
+        expected_release_version=expected_release_version,
+        expected_package_version=expected_package_version,
+    )
     public_source_metadata = validate_gm11906_source_metadata(
         packet_root,
         run,
@@ -1414,7 +1677,7 @@ def load_and_validate_packet(
 
     validate_cases(run, tables["cases.tsv"])
     validate_inputs(packet_root, raw_inputs)
-    validate_module_states(tables["module_status_matrix.tsv"])
+    validate_module_states(packet_root, tables["module_status_matrix.tsv"])
     validate_oracles(tables["oracle_assertions.tsv"])
     validate_resource_usage(
         packet_root,
@@ -1423,7 +1686,8 @@ def load_and_validate_packet(
         raw_inputs,
     )
     runtime_versions = validate_runtime_versions(
-        packet_root / RUNTIME_VERSIONS_PACKET_PATH
+        packet_root / RUNTIME_VERSIONS_PACKET_PATH,
+        expected_package_version,
     )
     network_isolation = validate_network_isolation(
         packet_root / NETWORK_ISOLATION_PACKET_PATH, runtime_versions
@@ -1450,7 +1714,7 @@ def load_and_validate_packet(
         packet_root=packet_root,
         run=run,
         release=release,
-        publication=publication,
+        publication=publication or {},
         tables=tables,
         raw_inputs=raw_inputs,
         environment_text=environment_text,
@@ -1459,6 +1723,31 @@ def load_and_validate_packet(
         cross_platform=cross,
         public_source_metadata=public_source_metadata,
         figures=figures,
+    )
+
+
+def preflight_packet(packet_root: Path) -> None:
+    """Validate complete packet evidence without GitHub publication metadata."""
+
+    run = read_json_object(packet_root / "run.json", "run identity")
+    release = read_json_object(
+        packet_root / "release_identity.json", "release identity"
+    )
+    identity = (run.get("release_version"), release.get("package_version"))
+    supported = {
+        ("v0.3.0", "0.3.0"),
+        (EXPECTED_VERSION, EXPECTED_PACKAGE_VERSION),
+    }
+    if identity not in supported:
+        raise ReportValidationError(
+            "Packet preflight supports only internally consistent v0.3.0 or "
+            f"{EXPECTED_VERSION} release identities; observed {identity!r}"
+        )
+    load_and_validate_packet(
+        packet_root,
+        None,
+        expected_release_version=str(identity[0]),
+        expected_package_version=str(identity[1]),
     )
 
 
@@ -1950,7 +2239,7 @@ def build_report_blocks(
                 ("case_id", "Case"),
                 ("module", "Module"),
                 ("status", "State"),
-                ("reason_code", "Reason"),
+                ("reason_display", "Reason"),
                 ("source_table", "Evidence table"),
             ),
             tuple(tables["module_status_matrix.tsv"]),
@@ -2393,7 +2682,7 @@ def configure_document(document: Document, evidence: ReportEvidence) -> None:
     for header in (section.header.paragraphs[0], section.even_page_header.paragraphs[0]):
         header.alignment = WD_ALIGN_PARAGRAPH.LEFT
         set_run_font(
-            header.add_run("MitoOverview | v0.3.0 release validation"),
+            header.add_run("MitoOverview | v0.3.1 release validation"),
             size=8.5,
             color="6B7280",
         )
@@ -2476,7 +2765,7 @@ def render_docx(evidence: ReportEvidence, blocks: list[Block], output: Path) -> 
     title = document.add_paragraph(style="Title")
     title.alignment = WD_ALIGN_PARAGRAPH.LEFT
     set_run_font(
-        title.add_run("MitoOverview v0.3.0"),
+        title.add_run("MitoOverview v0.3.1"),
         size=24,
         color="0B2545",
     )
@@ -2746,6 +3035,10 @@ def generate_report(
 def main() -> None:
     args = parse_args()
     try:
+        if args.preflight_packet:
+            preflight_packet(args.packet_root)
+            print(f"[PREFLIGHT] PASS: {args.packet_root}")
+            return
         outputs = generate_report(
             args.packet_root,
             args.publication_json,

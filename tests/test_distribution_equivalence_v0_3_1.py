@@ -12,7 +12,7 @@ import pytest
 
 
 ROOT = Path(__file__).parents[1]
-SCRIPT = ROOT / "scripts" / "verify_distribution_equivalence_v0.3.0.py"
+SCRIPT = ROOT / "scripts" / "verify_distribution_equivalence_v0.3.1.py"
 SPEC = importlib.util.spec_from_file_location("distribution_equivalence", SCRIPT)
 assert SPEC is not None and SPEC.loader is not None
 MODULE = importlib.util.module_from_spec(SPEC)
@@ -20,23 +20,23 @@ SPEC.loader.exec_module(MODULE)
 
 
 WHEEL_MEMBERS = {
-    "mito_overview/__init__.py": b'__version__ = "0.3.0"\n',
-    "mito_overview-0.3.0.dist-info/METADATA": (
-        b"Name: mito-overview\nVersion: 0.3.0\n"
+    "mito_overview/__init__.py": b'__version__ = "0.3.1"\n',
+    "mito_overview-0.3.1.dist-info/METADATA": (
+        b"Name: mito-overview\nVersion: 0.3.1\n"
     ),
-    "mito_overview-0.3.0.dist-info/WHEEL": (
+    "mito_overview-0.3.1.dist-info/WHEEL": (
         b"Wheel-Version: 1.0\nGenerator: fixture\nRoot-Is-Purelib: true\n"
         b"Tag: py3-none-any\n"
     ),
-    "mito_overview-0.3.0.dist-info/RECORD": b"fixture-record\n",
+    "mito_overview-0.3.1.dist-info/RECORD": b"fixture-record\n",
 }
 SDIST_MEMBERS = {
-    "mito_overview-0.3.0/PKG-INFO": b"Name: mito-overview\nVersion: 0.3.0\n",
-    "mito_overview-0.3.0/mito_overview.egg-info/PKG-INFO": (
-        b"Name: mito-overview\nVersion: 0.3.0\n"
+    "mito_overview-0.3.1/PKG-INFO": b"Name: mito-overview\nVersion: 0.3.1\n",
+    "mito_overview-0.3.1/mito_overview.egg-info/PKG-INFO": (
+        b"Name: mito-overview\nVersion: 0.3.1\n"
     ),
-    "mito_overview-0.3.0/mito_overview/__init__.py": (
-        b'__version__ = "0.3.0"\n'
+    "mito_overview-0.3.1/mito_overview/__init__.py": (
+        b'__version__ = "0.3.1"\n'
     ),
 }
 
@@ -54,9 +54,9 @@ def _write_wheel(
     if mutation is not None:
         members["mito_overview/__init__.py"] = mutation
     if omit_wheel_metadata:
-        members.pop("mito_overview-0.3.0.dist-info/WHEEL")
+        members.pop("mito_overview-0.3.1.dist-info/WHEEL")
     members.update(extra_members or {})
-    path = root / "mito_overview-0.3.0-py3-none-any.whl"
+    path = root / "mito_overview-0.3.1-py3-none-any.whl"
     with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         for name, payload in sorted(members.items()):
             info = zipfile.ZipInfo(name, date_time=(year, 1, 1, 0, 0, 0))
@@ -73,13 +73,13 @@ def _write_sdist(
     symlink: bool = False,
     omit_root_metadata: bool = False,
 ) -> None:
-    path = root / "mito_overview-0.3.0.tar.gz"
+    path = root / "mito_overview-0.3.1.tar.gz"
     with path.open("wb") as raw:
         with gzip.GzipFile(filename="", mode="wb", fileobj=raw, mtime=mtime) as compressed:
             with tarfile.open(fileobj=compressed, mode="w") as archive:
                 members = dict(SDIST_MEMBERS)
                 if omit_root_metadata:
-                    members.pop("mito_overview-0.3.0/PKG-INFO")
+                    members.pop("mito_overview-0.3.1/PKG-INFO")
                 for name, payload in sorted(members.items()):
                     info = tarfile.TarInfo(name)
                     info.size = len(payload)
@@ -87,7 +87,7 @@ def _write_sdist(
                     info.mode = 0o644
                     archive.addfile(info, io.BytesIO(payload))
                 if symlink:
-                    info = tarfile.TarInfo("mito_overview-0.3.0/link")
+                    info = tarfile.TarInfo("mito_overview-0.3.1/link")
                     info.type = tarfile.SYMTYPE
                     info.linkname = "PKG-INFO"
                     archive.addfile(info)
@@ -143,7 +143,7 @@ def test_changed_member_payload_fails(tmp_path: Path) -> None:
         rebuilt,
         year=2026,
         mtime=2,
-        wheel_mutation=b'__version__ = "0.3.1"\n',
+        wheel_mutation=b'__version__ = "9.9.9"\n',
     )
 
     with pytest.raises(MODULE.DistributionError, match="member payloads differ"):
@@ -229,7 +229,7 @@ def test_sdist_member_outside_canonical_root_fails(tmp_path: Path) -> None:
     rebuilt = tmp_path / "rebuilt"
     _write_pair(canonical, year=2020, mtime=1)
     _write_pair(rebuilt, year=2026, mtime=2)
-    sdist = rebuilt / "mito_overview-0.3.0.tar.gz"
+    sdist = rebuilt / "mito_overview-0.3.1.tar.gz"
     members: list[tuple[str, bytes, int]] = []
     with tarfile.open(sdist, "r:gz") as archive:
         for entry in archive.getmembers():
