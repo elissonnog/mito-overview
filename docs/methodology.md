@@ -1,7 +1,7 @@
 # Methodology
 
 ## Core analytical logic
-The unreleased MitoOverview v0.3.0 release candidate uses a modular, mode-gated report workflow. Read mode and assay type determine whether each layer runs, writes a status-only output, or is marked `not_applicable`.
+MitoOverview v0.3.1 uses the modular, mode-gated report workflow defined and scientifically characterized by the frozen v0.3.0 protocol. Read mode and assay type determine whether each layer runs, writes a status-only output, or is marked `not_applicable`. The v0.3.1 patch changes release/report tooling only; it does not change the calculations, thresholds, schemas, or scientific interpretation described below.
 
 Primary analytical layers:
 1. metadata discovery and provenance capture

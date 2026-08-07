@@ -12,10 +12,10 @@ from PIL import Image
 
 
 ROOT = Path(__file__).parents[1]
-FINALIZER = ROOT / "scripts" / "finalize_release_validation_report_v0.3.0.py"
+FINALIZER = ROOT / "scripts" / "finalize_release_validation_report_v0.3.1.py"
 FINAL_SHA = "a" * 40
 REPOSITORY = "https://github.com/elissonnog/mito-overview"
-REPORT_STEM = "MitoOverview_v0.3.0_release_validation_report"
+REPORT_STEM = "MitoOverview_v0.3.1_release_validation_report"
 
 
 def _sha256(path: Path) -> str:
@@ -55,7 +55,8 @@ def _write_fixture(root: Path) -> dict[str, Path]:
     common = {
         "schema_version": "2.0",
         "validation_profile": "github_release_validation_v1",
-        "release_version": "v0.3.0",
+        "release_version": "v0.3.1",
+        "scientific_protocol_version": "v0.3.0",
         "repository": REPOSITORY,
         "git_commit": FINAL_SHA,
     }
@@ -65,7 +66,7 @@ def _write_fixture(root: Path) -> dict[str, Path]:
             {
                 **common,
                 "package_name": "mito-overview",
-                "package_version": "0.3.0",
+                "package_version": "0.3.1",
             }
         )
         + "\n"
@@ -83,12 +84,12 @@ def _write_fixture(root: Path) -> dict[str, Path]:
     ]
     (packet / "artifacts.sha256").write_text("\n".join(manifest_rows) + "\n")
 
-    archive = root / "mito-overview-v0.3.0-validation.zip"
+    archive = root / "mito-overview-v0.3.1-validation.zip"
     with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as handle:
         for path in sorted(packet.rglob("*")):
             if path.is_file():
                 handle.write(path, path.relative_to(packet).as_posix())
-    verification = root / "mito-overview-v0.3.0-verification-input.json"
+    verification = root / "mito-overview-v0.3.1-verification-input.json"
     verification.write_text(
         json.dumps(
             {
@@ -96,7 +97,8 @@ def _write_fixture(root: Path) -> dict[str, Path]:
                 "validation_profile": "github_release_validation_v1",
                 "evidence_type": "release_validation_archive_verification",
                 "verdict": "PASS",
-                "release_version": "v0.3.0",
+                "release_version": "v0.3.1",
+                "scientific_protocol_version": "v0.3.0",
                 "git_commit": FINAL_SHA,
                 "audit_zip": archive.name,
                 "audit_zip_sha256": _sha256(archive),
@@ -109,7 +111,7 @@ def _write_fixture(root: Path) -> dict[str, Path]:
     report = root / "report"
     assets = report / f"{REPORT_STEM}_assets"
     assets.mkdir(parents=True)
-    identity = f"v0.3.0\n{REPOSITORY}\n{FINAL_SHA}\n"
+    identity = f"v0.3.1\n{REPOSITORY}\n{FINAL_SHA}\n"
     report_md = report / f"{REPORT_STEM}.md"
     report_md.write_text(identity)
     report_docx = report / f"{REPORT_STEM}.docx"
@@ -138,8 +140,9 @@ def _write_fixture(root: Path) -> dict[str, Path]:
         "schema_version": "1.0",
         "provenance_type": "mito_overview_release_report_build",
         "repository": REPOSITORY,
-        "release_version": "v0.3.0",
-        "release_tag": "v0.3.0",
+        "release_version": "v0.3.1",
+        "release_tag": "v0.3.1",
+        "scientific_protocol_version": "v0.3.0",
         "git_commit": FINAL_SHA,
         "validation_profile": "github_release_validation_v1",
         "packet_identity": {
@@ -218,6 +221,7 @@ def test_finalizer_binds_packet_report_pdf_and_pages(tmp_path: Path) -> None:
     receipt_path = inputs["assets"] / "report_provenance.json"
     receipt = json.loads(receipt_path.read_text())
     assert receipt["git_commit"] == FINAL_SHA
+    assert receipt["scientific_protocol_version"] == "v0.3.0"
     assert receipt["validation_archive"]["sha256"] == _sha256(inputs["archive"])
     assert receipt["report_outputs"]["pdf"]["sha256"] == _sha256(
         inputs["report"] / f"{REPORT_STEM}.pdf"
@@ -294,3 +298,15 @@ def test_finalizer_rejects_missing_rendered_page_for_multipage_pdf(tmp_path: Pat
 
     assert completed.returncode != 0
     assert "PNG page count does not match the PDF page count" in completed.stderr
+
+
+def test_finalizer_rejects_report_build_protocol_drift(tmp_path: Path) -> None:
+    inputs = _write_fixture(tmp_path)
+    build = json.loads(inputs["build"].read_text())
+    build["scientific_protocol_version"] = "v0.2.1"
+    inputs["build"].write_text(json.dumps(build, indent=2) + "\n")
+
+    completed = _run(inputs, "--visual-review-pass")
+
+    assert completed.returncode != 0
+    assert "scientific_protocol_version" in completed.stderr

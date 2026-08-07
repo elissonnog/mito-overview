@@ -65,7 +65,7 @@ jobs:
             --only-binary=:all: \
             --require-hashes \
             -r locks/requirements-release-tools.txt
-          python -I -S scripts/verify_release_environment_v0.3.0.py \
+          python -I -S scripts/verify_release_environment_v0.3.1.py \
             --repo-root . --expected-commit "$TARGET_SHA"
           conda list --explicit --sha256 > "$RUNNER_TEMP/conda-linux-64-observed.txt"
 
@@ -76,6 +76,16 @@ jobs:
           test ${#wheel_paths[@]} -eq 1
           python -m pip install --no-deps --force-reinstall "${wheel_paths[0]}"
           cd "$RUNNER_TEMP"
+          python - <<'PY'
+          from importlib.metadata import version
+
+          expected = "0.3.1"
+          observed = version("mito-overview")
+          if observed != expected:
+              raise SystemExit(
+                  f"Installed mito-overview version is {observed}; expected {expected}"
+              )
+          PY
           mito-overview --list-steps > installed-cli-steps.tsv
           MITO_OVERVIEW_PYTHON="$(command -v python)" \
           MITO_OVERVIEW_REQUIRE_INSTALLED=1 \

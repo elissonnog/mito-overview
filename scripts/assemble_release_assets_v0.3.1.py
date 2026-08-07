@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Assemble and verify the prebuilt MitoOverview v0.3.0 release assets.
+"""Assemble and verify the prebuilt MitoOverview v0.3.1 release assets.
 
 This utility closes the handoff between validation-packet construction, report
 generation, and fresh-tag validation. It promotes the exact packet-validated
@@ -24,21 +24,22 @@ import zipfile
 from pathlib import Path
 from typing import Any
 
-VERSION = "v0.3.0"
+VERSION = "v0.3.1"
+SCIENTIFIC_PROTOCOL_VERSION = "v0.3.0"
 PROFILE = "github_release_validation_v1"
 REPOSITORY = "https://github.com/elissonnog/mito-overview"
-REPORT_STEM = "MitoOverview_v0.3.0_release_validation_report"
-ZIP_NAME = "mito-overview-v0.3.0-validation.zip"
-VERIFICATION_NAME = "mito-overview-v0.3.0-verification.json"
+REPORT_STEM = "MitoOverview_v0.3.1_release_validation_report"
+ZIP_NAME = "mito-overview-v0.3.1-validation.zip"
+VERIFICATION_NAME = "mito-overview-v0.3.1-verification.json"
 REPORT_ASSET_ARCHIVE = f"{REPORT_STEM}_assets.tar.gz"
 BUILD_PROVENANCE_NAME = "report_build_provenance.json"
 FINAL_PROVENANCE_NAME = "report_provenance.json"
-ENVIRONMENT_NAME = "mito-overview-v0.3.0-environment.txt"
-ENVIRONMENT_ARCHIVE = "mito-overview-v0.3.0-environment-locks.tar.gz"
-RELEASE_NOTES_NAME = "RELEASE_NOTES_v0.3.0.md"
+ENVIRONMENT_NAME = "mito-overview-v0.3.1-environment.txt"
+ENVIRONMENT_ARCHIVE = "mito-overview-v0.3.1-environment-locks.tar.gz"
+RELEASE_NOTES_NAME = "RELEASE_NOTES_v0.3.1.md"
 DISTRIBUTION_NAMES = {
-    "mito_overview-0.3.0-py3-none-any.whl",
-    "mito_overview-0.3.0.tar.gz",
+    "mito_overview-0.3.1-py3-none-any.whl",
+    "mito_overview-0.3.1.tar.gz",
 }
 EXPECTED_LOCK_FILES = {
     f"{platform}/{name}-{platform}.{suffix}"
@@ -64,9 +65,9 @@ class AssemblyError(ValueError):
 def load_identity_verifier() -> tuple[type[ValueError], Any]:
     """Load the sibling versioned script without making ``scripts`` a package."""
 
-    path = Path(__file__).with_name("verify_release_asset_identity_v0.3.0.py")
+    path = Path(__file__).with_name("verify_release_asset_identity_v0.3.1.py")
     specification = importlib.util.spec_from_file_location(
-        "mito_overview_release_asset_identity_v0_3_0", path
+        "mito_overview_release_asset_identity_v0_3_1", path
     )
     if specification is None or specification.loader is None:
         raise AssemblyError(f"unable to load release-identity verifier: {path}")
@@ -171,6 +172,7 @@ def require_identity(payload: dict[str, Any], final_sha: str, audit_digest: str)
         "evidence_type": "release_validation_archive_verification",
         "verdict": "PASS",
         "release_version": VERSION,
+        "scientific_protocol_version": SCIENTIFIC_PROTOCOL_VERSION,
         "git_commit": final_sha,
         "audit_zip": ZIP_NAME,
         "audit_zip_sha256": audit_digest,
@@ -224,6 +226,7 @@ def require_report_identity(payload: dict[str, Any], final_sha: str, label: str)
         "repository": REPOSITORY,
         "release_version": VERSION,
         "release_tag": VERSION,
+        "scientific_protocol_version": SCIENTIFIC_PROTOCOL_VERSION,
         "git_commit": final_sha,
         "validation_profile": PROFILE,
     }
@@ -526,6 +529,7 @@ def populate_and_verify_stage(
         "repository": REPOSITORY,
         "release_version": VERSION,
         "release_tag": VERSION,
+        "scientific_protocol_version": SCIENTIFIC_PROTOCOL_VERSION,
         "git_commit": final_sha,
         "validation_zip_sha256": audit_digest,
         "report_provenance_archive_path": (
@@ -545,6 +549,7 @@ def populate_and_verify_stage(
         "repository_slug": "elissonnog/mito-overview",
         "release_version": VERSION,
         "release_tag": VERSION,
+        "scientific_protocol_version": SCIENTIFIC_PROTOCOL_VERSION,
         "git_commit": final_sha,
         "validation_zip_sha256": audit_digest,
         "assets": rows,
@@ -555,6 +560,7 @@ def populate_and_verify_stage(
         "repository": REPOSITORY,
         "release_version": VERSION,
         "release_tag": VERSION,
+        "scientific_protocol_version": SCIENTIFIC_PROTOCOL_VERSION,
         "git_commit": final_sha,
         "assets": [
             {

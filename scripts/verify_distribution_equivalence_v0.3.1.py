@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare packet-bound v0.3.0 distributions with clean tag rebuilds."""
+"""Compare packet-bound v0.3.1 distributions with clean tag rebuilds."""
 
 from __future__ import annotations
 
@@ -15,13 +15,13 @@ from typing import Any
 
 
 EXPECTED = {
-    "mito_overview-0.3.0-py3-none-any.whl": "wheel",
-    "mito_overview-0.3.0.tar.gz": "sdist",
+    "mito_overview-0.3.1-py3-none-any.whl": "wheel",
+    "mito_overview-0.3.1.tar.gz": "sdist",
 }
 EXPECTED_NAME = "mito-overview"
-EXPECTED_VERSION = "0.3.0"
-EXPECTED_WHEEL_DIST_INFO = "mito_overview-0.3.0.dist-info"
-EXPECTED_SDIST_ROOT = "mito_overview-0.3.0"
+EXPECTED_VERSION = "0.3.1"
+EXPECTED_WHEEL_DIST_INFO = "mito_overview-0.3.1.dist-info"
+EXPECTED_SDIST_ROOT = "mito_overview-0.3.1"
 MAX_ARCHIVE_MEMBERS = 100_000
 MAX_MEMBER_BYTES = 512 * 1024 * 1024
 MAX_EXPANDED_BYTES = 2 * 1024 * 1024 * 1024
@@ -278,7 +278,7 @@ def verify(canonical_root: Path, rebuilt_root: Path) -> dict[str, Any]:
     return {
         "schema_version": "1.0",
         "evidence_type": "distribution_payload_equivalence",
-        "release_version": "v0.3.0",
+        "release_version": "v0.3.1",
         "comparison": (
             "exact member paths, sizes, executable state, and SHA-256 payloads; "
             "container timestamps and compression metadata ignored"

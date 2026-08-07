@@ -135,7 +135,7 @@ def release_wheel(tmp_path_factory: pytest.TempPathFactory) -> Path:
         capture_output=True,
         text=True,
     )
-    wheels = list(output.glob("mito_overview-0.3.0-py3-none-any.whl"))
+    wheels = list(output.glob("mito_overview-0.3.1-py3-none-any.whl"))
     assert len(wheels) == 1
     return wheels[0]
 
@@ -143,7 +143,7 @@ def release_wheel(tmp_path_factory: pytest.TempPathFactory) -> Path:
 def test_wheel_contains_annotation_resources_at_stable_location(
     release_wheel: Path,
 ) -> None:
-    prefix = "mito_overview-0.3.0.data/data/share/mito-overview/annotations/"
+    prefix = "mito_overview-0.3.1.data/data/share/mito-overview/annotations/"
     with zipfile.ZipFile(release_wheel) as archive:
         members = set(archive.namelist())
         for name, expected_sha256 in EXPECTED_ANNOTATION_SHA256.items():

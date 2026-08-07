@@ -13,9 +13,9 @@ from pathlib import Path
 import pytest
 
 
-RUNNER = Path(__file__).parents[1] / "scripts" / "run_release_validation_v0.3.0.sh"
-PACKET_BUILDER = RUNNER.with_name("build_validation_packet_v0.3.0.py")
-ENVIRONMENT_VERIFIER = RUNNER.with_name("verify_release_environment_v0.3.0.py")
+RUNNER = Path(__file__).parents[1] / "scripts" / "run_release_validation_v0.3.1.sh"
+PACKET_BUILDER = RUNNER.with_name("build_validation_packet_v0.3.1.py")
+ENVIRONMENT_VERIFIER = RUNNER.with_name("verify_release_environment_v0.3.1.py")
 REPOSITORY = "elissonnog/mito-overview"
 DEFAULT_IDS = {
     "MITO_OVERVIEW_GITHUB_RUN_ID": "4001",
@@ -34,7 +34,7 @@ def invoke(
         str(tmp_path / "validation"),
         str(tmp_path / "cache"),
         str(tmp_path / "packet"),
-        str(tmp_path / "mito-overview-v0.3.0-validation.zip"),
+        str(tmp_path / "mito-overview-v0.3.1-validation.zip"),
     ]
     env = os.environ.copy()
     env.pop("MITO_OVERVIEW_ARCHIVE_DOI", None)
@@ -101,8 +101,8 @@ def create_fake_gh_harness(tmp_path: Path) -> tuple[Path, Path, dict[str, str]]:
     run_git(repo, "add", ".")
     run_git(repo, "commit", "-q", "-m", "runner fixture base")
     run_git(repo, "branch", "-M", "main")
-    run_git(repo, "checkout", "-q", "-b", "codex/preprint-hardening-v0.3.0")
-    (repo / "RELEASE_CANDIDATE").write_text("v0.3.0\n", encoding="utf-8")
+    run_git(repo, "checkout", "-q", "-b", "codex/report-builder-v0.3.1")
+    (repo / "RELEASE_CANDIDATE").write_text("v0.3.1\n", encoding="utf-8")
     run_git(repo, "add", "RELEASE_CANDIDATE")
     run_git(repo, "commit", "-q", "-m", "runner fixture release head")
     pr_head = run_git(repo, "rev-parse", "HEAD")
@@ -112,7 +112,7 @@ def create_fake_gh_harness(tmp_path: Path) -> tuple[Path, Path, dict[str, str]]:
         "merge",
         "-q",
         "--no-ff",
-        "codex/preprint-hardening-v0.3.0",
+        "codex/report-builder-v0.3.1",
         "-m",
         "Merge runner fixture release head",
     )
@@ -133,7 +133,7 @@ def create_fake_gh_harness(tmp_path: Path) -> tuple[Path, Path, dict[str, str]]:
         "#!/usr/bin/env bash\n"
         "set -euo pipefail\n"
         "if [[ ${1:-} == -I && ${2:-} == -S "
-        "&& ${3:-} == */verify_release_environment_v0.3.0.py ]]; then\n"
+        "&& ${3:-} == */verify_release_environment_v0.3.1.py ]]; then\n"
         "  shift 2\n"
         "  output=''; repo=''; expected=''\n"
         "  while [[ $# -gt 0 ]]; do\n"
@@ -227,7 +227,7 @@ mode = os.environ.get("FAKE_GH_MODE", "valid")
 pr_head = os.environ["FAKE_PR_HEAD_COMMIT"]
 pr_base = os.environ["FAKE_PR_BASE_COMMIT"]
 candidate_tree = os.environ["FAKE_CANDIDATE_TREE"]
-pr_branch = "codex/preprint-hardening-v0.3.0"
+pr_branch = "codex/report-builder-v0.3.1"
 log_path = Path(os.environ["FAKE_GH_LOG"])
 with log_path.open("a", encoding="utf-8") as handle:
     handle.write(" ".join(sys.argv[1:]) + "\\n")
@@ -537,7 +537,7 @@ def invoke_harness(
         output_root / "validation",
         output_root / "raw-cache",
         output_root / "packet",
-        output_root / "mito-overview-v0.3.0-validation.zip",
+        output_root / "mito-overview-v0.3.1-validation.zip",
     ]
     arguments = [str(path) for path in paths]
     if argument_count <= len(arguments):
@@ -1010,6 +1010,8 @@ def test_runner_keeps_transient_work_outside_validation_evidence_tree() -> None:
 
 def test_public_matrix_is_bound_to_public_clone_and_force_installed_wheel() -> None:
     text = RUNNER.read_text(encoding="utf-8")
+    assert 'SCIENTIFIC_PROTOCOL_VERSION="v0.3.0"' in text
+    assert 'echo "scientific_protocol_version=${SCIENTIFIC_PROTOCOL_VERSION}"' in text
     assert 'PREPARE_SCRIPT="${FRESH_CLONE_ROOT}/scripts/' in text
     assert 'PUBLIC_MATRIX="${FRESH_CLONE_ROOT}/scripts/' in text
     assert 'ISOLATION_WRAPPER="${FRESH_CLONE_ROOT}/scripts/' in text
@@ -1018,7 +1020,7 @@ def test_public_matrix_is_bound_to_public_clone_and_force_installed_wheel() -> N
     assert "MITO_OVERVIEW_REQUIRE_INSTALLED=1" in text
     assert "PYTHONPATH=" in text
     assert "pip install --force-reinstall" in text
-    assert '"mito-overview":"0.3.0"' in text
+    assert '"mito-overview":"0.3.1"' in text
     assert '"${ISOLATION_WRAPPER}"' in text
     assert "--evidence" in text
     assert "network_isolation_verdict" in text
@@ -1066,7 +1068,7 @@ def test_acceptance_cases_are_appended_only_after_ubuntu_evidence_exists() -> No
     text = RUNNER.read_text(encoding="utf-8")
     fetch = text.index("\nfetch_and_compare_ubuntu_public_evidence\n")
     append = text.index("\nappend_acceptance_cases >>", fetch)
-    packet = text.index("scripts/build_validation_packet_v0.3.0.py", append)
+    packet = text.index("scripts/build_validation_packet_v0.3.1.py", append)
     assert fetch < append < packet
 
 
@@ -1079,7 +1081,7 @@ def test_public_main_is_rechecked_at_packet_and_receipt_finalization() -> None:
     ]
     assert len(calls) >= 3
     fetch = text.index("\nfetch_and_compare_ubuntu_public_evidence\n")
-    packet = text.index('scripts/build_validation_packet_v0.3.0.py"', fetch)
+    packet = text.index('scripts/build_validation_packet_v0.3.1.py"', fetch)
     receipt = text.index('"${PACKET_RECEIPT}" "${CANDIDATE_COMMIT}"', packet)
     assert any(fetch < index < packet for index in calls)
     assert any(packet < index < receipt for index in calls)

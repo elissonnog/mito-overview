@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify that prebuilt v0.3.0 release assets describe one exact release commit."""
+"""Verify that prebuilt v0.3.1 release assets describe one exact release commit."""
 
 from __future__ import annotations
 
@@ -13,25 +13,26 @@ from pathlib import Path
 from typing import Any
 
 
-VERSION = "v0.3.0"
-TAG = "v0.3.0"
+VERSION = "v0.3.1"
+TAG = "v0.3.1"
+SCIENTIFIC_PROTOCOL_VERSION = "v0.3.0"
 PROFILE = "github_release_validation_v1"
-ZIP_NAME = "mito-overview-v0.3.0-validation.zip"
-VERIFICATION_NAME = "mito-overview-v0.3.0-verification.json"
+ZIP_NAME = "mito-overview-v0.3.1-validation.zip"
+VERIFICATION_NAME = "mito-overview-v0.3.1-verification.json"
 REPORT_ASSETS = {
-    "MitoOverview_v0.3.0_release_validation_report.md",
-    "MitoOverview_v0.3.0_release_validation_report.docx",
-    "MitoOverview_v0.3.0_release_validation_report.pdf",
-    "MitoOverview_v0.3.0_release_validation_report_assets.tar.gz",
-    "RELEASE_NOTES_v0.3.0.md",
-    "mito-overview-v0.3.0-environment.txt",
-    "mito-overview-v0.3.0-environment-locks.tar.gz",
+    "MitoOverview_v0.3.1_release_validation_report.md",
+    "MitoOverview_v0.3.1_release_validation_report.docx",
+    "MitoOverview_v0.3.1_release_validation_report.pdf",
+    "MitoOverview_v0.3.1_release_validation_report_assets.tar.gz",
+    "RELEASE_NOTES_v0.3.1.md",
+    "mito-overview-v0.3.1-environment.txt",
+    "mito-overview-v0.3.1-environment-locks.tar.gz",
 }
 DISTRIBUTION_ASSETS = {
-    "mito_overview-0.3.0-py3-none-any.whl": "wheel",
-    "mito_overview-0.3.0.tar.gz": "sdist",
+    "mito_overview-0.3.1-py3-none-any.whl": "wheel",
+    "mito_overview-0.3.1.tar.gz": "sdist",
 }
-REPORT_STEM = "MitoOverview_v0.3.0_release_validation_report"
+REPORT_STEM = "MitoOverview_v0.3.1_release_validation_report"
 REPORT_ASSET_ARCHIVE = f"{REPORT_STEM}_assets.tar.gz"
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 SHA256_LINE_RE = re.compile(r"^([0-9a-f]{64})  ([A-Za-z0-9][A-Za-z0-9._+-]*)$")
@@ -110,6 +111,7 @@ def release_identity_archive_digest(
             "schema_version": "2.0",
             "validation_profile": PROFILE,
             "release_version": VERSION,
+            "scientific_protocol_version": SCIENTIFIC_PROTOCOL_VERSION,
             "audit_zip": archive_name,
         }
         if final_sha is not None:
@@ -127,7 +129,11 @@ def release_identity_archive_digest(
             )
         digest = payload.get("audit_zip_sha256")
     elif payload.get("manifest_type") == "trusted_release_asset_manifest":
-        expected = {"release_version": VERSION, "release_tag": TAG}
+        expected = {
+            "release_version": VERSION,
+            "release_tag": TAG,
+            "scientific_protocol_version": SCIENTIFIC_PROTOCOL_VERSION,
+        }
         if final_sha is not None:
             expected["git_commit"] = final_sha
         if repository_url is not None:
@@ -216,6 +222,7 @@ def verify_archive_digest(
         "schema_version": "1.0",
         "evidence_type": "external_archive_digest_verification",
         "release_version": VERSION,
+        "scientific_protocol_version": SCIENTIFIC_PROTOCOL_VERSION,
         "archive_name": archive.name,
         "archive_sha256": observed,
         "digest_source_type": source_type,
@@ -277,6 +284,7 @@ def verify_report_provenance(
             "repository": repository_url,
             "release_version": VERSION,
             "release_tag": TAG,
+            "scientific_protocol_version": SCIENTIFIC_PROTOCOL_VERSION,
             "git_commit": final_sha,
             "validation_zip_sha256": archive_digest,
             "visual_review_status": "PASS",
@@ -307,6 +315,7 @@ def verify_report_provenance(
             "repository": repository_url,
             "release_version": VERSION,
             "release_tag": TAG,
+            "scientific_protocol_version": SCIENTIFIC_PROTOCOL_VERSION,
             "git_commit": final_sha,
             "validation_profile": PROFILE,
             "packet_verification_verdict": "PASS",
@@ -343,6 +352,7 @@ def verify_report_provenance(
             "repository": repository_url,
             "release_version": VERSION,
             "release_tag": TAG,
+            "scientific_protocol_version": SCIENTIFIC_PROTOCOL_VERSION,
             "git_commit": final_sha,
             "validation_profile": PROFILE,
             "rendered_page_qa_required": True,
@@ -523,6 +533,7 @@ def verify_distribution_assets(
             "repository": repository_url,
             "release_version": VERSION,
             "release_tag": TAG,
+            "scientific_protocol_version": SCIENTIFIC_PROTOCOL_VERSION,
             "git_commit": final_sha,
         },
         "distribution_asset_manifest",
@@ -613,6 +624,7 @@ def verify(
         "schema_version": "2.0",
         "validation_profile": PROFILE,
         "release_version": VERSION,
+        "scientific_protocol_version": SCIENTIFIC_PROTOCOL_VERSION,
         "git_commit": final_sha,
         "repository": repository_url,
     }
@@ -621,7 +633,7 @@ def verify(
     if identity.get("package_name") != "mito-overview":
         raise IdentityError("packet package_name is not mito-overview")
     if identity.get("package_version") != VERSION.removeprefix("v"):
-        raise IdentityError("packet package_version does not match v0.3.0")
+        raise IdentityError("packet package_version does not match v0.3.1")
 
     archive_digest = sha256(archive)
     require_fields(
@@ -632,6 +644,7 @@ def verify(
             "evidence_type": "release_validation_archive_verification",
             "verdict": "PASS",
             "release_version": VERSION,
+            "scientific_protocol_version": SCIENTIFIC_PROTOCOL_VERSION,
             "git_commit": final_sha,
             "audit_zip": ZIP_NAME,
             "audit_zip_sha256": archive_digest,
@@ -654,6 +667,7 @@ def verify(
             "repository_slug": repository_slug,
             "release_version": VERSION,
             "release_tag": TAG,
+            "scientific_protocol_version": SCIENTIFIC_PROTOCOL_VERSION,
             "git_commit": final_sha,
         },
         "report_asset_manifest",
@@ -709,6 +723,7 @@ def verify(
         "repository_slug": repository_slug,
         "release_version": VERSION,
         "release_tag": TAG,
+        "scientific_protocol_version": SCIENTIFIC_PROTOCOL_VERSION,
         "git_commit": final_sha,
         "validation_zip": ZIP_NAME,
         "validation_zip_sha256": archive_digest,
@@ -731,7 +746,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     if arguments[:1] == ["archive-digest"]:
         parser = argparse.ArgumentParser(
             description=(
-                "Verify the v0.3.0 validation ZIP against one expected digest "
+                "Verify the v0.3.1 validation ZIP against one expected digest "
                 "supplied outside the archive."
             )
         )

@@ -13,8 +13,8 @@ import pytest
 
 
 REPO_ROOT = Path(__file__).parents[1]
-SCRIPT = REPO_ROOT / "scripts" / "publish_github_release_v0.3.0.py"
-FRESH_TAG_RUNNER = REPO_ROOT / "scripts" / "run_fresh_public_tag_validation_v0.3.0.sh"
+SCRIPT = REPO_ROOT / "scripts" / "publish_github_release_v0.3.1.py"
+FRESH_TAG_RUNNER = REPO_ROOT / "scripts" / "run_fresh_public_tag_validation_v0.3.1.sh"
 SPEC = importlib.util.spec_from_file_location("publish_github_release_v030", SCRIPT)
 assert SPEC is not None and SPEC.loader is not None
 publication = importlib.util.module_from_spec(SPEC)
@@ -121,6 +121,7 @@ def _write_tag_validation_evidence(root: Path, asset_root: Path) -> Path:
                 "minimap2=2.31-r1302",
                 "bwa=0.7.19-r1273",
                 "threads=4",
+                "scientific_protocol_version=v0.3.0",
             )
         )
         + "\n",
@@ -134,6 +135,7 @@ def _write_tag_validation_evidence(root: Path, asset_root: Path) -> Path:
                 "git_commit": FINAL_SHA,
                 "git_tree": FINAL_TREE,
                 "release_tag": publication.EXPECTED_TAG,
+                "scientific_protocol_version": publication.SCIENTIFIC_PROTOCOL_VERSION,
                 "tag_object_sha": TAG_OBJECT_SHA,
             },
             indent=2,
@@ -153,6 +155,7 @@ def _write_tag_validation_evidence(root: Path, asset_root: Path) -> Path:
                 "tracked_artifact_lock_sha256": REMOTE_LOCK_SHA256,
                 "runtime_artifact_set_sha256": REMOTE_RUNTIME_SET_SHA256,
                 "repository_commit": FINAL_SHA,
+                "scientific_protocol_version": publication.SCIENTIFIC_PROTOCOL_VERSION,
                 "repository_tree": FINAL_TREE,
                 "repository_clean": True,
                 "verified": True,
@@ -174,14 +177,15 @@ def _write_tag_validation_evidence(root: Path, asset_root: Path) -> Path:
                 "schema_version": "1.0",
                 "evidence_type": "distribution_payload_equivalence",
                 "release_version": publication.EXPECTED_TAG,
+                "scientific_protocol_version": publication.SCIENTIFIC_PROTOCOL_VERSION,
                 "distributions": [
                     {
                         "filename": name,
                         "member_payloads_identical": True,
                     }
                     for name in (
-                        "mito_overview-0.3.0-py3-none-any.whl",
-                        "mito_overview-0.3.0.tar.gz",
+                        "mito_overview-0.3.1-py3-none-any.whl",
+                        "mito_overview-0.3.1.tar.gz",
                     )
                 ],
                 "verified": True,
@@ -209,6 +213,7 @@ def _write_tag_validation_evidence(root: Path, asset_root: Path) -> Path:
                 "repository": f"https://github.com/{REPOSITORY}",
                 "repository_slug": REPOSITORY,
                 "release_tag": publication.EXPECTED_TAG,
+                "scientific_protocol_version": publication.SCIENTIFIC_PROTOCOL_VERSION,
                 "git_commit": FINAL_SHA,
                 "checked_out_commit": FINAL_SHA,
                 "tag_object_sha": TAG_OBJECT_SHA,
@@ -248,6 +253,7 @@ def _write_tag_validation_evidence(root: Path, asset_root: Path) -> Path:
                 "repository": f"https://github.com/{REPOSITORY}",
                 "repository_slug": REPOSITORY,
                 "release_tag": publication.EXPECTED_TAG,
+                "scientific_protocol_version": publication.SCIENTIFIC_PROTOCOL_VERSION,
                 "git_commit": FINAL_SHA,
                 "checked_out_commit": FINAL_SHA,
                 "git_tree": FINAL_TREE,
@@ -346,7 +352,7 @@ class FakeGhRunner:
         self.tag_object: dict[str, Any] | None = {
             "sha": TAG_OBJECT_SHA,
             "tag": publication.EXPECTED_TAG,
-            "message": "MitoOverview v0.3.0",
+            "message": "MitoOverview v0.3.1",
             "url": "https://api.github.test/tag-object",
             "object": {"type": "commit", "sha": FINAL_SHA},
         }
@@ -673,10 +679,10 @@ def test_prepublication_receipt_rejects_an_existing_release_without_mutation(
     runner.release = {
         "id": 7,
         "url": "https://api.github.test/releases/7",
-        "html_url": f"https://github.com/{REPOSITORY}/releases/tag/v0.3.0",
+        "html_url": f"https://github.com/{REPOSITORY}/releases/tag/v0.3.1",
         "tag_name": publication.EXPECTED_TAG,
         "target_commitish": FINAL_SHA,
-        "name": "MitoOverview v0.3.0",
+        "name": "MitoOverview v0.3.1",
         "draft": True,
         "immutable": False,
         "prerelease": False,
@@ -813,6 +819,38 @@ def test_resealed_environment_tree_substitution_blocks_publication(
     with pytest.raises(
         publication.PublicationError,
         match="Release environment verification identity differs",
+    ):
+        publication.publish_github_release(config, runner)
+    assert runner.calls == []
+    assert runner.mutations == []
+
+
+@pytest.mark.parametrize(
+    "record_name",
+    [
+        "release_environment_verification.json",
+        "distribution_payload_equivalence.json",
+        "trusted_release_assets.json",
+        "tag_identity.json",
+        "fresh_public_tag_validation.json",
+    ],
+)
+def test_resealed_scientific_protocol_drift_blocks_publication(
+    tmp_path: Path, record_name: str
+) -> None:
+    config = _config(tmp_path / "publication", "create-draft")
+    path = config.tag_validation_receipt.parent / record_name
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["scientific_protocol_version"] = "v0.2.1"
+    path.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    _reseal_tag_validation_evidence(config.tag_validation_receipt)
+    runner = FakeGhRunner()
+
+    with pytest.raises(
+        publication.PublicationError,
+        match="[Pp]rotocol|identity|mismatch|evidence is invalid",
     ):
         publication.publish_github_release(config, runner)
     assert runner.calls == []
@@ -1016,7 +1054,7 @@ def test_draft_lookup_enumerates_authenticated_release_pages(tmp_path: Path) -> 
     target = {
         "id": 7,
         "url": "https://api.github.test/releases/7",
-        "html_url": f"https://github.com/{REPOSITORY}/releases/tag/v0.3.0",
+        "html_url": f"https://github.com/{REPOSITORY}/releases/tag/v0.3.1",
         "tag_name": publication.EXPECTED_TAG,
         "target_commitish": FINAL_SHA,
         "name": f"MitoOverview {publication.EXPECTED_TAG}",
@@ -1069,7 +1107,7 @@ def test_existing_matching_draft_is_reused_without_release_mutation(tmp_path: Pa
     runner.release = {
         "id": 7,
         "url": "https://api.github.test/releases/7",
-        "html_url": f"https://github.com/{REPOSITORY}/releases/tag/v0.3.0",
+        "html_url": f"https://github.com/{REPOSITORY}/releases/tag/v0.3.1",
         "tag_name": publication.EXPECTED_TAG,
         "target_commitish": FINAL_SHA,
         "name": f"MitoOverview {publication.EXPECTED_TAG}",
@@ -1172,15 +1210,15 @@ def test_canonical_asset_inventory_is_enforced_before_github_calls(
         tmp_path / "publication", "upload-verify", asset_dir=asset_dir
     )
     if inventory_problem == "missing":
-        (asset_dir / "RELEASE_NOTES_v0.3.0.md").unlink()
+        (asset_dir / "RELEASE_NOTES_v0.3.1.md").unlink()
     elif inventory_problem == "extra":
         (asset_dir / "extra.txt").write_text("extra\n", encoding="ascii")
     else:
-        source = asset_dir / "mito-overview-v0.3.0-environment.txt"
+        source = asset_dir / "mito-overview-v0.3.1-environment.txt"
         source.rename(asset_dir / "environment.txt")
     runner = FakeGhRunner()
 
-    with pytest.raises(publication.PublicationError, match="Canonical v0.3.0"):
+    with pytest.raises(publication.PublicationError, match="Canonical v0.3.1"):
         publication.publish_github_release(
             config,
             runner,
@@ -1587,7 +1625,7 @@ def test_upload_after_publication_rejects_changed_local_bytes(tmp_path: Path) ->
     publication.publish_github_release(
         _config(output_dir, "publish", asset_dir=asset_dir), runner
     )
-    target = "RELEASE_NOTES_v0.3.0.md"
+    target = "RELEASE_NOTES_v0.3.1.md"
     changed = payloads[target] + b"changed\n"
     (asset_dir / target).write_bytes(changed)
     manifest_payloads = {

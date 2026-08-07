@@ -22,7 +22,7 @@ import pytest
 
 
 ROOT = Path(__file__).parents[1]
-SCRIPT_PATH = ROOT / "scripts" / "build_validation_packet_v0.3.0.py"
+SCRIPT_PATH = ROOT / "scripts" / "build_validation_packet_v0.3.1.py"
 SPEC = importlib.util.spec_from_file_location("build_validation_packet_v030", SCRIPT_PATH)
 assert SPEC is not None and SPEC.loader is not None
 packet_builder = importlib.util.module_from_spec(SPEC)
@@ -52,7 +52,7 @@ PULL_REQUEST_NUMBER = 3
 PULL_REQUEST_RUN_ID = 123455
 PUBLIC_VALIDATION_RUN_ID = 123457
 PUBLIC_VALIDATION_ARTIFACT_ID = 7654321
-PULL_REQUEST_HEAD_REF = "codex/preprint-hardening-v0.3.0"
+PULL_REQUEST_HEAD_REF = "codex/report-builder-v0.3.1"
 
 
 def audit_comment_body(payload: dict[str, object]) -> str:
@@ -102,7 +102,7 @@ def required_pass_rows() -> list[dict[str, str]]:
     ]
 
 
-def create_release_repo(tmp_path: Path, version: str = "0.3.0") -> tuple[Path, str]:
+def create_release_repo(tmp_path: Path, version: str = "0.3.1") -> tuple[Path, str]:
     repo = tmp_path / "release-repo"
     (repo / "mito_overview").mkdir(parents=True)
     (repo / "pyproject.toml").write_text(
@@ -176,7 +176,7 @@ def create_release_repo(tmp_path: Path, version: str = "0.3.0") -> tuple[Path, s
     run(["git", "commit", "-q", "-m", "base fixture"], repo)
     run(["git", "branch", "-M", "main"], repo)
     run(["git", "checkout", "-q", "-b", PULL_REQUEST_HEAD_REF], repo)
-    (repo / "RELEASE_CANDIDATE").write_text("v0.3.0\n", encoding="utf-8")
+    (repo / "RELEASE_CANDIDATE").write_text("v0.3.1\n", encoding="utf-8")
     run(["git", "add", "RELEASE_CANDIDATE"], repo)
     run(["git", "commit", "-q", "-m", "release fixture"], repo)
     run(["git", "checkout", "-q", "main"], repo)
@@ -200,15 +200,15 @@ def create_release_repo(tmp_path: Path, version: str = "0.3.0") -> tuple[Path, s
     (
         (
             "README.md",
-            "Version `0.3.0`",
             "Version `0.3.1`",
-            "README.md=0.3.1",
+            "Version `0.3.2`",
+            "README.md=0.3.2",
         ),
         (
             "CHANGELOG.md",
-            "## v0.3.0",
             "## v0.3.1",
-            "CHANGELOG.md=0.3.1",
+            "## v0.3.2",
+            "CHANGELOG.md=0.3.2",
         ),
     ),
 )
@@ -227,7 +227,7 @@ def test_release_metadata_rejects_readme_or_changelog_version_drift(
         packet_builder.read_release_metadata(repo)
 
 
-def write_distribution_artifacts(dist_root: Path, version: str = "0.3.0") -> None:
+def write_distribution_artifacts(dist_root: Path, version: str = "0.3.1") -> None:
     dist_root.mkdir(parents=True)
     metadata = f"Metadata-Version: 2.1\nName: mito-overview\nVersion: {version}\n"
     wheel = dist_root / f"mito_overview-{version}-py3-none-any.whl"
@@ -293,9 +293,9 @@ def test_sdist_requires_one_canonical_root_pkg_info(
 ) -> None:
     dist_root = tmp_path / "dist"
     write_distribution_artifacts(dist_root)
-    sdist = dist_root / "mito_overview-0.3.0.tar.gz"
-    canonical = "mito_overview-0.3.0/PKG-INFO"
-    metadata = b"Metadata-Version: 2.1\nName: mito-overview\nVersion: 0.3.0\n"
+    sdist = dist_root / "mito_overview-0.3.1.tar.gz"
+    canonical = "mito_overview-0.3.1/PKG-INFO"
+    metadata = b"Metadata-Version: 2.1\nName: mito-overview\nVersion: 0.3.1\n"
     if mutation == "missing_root":
         rewrite_sdist(sdist, drop={canonical})
     elif mutation == "wrong_root_only":
@@ -309,13 +309,13 @@ def test_sdist_requires_one_canonical_root_pkg_info(
             for name in (
                 canonical,
                 canonical,
-                "mito_overview-0.3.0/mito_overview.egg-info/PKG-INFO",
+                "mito_overview-0.3.1/mito_overview.egg-info/PKG-INFO",
             ):
                 member = tarfile.TarInfo(name)
                 member.size = len(metadata)
                 archive.addfile(member, io.BytesIO(metadata))
     else:
-        nested = "mito_overview-0.3.0/mito_overview.egg-info/PKG-INFO"
+        nested = "mito_overview-0.3.1/mito_overview.egg-info/PKG-INFO"
         with tarfile.open(sdist, "w:gz") as archive:
             member = tarfile.TarInfo(canonical)
             member.type = tarfile.SYMTYPE
@@ -352,7 +352,7 @@ def replace_distribution_with_same_identity(path: Path) -> None:
             pkg_info.size = len(metadata)
             archive.addfile(pkg_info, io.BytesIO(metadata))
             payload = b"different sdist bytes\n"
-            marker = tarfile.TarInfo("mito_overview-0.3.0/replacement-marker.txt")
+            marker = tarfile.TarInfo("mito_overview-0.3.1/replacement-marker.txt")
             marker.size = len(payload)
             archive.addfile(marker, io.BytesIO(payload))
         return
@@ -368,17 +368,17 @@ def test_distribution_inventory_requires_exact_canonical_files(
 ) -> None:
     dist_root = tmp_path / "dist"
     write_distribution_artifacts(dist_root)
-    wheel = dist_root / "mito_overview-0.3.0-py3-none-any.whl"
+    wheel = dist_root / "mito_overview-0.3.1-py3-none-any.whl"
     if mutation == "extra_file":
         (dist_root / "notes.txt").write_text("unexpected\n", encoding="ascii")
     elif mutation == "extra_wheel":
-        shutil.copy2(wheel, dist_root / "mito_overview-0.3.0-py2-none-any.whl")
+        shutil.copy2(wheel, dist_root / "mito_overview-0.3.1-py2-none-any.whl")
     elif mutation == "nested_file":
         nested = dist_root / "nested"
         nested.mkdir()
         (nested / "payload.txt").write_text("unexpected\n", encoding="ascii")
     elif mutation == "renamed_wheel":
-        wheel.rename(dist_root / "mito-overview-0.3.0-py3-none-any.whl")
+        wheel.rename(dist_root / "mito-overview-0.3.1-py3-none-any.whl")
     elif mutation == "symlink_wheel":
         external = tmp_path / "external.whl"
         shutil.copy2(wheel, external)
@@ -627,7 +627,7 @@ def write_resolved_ci_environments(root: Path, repo: Path, commit: str) -> None:
         ).read_bytes()
         files = {
             f"conda-{platform_id}.explicit.txt": artifact_lock,
-            f"pip-{platform_id}.txt": b"mito-overview==0.3.0\n",
+            f"pip-{platform_id}.txt": b"mito-overview==0.3.1\n",
             f"environment-{platform_id}.yml": (
                 repo / "locks" / f"environment-{platform_id}.yml"
             ).read_bytes(),
@@ -701,7 +701,7 @@ def write_acceptance_evidence(
     distributions: list[dict[str, object]] = []
     if (root / "dist").is_dir():
         distributions = packet_builder.validate_distributions(
-            root / "dist", "mito-overview", "0.3.0"
+            root / "dist", "mito-overview", "0.3.1"
         )
         for artifact in distributions:
             artifact["direct_url_archive_sha256"] = artifact["sha256"]
@@ -1400,6 +1400,161 @@ def metric_table(path: Path, rows: list[tuple[str, str]]) -> None:
     write_tsv(path, ("metric", "value"), [[key, value] for key, value in rows])
 
 
+def module_status_fixture(
+    tmp_path: Path,
+    *,
+    status: str,
+    reason_code: str,
+    source_rows: list[tuple[str, str]],
+) -> tuple[Path, Path]:
+    normalized = tmp_path / "observed_normalized"
+    case_id = "gm11906_default_run1"
+    case_root = normalized / case_id
+    case_root.mkdir(parents=True)
+    source_name = "mito_fixture_summary.tsv"
+    metric_table(case_root / source_name, source_rows)
+    matrix = tmp_path / "module_status_matrix.tsv"
+    write_tsv(
+        matrix,
+        packet_builder.EVIDENCE_TABLES["module_status_matrix.tsv"],
+        [
+            [
+                "GM11906",
+                case_id,
+                "mito_fixture_summary",
+                status,
+                reason_code,
+                f"observed_normalized/{case_id}/{source_name}",
+            ]
+        ],
+    )
+    return matrix, normalized
+
+
+@pytest.mark.parametrize("include_blank_reason_metric", (False, True))
+def test_module_status_accepts_contextual_blank_not_applicable_reason(
+    tmp_path: Path,
+    include_blank_reason_metric: bool,
+) -> None:
+    rows = [
+        ("status", "not_applicable"),
+        ("message", "Module is skipped for this assay."),
+        ("step", "fixture"),
+        ("read_mode", "short"),
+        ("assay_type", "targeted_mt"),
+    ]
+    if include_blank_reason_metric:
+        rows.append(("reason_code", ""))
+    matrix, normalized = module_status_fixture(
+        tmp_path,
+        status="not_applicable",
+        reason_code="",
+        source_rows=rows,
+    )
+    packet_builder.validate_module_status_evidence(matrix, normalized)
+
+
+def test_module_status_accepts_blank_ok_reason_without_gate_context(
+    tmp_path: Path,
+) -> None:
+    matrix, normalized = module_status_fixture(
+        tmp_path,
+        status="ok",
+        reason_code="",
+        source_rows=[("status", "ok")],
+    )
+    packet_builder.validate_module_status_evidence(matrix, normalized)
+
+
+def test_module_status_accepts_explicit_non_success_reason_without_gate_context(
+    tmp_path: Path,
+) -> None:
+    matrix, normalized = module_status_fixture(
+        tmp_path,
+        status="not_configured",
+        reason_code="fixture_not_configured",
+        source_rows=[
+            ("status", "not_configured"),
+            ("reason_code", "fixture_not_configured"),
+        ],
+    )
+    packet_builder.validate_module_status_evidence(matrix, normalized)
+
+
+def test_module_status_rejects_whitespace_only_reason_code(tmp_path: Path) -> None:
+    matrix, normalized = module_status_fixture(
+        tmp_path,
+        status="not_applicable",
+        reason_code="   ",
+        source_rows=[
+            ("status", "not_applicable"),
+            ("reason_code", "   "),
+            ("message", "Module is skipped for this assay."),
+            ("step", "fixture"),
+            ("read_mode", "short"),
+            ("assay_type", "targeted_mt"),
+        ],
+    )
+    with pytest.raises(ValueError, match="must not contain surrounding whitespace"):
+        packet_builder.validate_module_status_evidence(matrix, normalized)
+
+
+@pytest.mark.parametrize(
+    "status", ("not_configured", "not_evaluable", "unavailable", "failed")
+)
+def test_module_status_rejects_blank_reason_for_other_non_success_states(
+    tmp_path: Path,
+    status: str,
+) -> None:
+    matrix, normalized = module_status_fixture(
+        tmp_path,
+        status=status,
+        reason_code="",
+        source_rows=[
+            ("status", status),
+            ("message", "Context cannot replace a required reason for this state."),
+            ("step", "fixture"),
+            ("read_mode", "short"),
+            ("assay_type", "targeted_mt"),
+        ],
+    )
+    with pytest.raises(
+        ValueError,
+        match="Blank module reason_code is permitted only for status=not_applicable",
+    ):
+        packet_builder.validate_module_status_evidence(matrix, normalized)
+
+
+@pytest.mark.parametrize("missing_metric", packet_builder.MODULE_STATUS_CONTEXT_METRICS)
+@pytest.mark.parametrize("representation", ("absent", "blank"))
+def test_module_status_rejects_incomplete_blank_not_applicable_context(
+    tmp_path: Path,
+    missing_metric: str,
+    representation: str,
+) -> None:
+    values = {
+        "message": "Module is skipped for this assay.",
+        "step": "fixture",
+        "read_mode": "short",
+        "assay_type": "targeted_mt",
+    }
+    if representation == "absent":
+        values.pop(missing_metric)
+    else:
+        values[missing_metric] = "   "
+    matrix, normalized = module_status_fixture(
+        tmp_path,
+        status="not_applicable",
+        reason_code="",
+        source_rows=[("status", "not_applicable"), *values.items()],
+    )
+    with pytest.raises(
+        ValueError,
+        match="Blank not_applicable reason_code requires nonempty source metrics",
+    ):
+        packet_builder.validate_module_status_evidence(matrix, normalized)
+
+
 def feature_annotation_table(path: Path, status: str) -> None:
     if status == "ok":
         write_tsv(
@@ -1624,6 +1779,21 @@ def write_normalized_case(
         metric_table(path, rows)
         scientific.append(path)
 
+    def module_status_rows(status: str, step: str) -> list[tuple[str, str]]:
+        rows = [("status", status)]
+        if status == "not_applicable":
+            rows.extend(
+                [
+                    ("message", "Fixture module is not applicable for this mode."),
+                    ("step", step),
+                    ("read_mode", "short" if dataset == "GM11906" else "long"),
+                    ("assay_type", "targeted_mt"),
+                ]
+            )
+        elif status != "ok":
+            rows.append(("reason_code", "fixture_state"))
+        return rows
+
     add_metric(
         "mito_heteroplasmy_summary.tsv",
         [
@@ -1684,14 +1854,16 @@ def write_normalized_case(
         "mito_mvtool_annotation_summary.tsv": oracle["mvtool_annotation_module_status"],
     }
     for filename, status in status_values.items():
-        add_metric(filename, [("status", status), ("reason_code", "")])
+        add_metric(filename, module_status_rows(status, Path(filename).stem))
     feature_annotation = root / "mito_feature_annotation_summary.tsv"
     feature_annotation_table(
         feature_annotation,
         oracle["feature_annotation_module_status"],
     )
     scientific.append(feature_annotation)
-    numt_rows = [("status", oracle["numt_qc_module_status"])]
+    numt_rows = module_status_rows(
+        oracle["numt_qc_module_status"], "numt_qc"
+    )
     if oracle["numt_qc_module_status"] != "not_applicable":
         numt_rows.extend(
             [
@@ -1716,15 +1888,13 @@ def write_normalized_case(
     add_metric("mito_qc_summary.tsv", qc_rows)
     add_metric(
         "mito_cosegregation_summary.tsv",
-        [
-            ("status", oracle["cosegregation_module_status"]),
-            ("selected_sites", oracle["selected_cosegregation_sites"] or "0"),
-        ],
+        module_status_rows(oracle["cosegregation_module_status"], "cosegregation")
+        + [("selected_sites", oracle["selected_cosegregation_sites"] or "0")],
     )
     add_metric(
         "mito_deletion_summary.tsv",
-        [
-            ("status", oracle["deletions_module_status"]),
+        module_status_rows(oracle["deletions_module_status"], "deletions")
+        + [
             ("candidate_deletion_clusters", oracle["deletion_clusters"] or "0"),
             ("reads_with_large_deletion", oracle["deletion_query_names"] or "0"),
             (
@@ -2067,7 +2237,8 @@ def create_validation_root(tmp_path: Path, repo: Path, commit: str) -> Path:
     write_cases(root / "cases.tsv", rows)
     (root / "environment.txt").write_text(
         (
-            "release_version=v0.3.0\n"
+            "release_version=v0.3.1\n"
+            "scientific_protocol_version=v0.3.0\n"
             f"git_commit={commit}\n"
             f"repository={REPOSITORY}\n"
             f"github_actions_run_id={GITHUB_RUN_ID}\n"
@@ -2173,11 +2344,11 @@ def packet_args(
     return argparse.Namespace(
         validation_root=validation_root,
         packet_root=output / "packet",
-        zip_path=output / "mito-overview-v0.3.0-validation.zip",
+        zip_path=output / "mito-overview-v0.3.1-validation.zip",
         repo_root=repo,
         commit=None,
         cache_root=validation_root.parent / "raw-cache",
-        version="v0.3.0",
+        version="v0.3.1",
         repository=REPOSITORY,
     )
 
@@ -2276,6 +2447,97 @@ def rebind_inventory_provenance(root: Path, inventory: Path) -> None:
         "sha256",
         hashlib.sha256(inventory.read_bytes()).hexdigest(),
     )
+
+
+def rebind_packet_normalized_metric_table(
+    packet: Path,
+    *,
+    case_id: str,
+    filename: str,
+    rows: list[tuple[str, str]],
+) -> None:
+    local_root = packet / "observed_normalized"
+    ubuntu_artifact = packet / "acceptance/ubuntu_public_validation/artifact"
+    ubuntu_root = ubuntu_artifact / "results/observed_normalized"
+    case_ids = (case_id, case_id.replace("_default_run1", "_default_run2"))
+    for normalized_root in (local_root, ubuntu_root):
+        for current_case_id in case_ids:
+            case_root = normalized_root / current_case_id
+            metric_table(case_root / filename, rows)
+            rewrite_normalized_manifest(case_root)
+
+    changed_local = tuple(
+        path
+        for current_case_id in case_ids
+        for path in (
+            local_root / current_case_id / filename,
+            local_root / current_case_id / "normalized_manifest.tsv",
+        )
+    )
+    provenance_path = packet / "table_provenance.tsv"
+    with provenance_path.open(encoding="utf-8", newline="") as handle:
+        reader = csv.DictReader(handle, delimiter="\t")
+        provenance_fields = tuple(reader.fieldnames or ())
+        provenance_rows = list(reader)
+    provenance_by_path = {row["packet_path"]: row for row in provenance_rows}
+    for path in changed_local:
+        relative = path.relative_to(packet).as_posix()
+        row = provenance_by_path[relative]
+        with path.open(encoding="utf-8", newline="") as handle:
+            parsed = list(csv.reader(handle, delimiter="\t"))
+        row["sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
+        row["rows"] = str(max(0, len(parsed) - 1))
+        row["columns"] = str(len(parsed[0]) if parsed else 0)
+    with provenance_path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=provenance_fields,
+            delimiter="\t",
+            lineterminator="\n",
+        )
+        writer.writeheader()
+        writer.writerows(provenance_rows)
+
+    acceptance_comparison = packet / "acceptance/cross_platform_comparison.tsv"
+    with acceptance_comparison.open(encoding="utf-8", newline="") as handle:
+        reader = csv.DictReader(handle, delimiter="\t")
+        comparison_fields = tuple(reader.fieldnames or ())
+        comparison_rows = list(reader)
+    comparison_by_path = {
+        row["relative_path"]: row
+        for row in comparison_rows
+        if row["evidence_type"] == "normalized_scientific_table"
+    }
+    for path in changed_local:
+        relative = path.relative_to(packet).as_posix()
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        comparison_by_path[relative]["macos_sha256"] = digest
+        comparison_by_path[relative]["ubuntu_sha256"] = digest
+    for comparison_path in (
+        acceptance_comparison,
+        packet / "cross_platform_comparison.tsv",
+    ):
+        with comparison_path.open("w", encoding="utf-8", newline="") as handle:
+            writer = csv.DictWriter(
+                handle,
+                fieldnames=comparison_fields,
+                delimiter="\t",
+                lineterminator="\n",
+            )
+            writer.writeheader()
+            writer.writerows(comparison_rows)
+
+    rewrite_public_artifact_manifest(ubuntu_artifact)
+    identity_path = packet / "release_identity.json"
+    identity = read_json(identity_path)
+    assert isinstance(identity, dict)
+    identity["public_validation_github_actions"]["cross_platform_reproduction"][
+        "comparison_sha256"
+    ] = hashlib.sha256(acceptance_comparison.read_bytes()).hexdigest()
+    for record in identity["public_provenance"]:
+        path = packet / record["path"]
+        record["sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
+    write_json(identity_path, identity)
 
 
 def verify_packet(packet: Path) -> subprocess.CompletedProcess[str]:
@@ -2398,6 +2660,7 @@ def test_github_only_packet_builds_and_verifies_from_fresh_extraction(
     identity = json.loads((packet / "release_identity.json").read_text(encoding="utf-8"))
     assert run_record["schema_version"] == "2.0"
     assert run_record["validation_profile"] == "github_release_validation_v1"
+    assert run_record["scientific_protocol_version"] == "v0.3.0"
     assert run_record["github_actions_run_id"] == GITHUB_RUN_ID
     assert run_record["final_push_github_actions_run_id"] == GITHUB_RUN_ID
     assert run_record["pull_request_number"] == PULL_REQUEST_NUMBER
@@ -2407,6 +2670,8 @@ def test_github_only_packet_builds_and_verifies_from_fresh_extraction(
         == PUBLIC_VALIDATION_RUN_ID
     )
     assert identity["git_commit"] == commit
+    assert identity["scientific_protocol_version"] == "v0.3.0"
+    assert identity["environment_scientific_protocol_version"] == "v0.3.0"
     assert identity["dist_artifacts"] == read_json(
         packet / "acceptance/fresh_clone.json"
     )["distributions"]
@@ -2490,9 +2755,17 @@ def test_github_only_packet_builds_and_verifies_from_fresh_extraction(
             assert hashlib.sha256(artifact.read_bytes()).hexdigest() == row["sha256"]
 
     for case_id in ("gm11906_default_run1", "gm11906_default_run2"):
-        assert read_tsv(
+        rows = read_tsv(
             packet / "observed_normalized" / case_id / "mito_numt_qc_summary.tsv"
-        ) == [{"metric": "status", "value": "not_applicable"}]
+        )
+        values = {row["metric"]: row["value"] for row in rows}
+        assert values == {
+            "status": "not_applicable",
+            "message": "Fixture module is not applicable for this mode.",
+            "step": "numt_qc",
+            "read_mode": "short",
+            "assay_type": "targeted_mt",
+        }
 
     root_check = subprocess.run(
         [str(packet / "verify_bundle.sh")], capture_output=True, text=True, check=False
@@ -2501,12 +2774,20 @@ def test_github_only_packet_builds_and_verifies_from_fresh_extraction(
 
     extracted = tmp_path / "extracted"
     safe_extract.safe_extract(
-        output / "mito-overview-v0.3.0-validation.zip", extracted
+        output / "mito-overview-v0.3.1-validation.zip", extracted
     )
     for case_id in ("gm11906_default_run1", "gm11906_default_run2"):
-        assert read_tsv(
+        rows = read_tsv(
             extracted / "observed_normalized" / case_id / "mito_numt_qc_summary.tsv"
-        ) == [{"metric": "status", "value": "not_applicable"}]
+        )
+        values = {row["metric"]: row["value"] for row in rows}
+        assert values == {
+            "status": "not_applicable",
+            "message": "Fixture module is not applicable for this mode.",
+            "step": "numt_qc",
+            "read_mode": "short",
+            "assay_type": "targeted_mt",
+        }
     extracted_check = subprocess.run(
         ["bash", str(extracted / "verify_bundle.sh")],
         capture_output=True,
@@ -2514,6 +2795,71 @@ def test_github_only_packet_builds_and_verifies_from_fresh_extraction(
         check=False,
     )
     assert extracted_check.returncode == 0, extracted_check.stderr
+
+
+@pytest.mark.parametrize(
+    ("case_id", "filename", "rows", "expected_error"),
+    (
+        (
+            "gm11906_default_run1",
+            "mito_numt_qc_summary.tsv",
+            [
+                ("status", "not_applicable"),
+                ("step", "numt_qc"),
+                ("read_mode", "short"),
+                ("assay_type", "targeted_mt"),
+            ],
+            "blank not_applicable reason_code requires nonempty source metrics",
+        ),
+        (
+            "gm12878_default_run1",
+            "mito_mvtool_annotation_summary.tsv",
+            [
+                ("status", "not_configured"),
+                ("message", "Fixture is not configured."),
+                ("step", "mvtool_annotation"),
+                ("read_mode", "long"),
+                ("assay_type", "targeted_mt"),
+            ],
+            "blank module reason_code is permitted only for status=not_applicable",
+        ),
+    ),
+)
+def test_extracted_verifier_rejects_resealed_invalid_blank_module_reason(
+    tmp_path: Path,
+    case_id: str,
+    filename: str,
+    rows: list[tuple[str, str]],
+    expected_error: str,
+) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    output = tmp_path / "output"
+    packet_builder.build_packet(packet_args(validation, repo, output))
+    packet = output / "packet"
+
+    rebind_packet_normalized_metric_table(
+        packet,
+        case_id=case_id,
+        filename=filename,
+        rows=rows,
+    )
+    source_table = f"observed_normalized/{case_id}/{filename}"
+    mutate_tsv_value(
+        packet / "module_status_matrix.tsv",
+        "source_table",
+        source_table,
+        "reason_code",
+        "",
+    )
+    rewrite_manifest(packet)
+
+    checked = verify_packet(packet)
+    assert checked.returncode != 0
+    assert expected_error in checked.stderr
+    assert "artifact hash mismatch" not in checked.stderr
+    assert "normalized manifest" not in checked.stderr
+    assert "cross-platform" not in checked.stderr
 
 
 def test_extracted_verifier_rejects_resealed_explicit_ok_feature_status(
@@ -3389,10 +3735,10 @@ def test_extracted_verifier_rejects_resealed_extra_distribution(
         item for item in identity["dist_artifacts"] if item["kind"] == "wheel"
     )
     source = packet / source_row["path"]
-    extra = packet / "dist/mito_overview-0.3.0-py2-none-any.whl"
+    extra = packet / "dist/mito_overview-0.3.1-py2-none-any.whl"
     shutil.copy2(source, extra)
     extra_row = dict(source_row)
-    extra_row["path"] = "dist/mito_overview-0.3.0-py2-none-any.whl"
+    extra_row["path"] = "dist/mito_overview-0.3.1-py2-none-any.whl"
     identity["dist_artifacts"].append(extra_row)
     fresh["distributions"].append(dict(extra_row))
     write_json(identity_path, identity)
@@ -3416,9 +3762,9 @@ def test_extracted_verifier_rejects_noncanonical_sdist_metadata(
     output = tmp_path / "output"
     packet_builder.build_packet(packet_args(validation, repo, output))
     packet = output / "packet"
-    artifact = packet / "dist/mito_overview-0.3.0.tar.gz"
-    canonical = "mito_overview-0.3.0/PKG-INFO"
-    metadata = b"Metadata-Version: 2.1\nName: mito-overview\nVersion: 0.3.0\n"
+    artifact = packet / "dist/mito_overview-0.3.1.tar.gz"
+    canonical = "mito_overview-0.3.1/PKG-INFO"
+    metadata = b"Metadata-Version: 2.1\nName: mito-overview\nVersion: 0.3.1\n"
     if mutation == "wrong_root_only":
         rewrite_sdist(
             artifact,
@@ -3430,13 +3776,13 @@ def test_extracted_verifier_rejects_noncanonical_sdist_metadata(
             for name in (
                 canonical,
                 canonical,
-                "mito_overview-0.3.0/mito_overview.egg-info/PKG-INFO",
+                "mito_overview-0.3.1/mito_overview.egg-info/PKG-INFO",
             ):
                 member = tarfile.TarInfo(name)
                 member.size = len(metadata)
                 archive.addfile(member, io.BytesIO(metadata))
     else:
-        nested = "mito_overview-0.3.0/mito_overview.egg-info/PKG-INFO"
+        nested = "mito_overview-0.3.1/mito_overview.egg-info/PKG-INFO"
         with tarfile.open(artifact, "w:gz") as archive:
             member = tarfile.TarInfo(canonical)
             member.type = tarfile.LNKTYPE
@@ -4185,6 +4531,23 @@ def test_packet_rejects_pull_request_environment_identity_drift(
         packet_builder.build_packet(packet_args(validation, repo, tmp_path / "output"))
 
 
+def test_packet_rejects_scientific_protocol_environment_drift(
+    tmp_path: Path,
+) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    environment = validation / "environment.txt"
+    environment.write_text(
+        environment.read_text(encoding="utf-8").replace(
+            "scientific_protocol_version=v0.3.0",
+            "scientific_protocol_version=v9.9.9",
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="scientific_protocol_version"):
+        packet_builder.build_packet(packet_args(validation, repo, tmp_path / "output"))
+
+
 def test_packet_rejects_final_merge_tree_relation_drift(tmp_path: Path) -> None:
     repo, _ = create_release_repo(tmp_path)
     run(["git", "checkout", "-q", "-b", "tree-drift-head"], repo)
@@ -4378,9 +4741,8 @@ def test_packet_rejects_secret_like_material(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     "private_path",
     (
-        "/" + "group/xgai/private/sample/run.log",
         "/mnt/institution/private/sample/run.log",
-        "/Volumes/dbasel-UDD-Data/private/sample/run.log",
+        "/Volumes/institution-private/sample/run.log",
     ),
 )
 def test_packet_rejects_private_institutional_paths(
@@ -4564,7 +4926,7 @@ def test_extracted_verifier_rejects_malformed_data_uri_bypasses(
     "private_path",
     (
         "/mnt/institution/private/sample/run.log",
-        "/Volumes/dbasel-UDD-Data/private/sample/run.log",
+        "/Volumes/institution-private/sample/run.log",
     ),
 )
 def test_extracted_verifier_rejects_resealed_private_mount_paths(

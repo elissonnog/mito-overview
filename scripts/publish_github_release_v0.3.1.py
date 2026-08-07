@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Publish the tag-bound MitoOverview v0.3.0 GitHub release safely."""
+"""Publish the tag-bound MitoOverview v0.3.1 GitHub release safely."""
 
 from __future__ import annotations
 
@@ -20,7 +20,8 @@ from typing import Any, Protocol, Sequence
 from urllib.parse import urlsplit
 
 
-EXPECTED_TAG = "v0.3.0"
+EXPECTED_TAG = "v0.3.1"
+SCIENTIFIC_PROTOCOL_VERSION = "v0.3.0"
 PUBLICATION_SCHEMA_VERSION = "1.0"
 TAG_VALIDATION_SCHEMA_VERSION = "2.0"
 TAG_VALIDATION_PROFILE = "fresh_public_tag_validation_v2"
@@ -64,17 +65,17 @@ REQUIRED_TAG_VALIDATION_CASES = frozenset(
 )
 CANONICAL_ASSET_NAMES = frozenset(
     {
-        "mito_overview-0.3.0-py3-none-any.whl",
-        "mito_overview-0.3.0.tar.gz",
-        "mito-overview-v0.3.0-validation.zip",
-        "MitoOverview_v0.3.0_release_validation_report.md",
-        "MitoOverview_v0.3.0_release_validation_report.docx",
-        "MitoOverview_v0.3.0_release_validation_report.pdf",
-        "MitoOverview_v0.3.0_release_validation_report_assets.tar.gz",
-        "mito-overview-v0.3.0-verification.json",
-        "RELEASE_NOTES_v0.3.0.md",
-        "mito-overview-v0.3.0-environment.txt",
-        "mito-overview-v0.3.0-environment-locks.tar.gz",
+        "mito_overview-0.3.1-py3-none-any.whl",
+        "mito_overview-0.3.1.tar.gz",
+        "mito-overview-v0.3.1-validation.zip",
+        "MitoOverview_v0.3.1_release_validation_report.md",
+        "MitoOverview_v0.3.1_release_validation_report.docx",
+        "MitoOverview_v0.3.1_release_validation_report.pdf",
+        "MitoOverview_v0.3.1_release_validation_report_assets.tar.gz",
+        "mito-overview-v0.3.1-verification.json",
+        "RELEASE_NOTES_v0.3.1.md",
+        "mito-overview-v0.3.1-environment.txt",
+        "mito-overview-v0.3.1-environment-locks.tar.gz",
         "SHA256SUMS",
     }
 )
@@ -248,7 +249,7 @@ def _validate_config(config: PublicationConfig) -> PublicationConfig:
 
 
 def inspect_asset_inventory(directory: Path) -> AssetInventory:
-    """Validate the exact flat v0.3.0 release inventory and its checksums."""
+    """Validate the exact flat v0.3.1 release inventory and its checksums."""
 
     entries = sorted(directory.iterdir(), key=lambda path: path.name)
     paths: dict[str, Path] = {}
@@ -266,7 +267,7 @@ def inspect_asset_inventory(directory: Path) -> AssetInventory:
     observed_names = set(paths)
     if observed_names != CANONICAL_ASSET_NAMES:
         raise PublicationError(
-            "Canonical v0.3.0 asset inventory mismatch; "
+            "Canonical v0.3.1 asset inventory mismatch; "
             f"missing={sorted(CANONICAL_ASSET_NAMES - observed_names)!r}; "
             f"unexpected={sorted(observed_names - CANONICAL_ASSET_NAMES)!r}"
         )
@@ -573,7 +574,7 @@ def _verify_tag(
         raise PublicationError("Remote tag reference name drifted")
     object_sha = str(ref_object.get("sha", ""))
     if ref_object.get("type") != "tag" or not SHA_PATTERN.fullmatch(object_sha):
-        raise PublicationError("Remote v0.3.0 tag must be an annotated tag object")
+        raise PublicationError("Remote v0.3.1 tag must be an annotated tag object")
     tag_payload = _api_object(runner, config.repository, f"git/tags/{object_sha}")
     target = tag_payload.get("object") if tag_payload else None
     if not isinstance(target, dict):
@@ -716,7 +717,7 @@ def _create_draft_release(
             ("-f", "tag_name", config.tag),
             ("-f", "target_commitish", config.final_sha),
             ("-f", "name", f"MitoOverview {config.tag}"),
-            ("-f", "body", "MitoOverview v0.3.0 release assets and validation evidence."),
+            ("-f", "body", "MitoOverview v0.3.1 release assets and validation evidence."),
             ("-F", "draft", "true"),
             ("-F", "prerelease", "false"),
             ("-F", "generate_release_notes", "false"),
@@ -930,6 +931,7 @@ def _base_receipt(
     payload: dict[str, Any] = {
         "schema_version": PUBLICATION_SCHEMA_VERSION,
         "release_version": config.tag,
+        "scientific_protocol_version": SCIENTIFIC_PROTOCOL_VERSION,
         "git_commit": config.final_sha,
         "repository": repository_url,
         "repository_url": repository_url,
@@ -1014,6 +1016,7 @@ def _validate_tag_validation_receipt(
         "repository": _repository_url(config),
         "repository_slug": config.repository,
         "release_tag": config.tag,
+        "scientific_protocol_version": SCIENTIFIC_PROTOCOL_VERSION,
         "git_commit": config.final_sha,
         "checked_out_commit": config.final_sha,
         "public_https_clone": True,
@@ -1104,6 +1107,7 @@ def _validate_tag_validation_receipt(
         "tracked_artifact_lock_sha256",
         "runtime_artifact_set_sha256",
         "repository_commit",
+        "scientific_protocol_version",
         "repository_tree",
         "repository_clean",
         "verified",
@@ -1129,6 +1133,8 @@ def _validate_tag_validation_receipt(
         )
         is None
         or release_environment.get("repository_commit") != config.final_sha
+        or release_environment.get("scientific_protocol_version")
+        != SCIENTIFIC_PROTOCOL_VERSION
         or release_environment.get("repository_tree") != git_tree
         or release_environment.get("repository_clean") is not True
         or release_environment.get("verified") is not True
@@ -1144,14 +1150,16 @@ def _validate_tag_validation_receipt(
     )
     distribution_rows = distribution_evidence.get("distributions")
     expected_distribution_names = {
-        "mito_overview-0.3.0-py3-none-any.whl",
-        "mito_overview-0.3.0.tar.gz",
+        "mito_overview-0.3.1-py3-none-any.whl",
+        "mito_overview-0.3.1.tar.gz",
     }
     if (
         distribution_evidence.get("schema_version") != "1.0"
         or distribution_evidence.get("evidence_type")
         != "distribution_payload_equivalence"
         or distribution_evidence.get("release_version") != config.tag
+        or distribution_evidence.get("scientific_protocol_version")
+        != SCIENTIFIC_PROTOCOL_VERSION
         or distribution_evidence.get("verdict") != "PASS"
         or distribution_evidence.get("verified") is not True
         or not isinstance(distribution_rows, list)
@@ -1184,6 +1192,7 @@ def _validate_tag_validation_receipt(
         "repository": _repository_url(config),
         "repository_slug": config.repository,
         "release_tag": config.tag,
+        "scientific_protocol_version": SCIENTIFIC_PROTOCOL_VERSION,
         "git_commit": config.final_sha,
         "checked_out_commit": config.final_sha,
         "tag_object_sha": tag_object_sha,
@@ -1252,6 +1261,7 @@ def _validate_tag_validation_receipt(
         "git_commit": config.final_sha,
         "git_tree": git_tree,
         "release_tag": config.tag,
+        "scientific_protocol_version": SCIENTIFIC_PROTOCOL_VERSION,
         "tag_object_sha": tag_object_sha,
     }:
         raise PublicationError("Fresh public-tag annotated-tag identity differs")
@@ -1285,6 +1295,7 @@ def _validate_tag_validation_receipt(
     return {
         "schema_version": TAG_VALIDATION_SCHEMA_VERSION,
         "validation_profile": TAG_VALIDATION_PROFILE,
+        "scientific_protocol_version": SCIENTIFIC_PROTOCOL_VERSION,
         "receipt_sha256": _sha256_file(receipt_path),
         "evidence_manifest_sha256": manifest_sha,
         "trusted_asset_manifest_sha256": trusted_digest,
@@ -1355,6 +1366,7 @@ def _verify_prepublication_mode(runner: Runner, config: PublicationConfig) -> Pa
     payload: dict[str, Any] = {
         "schema_version": PUBLICATION_SCHEMA_VERSION,
         "release_version": config.tag,
+        "scientific_protocol_version": SCIENTIFIC_PROTOCOL_VERSION,
         "git_commit": config.final_sha,
         "repository": _repository_url(config),
         "repository_url": _repository_url(config),
@@ -1398,6 +1410,7 @@ def _validate_receipt_identity(record: dict[str, Any], config: PublicationConfig
     required = {
         "schema_version": PUBLICATION_SCHEMA_VERSION,
         "release_version": config.tag,
+        "scientific_protocol_version": SCIENTIFIC_PROTOCOL_VERSION,
         "git_commit": config.final_sha,
         "repository": _repository_url(config),
         "repository_url": _repository_url(config),
@@ -1563,7 +1576,7 @@ def _create_draft_mode(
             require_immutable=require_immutable,
         )
         if release.get("draft") is not True:
-            raise PublicationError("The v0.3.0 release is already published")
+            raise PublicationError("The v0.3.1 release is already published")
         if existing_draft_path.exists():
             prior = _load_draft_record(config, require_uploaded_assets=False)
             if prior.get("local_asset_manifest") != _local_manifest_record(inventory):
@@ -1987,7 +2000,7 @@ def _parser() -> argparse.ArgumentParser:
         "--tag-validation-receipt",
         type=Path,
         help=(
-            "Hash-manifested PASS receipt from a fresh public v0.3.0 tag clone; "
+            "Hash-manifested PASS receipt from a fresh public v0.3.1 tag clone; "
             "required for release mutation phases"
         ),
     )

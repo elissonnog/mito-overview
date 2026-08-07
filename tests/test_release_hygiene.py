@@ -33,8 +33,7 @@ def test_current_tracked_tree_passes_release_hygiene() -> None:
 @pytest.mark.parametrize(
     ("relative_path", "payload", "rule"),
     [
-        ("examples/report.html", b"sample R20" + b"26-124", "internal_sample_id"),
-        ("run.txt", b"/group/" + b"xgai/work/bioinfo", "mcw_group_path"),
+        ("examples/report.html", b"sample R20" + b"99-999", "internal_sample_id"),
         (
             "binary.bam",
             b"prefix\x00/Users/" + b"elopes/private\x00",
@@ -54,6 +53,11 @@ def test_current_tracked_tree_passes_release_hygiene() -> None:
             "logs/root.txt",
             b"output=/ro" + b"ot/private/output.tsv",
             "absolute_user_home_path",
+        ),
+        (
+            "logs/volume.txt",
+            b"output=/Vol" + b"umes/research-volume/private/output.tsv",
+            "absolute_local_volume_path",
         ),
         (
             "credentials/key.pem",
@@ -112,9 +116,9 @@ def test_manuscript_wording_is_opt_in_and_not_a_software_release_gate(
 
 def test_ignored_private_output_is_not_scanned(tmp_path: Path) -> None:
     repo = make_repo(tmp_path, ".gitignore", b"private/\n")
-    private = repo / "private" / ("R20" + "26-124.html")
+    private = repo / "private" / ("R20" + "99-999.html")
     private.parent.mkdir()
-    private.write_text("/group/" + "xgai/work", encoding="utf-8")
+    private.write_text("/Vol" + "umes/research-volume/work", encoding="utf-8")
     assert hygiene.find_violations(repo) == []
 
 
@@ -164,6 +168,7 @@ def test_extracted_sdist_uses_sources_manifest_not_runtime_cache(tmp_path: Path)
         b"macOS example: /Users/" + b"alice/project/output.tsv",
         b"Linux example: /home/" + b"<username>/project/output.tsv",
         b"Windows example: C:" + b"\\Users\\username\\project\\output.tsv",
+        b"macOS volume example: /Volumes/institution-private/project/output.tsv",
         b"url=https://user:" + b"REDACTED@example.org/archive",
         b"API_" + b"TOKEN=${API_TOKEN}",
         b"password=" + b"changeme",
