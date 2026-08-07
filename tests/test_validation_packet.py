@@ -2238,6 +2238,7 @@ def create_validation_root(tmp_path: Path, repo: Path, commit: str) -> Path:
     (root / "environment.txt").write_text(
         (
             "release_version=v0.3.1\n"
+            "scientific_protocol_version=v0.3.0\n"
             f"git_commit={commit}\n"
             f"repository={REPOSITORY}\n"
             f"github_actions_run_id={GITHUB_RUN_ID}\n"
@@ -2659,6 +2660,7 @@ def test_github_only_packet_builds_and_verifies_from_fresh_extraction(
     identity = json.loads((packet / "release_identity.json").read_text(encoding="utf-8"))
     assert run_record["schema_version"] == "2.0"
     assert run_record["validation_profile"] == "github_release_validation_v1"
+    assert run_record["scientific_protocol_version"] == "v0.3.0"
     assert run_record["github_actions_run_id"] == GITHUB_RUN_ID
     assert run_record["final_push_github_actions_run_id"] == GITHUB_RUN_ID
     assert run_record["pull_request_number"] == PULL_REQUEST_NUMBER
@@ -2668,6 +2670,8 @@ def test_github_only_packet_builds_and_verifies_from_fresh_extraction(
         == PUBLIC_VALIDATION_RUN_ID
     )
     assert identity["git_commit"] == commit
+    assert identity["scientific_protocol_version"] == "v0.3.0"
+    assert identity["environment_scientific_protocol_version"] == "v0.3.0"
     assert identity["dist_artifacts"] == read_json(
         packet / "acceptance/fresh_clone.json"
     )["distributions"]
@@ -4524,6 +4528,23 @@ def test_packet_rejects_pull_request_environment_identity_drift(
         encoding="utf-8",
     )
     with pytest.raises(ValueError, match="pull_request_github_actions_run_id"):
+        packet_builder.build_packet(packet_args(validation, repo, tmp_path / "output"))
+
+
+def test_packet_rejects_scientific_protocol_environment_drift(
+    tmp_path: Path,
+) -> None:
+    repo, commit = create_release_repo(tmp_path)
+    validation = create_validation_root(tmp_path, repo, commit)
+    environment = validation / "environment.txt"
+    environment.write_text(
+        environment.read_text(encoding="utf-8").replace(
+            "scientific_protocol_version=v0.3.0",
+            "scientific_protocol_version=v9.9.9",
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="scientific_protocol_version"):
         packet_builder.build_packet(packet_args(validation, repo, tmp_path / "output"))
 
 

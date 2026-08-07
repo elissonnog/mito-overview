@@ -1010,6 +1010,8 @@ def test_runner_keeps_transient_work_outside_validation_evidence_tree() -> None:
 
 def test_public_matrix_is_bound_to_public_clone_and_force_installed_wheel() -> None:
     text = RUNNER.read_text(encoding="utf-8")
+    assert 'SCIENTIFIC_PROTOCOL_VERSION="v0.3.0"' in text
+    assert 'echo "scientific_protocol_version=${SCIENTIFIC_PROTOCOL_VERSION}"' in text
     assert 'PREPARE_SCRIPT="${FRESH_CLONE_ROOT}/scripts/' in text
     assert 'PUBLIC_MATRIX="${FRESH_CLONE_ROOT}/scripts/' in text
     assert 'ISOLATION_WRAPPER="${FRESH_CLONE_ROOT}/scripts/' in text

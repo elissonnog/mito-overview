@@ -1459,6 +1459,7 @@ PY
 
 {
   echo "release_version=v0.3.1"
+  echo "scientific_protocol_version=${SCIENTIFIC_PROTOCOL_VERSION}"
   echo "git_commit=${CANDIDATE_COMMIT}"
   echo "git_branch=$(git -C "${REPO_ROOT}" branch --show-current)"
   echo "repository=${REPOSITORY}"

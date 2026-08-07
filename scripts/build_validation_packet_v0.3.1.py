@@ -1570,6 +1570,7 @@ def canonicalize_zenodo_metadata(
 def parse_environment_identity(path: Path) -> dict[str, str]:
     required = {
         "release_version",
+        "scientific_protocol_version",
         "git_commit",
         "repository",
         "github_actions_run_id",
@@ -5005,6 +5006,12 @@ def resolve_release_identity(
             "environment.txt release_version does not match requested release: "
             f"{environment['release_version']} != {release_version}"
         )
+    if environment["scientific_protocol_version"] != SCIENTIFIC_PROTOCOL_VERSION:
+        raise ValueError(
+            "environment.txt scientific_protocol_version does not match the "
+            f"frozen protocol: {environment['scientific_protocol_version']} != "
+            f"{SCIENTIFIC_PROTOCOL_VERSION}"
+        )
     if environment["git_commit"] != head:
         raise ValueError(
             "environment.txt git_commit does not match repository HEAD: "
@@ -5056,11 +5063,15 @@ def resolve_release_identity(
         "schema_version": PACKET_SCHEMA_VERSION,
         "validation_profile": VALIDATION_PROFILE,
         "release_version": release_version,
+        "scientific_protocol_version": SCIENTIFIC_PROTOCOL_VERSION,
         "package_name": package_name,
         "package_version": package_version,
         "repository": repository,
         "git_commit": head,
         "environment_release_version": environment["release_version"],
+        "environment_scientific_protocol_version": environment[
+            "scientific_protocol_version"
+        ],
         "environment_git_commit": environment["git_commit"],
         "environment_github_actions_run_id": int(
             environment["github_actions_run_id"]
@@ -8213,7 +8224,7 @@ if observed_module_rows != expected_module_rows:
 
 def parse_environment(path):
     wanted = {
-        "release_version", "git_commit", "repository", "github_actions_run_id",
+        "release_version", "scientific_protocol_version", "git_commit", "repository", "github_actions_run_id",
         "final_push_github_actions_run_id", "pull_request_number",
         "pull_request_github_actions_run_id",
         "public_validation_github_actions_run_id",
@@ -8253,6 +8264,12 @@ if (
     raise SystemExit("release identity public-source metadata binding mismatch")
 if run.get("release_version") != "v0.3.1" or identity.get("release_version") != "v0.3.1":
     raise SystemExit("release identity mismatch")
+if (
+    run.get("scientific_protocol_version") != "v0.3.0"
+    or identity.get("scientific_protocol_version") != "v0.3.0"
+    or environment.get("scientific_protocol_version") != "v0.3.0"
+):
+    raise SystemExit("scientific protocol identity mismatch")
 if identity.get("package_version") != "0.3.1" or identity.get("package_name") != "mito-overview":
     raise SystemExit("package identity mismatch")
 commit = identity.get("git_commit")
@@ -9683,6 +9700,9 @@ def build_packet(args: argparse.Namespace) -> Path:
         "schema_version": PACKET_SCHEMA_VERSION,
         "validation_profile": VALIDATION_PROFILE,
         "release_version": release_identity["release_version"],
+        "scientific_protocol_version": release_identity[
+            "scientific_protocol_version"
+        ],
         "git_commit": release_identity["git_commit"],
         "repository": release_identity["repository"],
         "github_actions_run_id": ci_identity["run_id"],

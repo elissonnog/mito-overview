@@ -19,6 +19,7 @@ from PIL import Image
 
 
 VERSION = "v0.3.1"
+SCIENTIFIC_PROTOCOL_VERSION = "v0.3.0"
 PROFILE = "github_release_validation_v1"
 REPOSITORY = "https://github.com/elissonnog/mito-overview"
 REPORT_STEM = "MitoOverview_v0.3.1_release_validation_report"
@@ -213,6 +214,7 @@ def validate_build_provenance(
             "repository": REPOSITORY,
             "release_version": VERSION,
             "release_tag": VERSION,
+            "scientific_protocol_version": SCIENTIFIC_PROTOCOL_VERSION,
             "git_commit": final_sha,
             "validation_profile": PROFILE,
             "rendered_page_qa_required": True,
@@ -268,6 +270,7 @@ def validate_packet_binding(
             "evidence_type": "release_validation_archive_verification",
             "verdict": "PASS",
             "release_version": VERSION,
+            "scientific_protocol_version": SCIENTIFIC_PROTOCOL_VERSION,
             "git_commit": final_sha,
             "audit_zip": ZIP_NAME,
             "audit_zip_sha256": archive_digest,
@@ -336,6 +339,7 @@ def validate_packet_binding(
             "schema_version": "2.0",
             "validation_profile": PROFILE,
             "release_version": VERSION,
+            "scientific_protocol_version": SCIENTIFIC_PROTOCOL_VERSION,
             "repository": REPOSITORY,
             "git_commit": final_sha,
         }
@@ -400,6 +404,7 @@ def finalize(
         "repository": REPOSITORY,
         "release_version": VERSION,
         "release_tag": VERSION,
+        "scientific_protocol_version": SCIENTIFIC_PROTOCOL_VERSION,
         "git_commit": final_sha,
         "validation_profile": PROFILE,
         "validation_archive": file_record(validation_zip, ZIP_NAME),

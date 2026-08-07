@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any
 
 VERSION = "v0.3.1"
+SCIENTIFIC_PROTOCOL_VERSION = "v0.3.0"
 PROFILE = "github_release_validation_v1"
 REPOSITORY = "https://github.com/elissonnog/mito-overview"
 REPORT_STEM = "MitoOverview_v0.3.1_release_validation_report"
@@ -171,6 +172,7 @@ def require_identity(payload: dict[str, Any], final_sha: str, audit_digest: str)
         "evidence_type": "release_validation_archive_verification",
         "verdict": "PASS",
         "release_version": VERSION,
+        "scientific_protocol_version": SCIENTIFIC_PROTOCOL_VERSION,
         "git_commit": final_sha,
         "audit_zip": ZIP_NAME,
         "audit_zip_sha256": audit_digest,
@@ -224,6 +226,7 @@ def require_report_identity(payload: dict[str, Any], final_sha: str, label: str)
         "repository": REPOSITORY,
         "release_version": VERSION,
         "release_tag": VERSION,
+        "scientific_protocol_version": SCIENTIFIC_PROTOCOL_VERSION,
         "git_commit": final_sha,
         "validation_profile": PROFILE,
     }
@@ -526,6 +529,7 @@ def populate_and_verify_stage(
         "repository": REPOSITORY,
         "release_version": VERSION,
         "release_tag": VERSION,
+        "scientific_protocol_version": SCIENTIFIC_PROTOCOL_VERSION,
         "git_commit": final_sha,
         "validation_zip_sha256": audit_digest,
         "report_provenance_archive_path": (
@@ -545,6 +549,7 @@ def populate_and_verify_stage(
         "repository_slug": "elissonnog/mito-overview",
         "release_version": VERSION,
         "release_tag": VERSION,
+        "scientific_protocol_version": SCIENTIFIC_PROTOCOL_VERSION,
         "git_commit": final_sha,
         "validation_zip_sha256": audit_digest,
         "assets": rows,
@@ -555,6 +560,7 @@ def populate_and_verify_stage(
         "repository": REPOSITORY,
         "release_version": VERSION,
         "release_tag": VERSION,
+        "scientific_protocol_version": SCIENTIFIC_PROTOCOL_VERSION,
         "git_commit": final_sha,
         "assets": [
             {

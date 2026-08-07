@@ -402,7 +402,8 @@ def _build_release_asset_source(
         encoding="utf-8",
     )
     (source / "mito-overview-v0.3.1-environment.txt").write_text(
-        f"release_version=v0.3.1\ngit_commit={bound_sha}\n",
+        f"release_version=v0.3.1\nscientific_protocol_version=v0.3.0\n"
+        f"git_commit={bound_sha}\n",
         encoding="utf-8",
     )
     with zipfile.ZipFile(
@@ -444,6 +445,7 @@ def _build_release_asset_source(
         "schema_version": "2.0",
         "validation_profile": "github_release_validation_v1",
         "release_version": "v0.3.1",
+        "scientific_protocol_version": "v0.3.0",
         "git_commit": bound_sha,
         "repository": PUBLIC_FIXTURE_URL,
     }
@@ -532,6 +534,7 @@ def _build_release_asset_source(
         "repository": PUBLIC_FIXTURE_URL,
         "release_version": "v0.3.1",
         "release_tag": "v0.3.1",
+        "scientific_protocol_version": "v0.3.0",
         "git_commit": bound_sha,
         "validation_profile": "github_release_validation_v1",
         "packet_identity": {
@@ -580,6 +583,7 @@ def _build_release_asset_source(
         "repository": PUBLIC_FIXTURE_URL,
         "release_version": "v0.3.1",
         "release_tag": "v0.3.1",
+        "scientific_protocol_version": "v0.3.0",
         "git_commit": bound_sha,
         "validation_profile": "github_release_validation_v1",
         "validation_archive": {
@@ -643,6 +647,7 @@ def _build_release_asset_source(
         "evidence_type": "release_validation_archive_verification",
         "verdict": "PASS",
         "release_version": "v0.3.1",
+        "scientific_protocol_version": "v0.3.0",
         "git_commit": bound_sha,
         "audit_zip": archive_path.name,
         "audit_zip_sha256": hashlib.sha256(archive_path.read_bytes()).hexdigest(),
@@ -653,6 +658,7 @@ def _build_release_asset_source(
             "repository": PUBLIC_FIXTURE_URL,
             "release_version": "v0.3.1",
             "release_tag": "v0.3.1",
+            "scientific_protocol_version": "v0.3.0",
             "git_commit": bound_sha,
             "validation_zip_sha256": hashlib.sha256(archive_path.read_bytes()).hexdigest(),
             "report_provenance_archive_path": provenance_name,
@@ -670,6 +676,7 @@ def _build_release_asset_source(
             "repository_slug": "fixture/mito-overview",
             "release_version": "v0.3.1",
             "release_tag": "v0.3.1",
+            "scientific_protocol_version": "v0.3.0",
             "git_commit": bound_sha,
             "assets": report_assets,
         },
@@ -679,6 +686,7 @@ def _build_release_asset_source(
             "repository": PUBLIC_FIXTURE_URL,
             "release_version": "v0.3.1",
             "release_tag": "v0.3.1",
+            "scientific_protocol_version": "v0.3.0",
             "git_commit": bound_sha,
             "assets": [
                 {
@@ -963,6 +971,7 @@ def test_runner_success_path_emits_hash_verified_tag_bound_evidence(tmp_path: Pa
     assert receipt["verdict"] == "PASS"
     assert receipt["case_count"] == 16
     assert receipt["git_commit"] == final_sha
+    assert receipt["scientific_protocol_version"] == "v0.3.0"
     assert receipt["tag_object_sha"] == tag_object_sha
     assert receipt["trusted_asset_count"] == len(CANONICAL_ASSET_NAMES)
     environment_lines = (evidence_root / "environment.txt").read_text(
@@ -979,6 +988,7 @@ def test_runner_success_path_emits_hash_verified_tag_bound_evidence(tmp_path: Pa
     assert semantic["verified"] is True
     assert semantic["git_commit"] == final_sha
     assert semantic["repository"] == PUBLIC_FIXTURE_URL
+    assert semantic["scientific_protocol_version"] == "v0.3.0"
     assert semantic["report_asset_count"] == len(REPORT_ASSET_NAMES)
     assert {row["name"] for row in semantic["report_assets"]} == REPORT_ASSET_NAMES
     assert semantic["distribution_bytes_match_packet"] is True
@@ -988,6 +998,7 @@ def test_runner_success_path_emits_hash_verified_tag_bound_evidence(tmp_path: Pa
         )
     )
     assert distribution_evidence["verdict"] == "PASS"
+    assert distribution_evidence["scientific_protocol_version"] == "v0.3.0"
     assert all(
         row["member_payloads_identical"]
         for row in distribution_evidence["distributions"]
@@ -1017,6 +1028,7 @@ def test_runner_success_path_emits_hash_verified_tag_bound_evidence(tmp_path: Pa
         trusted_path.read_bytes()
     ).hexdigest()
     assert trusted["git_commit"] == final_sha
+    assert trusted["scientific_protocol_version"] == "v0.3.0"
     assert trusted["tag_object_sha"] == tag_object_sha
     assert trusted["asset_count"] == len(CANONICAL_ASSET_NAMES)
     assert [item["name"] for item in trusted["assets"]] == sorted(
@@ -1028,6 +1040,18 @@ def test_runner_success_path_emits_hash_verified_tag_bound_evidence(tmp_path: Pa
         path = release_assets / item["name"]
         assert path.stat().st_size == item["size"]
         assert hashlib.sha256(path.read_bytes()).hexdigest() == item["sha256"]
+
+    release_environment = json.loads(
+        (evidence_root / "release_environment_verification.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    tag_identity = json.loads(
+        (evidence_root / "tag_identity.json").read_text(encoding="utf-8")
+    )
+    assert release_environment["scientific_protocol_version"] == "v0.3.0"
+    assert tag_identity["scientific_protocol_version"] == "v0.3.0"
+    assert "scientific_protocol_version=v0.3.0" in environment_lines
 
 
 def test_runner_rejects_incomplete_example_inventory_without_pass_receipt(

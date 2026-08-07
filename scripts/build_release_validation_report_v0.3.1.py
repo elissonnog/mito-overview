@@ -17,6 +17,7 @@ import math
 import os
 import re
 import shutil
+import stat
 import subprocess
 import tempfile
 from collections import Counter, defaultdict
@@ -856,10 +857,23 @@ def validate_artifact_manifest(root: Path) -> None:
         raise ReportValidationError(
             "Packet contains symlinked entries: " + ", ".join(symlinks)
         )
+    special_entries = sorted(
+        path.relative_to(root).as_posix()
+        for path in packet_entries
+        if not path.is_symlink()
+        and not stat.S_ISREG(path.lstat().st_mode)
+        and not stat.S_ISDIR(path.lstat().st_mode)
+    )
+    if special_entries:
+        raise ReportValidationError(
+            "Packet contains special filesystem entries: "
+            + ", ".join(special_entries)
+        )
     actual = {
         path.relative_to(root).as_posix()
         for path in packet_entries
-        if path.is_file() and path.relative_to(root).as_posix() != "artifacts.sha256"
+        if stat.S_ISREG(path.lstat().st_mode)
+        and path.relative_to(root).as_posix() != "artifacts.sha256"
     }
     unmanifested = sorted(actual - set(manifest))
     if unmanifested:
@@ -883,6 +897,7 @@ def validate_publication(
     required = {
         "schema_version",
         "release_version",
+        "scientific_protocol_version",
         "git_commit",
         "repository",
         "release_tag",
@@ -903,6 +918,11 @@ def validate_publication(
         )
     if publication["schema_version"] != "1.0":
         raise ReportValidationError("GitHub publication metadata schema must be 1.0")
+    if publication["scientific_protocol_version"] != SCIENTIFIC_PROTOCOL_VERSION:
+        raise ReportValidationError(
+            "GitHub publication scientific protocol must be "
+            f"{SCIENTIFIC_PROTOCOL_VERSION}"
+        )
     if publication["release_tag"] != EXPECTED_VERSION:
         raise ReportValidationError(f"GitHub release tag must be {EXPECTED_VERSION}")
     if publication["publication_state"] != "prepublication":
@@ -1075,6 +1095,9 @@ def validate_identity(
         "git_commit",
         "repository",
     }
+    if expected_release_version == EXPECTED_VERSION:
+        required_run.add("scientific_protocol_version")
+        required_release.add("scientific_protocol_version")
     missing_release = sorted(required_release - set(release))
     if missing_release:
         raise ReportValidationError(
@@ -1090,6 +1113,15 @@ def validate_identity(
         if value.get("release_version") != expected_release_version:
             raise ReportValidationError(
                 f"{label} release must be {expected_release_version}"
+            )
+        if (
+            expected_release_version == EXPECTED_VERSION
+            and value.get("scientific_protocol_version")
+            != SCIENTIFIC_PROTOCOL_VERSION
+        ):
+            raise ReportValidationError(
+                f"{label} scientific protocol must be "
+                f"{SCIENTIFIC_PROTOCOL_VERSION}"
             )
 
     commit = run.get("git_commit")
@@ -1710,6 +1742,22 @@ def load_and_validate_packet(
     environment_text = (packet_root / "environment.txt").read_text(encoding="utf-8")
     if not environment_text.strip():
         raise ReportValidationError("environment.txt is empty")
+    if expected_release_version == EXPECTED_VERSION:
+        environment = {}
+        for line in environment_text.splitlines():
+            if "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            if key in environment:
+                raise ReportValidationError(
+                    f"environment.txt contains duplicate identity key: {key}"
+                )
+            environment[key] = value
+        if environment.get("scientific_protocol_version") != SCIENTIFIC_PROTOCOL_VERSION:
+            raise ReportValidationError(
+                "environment.txt scientific protocol must be "
+                f"{SCIENTIFIC_PROTOCOL_VERSION}"
+            )
     return ReportEvidence(
         packet_root=packet_root,
         run=run,
@@ -2894,6 +2942,9 @@ def write_build_provenance(
         "provenance_type": "mito_overview_release_report_build",
         "repository": evidence.run["repository"],
         "release_version": evidence.run["release_version"],
+        "scientific_protocol_version": evidence.run[
+            "scientific_protocol_version"
+        ],
         "release_tag": evidence.publication["release_tag"],
         "git_commit": evidence.run["git_commit"],
         "validation_profile": evidence.run["validation_profile"],

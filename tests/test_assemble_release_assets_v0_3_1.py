@@ -74,6 +74,7 @@ def _write_packet(
             "schema_version": "2.0",
             "validation_profile": "github_release_validation_v1",
             "release_version": "v0.3.1",
+            "scientific_protocol_version": "v0.3.0",
             "git_commit": FINAL_SHA,
             "repository": REPOSITORY,
         },
@@ -81,6 +82,7 @@ def _write_packet(
             "schema_version": "2.0",
             "validation_profile": "github_release_validation_v1",
             "release_version": "v0.3.1",
+            "scientific_protocol_version": "v0.3.0",
             "git_commit": FINAL_SHA,
             "repository": REPOSITORY,
             "package_name": "mito-overview",
@@ -185,6 +187,7 @@ def _write_packet(
                 "evidence_type": "release_validation_archive_verification",
                 "verdict": "PASS",
                 "release_version": "v0.3.1",
+                "scientific_protocol_version": "v0.3.0",
                 "git_commit": FINAL_SHA,
                 "audit_zip": archive.name,
                 "audit_zip_sha256": _sha256(archive),
@@ -248,6 +251,7 @@ def _write_inputs(root: Path) -> dict[str, Path]:
         "repository": REPOSITORY,
         "release_version": "v0.3.1",
         "release_tag": "v0.3.1",
+        "scientific_protocol_version": "v0.3.0",
         "git_commit": FINAL_SHA,
         "validation_profile": "github_release_validation_v1",
         "packet_identity": packet_records,
@@ -283,6 +287,7 @@ def _write_inputs(root: Path) -> dict[str, Path]:
         "repository": REPOSITORY,
         "release_version": "v0.3.1",
         "release_tag": "v0.3.1",
+        "scientific_protocol_version": "v0.3.0",
         "git_commit": FINAL_SHA,
         "validation_profile": "github_release_validation_v1",
         "validation_archive": _record(archive, archive.name),
@@ -322,7 +327,8 @@ def _write_inputs(root: Path) -> dict[str, Path]:
     notes.write_text(identity, encoding="utf-8")
     environment = root / "environment.txt"
     environment.write_text(
-        f"release_version=v0.3.1\nrepository={REPOSITORY}\ngit_commit={FINAL_SHA}\n",
+        f"release_version=v0.3.1\nscientific_protocol_version=v0.3.0\n"
+        f"repository={REPOSITORY}\ngit_commit={FINAL_SHA}\n",
         encoding="utf-8",
     )
     locks = root / "locks"
@@ -382,10 +388,13 @@ def test_assembler_builds_exact_semantically_bound_inventory(tmp_path: Path) -> 
     result = json.loads(completed.stdout)
     assert result["verified"] is True
     assert result["git_commit"] == FINAL_SHA
+    assert result["scientific_protocol_version"] == "v0.3.0"
     receipt = json.loads(
         (output / "mito-overview-v0.3.1-verification.json").read_text()
     )
     manifest = receipt["report_asset_manifest"]
+    assert receipt["scientific_protocol_version"] == "v0.3.0"
+    assert manifest["scientific_protocol_version"] == "v0.3.0"
     assert manifest["git_commit"] == FINAL_SHA
     assert manifest["validation_zip_sha256"] == _sha256(inputs["archive"])
     assert {row["name"] for row in manifest["assets"]} == REPORT_ASSETS
@@ -601,3 +610,16 @@ def test_assembler_rejects_receipt_bound_to_other_commit(tmp_path: Path) -> None
     completed, _ = _run(tmp_path, inputs)
     assert completed.returncode != 0
     assert "packet verification identity mismatch for git_commit" in completed.stderr
+
+
+def test_assembler_rejects_packet_verification_protocol_drift(tmp_path: Path) -> None:
+    inputs = _write_inputs(tmp_path)
+    payload = json.loads(inputs["receipt"].read_text())
+    payload["scientific_protocol_version"] = "v0.2.1"
+    inputs["receipt"].write_text(json.dumps(payload) + "\n")
+
+    completed, output = _run(tmp_path, inputs)
+
+    assert completed.returncode != 0
+    assert "scientific_protocol_version" in completed.stderr
+    assert not output.exists()

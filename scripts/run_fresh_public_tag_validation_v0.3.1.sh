@@ -163,6 +163,20 @@ run_case annotated_tag_identity "annotated tag peeled to FINAL_SHA"
   --repo-root "${CLONE_ROOT}" \
   --expected-commit "${FINAL_SHA}" \
   --output "${EVIDENCE_ROOT}/release_environment_verification.json"
+"${PYTHON_BIN}" - "${EVIDENCE_ROOT}/release_environment_verification.json" \
+  "${SCIENTIFIC_PROTOCOL_VERSION}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+payload = json.loads(path.read_text(encoding="utf-8"))
+observed = payload.get("scientific_protocol_version")
+if observed not in (None, sys.argv[2]):
+    raise SystemExit("release environment scientific protocol differs")
+payload["scientific_protocol_version"] = sys.argv[2]
+path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+PY
 
 write_command locked_environment <<EOF
 #!/usr/bin/env bash
@@ -199,6 +213,7 @@ htslib=1.23.1
 minimap2=2.31-r1302
 bwa=0.7.19-r1273
 threads=4
+scientific_protocol_version=${SCIENTIFIC_PROTOCOL_VERSION}
 EOF
 
 write_command wheel_sdist_build <<EOF
@@ -220,6 +235,20 @@ $(printf '%q' "${PYTHON_BIN}") \
   $(printf '%q' "${EVIDENCE_ROOT}/distribution_payload_equivalence.json")
 EOF
 run_case distribution_payload_equivalence "packet-bound distributions matched clean tag rebuild member payloads"
+"${PYTHON_BIN}" - "${EVIDENCE_ROOT}/distribution_payload_equivalence.json" \
+  "${SCIENTIFIC_PROTOCOL_VERSION}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+payload = json.loads(path.read_text(encoding="utf-8"))
+observed = payload.get("scientific_protocol_version")
+if observed not in (None, sys.argv[2]):
+    raise SystemExit("distribution evidence scientific protocol differs")
+payload["scientific_protocol_version"] = sys.argv[2]
+path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+PY
 
 write_command installed_cli <<EOF
 #!/usr/bin/env bash
@@ -439,7 +468,8 @@ $(printf '%q' "${PYTHON_BIN}") - \
   $(printf '%q' "${REPOSITORY_URL#https://github.com/}") \
   $(printf '%q' "${FINAL_SHA}") \
   $(printf '%q' "${TAG}") \
-  $(printf '%q' "${TAG_OBJECT_SHA}") <<'PY'
+  $(printf '%q' "${TAG_OBJECT_SHA}") \
+  $(printf '%q' "${SCIENTIFIC_PROTOCOL_VERSION}") <<'PY'
 import hashlib
 import json
 import re
@@ -495,6 +525,7 @@ payload = {
     "repository": sys.argv[3],
     "repository_slug": sys.argv[4],
     "release_tag": sys.argv[6],
+    "scientific_protocol_version": sys.argv[8],
     "git_commit": sys.argv[5],
     "checked_out_commit": sys.argv[5],
     "tag_object_sha": sys.argv[7],
@@ -509,7 +540,8 @@ run_case trusted_release_assets "canonical release assets were sealed to the ann
 
 "${PYTHON_BIN}" - \
   "${EVIDENCE_ROOT}/tag_identity.json" "${FINAL_SHA}" "${TAG}" \
-  "${TAG_OBJECT_SHA}" "${EVIDENCE_ROOT}/release_environment_verification.json" <<'PY'
+  "${TAG_OBJECT_SHA}" "${EVIDENCE_ROOT}/release_environment_verification.json" \
+  "${SCIENTIFIC_PROTOCOL_VERSION}" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -518,6 +550,7 @@ environment = json.loads(Path(sys.argv[5]).read_text(encoding="utf-8"))
 if (
     environment.get("repository_commit") != sys.argv[2]
     or environment.get("repository_clean") is not True
+    or environment.get("scientific_protocol_version") != sys.argv[6]
 ):
     raise SystemExit("release environment identity does not match the public tag")
 Path(sys.argv[1]).write_text(
@@ -528,6 +561,7 @@ Path(sys.argv[1]).write_text(
             "git_commit": sys.argv[2],
             "git_tree": environment["repository_tree"],
             "release_tag": sys.argv[3],
+            "scientific_protocol_version": sys.argv[6],
             "tag_object_sha": sys.argv[4],
         },
         indent=2,
@@ -563,7 +597,7 @@ REPOSITORY_SLUG="${REPOSITORY_URL#https://github.com/}"
   "${EVIDENCE_ROOT}/trusted_release_assets.json" \
   "${EVIDENCE_ROOT}/release_environment_verification.json" \
   "${REPOSITORY_URL}" "${REPOSITORY_SLUG}" "${FINAL_SHA}" "${TAG}" \
-  "${TAG_OBJECT_SHA}" <<'PY'
+  "${TAG_OBJECT_SHA}" "${SCIENTIFIC_PROTOCOL_VERSION}" <<'PY'
 import csv
 import hashlib
 import json
@@ -586,6 +620,7 @@ distribution_evidence = json.loads(
 if (
     distribution_evidence.get("evidence_type") != "distribution_payload_equivalence"
     or distribution_evidence.get("release_version") != "v0.3.1"
+    or distribution_evidence.get("scientific_protocol_version") != sys.argv[10]
     or distribution_evidence.get("verdict") != "PASS"
     or distribution_evidence.get("verified") is not True
     or len(distribution_evidence.get("distributions", [])) != 2
@@ -602,6 +637,7 @@ expected_trusted_identity = {
     "repository": sys.argv[5],
     "repository_slug": sys.argv[6],
     "release_tag": sys.argv[8],
+    "scientific_protocol_version": sys.argv[10],
     "git_commit": sys.argv[7],
     "checked_out_commit": sys.argv[7],
     "tag_object_sha": sys.argv[9],
@@ -615,6 +651,7 @@ environment = json.loads(environment_path.read_text(encoding="utf-8"))
 if (
     environment.get("repository_commit") != sys.argv[7]
     or environment.get("repository_clean") is not True
+    or environment.get("scientific_protocol_version") != sys.argv[10]
 ):
     raise SystemExit("release environment identity differs from the public tag")
 
@@ -625,6 +662,7 @@ payload = {
     "repository": sys.argv[5],
     "repository_slug": sys.argv[6],
     "release_tag": sys.argv[8],
+    "scientific_protocol_version": sys.argv[10],
     "git_commit": sys.argv[7],
     "checked_out_commit": sys.argv[7],
     "git_tree": environment["repository_tree"],

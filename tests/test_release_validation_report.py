@@ -4,8 +4,11 @@ import csv
 import hashlib
 import importlib.util
 import json
+import os
+import socket
 import subprocess
 import sys
+import tempfile
 import zipfile
 from pathlib import Path
 
@@ -133,6 +136,7 @@ def make_packet(tmp_path: Path) -> tuple[Path, Path, list[Path]]:
         "schema_version": "2.0",
         "validation_profile": "github_release_validation_v1",
         "release_version": "v0.3.1",
+        "scientific_protocol_version": "v0.3.0",
         "git_commit": COMMIT,
         "repository": REPOSITORY,
         "github_actions_run_id": RUN_ID,
@@ -154,6 +158,7 @@ def make_packet(tmp_path: Path) -> tuple[Path, Path, list[Path]]:
         "schema_version": "2.0",
         "validation_profile": "github_release_validation_v1",
         "release_version": "v0.3.1",
+        "scientific_protocol_version": "v0.3.0",
         "package_name": "mito-overview",
         "package_version": "0.3.1",
         "repository": REPOSITORY,
@@ -536,6 +541,7 @@ def make_packet(tmp_path: Path) -> tuple[Path, Path, list[Path]]:
     )
     (packet / "environment.txt").write_text(
         "release_version=v0.3.1\n"
+        "scientific_protocol_version=v0.3.0\n"
         f"git_commit={COMMIT}\n"
         "python=3.12.13\n"
         "samtools=1.23.1\n"
@@ -604,6 +610,7 @@ def make_packet(tmp_path: Path) -> tuple[Path, Path, list[Path]]:
             {
                 "schema_version": "1.0",
                 "release_version": "v0.3.1",
+                "scientific_protocol_version": "v0.3.0",
                 "git_commit": COMMIT,
                 "repository": REPOSITORY,
                 "release_tag": "v0.3.1",
@@ -848,6 +855,35 @@ def test_preflight_rejects_unmanifested_file_closed_inventory(tmp_path: Path) ->
 
     with pytest.raises(report_builder.ReportValidationError, match="unmanifested files"):
         report_builder.preflight_packet(packet)
+
+
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="FIFO unsupported")
+def test_preflight_rejects_unmanifested_fifo(tmp_path: Path) -> None:
+    packet, _, _ = make_packet(tmp_path)
+    os.mkfifo(packet / "unexpected.fifo")
+
+    with pytest.raises(
+        report_builder.ReportValidationError, match="special filesystem entries"
+    ):
+        report_builder.preflight_packet(packet)
+
+
+@pytest.mark.skipif(not hasattr(socket, "AF_UNIX"), reason="Unix sockets unsupported")
+def test_preflight_rejects_unmanifested_socket(tmp_path: Path) -> None:
+    packet, _, _ = make_packet(tmp_path)
+    with tempfile.TemporaryDirectory(dir="/tmp") as short_root:
+        socket_path = Path(short_root) / "s"
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as listener:
+            try:
+                listener.bind(str(socket_path))
+            except OSError as error:
+                pytest.skip(f"Unix socket creation unavailable: {error}")
+            socket_path.replace(packet / "unexpected.sock")
+            with pytest.raises(
+                report_builder.ReportValidationError,
+                match="special filesystem entries",
+            ):
+                report_builder.preflight_packet(packet)
 
 
 def test_preflight_failure_creates_no_report_output(tmp_path: Path) -> None:
@@ -1131,6 +1167,20 @@ def test_fails_closed_on_release_identity_drift(
         rewrite_artifact_manifest(packet)
 
     with pytest.raises(report_builder.ReportValidationError, match=message):
+        report_builder.generate_report(packet, publication, tmp_path / "report")
+
+
+def test_report_rejects_scientific_protocol_identity_drift(tmp_path: Path) -> None:
+    packet, publication, _ = make_packet(tmp_path)
+    run_path = packet / "run.json"
+    run = json.loads(run_path.read_text(encoding="utf-8"))
+    run["scientific_protocol_version"] = "v9.9.9"
+    run_path.write_text(json.dumps(run, indent=2) + "\n", encoding="utf-8")
+    rewrite_artifact_manifest(packet)
+
+    with pytest.raises(
+        report_builder.ReportValidationError, match="scientific protocol"
+    ):
         report_builder.generate_report(packet, publication, tmp_path / "report")
 
 

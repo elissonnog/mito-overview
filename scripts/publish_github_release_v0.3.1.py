@@ -21,6 +21,7 @@ from urllib.parse import urlsplit
 
 
 EXPECTED_TAG = "v0.3.1"
+SCIENTIFIC_PROTOCOL_VERSION = "v0.3.0"
 PUBLICATION_SCHEMA_VERSION = "1.0"
 TAG_VALIDATION_SCHEMA_VERSION = "2.0"
 TAG_VALIDATION_PROFILE = "fresh_public_tag_validation_v2"
@@ -930,6 +931,7 @@ def _base_receipt(
     payload: dict[str, Any] = {
         "schema_version": PUBLICATION_SCHEMA_VERSION,
         "release_version": config.tag,
+        "scientific_protocol_version": SCIENTIFIC_PROTOCOL_VERSION,
         "git_commit": config.final_sha,
         "repository": repository_url,
         "repository_url": repository_url,
@@ -1014,6 +1016,7 @@ def _validate_tag_validation_receipt(
         "repository": _repository_url(config),
         "repository_slug": config.repository,
         "release_tag": config.tag,
+        "scientific_protocol_version": SCIENTIFIC_PROTOCOL_VERSION,
         "git_commit": config.final_sha,
         "checked_out_commit": config.final_sha,
         "public_https_clone": True,
@@ -1104,6 +1107,7 @@ def _validate_tag_validation_receipt(
         "tracked_artifact_lock_sha256",
         "runtime_artifact_set_sha256",
         "repository_commit",
+        "scientific_protocol_version",
         "repository_tree",
         "repository_clean",
         "verified",
@@ -1129,6 +1133,8 @@ def _validate_tag_validation_receipt(
         )
         is None
         or release_environment.get("repository_commit") != config.final_sha
+        or release_environment.get("scientific_protocol_version")
+        != SCIENTIFIC_PROTOCOL_VERSION
         or release_environment.get("repository_tree") != git_tree
         or release_environment.get("repository_clean") is not True
         or release_environment.get("verified") is not True
@@ -1152,6 +1158,8 @@ def _validate_tag_validation_receipt(
         or distribution_evidence.get("evidence_type")
         != "distribution_payload_equivalence"
         or distribution_evidence.get("release_version") != config.tag
+        or distribution_evidence.get("scientific_protocol_version")
+        != SCIENTIFIC_PROTOCOL_VERSION
         or distribution_evidence.get("verdict") != "PASS"
         or distribution_evidence.get("verified") is not True
         or not isinstance(distribution_rows, list)
@@ -1184,6 +1192,7 @@ def _validate_tag_validation_receipt(
         "repository": _repository_url(config),
         "repository_slug": config.repository,
         "release_tag": config.tag,
+        "scientific_protocol_version": SCIENTIFIC_PROTOCOL_VERSION,
         "git_commit": config.final_sha,
         "checked_out_commit": config.final_sha,
         "tag_object_sha": tag_object_sha,
@@ -1252,6 +1261,7 @@ def _validate_tag_validation_receipt(
         "git_commit": config.final_sha,
         "git_tree": git_tree,
         "release_tag": config.tag,
+        "scientific_protocol_version": SCIENTIFIC_PROTOCOL_VERSION,
         "tag_object_sha": tag_object_sha,
     }:
         raise PublicationError("Fresh public-tag annotated-tag identity differs")
@@ -1285,6 +1295,7 @@ def _validate_tag_validation_receipt(
     return {
         "schema_version": TAG_VALIDATION_SCHEMA_VERSION,
         "validation_profile": TAG_VALIDATION_PROFILE,
+        "scientific_protocol_version": SCIENTIFIC_PROTOCOL_VERSION,
         "receipt_sha256": _sha256_file(receipt_path),
         "evidence_manifest_sha256": manifest_sha,
         "trusted_asset_manifest_sha256": trusted_digest,
@@ -1355,6 +1366,7 @@ def _verify_prepublication_mode(runner: Runner, config: PublicationConfig) -> Pa
     payload: dict[str, Any] = {
         "schema_version": PUBLICATION_SCHEMA_VERSION,
         "release_version": config.tag,
+        "scientific_protocol_version": SCIENTIFIC_PROTOCOL_VERSION,
         "git_commit": config.final_sha,
         "repository": _repository_url(config),
         "repository_url": _repository_url(config),
@@ -1398,6 +1410,7 @@ def _validate_receipt_identity(record: dict[str, Any], config: PublicationConfig
     required = {
         "schema_version": PUBLICATION_SCHEMA_VERSION,
         "release_version": config.tag,
+        "scientific_protocol_version": SCIENTIFIC_PROTOCOL_VERSION,
         "git_commit": config.final_sha,
         "repository": _repository_url(config),
         "repository_url": _repository_url(config),

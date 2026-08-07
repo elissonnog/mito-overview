@@ -121,6 +121,7 @@ def _write_tag_validation_evidence(root: Path, asset_root: Path) -> Path:
                 "minimap2=2.31-r1302",
                 "bwa=0.7.19-r1273",
                 "threads=4",
+                "scientific_protocol_version=v0.3.0",
             )
         )
         + "\n",
@@ -134,6 +135,7 @@ def _write_tag_validation_evidence(root: Path, asset_root: Path) -> Path:
                 "git_commit": FINAL_SHA,
                 "git_tree": FINAL_TREE,
                 "release_tag": publication.EXPECTED_TAG,
+                "scientific_protocol_version": publication.SCIENTIFIC_PROTOCOL_VERSION,
                 "tag_object_sha": TAG_OBJECT_SHA,
             },
             indent=2,
@@ -153,6 +155,7 @@ def _write_tag_validation_evidence(root: Path, asset_root: Path) -> Path:
                 "tracked_artifact_lock_sha256": REMOTE_LOCK_SHA256,
                 "runtime_artifact_set_sha256": REMOTE_RUNTIME_SET_SHA256,
                 "repository_commit": FINAL_SHA,
+                "scientific_protocol_version": publication.SCIENTIFIC_PROTOCOL_VERSION,
                 "repository_tree": FINAL_TREE,
                 "repository_clean": True,
                 "verified": True,
@@ -174,6 +177,7 @@ def _write_tag_validation_evidence(root: Path, asset_root: Path) -> Path:
                 "schema_version": "1.0",
                 "evidence_type": "distribution_payload_equivalence",
                 "release_version": publication.EXPECTED_TAG,
+                "scientific_protocol_version": publication.SCIENTIFIC_PROTOCOL_VERSION,
                 "distributions": [
                     {
                         "filename": name,
@@ -209,6 +213,7 @@ def _write_tag_validation_evidence(root: Path, asset_root: Path) -> Path:
                 "repository": f"https://github.com/{REPOSITORY}",
                 "repository_slug": REPOSITORY,
                 "release_tag": publication.EXPECTED_TAG,
+                "scientific_protocol_version": publication.SCIENTIFIC_PROTOCOL_VERSION,
                 "git_commit": FINAL_SHA,
                 "checked_out_commit": FINAL_SHA,
                 "tag_object_sha": TAG_OBJECT_SHA,
@@ -248,6 +253,7 @@ def _write_tag_validation_evidence(root: Path, asset_root: Path) -> Path:
                 "repository": f"https://github.com/{REPOSITORY}",
                 "repository_slug": REPOSITORY,
                 "release_tag": publication.EXPECTED_TAG,
+                "scientific_protocol_version": publication.SCIENTIFIC_PROTOCOL_VERSION,
                 "git_commit": FINAL_SHA,
                 "checked_out_commit": FINAL_SHA,
                 "git_tree": FINAL_TREE,
@@ -813,6 +819,38 @@ def test_resealed_environment_tree_substitution_blocks_publication(
     with pytest.raises(
         publication.PublicationError,
         match="Release environment verification identity differs",
+    ):
+        publication.publish_github_release(config, runner)
+    assert runner.calls == []
+    assert runner.mutations == []
+
+
+@pytest.mark.parametrize(
+    "record_name",
+    [
+        "release_environment_verification.json",
+        "distribution_payload_equivalence.json",
+        "trusted_release_assets.json",
+        "tag_identity.json",
+        "fresh_public_tag_validation.json",
+    ],
+)
+def test_resealed_scientific_protocol_drift_blocks_publication(
+    tmp_path: Path, record_name: str
+) -> None:
+    config = _config(tmp_path / "publication", "create-draft")
+    path = config.tag_validation_receipt.parent / record_name
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["scientific_protocol_version"] = "v0.2.1"
+    path.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    _reseal_tag_validation_evidence(config.tag_validation_receipt)
+    runner = FakeGhRunner()
+
+    with pytest.raises(
+        publication.PublicationError,
+        match="[Pp]rotocol|identity|mismatch|evidence is invalid",
     ):
         publication.publish_github_release(config, runner)
     assert runner.calls == []
