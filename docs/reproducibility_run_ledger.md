@@ -302,3 +302,26 @@ and the complete working-tree suite passed `1084/1084` in 446.27 seconds.
 These working-tree results do not approve a release candidate; a new exact
 commit, package/workflow gates, and three fresh role-separated audits remain
 mandatory.
+
+## Rejected release-evidence attempt at `260bdca`
+
+Merge commit `260bdcaba0099143174fe9ec83b0699c082e8fc5` passed the three-platform
+push CI run `31218780097` and the exact-commit Ubuntu public-data run
+`31222468049`. The subsequent official macOS release validator stopped before
+creating the empty public-data cache because PR #17 did not contain the three
+schema-1.1 structured read-only audit comments required by the fail-closed
+GitHub acceptance contract. The role-separated reviews had been completed in
+the development environment, but they had not been recorded as authenticated,
+PR-head-bound GitHub comments before merge and therefore are not admissible
+release evidence. No retrospective comment is substituted for that missing
+evidence.
+
+Commit `260bdcaba0099143174fe9ec83b0699c082e8fc5` is consequently rejected as
+the final `v0.3.1` release commit. Its successful CI and Ubuntu run remain
+historical execution records, not a complete release packet. The replacement
+candidate must use a new documentation-only PR, obtain three fresh read-only
+audits bound to its exact head commit and tree, publish their structured
+payloads before merge, and repeat PR CI, push CI, Ubuntu public reproduction,
+macOS empty-cache reproduction, packet verification, reporting, tagging, and
+publication. Scientific implementation, thresholds, schemas, oracles, public
+inputs, normalized results, and `paper/**` remain unchanged.
