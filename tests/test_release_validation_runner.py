@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import hashlib
 import json
 import os
@@ -773,6 +774,31 @@ def test_runner_declares_public_clone_and_isolated_installed_probe() -> None:
     assert 'cp "${VALIDATION_ROOT}/resources/${FRESH_CLONE_CASE_ID}.json"' not in text
     assert "--zenodo-reservation-evidence" not in text
     assert "--doi" not in text
+
+
+def test_runner_claim_matrix_matches_frozen_packet_contract() -> None:
+    runner_text = RUNNER.read_text(encoding="utf-8")
+    claim_start = runner_text.index("claim_rows = [")
+    claim_end = runner_text.index("\nwrite_table(", claim_start)
+    runner_tree = ast.parse(runner_text[claim_start:claim_end])
+    runner_assignment = runner_tree.body[0]
+    assert isinstance(runner_assignment, ast.Assign)
+    runner_rows = ast.literal_eval(runner_assignment.value)
+
+    packet_tree = ast.parse(PACKET_BUILDER.read_text(encoding="utf-8"))
+    packet_assignment = next(
+        node
+        for node in packet_tree.body
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name)
+            and target.id == "FROZEN_CLAIM_EVIDENCE_ROWS"
+            for target in node.targets
+        )
+    )
+    packet_rows = ast.literal_eval(packet_assignment.value)
+
+    assert runner_rows == list(packet_rows)
 
 
 def test_runner_records_factual_threads_and_uses_fresh_installed_smokes() -> None:
