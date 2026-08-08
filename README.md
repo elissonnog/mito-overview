@@ -2,6 +2,8 @@
 
 `mito-overview` is a Python-based workflow for mode-gated mitochondrial DNA (mtDNA) evidence reporting from aligned BAM or CRAM inputs. The current public implementation provides a long-read-oriented profile and a reduced short-read compatibility profile that preserves the analytical layers applicable without long molecules or ONT methylation tracks. The repository emphasizes synchronized HTML, TSV, and figure generation for mitochondrial QC, alternate-allele screening, structural screening, an experimental within-sample mt:nuclear depth ratio when nuclear context is evaluable, feature annotation, same-read co-occurrence, and warning-oriented QC.
 
+Version `0.3.1` defines the workflow/resource release described here.
+
 Version `0.3.1` is a release/report-tooling correction that preserves the frozen `v0.3.0` scientific protocol. That protocol starts from seven identity-checked public FASTQs, reconstructs the pooled short-read or deterministic reduced long-read derivative and alignment on each validation platform, and then tests report execution, synchronized artifacts, mode/status gating, descriptive filter dependence, and fixed-input repeatability. The release contract binds source, distributions, audit ZIP, macOS and Ubuntu reproduction evidence, and CI records to one immutable commit. The patch does not change scientific algorithms, thresholds, schemas, public-input identities, deterministic selection rules, or normalized biological results. Zenodo, an archival DOI, and bioRxiv submission are outside this GitHub release contract.
 
 ## Scope

@@ -325,3 +325,21 @@ payloads before merge, and repeat PR CI, push CI, Ubuntu public reproduction,
 macOS empty-cache reproduction, packet verification, reporting, tagging, and
 publication. Scientific implementation, thresholds, schemas, oracles, public
 inputs, normalized results, and `paper/**` remain unchanged.
+
+## Rejected packet-build attempt at `209ac11`
+
+Merge commit `209ac114a6dc9d06dde8ca2c69baf4b12001057f` passed PR #18's
+three structured pre-merge audits, three-platform PR and push CI, Ubuntu public
+reproduction, and the complete macOS package, synthetic, and eight-run public
+matrix. Packet construction then failed closed because `README.md` did not
+contain the single canonical release-version sentence required by the release
+metadata parser. Two earlier macOS invocations also stopped before public-data
+execution because the selected shell environment exposed samtools/htslib
+1.22.1 rather than the required 1.23.1; the successful matrix invocation used
+the exact 111-artifact `osx-arm64` lock and hash-locked Python release tools.
+
+Commit `209ac114a6dc9d06dde8ca2c69baf4b12001057f` is therefore rejected as the
+final `v0.3.1` release commit. The replacement candidate adds the exact README
+release sentence and must repeat the complete exact-tree evidence chain. No
+algorithm, threshold, schema, oracle, fixture, public input, normalized
+scientific result, or `paper/**` file is changed.
