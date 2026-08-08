@@ -1728,6 +1728,12 @@ claim_rows = [
         "evidence": "gm11906_repeatability; gm12878_repeatability; filter_profile_results.tsv",
         "limitation": "Not an analytical-performance or diagnostic benchmark",
     },
+    {
+        "claim_id": "C7",
+        "bounded_claim": "The GM11906 public workflow represents the known m.8344A>G marker",
+        "evidence": "gm11906_default_run1; filter_profile_results.tsv",
+        "limitation": "Marker representation is not sensitivity, pathogenicity, or diagnostic validation",
+    },
 ]
 write_table(
     "claim_evidence_matrix.tsv",

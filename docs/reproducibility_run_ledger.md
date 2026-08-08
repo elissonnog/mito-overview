@@ -343,3 +343,23 @@ final `v0.3.1` release commit. The replacement candidate adds the exact README
 release sentence and must repeat the complete exact-tree evidence chain. No
 algorithm, threshold, schema, oracle, fixture, public input, normalized
 scientific result, or `paper/**` file is changed.
+
+## Rejected packet-build attempt at `db5c527`
+
+Merge commit `db5c527bb636c1761c24a83a7717c8faa150330f` passed PR #19's
+three structured pre-merge audits, three-platform PR and push CI, Ubuntu public
+reproduction, and the complete macOS package, synthetic, and eight-run public
+matrix from a newly downloaded and sealed seven-FASTQ cache. Packet construction
+then failed closed because the release runner generated claim-evidence rows C1
+through C6 while the frozen packet contract required the already approved C1
+through C7 set. The missing C7 row bounds representation of the public GM11906
+`m.8344A>G` marker and does not add a diagnostic, pathogenicity, or sensitivity
+claim. An earlier empty-cache attempt also stopped because one GM12878 transfer
+failed gzip CRC and locked MD5 checks; that cache was rejected rather than
+reused.
+
+Commit `db5c527bb636c1761c24a83a7717c8faa150330f` is therefore rejected as the
+final `v0.3.1` release commit. The successor aligns the runner-generated table
+with the frozen packet contract and adds a source-level equality regression
+test. No algorithm, threshold, schema, oracle, fixture, public input, normalized
+scientific result, or `paper/**` file is changed.
