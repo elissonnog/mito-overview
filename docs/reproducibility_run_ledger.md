@@ -363,3 +363,26 @@ final `v0.3.1` release commit. The successor aligns the runner-generated table
 with the frozen packet contract and adds a source-level equality regression
 test. No algorithm, threshold, schema, oracle, fixture, public input, normalized
 scientific result, or `paper/**` file is changed.
+
+## Rejected release-chain attempt at `5798d66`
+
+Merge commit `5798d66dc152b7734d9e8e88af32456e5427f836` passed PR #20's three
+structured pre-merge audits, three-platform PR and push CI, Ubuntu empty-cache
+public reproduction, and the complete macOS empty-cache package, synthetic, and
+eight-run public matrix. The schema-2.0 packet passed report preflight, verified
+in place and after fresh extraction, and contained 36 passing release cases and
+366 passing scientific oracle assertions. Three final read-only audits passed
+the scientific, public-provenance, and standalone-packet gates.
+
+The release-identity audit correctly held the candidate before tagging because
+the outer archive-verification receipt omitted `scientific_protocol_version`,
+although report finalization and asset assembly require that field to equal
+`v0.3.0`. The packet itself retained the correct package/release/protocol
+identity; the defect was confined to the post-packet receipt written by the
+release runner. No `v0.3.1` tag or release was created.
+
+Commit `5798d66dc152b7734d9e8e88af32456e5427f836` is therefore rejected as the
+final `v0.3.1` release commit. The successor adds the missing receipt field and
+a source-level regression test binding release `v0.3.1` to scientific protocol
+`v0.3.0`. No algorithm, threshold, schema, oracle, fixture, public input,
+normalized scientific result, or `paper/**` file is changed.
