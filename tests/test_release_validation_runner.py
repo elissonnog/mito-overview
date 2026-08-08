@@ -801,6 +801,24 @@ def test_runner_claim_matrix_matches_frozen_packet_contract() -> None:
     assert runner_rows == list(packet_rows)
 
 
+def test_runner_verification_receipt_binds_scientific_protocol_version() -> None:
+    text = RUNNER.read_text(encoding="utf-8")
+    receipt_call = text.index('"${PACKET_RECEIPT}" "${CANDIDATE_COMMIT}"')
+    receipt_start = text.index("receipt = {", receipt_call)
+    receipt_end = text.index("\nPath(sys.argv[1]).write_text", receipt_start)
+    receipt_tree = ast.parse(text[receipt_start:receipt_end])
+    assignment = receipt_tree.body[0]
+    assert isinstance(assignment, ast.Assign)
+    assert isinstance(assignment.value, ast.Dict)
+    fields = {
+        ast.literal_eval(key): value
+        for key, value in zip(assignment.value.keys, assignment.value.values, strict=True)
+    }
+
+    assert ast.literal_eval(fields["release_version"]) == "v0.3.1"
+    assert ast.literal_eval(fields["scientific_protocol_version"]) == "v0.3.0"
+
+
 def test_runner_records_factual_threads_and_uses_fresh_installed_smokes() -> None:
     text = RUNNER.read_text(encoding="utf-8")
     assert '"threads": thread_setting' in text

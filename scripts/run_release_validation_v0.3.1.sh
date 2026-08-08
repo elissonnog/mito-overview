@@ -2190,6 +2190,7 @@ receipt = {
     "evidence_type": "release_validation_archive_verification",
     "verdict": "PASS",
     "release_version": "v0.3.1",
+    "scientific_protocol_version": "v0.3.0",
     "git_commit": sys.argv[2],
     "github_actions_run_id": int(sys.argv[3]),
     "final_push_github_actions_run_id": int(sys.argv[3]),
