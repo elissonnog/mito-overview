@@ -56,7 +56,6 @@ GM11906_SOURCE_METADATA = (
     / "public_validation"
     / "gm11906_ncbi_source_metadata_v0.3.0.json"
 )
-PREPRINT_VALIDATION_DOC = REPO_ROOT / "docs" / "preprint_release_validation_v0.3.0.md"
 FIXTURE_ORACLE_NAME = "_fixture_public_validation_oracle.tsv"
 REPORT_MODULE_STATUS_OUTPUTS = (
     ("mito_qc_module_status", "mito_qc_summary.tsv"),
@@ -679,25 +678,6 @@ def test_prepare_rejects_tampered_official_metadata_before_network(
     assert result.returncode != 0
     assert "snapshot SHA-256 mismatch" in result.stderr
     assert not marker.exists()
-
-
-def test_provisional_validation_doc_defers_exact_final_suite_count() -> None:
-    text = PREPRINT_VALIDATION_DOC.read_text(encoding="utf-8")
-    opening = "\n".join(text.splitlines()[:12]).lower()
-    assert "historical" in opening
-    assert "not release evidence" in opening
-    assert "239 passed" not in text
-    assert "239-test PASS" not in text
-    assert "All 256" not in text
-    stale_hashes = (
-        "a18f2194487dbbd0ce72eeeedcd6203d8675ec47b5fb351454b7f506ed014166",
-        "11605372e020dc79d3c1f0e05bc89441c3ef132e1343a19d37379df22c2ae04a",
-        "eb4dd1d907a32b0202c479215ff3a9fe3ad2788a65127bbafc6f74ac4a27b366",
-    )
-    assert not any(value in text for value in stale_hashes)
-    assert "Final count deferred" in text
-    assert "exact count, commit, environment, and verdict" in text
-    assert "MitoOverview_v0.3.0_release_validation_report" in text
 
 
 def test_oracle_accepts_exact_six_profile_fixture(tmp_path: Path) -> None:

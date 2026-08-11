@@ -1,9 +1,5 @@
 #!/usr/bin/env python3
-"""Build the lead report-native public ONT example figure.
-
-The historical output filename is retained for README/manuscript compatibility,
-but this figure intentionally contains no workflow schematic.
-"""
+"""Build the lead report-native public ONT example figure."""
 
 from __future__ import annotations
 
@@ -27,11 +23,11 @@ from mito_overview.steps.mito_cosegregation import (
 )
 
 
-FIGURE_DIR = ROOT / "paper" / "figures"
+FIGURE_DIR = ROOT / "docs" / "assets"
 SOURCE_DIR = ROOT / "examples" / "public_validation" / "GM12878_ONT_longread" / "figures"
 SUMMARY_DIR = SOURCE_DIR.parent / "summary"
-OUT_PNG = FIGURE_DIR / "figure0_workflow_architecture.png"
-OUT_SVG = FIGURE_DIR / "figure0_workflow_architecture.svg"
+OUT_PNG = FIGURE_DIR / "mito_overview_report_native_views.png"
+OUT_SVG = FIGURE_DIR / "mito_overview_report_native_views.svg"
 
 TEXT = "#17212b"
 MUTED = "#536276"

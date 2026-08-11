@@ -9,16 +9,14 @@ dependence. It is an independent clean-room reproduction protocol, not a
 clinical, diagnostic, analytical-sensitivity, deletion-truth, absolute-copy-
 number, NUMT-classification, or sequencing-modality benchmark.
 
-The release is GitHub-primary. A Zenodo record, archival DOI, manuscript, and
-bioRxiv submission are not inputs to this protocol. The MCW/HPC installation is
-outside scope.
+The release is GitHub-primary. Archive services, manuscript preparation,
+submission systems, and institutional deployment are outside this protocol.
 
 ## Frozen development baseline
 
 | Item | Value |
 | --- | --- |
 | Repository | `https://github.com/elissonnog/mito-overview` |
-| Development branch | `codex/preprint-hardening-v0.3.0` |
 | Reconciled baseline | `6dc5f079745bf7732710a483e926ab27e6b94926` |
 | Prior immutable release | `v0.2.1` at `2ba62b775a7204c0dc61f5408989603f536c78da` |
 
@@ -205,74 +203,23 @@ An oracle mismatch is never updated automatically. It requires scientific
 investigation, a separately reviewed commit explaining the discrepancy, and a
 complete rerun from a new final commit.
 
-## Required release sequence
+## Validation sequence
 
-1. Complete the release-candidate PR recorded by the validator and run three
-   role-separated read-only software audits. Each audit uses a unique execution
-   ID and is bound to the PR-head tree; owner-posted GitHub records do not imply
-   distinct external reviewers.
-2. Require Ubuntu and macOS PR CI at the exact final PR head.
-3. Merge that PR and define the resulting `main` commit as `FINAL_SHA`.
-4. Require push-event Ubuntu and macOS CI at `FINAL_SHA`.
-5. Run independent macOS and Ubuntu clean-room public reproductions from the
-   public HTTPS repository at `FINAL_SHA`.
-6. Build and verify the GitHub-only validation packet from both its source
-   directory and a fresh extraction.
-7. Create annotated tag `v0.3.0` at `FINAL_SHA` and never move it. Capture
-   `github_prepublication.json` through the publisher's read-only
-   `--verify-prepublication` phase before any GitHub release exists. Build the
-   report from that exact tag/repository identity. Render its DOCX with the
-   documents workflow, inspect every `page-<N>.png`, and finalize the report
-   evidence before assembly:
+The frozen scientific protocol was executed for the `v0.3.1` software release
+using this sequence:
 
-   ```bash
-   python scripts/finalize_release_validation_report_v0.3.0.py \
-     --report-root <rendered-report-directory> \
-     --validation-zip <mito-overview-v0.3.0-validation.zip> \
-     --packet-verification <packet-verification-json> \
-     --rendered-pdf <renderer-output.pdf> \
-     --rendered-pages <renderer-page-directory> \
-     --final-sha <FINAL_SHA> \
-     --visual-reviewer <reviewer-id> \
-     --visual-review-pass
-   ```
+1. Bind source, CI, and independent reviews to one exact commit.
+2. Rebuild public-data derivatives from the sealed FASTQ cache on macOS and
+   Ubuntu with the locked environments.
+3. Run unit, synthetic, and public-data matrices and compare their normalized
+   outputs with the prespecified scientific oracles.
+4. Verify repeatability, module-state contracts, network denial, provenance,
+   manifests, and artifact hashes.
+5. Verify the validation packet both in place and after fresh extraction.
+6. Tag the verified commit immutably and publish the packet, report, software
+   distributions, environment records, and checksums as GitHub release assets.
 
-   The finalizer verifies the packet ZIP and embedded verifier, the report
-   builder receipt, exact packet-native figure hashes, the final PDF page tree,
-   and a contiguous PASS-reviewed page inventory whose count equals the PDF. It writes
-   `report_provenance.json` beside the figure manifest. Then assemble the
-   release assets with the fail-closed command below. The assembler requires
-   the exact packet-built wheel and source distribution, an absent output
-   directory, the complete provenance chain, and the exact environment-lock
-   inventory. It copies rather than rebuilds those distributions and writes
-   the manifest-bearing verification JSON atomically.
-
-   ```bash
-   python scripts/assemble_release_assets_v0.3.0.py \
-     <absent-asset-source> \
-     <mito-overview-v0.3.0-validation.zip> \
-     <packet-verification-json> \
-     <rendered-report-directory> \
-     <release-notes-markdown> \
-     <environment-text> \
-     <resolved-platform-lock-root> \
-     <packet-built-distribution-root> \
-     <FINAL_SHA>
-   ```
-8. Run `scripts/run_fresh_public_tag_validation_v0.3.0.sh` from absent work and
-   evidence roots with the assembled asset source. The runner clones the public
-   tag and rebuilds wheel/sdist only to compare canonical member paths, payloads,
-   sizes, and executable state. It installs the exact packet-bound wheel and
-   source distribution in separate environments, verifies all package and
-   synthetic gates, and seals all 12 canonical assets into a
-   tag/`FINAL_SHA`-bound trusted manifest. Rebuilt archive bytes never replace
-   the packet-bound release distributions.
-9. Supply that exact PASS receipt and asset directory to every mutation phase.
-   The publisher verifies all trusted hashes, enables native GitHub immutable
-   releases when the initial query reports them disabled, re-queries until
-   enabled, and only then creates the draft. It uploads and
-   authenticated-redownloads every asset,
-   publishes, and captures final release/tag/asset proof in
-   `github_publication.json`. The report is intentionally prepublication to
-   avoid hashing a document that claims verification of its own upload.
-10. Stop before manuscript, bioRxiv, Notion, or MCW/HPC work.
+The resulting evidence is available from the
+[`v0.3.1` GitHub release](https://github.com/elissonnog/mito-overview/releases/tag/v0.3.1).
+Current release-lifecycle utilities use `v0.3.1` filenames; scripts retaining
+`v0.3.0` identify the frozen scientific protocol rather than the package release.

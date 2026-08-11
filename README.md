@@ -211,7 +211,7 @@ Every layer records one of the common states: `ok`, `not_configured`, `not_appli
 
 The following report-native panels were generated from the fixed GM12878 reduced ONT input in the `v0.3.1` evidence bundle. They show depth, observed alternate-allele fractions, selected-site read co-occurrence, and alignment span-versus-MAPQ QC.
 
-[![MitoOverview report-native views](https://raw.githubusercontent.com/elissonnog/mito-overview/v0.3.1/paper/figures/figure0_workflow_architecture.png)](https://raw.githubusercontent.com/elissonnog/mito-overview/v0.3.1/paper/figures/figure0_workflow_architecture.png)
+[![MitoOverview report-native views](docs/assets/mito_overview_report_native_views.png)](docs/assets/mito_overview_report_native_views.png)
 
 The complementary short-read asset pack contains a report montage from pooled public GM11906 single-cell ATAC-seq libraries:
 
@@ -284,7 +284,7 @@ For configuration and module details, see [`docs/overview.md`](docs/overview.md)
 
 ## Citation
 
-Citation metadata for the software are maintained in [`CITATION.cff`](CITATION.cff). The [version-bound free-format manuscript draft](https://github.com/elissonnog/mito-overview/blob/v0.3.1/paper/preprint_draft.md) is available for collaborator review; its formal citation will be added here when the preprint is publicly posted.
+Citation metadata for the software are maintained in [`CITATION.cff`](CITATION.cff). A software/resource preprint is in preparation; its formal citation will be added here when publicly posted.
 
 ```text
 Lopes E, Gai X. MitoOverview: a mode-gated mitochondrial DNA reporting workflow. Version 0.3.1. Medical College of Wisconsin.

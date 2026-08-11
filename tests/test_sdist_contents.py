@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -14,7 +15,7 @@ REQUIRED_SDIST_PATHS = {
     ".github/workflows/public-validation.yml",
     ".github/workflows/smoke-tests.yml",
     "CITATION.cff",
-    "docs/preprint_release_validation_v0.3.0.md",
+    "docs/assets/mito_overview_report_native_views.png",
     "examples/expected_reports/TOY-001_output/report/01_mito_qc.html",
     "examples/expected_reports/TOY-SR-001_output/report/01_mito_qc.html",
     "examples/public_validation/GM11906_MERRF_shortread/summary/mito_qc_summary.tsv",
@@ -54,9 +55,17 @@ REQUIRED_SDIST_PATHS = {
     "tests/test_sanitize_validation_evidence.py",
 }
 
-REPOSITORY_ONLY_OPTIONAL_PATHS = {
+FORBIDDEN_INTERNAL_PATHS = {
+    "analysis_log.md",
+    "docs/preprint_hardening_plan_v0.3.0.md",
+    "docs/preprint_release_validation_v0.3.0.md",
+    "docs/repo_mapping.md",
+    "docs/reproducibility_run_ledger.md",
+    "optional_checks/README.md",
     "resources/zenodo/mito_overview_v0.3.0_draft.json",
     "scripts/capture_zenodo_reservation.py",
+    "scripts/export_preprint_docx.py",
+    "scripts/hpc/prep_mito_overview.pl",
     "optional_checks/test_zenodo_reservation_capture.py",
 }
 
@@ -98,18 +107,65 @@ def test_sdist_contains_runnable_release_tests_and_only_public_expected_bundles(
         and PurePosixPath(path).parts[:2] == ("examples", "expected_reports")
     }
     assert expected_bundles == {"TOY-001_output", "TOY-SR-001_output"}
-    assert REPOSITORY_ONLY_OPTIONAL_PATHS.isdisjoint(payload)
+    assert FORBIDDEN_INTERNAL_PATHS.isdisjoint(payload)
+    assert not any(
+        path.startswith(("paper/", "optional_checks/", "resources/zenodo/", "scripts/hpc/"))
+        for path in payload
+    )
     assert not any("__pycache__" in path or path.endswith((".pyc", ".pyo")) for path in payload)
 
 
-def test_default_pytest_scope_excludes_repository_only_optional_checks() -> None:
+def test_sdist_excludes_internal_canaries_if_they_exist_locally(tmp_path: Path) -> None:
+    repo_root = Path(__file__).parents[1]
+    candidate = tmp_path / "candidate"
+    shutil.copytree(
+        repo_root,
+        candidate,
+        ignore=shutil.ignore_patterns(
+            ".git",
+            ".conda-release-check",
+            ".pytest_cache",
+            "build",
+            "dist",
+            "mito_overview.egg-info",
+            "paper",
+            "__pycache__",
+        ),
+    )
+    canaries = {
+        "analysis_log.md": "internal log\n",
+        "paper/preprint_draft.md": "internal manuscript\n",
+        "docs/preprint_release_validation_v0.3.0.md": "internal plan\n",
+        "optional_checks/test_internal.py": "raise AssertionError\n",
+        "resources/zenodo/internal.json": "{}\n",
+        "scripts/capture_zenodo_reservation.py": "raise AssertionError\n",
+        "scripts/export_preprint_docx.py": "raise AssertionError\n",
+        "scripts/hpc/prep_mito_overview.pl": "die;\n",
+    }
+    for relative, content in canaries.items():
+        path = candidate / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+
+    output = tmp_path / "dist"
+    output.mkdir()
+    payload = _payload_paths(_build_sdist(candidate, output))
+
+    assert set(canaries).isdisjoint(payload)
+    assert not any(
+        path.startswith(("paper/", "optional_checks/", "resources/zenodo/", "scripts/hpc/"))
+        for path in payload
+    )
+
+
+def test_default_pytest_scope_is_limited_to_public_tests() -> None:
     configuration = tomllib.loads(
         (Path(__file__).parents[1] / "pyproject.toml").read_text(encoding="utf-8")
     )
     assert configuration["tool"]["pytest"]["ini_options"]["testpaths"] == ["tests"]
 
 
-def test_sdist_readme_does_not_reference_excluded_paper_paths_relatively(
+def test_sdist_readme_contains_no_internal_manuscript_references(
     tmp_path: Path,
 ) -> None:
     sdist = _build_sdist(Path(__file__).parents[1], tmp_path)
@@ -121,15 +177,9 @@ def test_sdist_readme_does_not_reference_excluded_paper_paths_relatively(
         assert handle is not None
         readme = handle.read().decode("utf-8")
 
-    assert "](paper/" not in readme
-    assert (
-        "https://raw.githubusercontent.com/elissonnog/mito-overview/v0.3.1/"
-        "paper/figures/figure0_workflow_architecture.png"
-    ) in readme
-    assert (
-        "https://github.com/elissonnog/mito-overview/blob/v0.3.1/"
-        "paper/preprint_draft.md"
-    ) in readme
+    assert "paper/" not in readme
+    assert "preprint_draft" not in readme
+    assert "docs/assets/mito_overview_report_native_views.png" in readme
 
 
 def test_extracted_sdist_runs_the_standalone_oracle_checker_in_isolated_mode(

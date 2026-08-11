@@ -145,7 +145,6 @@ ZENODO_RESERVATION_PACKET_PATH = "acceptance/zenodo_reservation.json"
 ZENODO_RESERVATION_SOURCE = "authenticated_zenodo_deposition_api"
 EXPECTED_GITHUB_BRANCH = "main"
 EXPECTED_GITHUB_WORKFLOW_PATH = ".github/workflows/smoke-tests.yml"
-ZENODO_TEMPLATE_PATH = "resources/zenodo/mito_overview_v0.3.0_draft.json"
 PLACEHOLDER_PATTERN = re.compile(
     r"(?i)(?:<[^>]+>|\b(?:TBD|TODO|TBA|UNRESERVED|PLACEHOLDER|EXAMPLE[-_ ]DOI)\b)"
 )
