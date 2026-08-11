@@ -9,16 +9,14 @@ dependence. It is an independent clean-room reproduction protocol, not a
 clinical, diagnostic, analytical-sensitivity, deletion-truth, absolute-copy-
 number, NUMT-classification, or sequencing-modality benchmark.
 
-The release is GitHub-primary. A Zenodo record, archival DOI, manuscript, and
-bioRxiv submission are not inputs to this protocol. The MCW/HPC installation is
-outside scope.
+The release is GitHub-primary. Archive services, manuscript preparation,
+submission systems, and institutional deployment are outside this protocol.
 
 ## Frozen development baseline
 
 | Item | Value |
 | --- | --- |
 | Repository | `https://github.com/elissonnog/mito-overview` |
-| Development branch | `codex/preprint-hardening-v0.3.0` |
 | Reconciled baseline | `6dc5f079745bf7732710a483e926ab27e6b94926` |
 | Prior immutable release | `v0.2.1` at `2ba62b775a7204c0dc61f5408989603f536c78da` |
 
@@ -275,4 +273,4 @@ complete rerun from a new final commit.
    publishes, and captures final release/tag/asset proof in
    `github_publication.json`. The report is intentionally prepublication to
    avoid hashing a document that claims verification of its own upload.
-10. Stop before manuscript, bioRxiv, Notion, or MCW/HPC work.
+10. Stop before manuscript preparation, submission, or institutional deployment.

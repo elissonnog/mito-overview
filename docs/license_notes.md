@@ -19,6 +19,14 @@ Two optional human mtDNA enrichments are designed as external integrations rathe
    - Source: [mvTool documentation](https://mseqdr.org/wp/index.php/2018/10/17/mseqdr-mvtool-documentation/)
    - In this repository, mvTool should be treated as an optional external annotation service rather than redistributed code or data.
 
+## Bundled reference resources
+The mitochondrial reference sequence and annotation files under
+`resources/annotations/` are derived from NCBI RefSeq record `NC_012920.1`.
+Their exact source and retrieval provenance are documented in
+`resources/annotations/README.md`. These reference resources are not presented
+as original MitoOverview-authored data; users should observe the applicable
+source-database terms when redistributing or adapting them.
+
 ## Practical implication
 The clean redistribution model for `mito-overview` is:
 - keep the core workflow and reporting code in this repository under MIT

@@ -1,12 +1,10 @@
 include CHANGELOG.md CITATION.cff CONTRIBUTING.md environment.yml
 include examples/README.md
 recursive-include .github/workflows *.yml
-recursive-include docs *.md
+recursive-include docs *.md *.png *.svg
 recursive-include resources *.fa *.gtf *.json *.md *.yaml
-recursive-include scripts *.pl *.py *.sh
+recursive-include scripts *.py *.sh
 recursive-include tests *.csv *.json *.py *.sh *.tsv *.txt
-prune resources/zenodo
-exclude scripts/capture_zenodo_reservation.py
 recursive-include examples/configs *.env
 recursive-include examples/synthetic_data *.md *.fa *.sam *.tsv *.gtf *.vcf
 recursive-include examples/expected_reports/TOY-001_output *
@@ -15,4 +13,19 @@ include examples/public_validation/*.sha256
 include examples/public_validation/*.tsv
 recursive-include examples/public_validation/GM11906_MERRF_shortread *
 recursive-include examples/public_validation/GM12878_ONT_longread *
+prune paper
+prune optional_checks
+prune resources/zenodo
+prune scripts/hpc
+exclude analysis_log.md
+exclude docs/mito_overview_full_project_guide_2026-04-22.md
+exclude docs/preprint_hardening_plan_v0.3.0.md
+exclude docs/preprint_release_validation_v0.3.0.md
+exclude docs/release_checklist.md
+exclude docs/release_validation_audit_2026-07-07.md
+exclude docs/repo_mapping.md
+exclude docs/reproducibility_run_ledger.md
+exclude docs/validation_plan.md
+exclude scripts/capture_zenodo_reservation.py
+exclude scripts/export_preprint_docx.py
 global-exclude .DS_Store *.py[cod]
